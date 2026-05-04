@@ -1,0 +1,14 @@
+{
+  "profiles": {
+    "user-service": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "applicationUrl": "http://localhost:6001",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "UseInMemoryDatabase": "true"
+      }
+    }
+  }
+}

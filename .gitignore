@@ -1,0 +1,43 @@
+# Build outputs
+**/bin/
+**/obj/
+**/build/
+**/.vs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.sln
+
+# Environment
+.env
+.env.local
+*.user
+*.suo
+
+# Docker
+.docker/
+
+# Node modules
+node_modules/
+npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.venv/
+venv/
+*.egg-info/
+
+# Go
+/dist/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db

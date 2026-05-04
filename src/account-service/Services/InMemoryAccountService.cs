@@ -1,0 +1,71 @@
+using System;
+using System.Collections.Concurrent;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using AccountService.Models;
+using OnlineBankingDemo.Contracts.Dtos;
+
+namespace AccountService.Services;
+
+public class InMemoryAccountService : IAccountService
+{
+    private readonly ConcurrentDictionary<string, Account> _accounts = new();
+    private readonly ILogger<InMemoryAccountService> _logger;
+
+    public InMemoryAccountService(ILogger<InMemoryAccountService> logger)
+    {
+        _logger = logger;
+    }
+
+    public Task<Account> CreateAccountAsync(string userId, CreateAccountRequest request)
+    {
+        var account = new Account
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserId = userId,
+            AccountNumber = GenerateAccountNumber(),
+            AccountType = request.AccountType,
+            Balance = request.InitialBalance,
+            Currency = request.Currency ?? "USD"
+        };
+
+        _accounts[account.Id] = account;
+        _logger.LogInformation("Created account {AccountId} for user {UserId}", account.Id, userId);
+        return Task.FromResult(account);
+    }
+
+    public Task<Account?> GetAccountByIdAsync(string id)
+    {
+        _accounts.TryGetValue(id, out var account);
+        return Task.FromResult(account);
+    }
+
+    public Task<System.Collections.Generic.IEnumerable<Account>> GetUserAccountsAsync(string userId)
+    {
+        var accounts = _accounts.Values.Where(a => a.UserId == userId);
+        return Task.FromResult(accounts);
+    }
+
+    public Task<Account?> GetAccountByNumberAsync(string accountNumber)
+    {
+        var account = _accounts.Values.FirstOrDefault(a => a.AccountNumber == accountNumber);
+        return Task.FromResult(account);
+    }
+
+    public Task<Account> UpdateBalanceAsync(string accountId, decimal amount)
+    {
+        if (!_accounts.TryGetValue(accountId, out var account))
+            throw new InvalidOperationException("Account not found");
+
+        account.Balance += amount;
+        _accounts[accountId] = account;
+        return Task.FromResult(account);
+    }
+
+    private string GenerateAccountNumber()
+    {
+        var random = new Random();
+        return $"ACC{random.Next(10000000, 99999999)}";
+    }
+}

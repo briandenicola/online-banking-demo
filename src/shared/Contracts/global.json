@@ -1,0 +1,16 @@
+{
+  "sdk": {
+    "version": "9.0.100"
+  }
+}
+{
+  "version": "1.0.0",
+  "packages": {
+    "org": "OnlineBankingDemo",
+    "description": "Shared contracts for online banking microservices"
+  },
+  "dependencies": {},
+  "frameworks": {
+    "net9.0": {}
+  }
+}

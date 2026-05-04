@@ -1,0 +1,14 @@
+{
+  "profiles": {
+    "transfer-service": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "applicationUrl": "http://localhost:6004",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "UseInMemoryDatabase": "true"
+      }
+    }
+  }
+}

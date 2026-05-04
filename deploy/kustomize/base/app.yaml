@@ -1,0 +1,445 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: banking-demo
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: banking-demo-config
+  namespace: flux-system
+data:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/banking-demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: banking-demo
+  labels:
+    app: user-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+      - name: user-service
+        image: ghcr.io/banking-demo/user-service:latest
+        ports:
+        - containerPort: 6001
+        env:
+        - name: CosmosDb__ConnectionString
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: cosmos-connection-string
+        - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: appinsights-connection-string
+        - name: Jwt__Key
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: jwt-key
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account-service
+  namespace: banking-demo
+  labels:
+    app: account-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: account-service
+  template:
+    metadata:
+      labels:
+        app: account-service
+    spec:
+      containers:
+      - name: account-service
+        image: ghcr.io/banking-demo/account-service:latest
+        ports:
+        - containerPort: 6002
+        env:
+        - name: CosmosDb__ConnectionString
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: cosmos-connection-string
+        - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: appinsights-connection-string
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transaction-service
+  namespace: banking-demo
+  labels:
+    app: transaction-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: transaction-service
+  template:
+    metadata:
+      labels:
+        app: transaction-service
+    spec:
+      containers:
+      - name: transaction-service
+        image: ghcr.io/banking-demo/transaction-service:latest
+        ports:
+        - containerPort: 6003
+        env:
+        - name: CosmosDb__ConnectionString
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: cosmos-connection-string
+        - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: appinsights-connection-string
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transfer-service
+  namespace: banking-demo
+  labels:
+    app: transfer-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: transfer-service
+  template:
+    metadata:
+      labels:
+        app: transfer-service
+    spec:
+      containers:
+      - name: transfer-service
+        image: ghcr.io/banking-demo/transfer-service:latest
+        ports:
+        - containerPort: 6004
+        env:
+        - name: CosmosDb__ConnectionString
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: cosmos-connection-string
+        - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: appinsights-connection-string
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chatbot-service
+  namespace: banking-demo
+  labels:
+    app: chatbot-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: chatbot-service
+  template:
+    metadata:
+      labels:
+        app: chatbot-service
+    spec:
+      containers:
+      - name: chatbot-service
+        image: ghcr.io/banking-demo/chatbot-service:latest
+        ports:
+        - containerPort: 8001
+        env:
+        - name: AZURE_OPENAI_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: openai-endpoint
+        - name: AZURE_OPENAI_KEY
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: openai-key
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "400m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anomaly-service
+  namespace: banking-demo
+  labels:
+    app: anomaly-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: anomaly-service
+  template:
+    metadata:
+      labels:
+        app: anomaly-service
+    spec:
+      containers:
+      - name: anomaly-service
+        image: ghcr.io/banking-demo/anomaly-service:latest
+        ports:
+        - containerPort: 8002
+        env:
+        - name: EVENTHUB_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: eventhub-connection-string
+        - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: appinsights-connection-string
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "400m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: budget-service
+  namespace: banking-demo
+  labels:
+    app: budget-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: budget-service
+  template:
+    metadata:
+      labels:
+        app: budget-service
+    spec:
+      containers:
+      - name: budget-service
+        image: ghcr.io/banking-demo/budget-service:latest
+        ports:
+        - containerPort: 8003
+        env:
+        - name: EVENTHUB_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: eventhub-connection-string
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "400m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: event-processor
+  namespace: banking-demo
+  labels:
+    app: event-processor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: event-processor
+  template:
+    metadata:
+      labels:
+        app: event-processor
+    spec:
+      containers:
+      - name: event-processor
+        image: ghcr.io/banking-demo/event-processor:latest
+        ports:
+        - containerPort: 9001
+        env:
+        - name: EVENTHUB_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: eventhub-connection-string
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+  namespace: banking-demo
+spec:
+  selector:
+    app: user-service
+  ports:
+  - port: 80
+    targetPort: 6001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: account-service
+  namespace: banking-demo
+spec:
+  selector:
+    app: account-service
+  ports:
+  - port: 80
+    targetPort: 6002
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: transaction-service
+  namespace: banking-demo
+spec:
+  selector:
+    app: transaction-service
+  ports:
+  - port: 80
+    targetPort: 6003
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: transfer-service
+  namespace: banking-demo
+spec:
+  selector:
+    app: transfer-service
+  ports:
+  - port: 80
+    targetPort: 6004
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chatbot-service
+  namespace: banking-demo
+spec:
+  selector:
+    app: chatbot-service
+  ports:
+  - port: 80
+    targetPort: 8001
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: banking-demo-ingress
+  namespace: banking-demo
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - host: banking-demo.local
+    http:
+      paths:
+      - path: /api/users
+        pathType: Prefix
+        backend:
+          service:
+            name: user-service
+            port:
+              number: 80
+      - path: /api/accounts
+        pathType: Prefix
+        backend:
+          service:
+            name: account-service
+            port:
+              number: 80
+      - path: /api/transactions
+        pathType: Prefix
+        backend:
+          service:
+            name: transaction-service
+            port:
+              number: 80
+      - path: /api/transfers
+        pathType: Prefix
+        backend:
+          service:
+            name: transfer-service
+            port:
+              number: 80
+      - path: /api/chat
+        pathType: Prefix
+        backend:
+          service:
+            name: chatbot-service
+            port:
+              number: 80

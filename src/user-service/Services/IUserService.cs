@@ -1,0 +1,13 @@
+using System.Threading.Tasks;
+using OnlineBankingDemo.Contracts.Dtos;
+using UserService.Models;
+
+namespace UserService.Services;
+
+public interface IUserService
+{
+    Task<User?> GetUserByIdAsync(string id);
+    Task<User?> GetUserByUsernameAsync(string username);
+    Task<User> CreateUserAsync(RegisterUserRequest request);
+    Task<bool> ValidateCredentialsAsync(string username, string password);
+}

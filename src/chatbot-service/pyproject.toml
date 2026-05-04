@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "chatbot-service"
+version = "1.0.0"
+description = "AI-powered financial advice chatbot service"
+authors = ["Online Banking Demo"]
+readme = "README.md"
+packages = [{include = "app"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.115.0"
+uvicorn = "^0.32.0"
+azure-ai-inference = "^1.0.0"
+azure-identity = "^1.17.0"
+httpx = "^0.27.0"
+pydantic = "^2.9.0"
+python-dotenv = "^1.0.0"
+opentelemetry-api = "^1.27.0"
+opentelemetry-sdk = "^1.27.0"
+opentelemetry-exporter-otlp = "^1.27.0"
+opentelemetry-instrumentation-fastapi = "^0.46b0"
+opentelemetry-instrumentation-requests = "^0.46b0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
