@@ -8,7 +8,6 @@ import Button from '@mui/material/Button';
 import AppBar from '@mui/material/AppBar';
 import Toolbar from '@mui/material/Toolbar';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
-import ChatIcon from '@mui/icons-material/Chat';
 
 // Pages
 import Dashboard from './pages/Dashboard';
@@ -32,6 +31,7 @@ const theme = createTheme({
 
 const AppContent: React.FC = () => {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
 
   if (!user) {
     return (
@@ -47,7 +47,12 @@ const AppContent: React.FC = () => {
       <AppBar position="static">
         <Toolbar>
           <AccountBalanceIcon sx={{ mr: 2 }} />
-          <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+          <Typography 
+            variant="h6" 
+            component="div" 
+            sx={{ flexGrow: 1, cursor: 'pointer' }}
+            onClick={() => navigate('/')}
+          >
             Online Banking Demo
           </Typography>
           <Button color="inherit" onClick={logout}>
