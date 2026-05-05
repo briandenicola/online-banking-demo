@@ -1,6 +1,7 @@
 """
 AI-powered financial advice chatbot service using Azure AI Foundry Agents
 """
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -31,7 +32,7 @@ from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -54,12 +55,6 @@ def init_telemetry():
 
 init_telemetry()
 
-app = FastAPI(title="Chatbot Service", version="1.0.0")
-
-# Initialize instrumentation
-FastAPIInstrumentor.instrument_app(app)
-HTTPXClientInstrumentor().instrument()
-
 # Azure AI Agents client and agent
 agents_client = None
 agent_id = None
@@ -70,7 +65,7 @@ def get_budget_insights(user_id: str, period: str = "30d") -> dict:
     """Get budget insights for a user - financial advisor tool"""
     try:
         budget_service_url = os.getenv("BUDGET_SERVICE_URL", "http://budget-service:8003")
-        response = httpx.get(f"{budget_service_url}/api/budget/insights?userId={user_id}&period={period}", timeout=10.0)
+        response = httpx.get(f"{budget_service_url}/insights/{user_id}?period={period}", timeout=10.0)
         if response.ok:
             return response.json()
     except Exception as e:
@@ -82,7 +77,7 @@ def get_spending_pattern(user_id: str) -> dict:
     """Get spending patterns for a user - financial advisor tool"""
     try:
         budget_service_url = os.getenv("BUDGET_SERVICE_URL", "http://budget-service:8003")
-        response = httpx.get(f"{budget_service_url}/api/budget/patterns?userId={user_id}", timeout=10.0)
+        response = httpx.get(f"{budget_service_url}/insights/{user_id}?period=7d", timeout=10.0)
         if response.ok:
             return response.json()
     except Exception as e:
@@ -94,7 +89,7 @@ def analyze_transaction(description: str, amount: float) -> dict:
     """Analyze a transaction for budgeting - financial advisor tool"""
     try:
         budget_service_url = os.getenv("BUDGET_SERVICE_URL", "http://budget-service:8003")
-        response = httpx.get(f"{budget_service_url}/api/budget/categorize?description={description}", timeout=10.0)
+        response = httpx.post(f"{budget_service_url}/categorize", params={"description": description}, timeout=10.0)
         if response.ok:
             data = response.json()
             return {
@@ -174,7 +169,11 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Error cleaning up agent: {e}")
 
 
-app.router.lifespan = lifespan
+app = FastAPI(title="Chatbot Service", version="1.0.0", lifespan=lifespan)
+
+# Initialize instrumentation
+FastAPIInstrumentor.instrument_app(app)
+HTTPXClientInstrumentor().instrument()
 
 
 class ChatRequest(BaseModel):
@@ -185,7 +184,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     response: str
-    suggestions: list[str] = []
+    suggestions: list[str] = Field(default_factory=list)
 
 
 @app.post("/api/chat", response_model=ChatResponse)
@@ -231,8 +230,9 @@ async def chat(request: ChatRequest):
             
             span.set_attribute("run.id", run.id)
             
-            # Wait for run completion
+            # Wait for run completion with async sleep to avoid blocking event loop
             while run.status in ["queued", "in_progress", "requires_action"]:
+                await asyncio.sleep(0.5)
                 run = agents_client.get_run(thread_id, run.id)
             
             span.set_attribute("run.status", run.status)
