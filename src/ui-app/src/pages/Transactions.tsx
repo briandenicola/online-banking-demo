@@ -21,6 +21,7 @@ import {
   MenuItem
 } from '@mui/material';
 import { Warning as WarningIcon, CheckCircle as CheckCircleIcon, Add as AddIcon } from '@mui/icons-material';
+import { useAuth } from '../context/AuthContext';
 
 interface Transaction {
   id: string;
@@ -43,13 +44,14 @@ interface NewTransaction {
 }
 
 const Transactions: React.FC = () => {
+  const { accounts } = useAuth();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [newTransaction, setNewTransaction] = useState<NewTransaction>({
-    accountId: 'acc-001',
+    accountId: accounts.length > 0 ? accounts[0].id : 'acc-001',
     amount: '',
     type: 'Debit',
     description: '',
@@ -57,6 +59,13 @@ const Transactions: React.FC = () => {
     autoCategorize: true
   });
   const [success, setSuccess] = useState<string | null>(null);
+
+  // Update default accountId when accounts load
+  useEffect(() => {
+    if (accounts.length > 0 && newTransaction.accountId === 'acc-001') {
+      setNewTransaction(prev => ({ ...prev, accountId: accounts[0].id }));
+    }
+  }, [accounts, newTransaction.accountId]);
 
   // Fetch transactions from the transaction service
   const fetchTransactions = async () => {
@@ -148,10 +157,11 @@ const Transactions: React.FC = () => {
       });
 
       if (response.ok) {
-        setSuccess('Transaction added successfully! AI categorization will run automatically.');
+        const selectedAccount = accounts.find(a => a.id === newTransaction.accountId);
+        setSuccess(`Transaction added to ${selectedAccount?.name || 'account'}! AI categorization will run automatically.`);
         setDialogOpen(false);
         setNewTransaction({
-          accountId: 'acc-001',
+          accountId: accounts.length > 0 ? accounts[0].id : 'acc-001',
           amount: '',
           type: 'Debit',
           description: '',
@@ -254,12 +264,20 @@ const Transactions: React.FC = () => {
           <Box sx={{ pt: 1 }}>
             <TextField
               fullWidth
-              label="Account ID"
+              select
+              label="Account"
               value={newTransaction.accountId}
               onChange={(e) => setNewTransaction({...newTransaction, accountId: e.target.value})}
               margin="dense"
-              helperText="Your account identifier"
-            />
+              required
+              helperText="Select the account for this transaction"
+            >
+              {accounts.map((account) => (
+                <MenuItem key={account.id} value={account.id}>
+                  {account.name} ({account.number}) - ${Math.abs(account.balance).toFixed(2)} {account.balance < 0 ? 'CR' : 'DR'}
+                </MenuItem>
+              ))}
+            </TextField>
             <TextField
               fullWidth
               label="Amount"
