@@ -1,5 +1,5 @@
 output "resource_group_name" {
-  value = azurerm_resource_group.main.name
+  value = azurerm_resource_group.this.name
 }
 
 output "aks_name" {
@@ -11,13 +11,22 @@ output "aks_kube_config" {
   sensitive = true
 }
 
+output "storage_account_name" {
+  value = azurerm_storage_account.main.name
+}
+
+output "storage_connection_string" {
+  value     = azurerm_storage_account.main.primary_connection_string
+  sensitive = true
+}
+
 output "cosmos_db_endpoint" {
   value     = azurerm_cosmosdb_account.main.endpoint
   sensitive = true
 }
 
 output "cosmos_db_key" {
-  value     = azurerm_cosmosdb_account.main.primary_master_key
+  value     = azurerm_cosmosdb_account.main.primary_key
   sensitive = true
 }
 
@@ -31,11 +40,11 @@ output "eventhub_connection_string" {
 }
 
 output "redis_host" {
-  value = azurerm_redis_cache.main.host_name
+  value = azurerm_redis_cache.main.hostname
 }
 
 output "redis_primary_key" {
-  value     = azurerm_redis_cache.main.primary_primary_key
+  value     = azurerm_redis_cache.main.primary_access_key
   sensitive = true
 }
 

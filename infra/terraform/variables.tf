@@ -1,24 +1,13 @@
-variable "resource_group_name" {
-  description = "Name of the resource group"
-  type        = string
-}
-
-variable "prefix" {
-  description = "Prefix for resource names"
-  type        = string
-  default     = "bankingdemo"
-}
-
-variable "location" {
+variable "region" {
   description = "Azure region"
   type        = string
-  default     = "East US"
+  default     = "eastus"
 }
 
-variable "aks_name" {
-  description = "Name of the AKS cluster"
+variable "tags" {
+  description = "Application name for tagging"
   type        = string
-  default     = "banking-demo-aks"
+  default     = "banking-demo"
 }
 
 variable "aks_node_count" {
@@ -37,10 +26,4 @@ variable "kubernetes_version" {
   description = "Kubernetes version"
   type        = string
   default     = "1.30"
-}
-
-variable "tags" {
-  description = "Tags to apply to resources"
-  type        = map(string)
-  default     = {}
 }

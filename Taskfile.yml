@@ -1,87 +1,64 @@
-version: "3"
+version: '3'
 
 vars:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: banking-demo
-  RESOURCE_GROUP: banking-demo-rg
-  AKS_NAME: banking-demo-aks
-  LOCATION: eastus
+  TITLE: Online Banking Demo
+  DEFAULT_REGION: eastus
+  INFRA_DIR: infra/terraform
 
 tasks:
   default:
-    desc: Show main tasks (use 'task --list-all' for all tasks)
-    silent: true
+    desc: Show available tasks
     cmds:
-      - |
-        echo "Main commands:"
-        echo "  task up     - Start all services locally (Docker Compose)"
-        echo "  task down   - Stop and remove all Docker services"
-        echo "  task run    - Run services natively (no Docker, in-memory)"
-        echo "  task stop   - Stop all running services"
-        echo ""
-        echo "Other useful commands:"
-        echo "  task test       - Run all tests"
-        echo "  task logs       - Follow service logs"
-        echo "  task tf-deploy  - Deploy to AKS"
-        echo ""
-        echo "Use 'task --list-all' to see all available tasks"
+      - task --list
 
-  # ==== Main User Commands ====
   up:
-    desc: Start all services locally using Docker Compose
+    desc: Creates complete Azure environment for {{.TITLE}} (includes AI Foundry)
     cmds:
-      - |
-        if command -v docker &> /dev/null && docker info &> /dev/null; then
-          docker-compose up -d
-        else
-          echo "Docker is not running. Use 'task run' to start services natively without Docker."
-          exit 1
-        fi
+      - task: _init
+      - task: apply
+      - task: output-env
+
+  apply:
+    desc: Apply Terraform infrastructure
+    cmds:
+      - terraform -chdir=./{{.INFRA_DIR}} apply -auto-approve -compact-warnings
+        -var "region={{.REGION}}"
+    vars:
+      REGION: '{{default .DEFAULT_REGION .CLI_ARGS}}'
 
   down:
-    desc: Stop and remove all Docker Compose services
+    desc: Destroy all Azure resources and clean Terraform/build files
+    cmds:
+      - terraform -chdir=./{{.INFRA_DIR}} destroy -auto-approve || true
+      - cmd: rm -rf .terraform .terraform.lock.hcl terraform.tfstate.d
+        dir: '{{.INFRA_DIR}}'
+
+  output-env:
+    desc: Output environment variables for local AI development
+    dir: '{{.INFRA_DIR}}'
     cmds:
       - |
-        if command -v docker &> /dev/null && docker info &> /dev/null; then
-          docker-compose down
-        else
-          echo "Docker is not running. Nothing to stop."
-        fi
+        echo "# Azure AI Foundry Environment"
+        echo "AZURE_OPENAI_ENDPOINT=$(terraform output -raw openai_endpoint)"
+        echo "AZURE_OPENAI_KEY=$(terraform output -raw openai_key)"
+        echo "AZURE_OPENAI_MODEL=gpt-4o-mini"
+        echo "APPLICATIONINSIGHTS_CONNECTION_STRING=$(terraform output -raw application_insights_connection_string)"
 
   run:
-    desc: Run services natively without Docker (uses in-memory storage)
+    desc: Run Docker Compose locally
     cmds:
-      - echo "Starting .NET services on ports 6001-6004..."
-      - cd src/user-service && ASPNETCORE_ENVIRONMENT=Development UseInMemoryDatabase=true dotnet run &
-      - cd src/account-service && ASPNETCORE_ENVIRONMENT=Development UseInMemoryDatabase=true dotnet run &
-      - cd src/transaction-service && ASPNETCORE_ENVIRONMENT=Development UseInMemoryDatabase=true dotnet run &
-      - cd src/transfer-service && ASPNETCORE_ENVIRONMENT=Development UseInMemoryDatabase=true dotnet run &
-      - echo "All services started. Press Ctrl+C to stop."
-      - wait
+      - docker-compose up -d
 
   stop:
-    desc: Stop all running services (Docker and native)
+    desc: Stop Docker Compose
     cmds:
-      - echo "Stopping all services..."
-      - if command -v docker &> /dev/null && docker info &> /dev/null; then docker-compose down 2>/dev/null || true; fi
-      - pkill -f "dotnet run" 2>/dev/null || true
-      - pkill -f "uvicorn" 2>/dev/null || true
-      - echo "All services stopped"
+      - docker-compose down
 
-  push:
-    desc: Push all images to registry
+  logs:
+    desc: Follow Docker Compose logs
     cmds:
-      - echo "{{.GITHUB_TOKEN}}" | docker login {{.REGISTRY}} -u {{.GITHUB_REPOSITORY_OWNER}} --password-stdin
-      - docker push {{.REGISTRY}}/{{.IMAGE_NAME}}/user-service:latest
-      - docker push {{.REGISTRY}}/{{.IMAGE_NAME}}/account-service:latest
-      - docker push {{.REGISTRY}}/{{.IMAGE_NAME}}/transaction-service:latest
-      - docker push {{.REGISTRY}}/{{.IMAGE_NAME}}/transfer-service:latest
-      - docker push {{.REGISTRY}}/{{.IMAGE_NAME}}/chatbot-service:latest
-      - docker push {{.REGISTRY}}/{{.IMAGE_NAME}}/anomaly-service:latest
-      - docker push {{.REGISTRY}}/{{.IMAGE_NAME}}/budget-service:latest
-      - docker push {{.REGISTRY}}/{{.IMAGE_NAME}}/event-processor:latest
+      - docker-compose logs -f
 
-  # ==== Test Tasks ====
   test:
     desc: Run all tests
     cmds:
@@ -89,66 +66,18 @@ tasks:
       - cd src/chatbot-service && poetry run pytest || true
       - cd src/event-processor && go test ./... || true
 
-  # ==== Terraform Tasks ====
-  tf-init:
-    desc: Initialize Terraform
-    dir: infra/terraform
-    cmds:
-      - terraform init
-
-  tf-plan:
-    desc: Plan Terraform changes
-    dir: infra/terraform
-    cmds:
-      - terraform plan -var-file=environments/dev.tfvars
-
-  tf-apply:
-    desc: Apply Terraform changes
-    dir: infra/terraform
-    cmds:
-      - terraform apply -var-file=environments/dev.tfvars -auto-approve
-
-  tf-destroy:
-    desc: Destroy Terraform resources
-    dir: infra/terraform
-    cmds:
-      - terraform destroy -var-file=environments/dev.tfvars -auto-approve
-
-  # ==== AKS Tasks ====
-  tf-deploy:
-    desc: Deploy to AKS using Terraform and Flux
-    cmds:
-      - task tf-apply
-      - kubectl apply -f deploy/kustomize/base/
-
-  aks-status:
-    desc: Show AKS deployment status
-    cmds:
-      - kubectl get pods -n banking-demo
-      - kubectl get services -n banking-demo
-
-  # ==== Utility Tasks ====
-  logs:
-    desc: Follow Docker Compose logs
-    cmds:
-      - docker-compose logs -f
-    interpreter: sh
-
   clean:
-    desc: Clean up local Docker resources
+    desc: Clean build artifacts
     cmds:
-      - docker system prune -f
-      - docker volume prune -f
+      - rm -rf src/**/bin src/**/obj
+      - rm -rf node_modules dist
 
-  fmt:
-    desc: Format code
+  # === Internal tasks ===
+  _init:
+    internal: true
     cmds:
-      - dotnet format src/shared/Contracts/Contracts.csproj
-      - cd src/event-processor && go fmt ./...
-
-  doctor:
-    desc: Run health checks
-    cmds:
-      - docker info || true
-      - az account show || true
-      - kubectl version --short || true
+      - terraform -chdir=./{{.INFRA_DIR}} init -upgrade
+      - terraform -chdir=./{{.INFRA_DIR}} workspace new {{.REGION}} || true
+      - terraform -chdir=./{{.INFRA_DIR}} workspace select {{.REGION}}
+    vars:
+      REGION: '{{default .DEFAULT_REGION .CLI_ARGS}}'
