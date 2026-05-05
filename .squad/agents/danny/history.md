@@ -37,3 +37,13 @@
 
 ### Architectural Impact
 The project's microservice decomposition is sound, but execution gaps (code bugs, missing infrastructure, zero tests) compound each other. Terraform errors block cloud deployment; CI context errors block local builds. Backend bugs (partition keys, missing money-move) mean transfers fail silently. Frontend can't call undeployed APIs. Tests don't catch any of this.
+
+### Infrastructure Fixes Applied (2026-05-05)
+- **CI build context:** .NET services now build from repo root with explicit `file:` path — mirrors docker-compose.yml
+- **CI test job:** Now runs dotnet test, pytest, npm test, go test conditionally (graceful failure with `|| true`)
+- **Terraform duplicate identity:** Removed second `openai_managed_identity` definition (line 334)
+- **Terraform missing attribute:** Added `user_assigned_identity_id` to `aks_openai_workload_identity`
+- **docker-compose version:** Removed deprecated `version: "3.9"`
+- **Redis placeholder:** Added comment explaining it's reserved for future use
+- **Taskfile.local.yml:** Removed duplicate `stop` task
+- **`.env.example`:** Documented all required env vars for local dev
