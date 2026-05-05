@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Box, Typography, Paper, TextField, Button, List, ListItem, ListItemText, Divider } from '@mui/material';
+import { Box, Typography, Paper, TextField, Button, List, ListItem, ListItemText, CircularProgress } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 
 interface Message {
@@ -10,11 +10,12 @@ interface Message {
 
 const Chat: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([
-    { id: 1, text: 'Hello! I\'m your AI financial assistant. How can I help you today?', sender: 'bot' },
+    { id: 1, text: "Hello! I'm your AI financial assistant powered by Azure AI Foundry. I can help with budget insights, spending patterns, and transaction analysis. What would you like to know?", sender: 'bot' },
   ]);
   const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!input.trim()) return;
 
     const userMessage: Message = {
@@ -25,24 +26,40 @@ const Chat: React.FC = () => {
     
     setMessages([...messages, userMessage]);
     setInput('');
+    setLoading(true);
 
-    // Simulate AI response
-    setTimeout(() => {
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: 'user-demo',
+          message: input,
+          context: {}
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const botResponse: Message = {
+          id: Date.now() + 1,
+          text: data.response,
+          sender: 'bot',
+        };
+        setMessages(prev => [...prev, botResponse]);
+      } else {
+        throw new Error('API error');
+      }
+    } catch (error) {
       const botResponse: Message = {
         id: Date.now() + 1,
-        text: getBotResponse(input),
+        text: "I'm having trouble connecting to the AI assistant. Please try again later.",
         sender: 'bot',
       };
       setMessages(prev => [...prev, botResponse]);
-    }, 1000);
-  };
-
-  const getBotResponse = (question: string): string => {
-    const lower = question.toLowerCase();
-    if (lower.includes('balance')) return 'Your total balance across all accounts is $18,963.12. Checking: $2,543.78, Savings: $15,234.56, Credit: -$876.23';
-    if (lower.includes('transfer')) return 'I can help you make a transfer. Would you like to move money between your checking and savings accounts?';
-    if (lower.includes('spending')) return 'This month you\'ve spent $1,234.56. Your top categories are: Groceries ($345), Dining ($210), and Gas ($180).';
-    return 'I can help with balance inquiries, transfers, spending analysis, and budget recommendations. What would you like to know?';
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -75,10 +92,16 @@ const Chat: React.FC = () => {
           placeholder="Ask about your finances..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+          onKeyPress={(e) => e.key === 'Enter' && !loading && handleSend()}
+          disabled={loading}
         />
-        <Button variant="contained" endIcon={<SendIcon />} onClick={handleSend}>
-          Send
+        <Button 
+          variant="contained" 
+          endIcon={loading ? <CircularProgress size={20} /> : <SendIcon />} 
+          onClick={handleSend}
+          disabled={loading || !input.trim()}
+        >
+          {loading ? 'Thinking...' : 'Send'}
         </Button>
       </Box>
     </Box>
