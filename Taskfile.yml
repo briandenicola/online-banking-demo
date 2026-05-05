@@ -1,92 +1,16 @@
 version: '3'
 
-vars:
+dotenv: ['.env']
+
+env:
   TITLE: Online Banking Demo
-  DEFAULT_REGION: eastus
-  INFRA_DIR: infra/terraform
+  DEFAULT_REGION: eastus2
 
-tasks:
-  default:
-    desc: Show available tasks
-    cmds:
-      - task --list
+includes:
+  local: 
+    taskfile: ./Taskfile.local.yml
+    internal: false
 
-  up:
-    desc: Creates complete Azure environment for {{.TITLE}} (includes AI Foundry)
-    cmds:
-      - task: _init
-      - task: apply
-      - task: output-env
-
-  apply:
-    desc: Apply Terraform infrastructure
-    cmds:
-      - terraform -chdir=./{{.INFRA_DIR}} apply -auto-approve -compact-warnings
-        -var "region={{.REGION}}"
-    vars:
-      REGION: '{{default .DEFAULT_REGION .CLI_ARGS}}'
-
-  down:
-    desc: Destroy all Azure resources and clean Terraform/build files
-    cmds:
-      - terraform -chdir=./{{.INFRA_DIR}} destroy -auto-approve || true
-      - cmd: rm -rf .terraform .terraform.lock.hcl terraform.tfstate.d
-        dir: '{{.INFRA_DIR}}'
-
-  output-env:
-    desc: Output environment variables for local AI development
-    dir: '{{.INFRA_DIR}}'
-    cmds:
-      - |
-        echo "# Azure AI Foundry Environment"
-        echo "AZURE_OPENAI_ENDPOINT={{.AZURE_OPENAI_ENDPOINT}}"
-        echo "AZURE_OPENAI_KEY={{.AZURE_OPENAI_KEY}}"
-        echo "AZURE_OPENAI_MODEL={{.AZURE_OPENAI_MODEL}}"
-        echo "APPLICATIONINSIGHTS_CONNECTION_STRING={{.APPLICATIONINSIGHTS_CONNECTION_STRING}}"
-    silent: true
-    vars:
-      AZURE_OPENAI_MODEL: gpt-5.4
-      AZURE_OPENAI_ENDPOINT:
-        sh: terraform output -raw openai_endpoint
-      AZURE_OPENAI_KEY:
-        sh: terraform output -raw openai_key
-      APPLICATIONINSIGHTS_CONNECTION_STRING:
-        sh: terraform output -raw application_insights_connection_string
-
-  run:
-    desc: Run Docker Compose locally
-    cmds:
-      - docker-compose up -d
-
-  stop:
-    desc: Stop Docker Compose
-    cmds:
-      - docker-compose down
-
-  logs:
-    desc: Follow Docker Compose logs
-    cmds:
-      - docker-compose logs -f
-
-  test:
-    desc: Run all tests
-    cmds:
-      - dotnet test src/shared/Contracts/Contracts.csproj
-      - cd src/chatbot-service && poetry run pytest || true
-      - cd src/event-processor && go test ./... || true
-
-  clean:
-    desc: Clean build artifacts
-    cmds:
-      - rm -rf src/**/bin src/**/obj
-      - rm -rf node_modules dist
-
-  # === Internal tasks ===
-  _init:
-    internal: true
-    cmds:
-      - terraform -chdir=./{{.INFRA_DIR}} init -upgrade
-      - terraform -chdir=./{{.INFRA_DIR}} workspace new {{.REGION}} || true
-      - terraform -chdir=./{{.INFRA_DIR}} workspace select {{.REGION}}
-    vars:
-      REGION: '{{default .DEFAULT_REGION .CLI_ARGS}}'
+  cloud: 
+    taskfile: ./Taskfile.cloud.yml
+    internal: false

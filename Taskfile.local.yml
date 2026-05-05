@@ -1,9 +1,7 @@
 version: '3'
 
-vars:
-  TITLE: Online Banking Demo
-  DEFAULT_REGION: eastus
-  INFRA_DIR: infra/terraform
+env:
+  INFRA_DIR: infra/local
 
 tasks:
   default:

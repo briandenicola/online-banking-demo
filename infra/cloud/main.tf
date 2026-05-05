@@ -231,6 +231,7 @@ resource "azurerm_application_insights" "main" {
   location            = azurerm_resource_group.this.location
   resource_group_name = azurerm_resource_group.this.name
   application_type    = "web"
+  workspace_id        = azurerm_log_analytics_workspace.main.id
   tags = {
     AppName = local.resource_name
   }
@@ -250,7 +251,7 @@ resource "azurerm_key_vault" "main" {
 # Azure OpenAI
 resource "azurerm_cognitive_account" "openai" {
   name                = local.openai_name
-  location            = "East US"
+  location            = azurerm_resource_group.this.location
   resource_group_name = azurerm_resource_group.this.name
   sku_name            = "S0"
   kind                = "OpenAI"
