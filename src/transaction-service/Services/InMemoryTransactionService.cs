@@ -13,9 +13,10 @@ public class InMemoryTransactionService : ITransactionService
     {
         var transaction = new Transaction
         {
+            Id = System.Guid.NewGuid().ToString(),
             AccountId = request.AccountId,
             Amount = request.Amount,
-            Currency = request.Currency,
+            Currency = request.Currency ?? "USD",
             Type = request.Type,
             Description = request.Description,
             Category = request.Category ?? "Uncategorized"
