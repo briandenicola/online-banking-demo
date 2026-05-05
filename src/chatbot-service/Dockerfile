@@ -9,7 +9,8 @@ RUN pip install --no-cache-dir \
     fastapi uvicorn httpx pydantic python-dotenv \
     opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp \
     opentelemetry-instrumentation-fastapi opentelemetry-instrumentation-requests \
-    opentelemetry-instrumentation-httpx
+    opentelemetry-instrumentation-httpx \
+    azure-ai-agents azure-identity
 
 EXPOSE 8001
 
