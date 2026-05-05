@@ -44,11 +44,12 @@ interface NewTransaction {
 }
 
 const Transactions: React.FC = () => {
-  const { accounts } = useAuth();
+  const { accounts, addAccount } = useAuth();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [accountDialogOpen, setAccountDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [newTransaction, setNewTransaction] = useState<NewTransaction>({
     accountId: accounts.length > 0 ? accounts[0].id : 'acc-001',
@@ -57,6 +58,12 @@ const Transactions: React.FC = () => {
     description: '',
     category: '',
     autoCategorize: true
+  });
+  const [newAccount, setNewAccount] = useState({
+    name: '',
+    number: '',
+    balance: '',
+    type: 'Checking'
   });
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -181,6 +188,19 @@ const Transactions: React.FC = () => {
     }
   };
 
+  const handleAddAccount = () => {
+    if (newAccount.name && newAccount.number && newAccount.balance) {
+      addAccount({
+        name: newAccount.name,
+        number: newAccount.number,
+        balance: parseFloat(newAccount.balance),
+        type: newAccount.type
+      });
+      setAccountDialogOpen(false);
+      setNewAccount({ name: '', number: '', balance: '', type: 'Checking' });
+    }
+  };
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '200px' }}>
@@ -262,22 +282,33 @@ const Transactions: React.FC = () => {
         <DialogTitle>Add New Transaction</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 1 }}>
-            <TextField
-              fullWidth
-              select
-              label="Account"
-              value={newTransaction.accountId}
-              onChange={(e) => setNewTransaction({...newTransaction, accountId: e.target.value})}
-              margin="dense"
-              required
-              helperText="Select the account for this transaction"
-            >
-              {accounts.map((account) => (
-                <MenuItem key={account.id} value={account.id}>
-                  {account.name} ({account.number}) - ${Math.abs(account.balance).toFixed(2)} {account.balance < 0 ? 'CR' : 'DR'}
-                </MenuItem>
-              ))}
-            </TextField>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end' }}>
+              <TextField
+                fullWidth
+                select
+                label="Account"
+                value={newTransaction.accountId}
+                onChange={(e) => setNewTransaction({...newTransaction, accountId: e.target.value})}
+                margin="dense"
+                required
+                helperText="Select the account for this transaction"
+              >
+                {accounts.map((account) => (
+                  <MenuItem key={account.id} value={account.id}>
+                    {account.name} ({account.number}) - ${Math.abs(account.balance).toFixed(2)} {account.balance < 0 ? 'CR' : 'DR'}
+                  </MenuItem>
+                ))}
+              </TextField>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={() => setAccountDialogOpen(true)}
+                sx={{ mb: 1, minWidth: 'auto' }}
+                title="Add new account"
+              >
+                <AddIcon />
+              </Button>
+            </Box>
             <TextField
               fullWidth
               label="Amount"
@@ -330,6 +361,63 @@ const Transactions: React.FC = () => {
             disabled={submitting || !newTransaction.amount || !newTransaction.description}
           >
             {submitting ? <CircularProgress size={20} /> : 'Add Transaction'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Add Account Dialog (from Transactions page) */}
+      <Dialog open={accountDialogOpen} onClose={() => setAccountDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Add New Account</DialogTitle>
+        <DialogContent>
+          <Box sx={{ pt: 1 }}>
+            <TextField
+              fullWidth
+              label="Account Name"
+              value={newAccount.name}
+              onChange={(e) => setNewAccount({...newAccount, name: e.target.value})}
+              margin="dense"
+              placeholder="e.g., My Savings Account"
+            />
+            <TextField
+              fullWidth
+              label="Account Number"
+              value={newAccount.number}
+              onChange={(e) => setNewAccount({...newAccount, number: e.target.value})}
+              margin="dense"
+              placeholder="e.g., ****-5678"
+            />
+            <TextField
+              fullWidth
+              label="Initial Balance"
+              type="number"
+              value={newAccount.balance}
+              onChange={(e) => setNewAccount({...newAccount, balance: e.target.value})}
+              margin="dense"
+            />
+            <TextField
+              fullWidth
+              select
+              label="Account Type"
+              value={newAccount.type}
+              onChange={(e) => setNewAccount({...newAccount, type: e.target.value})}
+              margin="dense"
+            >
+              <MenuItem value="Checking">Checking</MenuItem>
+              <MenuItem value="Savings">Savings</MenuItem>
+              <MenuItem value="Credit">Credit Card</MenuItem>
+            </TextField>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setAccountDialogOpen(false)}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleAddAccount} 
+            variant="contained"
+            disabled={!newAccount.name || !newAccount.number || !newAccount.balance}
+          >
+            Add Account
           </Button>
         </DialogActions>
       </Dialog>

@@ -19,6 +19,7 @@ interface AuthContextType {
   user: User | null;
   accounts: Account[];
   transfer: (fromId: string, toId: string, amount: number) => boolean;
+  addAccount: (account: Omit<Account, 'id'>) => void;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
 }
@@ -40,6 +41,7 @@ const initialAccounts: Account[] = [
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [accounts, setAccounts] = useState<Account[]>(initialAccounts);
+  const [nextAccountId, setNextAccountId] = useState(4);
 
   const transfer = (fromId: string, toId: string, amount: number): boolean => {
     setAccounts(prev => prev.map(acc => {
@@ -52,6 +54,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return acc;
     }));
     return true;
+  };
+
+  const addAccount = (accountData: Omit<Account, 'id'>) => {
+    const newAccount: Account = {
+      ...accountData,
+      id: nextAccountId.toString()
+    };
+    setAccounts(prev => [...prev, newAccount]);
+    setNextAccountId(prev => prev + 1);
   };
 
   const login = async (email: string, password: string) => {
@@ -68,7 +79,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   return (
-    <AuthContext.Provider value={{ user, accounts, transfer, login, logout }}>
+    <AuthContext.Provider value={{ user, accounts, transfer, addAccount, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
