@@ -44,7 +44,7 @@ interface NewTransaction {
 }
 
 const Transactions: React.FC = () => {
-  const { accounts, addAccount } = useAuth();
+  const { accounts, addAccount, token } = useAuth();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,7 +78,11 @@ const Transactions: React.FC = () => {
   const fetchTransactions = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/transactions');
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const response = await fetch('/api/transactions', { headers });
       if (response.ok) {
         const data = await response.json();
         setTransactions(data.transactions || []);
@@ -102,9 +106,13 @@ const Transactions: React.FC = () => {
     setSuccess(null);
 
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
       const response = await fetch('/api/transactions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           accountId: newTransaction.accountId,
           amount: parseFloat(newTransaction.amount),

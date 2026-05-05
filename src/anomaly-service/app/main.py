@@ -20,6 +20,7 @@ except ImportError:
     AZURE_AVAILABLE = False
     EventHubConsumerClient = None
     ChatCompletionsClient = None
+    DefaultAzureCredential = None
     AzureInstrumentor = None
 
 from fastapi import FastAPI

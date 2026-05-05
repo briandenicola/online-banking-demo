@@ -10,7 +10,7 @@ import httpx
 
 try:
     from azure.ai.agents import AgentsClient
-    from azure.ai.agents.models import FunctionTool, ToolSet, FunctionDefinition, ThreadMessageOptions, ThreadRunOptions
+    from azure.ai.agents.models import FunctionTool, ToolSet, FunctionDefinition
     from azure.identity import DefaultAzureCredential
     from opentelemetry.instrumentation.azure import AzureInstrumentor
     AZURE_AGENTS_AVAILABLE = True
@@ -20,8 +20,6 @@ except ImportError:
     FunctionTool = None
     ToolSet = None
     FunctionDefinition = None
-    ThreadMessageOptions = None
-    ThreadRunOptions = None
     DefaultAzureCredential = None
     AzureInstrumentor = None
 

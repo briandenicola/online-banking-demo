@@ -18,6 +18,7 @@ interface User {
 interface AuthContextType {
   user: User | null;
   accounts: Account[];
+  token: string | null;
   transfer: (fromId: string, toId: string, amount: number) => boolean;
   addAccount: (account: Omit<Account, 'id'>) => void;
   login: (email: string, password: string) => Promise<void>;
@@ -35,6 +36,7 @@ export const useAuth = () => {
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [token, setToken] = useState<string | null>(null);
   const [nextAccountId, setNextAccountId] = useState(1);
 
   // Fetch accounts from API on mount
@@ -79,20 +81,38 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const login = async (email: string, password: string) => {
+    // Call the real auth API
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: email, password })
+    });
+
+    if (!response.ok) {
+      throw new Error('Login failed');
+    }
+
+    const data = await response.json();
+    setToken(data.token);
+    
+    // Get user info from the token or a separate endpoint
+    // For demo, we'll parse basic info from email
+    const emailParts = email.split('@')[0].split('.');
     setUser({
       id: '1',
       email,
-      firstName: 'John',
-      lastName: 'Doe',
+      firstName: emailParts[0] || 'User',
+      lastName: emailParts[1] || 'Name',
     });
   };
 
   const logout = () => {
     setUser(null);
+    setToken(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, accounts, transfer, addAccount, login, logout }}>
+    <AuthContext.Provider value={{ user, accounts, token, transfer, addAccount, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

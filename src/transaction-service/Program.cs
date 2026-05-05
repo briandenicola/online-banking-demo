@@ -47,7 +47,7 @@ builder.Services.AddAuthentication(options =>
 {
     options.TokenValidationParameters = new TokenValidationParameters
     {
-        ValidateIssuer = true,
+        ValidateIssuer = false, // Accept tokens from any issuer (user-service in this case)
         ValidateAudience = true,
         ValidateLifetime = true,
         ValidateIssuerSigningKey = true,

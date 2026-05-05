@@ -18,6 +18,35 @@ public class InMemoryUserService : IUserService
     public InMemoryUserService(ILogger<InMemoryUserService> logger)
     {
         _logger = logger;
+        // Seed a default test user for demo purposes
+        var salt = GenerateSalt();
+        var passwordHash = HashPassword("password123", salt);
+        var defaultUser = new User
+        {
+            Id = "1",
+            Username = "testuser",
+            Email = "test@example.com",
+            FirstName = "Test",
+            LastName = "User",
+            PasswordHash = passwordHash,
+            Salt = salt
+        };
+        _users[defaultUser.Id] = defaultUser;
+
+        // Seed a demo user
+        var demoSalt = GenerateSalt();
+        var demoPasswordHash = HashPassword("password123", demoSalt);
+        var demoUser = new User
+        {
+            Id = "2",
+            Username = "demo@banking-demo.com",
+            Email = "demo@banking-demo.com",
+            FirstName = "Demo",
+            LastName = "User",
+            PasswordHash = demoPasswordHash,
+            Salt = demoSalt
+        };
+        _users[demoUser.Id] = demoUser;
     }
 
     public Task<User?> GetUserByIdAsync(string id)
