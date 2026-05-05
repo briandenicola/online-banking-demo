@@ -7,7 +7,6 @@ variable "region" {
 variable "tags" {
   description = "Application name for tagging"
   type        = string
-  default     = "banking-demo"
 }
 
 variable "aks_node_count" {

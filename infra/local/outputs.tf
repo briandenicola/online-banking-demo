@@ -8,11 +8,10 @@ output "application_insights_connection_string" {
 }
 
 output "openai_endpoint" {
-  value     = azurerm_cognitive_account.openai.endpoint
-  sensitive = true
+  value     = "https://${local.project_name}.services.ai.azure.com/api/projects/${local.project_name}"
+  sensitive = false
 }
 
 output "managed_identity_client_id" {
   value = azurerm_user_assigned_identity.openai_managed_identity.client_id
 }
-
