@@ -10,14 +10,14 @@ import httpx
 try:
     from azure.ai.inference import ChatCompletionsClient
     from azure.ai.inference.models import SystemMessage, UserMessage
-    from azure.core.credentials import AzureKeyCredential
+    from azure.identity import DefaultAzureCredential
     AZURE_AVAILABLE = True
 except ImportError:
     AZURE_AVAILABLE = False
     ChatCompletionsClient = None
     SystemMessage = None
     UserMessage = None
-    AzureKeyCredential = None
+    DefaultAzureCredential = None
 
 from fastapi import FastAPI, HTTPException
 from opentelemetry import trace
@@ -61,11 +61,10 @@ async def lifespan(app: FastAPI):
     http_client = httpx.AsyncClient()
     
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-    key = os.getenv("AZURE_OPENAI_KEY")
-    if endpoint and key and AZURE_AVAILABLE:
+    if endpoint and AZURE_AVAILABLE and DefaultAzureCredential:
         ai_client = ChatCompletionsClient(
             endpoint=endpoint,
-            credential=AzureKeyCredential(key)
+            credential=DefaultAzureCredential()
         )
     
     yield

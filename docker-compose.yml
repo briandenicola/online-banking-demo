@@ -93,7 +93,6 @@ services:
       - "8001:8001"
     environment:
       - AZURE_OPENAI_ENDPOINT=
-      - AZURE_OPENAI_KEY=
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
     depends_on:
       - user-service
@@ -107,6 +106,8 @@ services:
     ports:
       - "8002:8002"
     environment:
+      - AZURE_OPENAI_ENDPOINT=
+      - AZURE_CLIENT_ID=
       - EVENTHUB_CONNECTION_STRING=
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
     depends_on:
@@ -121,6 +122,8 @@ services:
     ports:
       - "8003:8003"
     environment:
+      - AZURE_OPENAI_ENDPOINT=
+      - AZURE_CLIENT_ID=
       - EVENTHUB_CONNECTION_STRING=
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
     depends_on:

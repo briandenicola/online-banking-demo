@@ -13,12 +13,13 @@ try:
     from azure.eventhub import EventHubConsumerClient
     from azure.ai.inference import ChatCompletionsClient
     from azure.ai.inference.models import SystemMessage, UserMessage
-    from azure.core.credentials import AzureKeyCredential
+    from azure.identity import DefaultAzureCredential
     AZURE_AVAILABLE = True
 except ImportError:
     AZURE_AVAILABLE = False
     EventHubConsumerClient = None
     ChatCompletionsClient = None
+    DefaultAzureCredential = None
 
 from fastapi import FastAPI
 from opentelemetry import trace
@@ -61,14 +62,13 @@ ai_client = None
 
 
 def init_ai_client():
-    """Initialize Azure OpenAI client for anomaly explanations"""
+    """Initialize Azure OpenAI client for anomaly explanations using RBAC"""
     global ai_client
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-    key = os.getenv("AZURE_OPENAI_KEY")
-    if endpoint and key and ChatCompletionsClient:
+    if endpoint and ChatCompletionsClient and DefaultAzureCredential:
         ai_client = ChatCompletionsClient(
             endpoint=endpoint,
-            credential=AzureKeyCredential(key)
+            credential=DefaultAzureCredential()
         )
 
 

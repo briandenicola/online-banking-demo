@@ -67,7 +67,11 @@ output "openai_endpoint" {
   sensitive = true
 }
 
-output "openai_key" {
-  value     = azurerm_cognitive_account.openai.primary_access_key
+output "managed_identity_client_id" {
+  value = azurerm_user_assigned_identity.openai_managed_identity.client_id
+}
+
+output "kube_config" {
+  value     = azurerm_kubernetes_cluster.main.kube_config_raw
   sensitive = true
 }

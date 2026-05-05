@@ -12,13 +12,14 @@ from typing import Optional
 try:
     from azure.eventhub import EventHubConsumerClient, EventHubProducerClient
     from azure.ai.inference import EmbeddingsClient
-    from azure.core.credentials import AzureKeyCredential
+    from azure.identity import DefaultAzureCredential
     AZURE_AVAILABLE = True
 except ImportError:
     AZURE_AVAILABLE = False
     EventHubConsumerClient = None
     EventHubProducerClient = None
     EmbeddingsClient = None
+    DefaultAzureCredential = None
 
 from fastapi import FastAPI, HTTPException
 from opentelemetry import trace
@@ -71,14 +72,13 @@ CATEGORIES = {
 
 
 def init_embeddings_client():
-    """Initialize embeddings client for categorization"""
+    """Initialize embeddings client for categorization using RBAC"""
     global embeddings_client
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-    key = os.getenv("AZURE_OPENAI_KEY")
-    if endpoint and key and EmbeddingsClient:
+    if endpoint and EmbeddingsClient and DefaultAzureCredential:
         embeddings_client = EmbeddingsClient(
             endpoint=endpoint,
-            credential=AzureKeyCredential(key)
+            credential=DefaultAzureCredential()
         )
 
 

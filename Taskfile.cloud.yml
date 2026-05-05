@@ -36,20 +36,25 @@ tasks:
     dir: '{{.INFRA_DIR}}'
     cmds:
       - |
-        echo "# Azure AI Foundry Environment"
+        echo "# Azure AI Foundry Environment (RBAC auth)"
         echo "AZURE_OPENAI_ENDPOINT={{.AZURE_OPENAI_ENDPOINT}}"
-        echo "AZURE_OPENAI_KEY={{.AZURE_OPENAI_KEY}}"
+        echo "AZURE_CLIENT_ID={{.AZURE_CLIENT_ID}}"
         echo "AZURE_OPENAI_MODEL={{.AZURE_OPENAI_MODEL}}"
+        echo "AZURE_OPENAI_EMBEDDING_MODEL={{.AZURE_OPENAI_EMBEDDING_MODEL}}"
         echo "APPLICATIONINSIGHTS_CONNECTION_STRING={{.APPLICATIONINSIGHTS_CONNECTION_STRING}}"
+        echo "EVENTHUB_CONNECTION_STRING={{.EVENTHUB_CONNECTION_STRING}}"
     silent: true
     vars:
-      AZURE_OPENAI_MODEL: gpt-5.4
+      AZURE_OPENAI_MODEL: gpt-4.1-mini
+      AZURE_OPENAI_EMBEDDING_MODEL: text-embedding-3-large
       AZURE_OPENAI_ENDPOINT:
         sh: terraform output -raw openai_endpoint
-      AZURE_OPENAI_KEY:
-        sh: terraform output -raw openai_key
+      AZURE_CLIENT_ID:
+        sh: terraform output -raw managed_identity_client_id
       APPLICATIONINSIGHTS_CONNECTION_STRING:
         sh: terraform output -raw application_insights_connection_string
+      EVENTHUB_CONNECTION_STRING:
+        sh: terraform output -raw eventhub_connection_string
 
   run:
     desc: Run Docker Compose locally
