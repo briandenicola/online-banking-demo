@@ -14,7 +14,6 @@ tasks:
     cmds:
       - task: _init
       - task: apply
-      - task: output-env
 
   apply:
     desc: Apply Terraform infrastructure
@@ -61,7 +60,6 @@ tasks:
         export AZURE_OPENAI_MODEL={{.AZURE_OPENAI_MODEL}} &
         export AZURE_OPENAI_EMBEDDING_MODEL={{.AZURE_OPENAI_EMBEDDING_MODEL}} &
         export APPLICATIONINSIGHTS_CONNECTION_STRING={{.APPLICATIONINSIGHTS_CONNECTION_STRING}} &
-        export EVENTHUB_CONNECTION_STRING={{.EVENTHUB_CONNECTION_STRING}} &
         docker-compose up -d
     vars:
       AZURE_OPENAI_MODEL: gpt-5.4
@@ -72,9 +70,6 @@ tasks:
         sh: terraform -chdir=./{{.LOCAL_INFRA_DIR}} output -raw managed_identity_client_id
       APPLICATIONINSIGHTS_CONNECTION_STRING:
         sh: terraform -chdir=./{{.LOCAL_INFRA_DIR}} output -raw application_insights_connection_string
-      EVENTHUB_CONNECTION_STRING:
-        sh: terraform -chdir=./{{.LOCAL_INFRA_DIR}} output -raw eventhub_connection_string
-
   stop:
     desc: Stop Docker Compose
     cmds:

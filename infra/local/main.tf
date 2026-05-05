@@ -100,6 +100,12 @@ resource "azurerm_role_assignment" "openai_cognitive_services_openai_user" {
   principal_id         = azurerm_user_assigned_identity.openai_managed_identity.principal_id
 }
 
+resource "azurerm_role_assignment" "current_user_cognitive_services_openai_user" {
+  scope                = azurerm_cognitive_account.openai.id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
 resource "azurerm_cognitive_deployment" "gpt54" {
   name                 = "gpt-5.4"
   cognitive_account_id = azurerm_cognitive_account.openai.id
