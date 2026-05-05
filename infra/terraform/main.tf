@@ -269,11 +269,12 @@ resource "azurerm_cognitive_deployment" "gpt4o_mini" {
   model {
     format  = "OpenAI"
     name    = "gpt-4o-mini"
-    version = "2024-07-18"
+    version = "2024-11-20"
   }
   
   sku {
     name = "Standard"
+    capacity = 10
   }
 }
 
@@ -288,5 +289,6 @@ resource "azurerm_cognitive_deployment" "text_embedding" {
   
   sku {
     name = "Standard"
+    capacity = 10
   }
 }
