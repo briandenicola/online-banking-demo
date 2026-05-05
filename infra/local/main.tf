@@ -81,14 +81,23 @@ resource "azurerm_cognitive_account" "openai" {
   resource_group_name = azurerm_resource_group.this.name
   sku_name            = "S0"
   kind                = "OpenAI"
-
-  identity {
-    type = "SystemAssigned"
-  }
-
   tags = {
     AppName = local.resource_name
   }
+}
+
+# User-assigned managed identity for OpenAI RBAC access
+resource "azurerm_user_assigned_identity" "openai_managed_identity" {
+  name                = "${local.resource_name}-openai-mi"
+  location            = azurerm_resource_group.this.location
+  resource_group_name = azurerm_resource_group.this.name
+}
+
+# Role assignment for OpenAI RBAC access
+resource "azurerm_role_assignment" "openai_cognitive_services_openai_user" {
+  scope                = azurerm_cognitive_account.openai.id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = azurerm_user_assigned_identity.openai_managed_identity.principal_id
 }
 
 resource "azurerm_cognitive_deployment" "gpt54" {
@@ -97,7 +106,7 @@ resource "azurerm_cognitive_deployment" "gpt54" {
   model {
     format  = "OpenAI"
     name    = "gpt-5.4"
-    version = "2025-04-14"
+    version = "2026-03-05"
   }
 
   sku {

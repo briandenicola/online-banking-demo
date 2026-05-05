@@ -56,28 +56,6 @@ tasks:
       EVENTHUB_CONNECTION_STRING:
         sh: terraform output -raw eventhub_connection_string
 
-  run:
-    desc: Run Docker Compose locally
-    cmds:
-      - docker-compose up -d
-
-  stop:
-    desc: Stop Docker Compose
-    cmds:
-      - docker-compose down
-
-  logs:
-    desc: Follow Docker Compose logs
-    cmds:
-      - docker-compose logs -f
-
-  test:
-    desc: Run all tests
-    cmds:
-      - dotnet test src/shared/Contracts/Contracts.csproj
-      - cd src/chatbot-service && poetry run pytest || true
-      - cd src/event-processor && go test ./... || true
-
   clean:
     desc: Clean build artifacts
     cmds:

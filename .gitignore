@@ -5,10 +5,16 @@
 **/.vs/
 
 # Terraform
-infra/terraform/.terraform/
-infra/terraform/terraform.tfstate.d/
-infra/terraform/*.tfstate
-infra/terraform/*.tfstate.backup
+infra/cloud/.terraform/
+infra/cloud/terraform.tfstate.d/
+infra/cloud/*.tfstate
+infra/cloud/*.tfstate.backup
+
+infra/local/.terraform/
+infra/local/terraform.tfstate.d/
+infra/local/*.tfstate
+infra/local/*.tfstate.backup
+
 
 # IDE
 .idea/

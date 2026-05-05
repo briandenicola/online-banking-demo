@@ -1,7 +1,7 @@
 version: '3'
 
 env:
-  INFRA_DIR: infra/local
+  LOCAL_INFRA_DIR: infra/local
 
 tasks:
   default:
@@ -19,7 +19,7 @@ tasks:
   apply:
     desc: Apply Terraform infrastructure
     cmds:
-      - terraform -chdir=./{{.INFRA_DIR}} apply -auto-approve -compact-warnings
+      - terraform -chdir=./{{.LOCAL_INFRA_DIR}} apply -auto-approve -compact-warnings
         -var "region={{.REGION}}"
     vars:
       REGION: '{{default .DEFAULT_REGION .CLI_ARGS}}'
@@ -27,34 +27,58 @@ tasks:
   down:
     desc: Destroy all Azure resources and clean Terraform/build files
     cmds:
-      - terraform -chdir=./{{.INFRA_DIR}} destroy -auto-approve || true
+      - terraform -chdir=./{{.LOCAL_INFRA_DIR}} destroy -auto-approve || true
       - cmd: rm -rf .terraform .terraform.lock.hcl terraform.tfstate.d
-        dir: '{{.INFRA_DIR}}'
+        dir: '{{.LOCAL_INFRA_DIR}}'
 
   output-env:
-    desc: Output environment variables for local AI development
-    dir: '{{.INFRA_DIR}}'
+    desc: Output environment variables for local AI development (RBAC auth)
+    dir: '{{.LOCAL_INFRA_DIR}}'
     cmds:
       - |
-        echo "# Azure AI Foundry Environment"
+        echo "# Azure AI Foundry Environment (RBAC auth)"
         echo "AZURE_OPENAI_ENDPOINT={{.AZURE_OPENAI_ENDPOINT}}"
-        echo "AZURE_OPENAI_KEY={{.AZURE_OPENAI_KEY}}"
+        echo "AZURE_CLIENT_ID={{.AZURE_CLIENT_ID}}"
         echo "AZURE_OPENAI_MODEL={{.AZURE_OPENAI_MODEL}}"
+        echo "AZURE_OPENAI_EMBEDDING_MODEL={{.AZURE_OPENAI_EMBEDDING_MODEL}}"
         echo "APPLICATIONINSIGHTS_CONNECTION_STRING={{.APPLICATIONINSIGHTS_CONNECTION_STRING}}"
     silent: true
     vars:
       AZURE_OPENAI_MODEL: gpt-5.4
+      AZURE_OPENAI_EMBEDDING_MODEL: text-embedding-3-large
       AZURE_OPENAI_ENDPOINT:
         sh: terraform output -raw openai_endpoint
-      AZURE_OPENAI_KEY:
-        sh: terraform output -raw openai_key
+      AZURE_CLIENT_ID:
+        sh: terraform output -raw managed_identity_client_id
       APPLICATIONINSIGHTS_CONNECTION_STRING:
         sh: terraform output -raw application_insights_connection_string
 
   run:
     desc: Run Docker Compose locally
     cmds:
-      - docker-compose up -d
+      - export AZURE_OPENAI_ENDPOINT={{.AZURE_OPENAI_ENDPOINT}} &
+        export AZURE_CLIENT_ID={{.AZURE_CLIENT_ID}} &
+        export AZURE_OPENAI_MODEL={{.AZURE_OPENAI_MODEL}} &
+        export AZURE_OPENAI_EMBEDDING_MODEL={{.AZURE_OPENAI_EMBEDDING_MODEL}} &
+        export APPLICATIONINSIGHTS_CONNECTION_STRING={{.APPLICATIONINSIGHTS_CONNECTION_STRING}} &
+        export EVENTHUB_CONNECTION_STRING={{.EVENTHUB_CONNECTION_STRING}} &
+        docker-compose up -d
+    vars:
+      AZURE_OPENAI_MODEL: gpt-5.4
+      AZURE_OPENAI_EMBEDDING_MODEL: text-embedding-3-large
+      AZURE_OPENAI_ENDPOINT:
+        sh: terraform -chdir=./{{.LOCAL_INFRA_DIR}} output -raw openai_endpoint
+      AZURE_CLIENT_ID:
+        sh: terraform -chdir=./{{.LOCAL_INFRA_DIR}} output -raw managed_identity_client_id
+      APPLICATIONINSIGHTS_CONNECTION_STRING:
+        sh: terraform -chdir=./{{.LOCAL_INFRA_DIR}} output -raw application_insights_connection_string
+      EVENTHUB_CONNECTION_STRING:
+        sh: terraform -chdir=./{{.LOCAL_INFRA_DIR}} output -raw eventhub_connection_string
+
+  stop:
+    desc: Stop Docker Compose
+    cmds:
+      - docker-compose down
 
   stop:
     desc: Stop Docker Compose
@@ -83,8 +107,8 @@ tasks:
   _init:
     internal: true
     cmds:
-      - terraform -chdir=./{{.INFRA_DIR}} init -upgrade
-      - terraform -chdir=./{{.INFRA_DIR}} workspace new {{.REGION}} || true
-      - terraform -chdir=./{{.INFRA_DIR}} workspace select {{.REGION}}
+      - terraform -chdir=./{{.LOCAL_INFRA_DIR}} init -upgrade
+      - terraform -chdir=./{{.LOCAL_INFRA_DIR}} workspace new {{.REGION}} || true
+      - terraform -chdir=./{{.LOCAL_INFRA_DIR}} workspace select {{.REGION}}
     vars:
       REGION: '{{default .DEFAULT_REGION .CLI_ARGS}}'
