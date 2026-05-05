@@ -212,12 +212,11 @@ resource "azurerm_eventhub" "banking" {
   message_retention   = 7
 }
 
-resource "azurerm_redis_cache" "main" {
+# Azure Managed Redis (newer API)
+resource "azurerm_redis_managed_redis" "main" {
   name                = local.redis_name
   location            = azurerm_resource_group.this.location
   resource_group_name = azurerm_resource_group.this.name
-  capacity            = 1
-  family              = "C"
   sku_name            = "Standard"
   minimum_tls_version = "1.2"
   tags = {
