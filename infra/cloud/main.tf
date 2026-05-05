@@ -308,12 +308,12 @@ resource "azurerm_federated_identity_credential" "aks_chatbot_workload_identity"
   issuer              = azurerm_kubernetes_cluster.main.oidc_issuer_url
 }
 
-resource "azurerm_cognitive_deployment" "gpt41_mini" {
-  name                = "gpt-4.1-mini"
+resource "azurerm_cognitive_deployment" "gpt54" {
+  name                = "gpt-5.4"
   cognitive_account_id = azurerm_cognitive_account.openai.id
   model {
     format  = "OpenAI"
-    name    = "gpt-4.1-mini"
+    name    = "gpt-5.4"
     version = "2025-04-14"
   }
   

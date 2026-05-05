@@ -93,7 +93,7 @@ Provide a clear, concise explanation suitable for a bank customer alert (2-3 sen
 """
         response = ai_client.complete(
             messages=[UserMessage(content=prompt)],
-            model=os.getenv("AZURE_OPENAI_MODEL", "gpt-4.1-mini"),
+            model=os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4"),
             temperature=0.3,
             max_tokens=150
         )

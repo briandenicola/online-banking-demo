@@ -130,7 +130,7 @@ async def chat(request: ChatRequest):
     try:
         response = ai_client.complete(
             messages=context_messages,
-            model=os.getenv("AZURE_OPENAI_MODEL", "gpt-4o-mini"),
+            model=os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4"),
             temperature=0.7,
             max_tokens=500
         )
