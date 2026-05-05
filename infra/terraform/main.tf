@@ -263,32 +263,32 @@ resource "azurerm_cognitive_account" "openai" {
   }
 }
 
-resource "azurerm_cognitive_deployment" "gpt4o_mini" {
-  name                = "gpt-4o-mini"
+resource "azurerm_cognitive_deployment" "gpt41_mini" {
+  name                = "gpt-4.1-mini"
   cognitive_account_id = azurerm_cognitive_account.openai.id
   model {
     format  = "OpenAI"
-    name    = "gpt-4o-mini"
-    version = "2024-11-20"
+    name    = "gpt-4.1-mini"
+    version = "2025-04-14"
   }
   
   sku {
-    name = "Standard"
+    name = "GlobalStandard"
     capacity = 10
   }
 }
 
 resource "azurerm_cognitive_deployment" "text_embedding" {
-  name                = "text-embedding-3-small"
+  name                = "text-embedding-3-large"
   cognitive_account_id = azurerm_cognitive_account.openai.id
   model {
     format  = "OpenAI"
-    name    = "text-embedding-3-small"
+    name    = "text-embedding-3-large"
     version = "1"
   }
   
   sku {
-    name = "Standard"
+    name = "GlobalStandard"
     capacity = 10
   }
 }

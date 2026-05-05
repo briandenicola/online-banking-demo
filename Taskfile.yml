@@ -41,7 +41,7 @@ tasks:
         echo "# Azure AI Foundry Environment"
         echo "AZURE_OPENAI_ENDPOINT=$(terraform output -raw openai_endpoint)"
         echo "AZURE_OPENAI_KEY=$(terraform output -raw openai_key)"
-        echo "AZURE_OPENAI_MODEL=gpt-4o-mini"
+        echo "AZURE_OPENAI_MODEL=gpt-4.1-mini"
         echo "APPLICATIONINSIGHTS_CONNECTION_STRING=$(terraform output -raw application_insights_connection_string)"
 
   run:
