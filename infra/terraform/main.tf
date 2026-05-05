@@ -213,12 +213,14 @@ resource "azurerm_eventhub" "banking" {
 }
 
 # Azure Managed Redis (newer API)
-resource "azurerm_redis_managed_redis" "main" {
+resource "azurerm_managed_redis" "main" {
   name                = local.redis_name
   location            = azurerm_resource_group.this.location
   resource_group_name = azurerm_resource_group.this.name
-  sku_name            = "Standard"
-  minimum_tls_version = "1.2"
+  sku_name            = "Balanced_B0"
+  default_database {
+    access_keys_authentication_enabled = false
+  }
   tags = {
     AppName = local.resource_name
   }

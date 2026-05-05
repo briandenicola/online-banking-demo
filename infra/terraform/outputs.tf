@@ -40,11 +40,11 @@ output "eventhub_connection_string" {
 }
 
 output "redis_host" {
-  value = azurerm_redis_managed_redis.main.host_name
+  value = azurerm_managed_redis.main.hostname
 }
 
 output "redis_primary_key" {
-  value     = azurerm_redis_managed_redis.main.primary_key
+  value     = azurerm_managed_redis.main.default_database[0].primary_access_key
   sensitive = true
 }
 
