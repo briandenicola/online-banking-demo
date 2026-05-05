@@ -1,7 +1,5 @@
-version: "3.9"
-
 services:
-  # Redis
+  # Redis — reserved for future caching/session use (no services consume it yet)
   redis:
     image: redis:7-alpine
     container_name: banking-redis
