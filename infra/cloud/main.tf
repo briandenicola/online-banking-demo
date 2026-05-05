@@ -309,10 +309,11 @@ resource "azurerm_role_assignment" "current_user_cognitive_services_openai_user"
 
 # AKS workload identity setup for accessing OpenAI
 resource "azurerm_federated_identity_credential" "aks_openai_workload_identity" {
-  name                = "aks-openai-workload-identity"
-  audience            = ["api://AzureADTokenExchange"]  
-  subject             = "system:serviceaccount:banking:anomaly-service"
-  issuer              = azurerm_kubernetes_cluster.main.oidc_issuer_url
+  name                      = "aks-openai-workload-identity"
+  user_assigned_identity_id = azurerm_user_assigned_identity.openai_managed_identity.id
+  audience                  = ["api://AzureADTokenExchange"]
+  subject                   = "system:serviceaccount:banking:anomaly-service"
+  issuer                    = azurerm_kubernetes_cluster.main.oidc_issuer_url
 }
 
 resource "azurerm_federated_identity_credential" "aks_budget_workload_identity" {
@@ -329,12 +330,6 @@ resource "azurerm_federated_identity_credential" "aks_chatbot_workload_identity"
   user_assigned_identity_id = azurerm_user_assigned_identity.openai_managed_identity.id
   subject                   = "system:serviceaccount:banking:chatbot-service"
   issuer                    = azurerm_kubernetes_cluster.main.oidc_issuer_url
-}
-
-resource "azurerm_user_assigned_identity" "openai_managed_identity" {
-  name                = "${local.resource_name}-openai-mi"
-  location            = azurerm_resource_group.this.location
-  resource_group_name = azurerm_resource_group.this.name
 }
 
 resource "azurerm_cognitive_deployment" "gpt54" {
