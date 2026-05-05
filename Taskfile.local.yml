@@ -77,11 +77,6 @@ tasks:
     cmds:
       - docker-compose down
 
-  stop:
-    desc: Stop Docker Compose
-    cmds:
-      - docker-compose down
-
   logs:
     desc: Follow Docker Compose logs
     cmds:
