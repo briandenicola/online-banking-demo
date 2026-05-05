@@ -114,14 +114,30 @@ async def lifespan(app: FastAPI):
             credential=DefaultAzureCredential()
         )
         
-        # Validate Entra ID token acquisition
-        logger.info("Validating Entra ID token acquisition for Azure AI Agents...")
+        logger.info("=" * 50)
+        logger.info("Validating Azure AI Foundry connectivity...")
+        
+        # Validate Entra ID token acquisition for Azure AI Agents
         try:
             credential = DefaultAzureCredential()
             token = await credential.get_token("https://ai.azure.com/.default")
-            logger.info(f"✅ Entra ID token acquired successfully (expires {token.expires_on})")
+            logger.info(f"✅ Azure AI Foundry token acquired (expires {token.expires_on})")
         except Exception as ex:
-            logger.error(f"❌ Entra ID token acquisition FAILED: {ex}")
+            logger.error(f"❌ Azure AI Foundry token acquisition FAILED: {ex}")
+            logger.error("Ensure AZURE_AI_AGENTS_ENDPOINT is set and Managed Identity/Service Principal has Azure AI Account role")
+            raise
+        
+        # Test connectivity with a simple ping
+        try:
+            test_run = agents_client.create_agent(
+                model=os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4"),
+                name="connectivity-test-agent",
+                instructions="Test agent"
+            )
+            agents_client.delete_agent(test_run.id)
+            logger.info("✅ Azure AI Foundry connectivity verified - Agent creation/deletion works")
+        except Exception as ping_ex:
+            logger.warning(f"⚠️ Azure AI Foundry ping test failed: {ping_ex}")
         
         # Create agent with tools for financial advisor
         agent = agents_client.create_agent(

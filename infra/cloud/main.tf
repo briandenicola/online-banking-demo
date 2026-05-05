@@ -30,7 +30,8 @@ locals {
   vnet_name             = "${local.resource_name}-vnet"
   storage_name          = "${substr(replace(random_uuid.guid.result, "-", ""), 0, 22)}sa"
   cosmos_name           = "${local.resource_name}-cosmos"
-  openai_name           = "${local.resource_name}-openai"
+  openai_name           = "${local.resource_name}-foundry"
+  project_name          = "${local.resource_name}-project"
   redis_name            = "${local.resource_name}-redis"
   eventhub_name         = "${local.resource_name}-eh"
   loganalytics_name     = "${local.resource_name}-logs"
@@ -252,15 +253,38 @@ resource "azurerm_key_vault" "main" {
 }
 
 # Azure OpenAI
-resource "azurerm_cognitive_account" "openai" {
-  name                = local.openai_name
-  location            = azurerm_resource_group.this.location
-  resource_group_name = azurerm_resource_group.this.name
-  sku_name            = "S0"
-  kind                = "OpenAI"
-  tags = {
-    AppName = local.resource_name
+resource "azapi_resource" "this" {
+  type                      = "Microsoft.CognitiveServices/accounts@2025-10-01-preview"
+  name                      = local.openai_name
+  parent_id                 = azurerm_resource_group.this.id
+  location                  = azurerm_resource_group.this.location
+  schema_validation_enabled = false
+
+  body = {
+    kind = "AIServices"
+    sku = {
+      name = "S0"
+    }
+    identity = {
+      type = "SystemAssigned"
+    }
+    properties = {
+      disableLocalAuth       = true
+      allowProjectManagement = true
+      customSubDomainName    = local.openai_name
+    }
   }
+
+  response_export_values = [
+    "properties.endpoint",
+    "identity.principalId"
+  ]
+}
+
+data "azurerm_cognitive_account" "openai" {
+  depends_on          = [azapi_resource.this]
+  name                = local.openai_name
+  resource_group_name = azurerm_resource_group.this.name
 }
 
 # User-assigned managed identity for OpenAI RBAC access
@@ -308,32 +332,78 @@ resource "azurerm_federated_identity_credential" "aks_chatbot_workload_identity"
   issuer              = azurerm_kubernetes_cluster.main.oidc_issuer_url
 }
 
+resource "azurerm_user_assigned_identity" "openai_managed_identity" {
+  name                = "${local.resource_name}-openai-mi"
+  location            = azurerm_resource_group.this.location
+  resource_group_name = azurerm_resource_group.this.name
+}
+
+# Role assignment for OpenAI RBAC access
+resource "azurerm_role_assignment" "openai_cognitive_services_openai_user" {
+  scope                = data.azurerm_cognitive_account.openai.id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = azurerm_user_assigned_identity.openai_managed_identity.principal_id
+}
+
+resource "azurerm_role_assignment" "current_user_cognitive_services_openai_user" {
+  scope                = data.azurerm_cognitive_account.openai.id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
 resource "azurerm_cognitive_deployment" "gpt54" {
-  name                = "gpt-5.4"
-  cognitive_account_id = azurerm_cognitive_account.openai.id
+  name                 = "gpt-5.4"
+  cognitive_account_id = data.azurerm_cognitive_account.openai.id
   model {
     format  = "OpenAI"
     name    = "gpt-5.4"
-    version = "2025-04-14"
+    version = "2026-03-05"
   }
-  
+
   sku {
-    name = "GlobalStandard"
+    name     = "GlobalStandard"
     capacity = 10
   }
 }
 
 resource "azurerm_cognitive_deployment" "text_embedding" {
-  name                = "text-embedding-3-large"
-  cognitive_account_id = azurerm_cognitive_account.openai.id
+  name                 = "text-embedding-3-large"
+  cognitive_account_id = data.azurerm_cognitive_account.openai.id
   model {
     format  = "OpenAI"
     name    = "text-embedding-3-large"
     version = "1"
   }
-  
+
   sku {
-    name = "GlobalStandard"
+    name     = "GlobalStandard"
     capacity = 10
   }
+}
+
+resource "azapi_resource" "ai_foundry_project" {
+  type                      = "Microsoft.CognitiveServices/accounts/projects@2026-01-15-preview"
+  name                      = local.project_name
+  parent_id                 = data.azurerm_cognitive_account.openai.id
+  location                  = azurerm_resource_group.this.location
+  schema_validation_enabled = false
+
+  body = {
+    sku = {
+      name = "S0"
+    }
+    identity = {
+      type = "SystemAssigned"
+    }
+
+    properties = {
+      displayName = local.project_name
+      description = var.tags
+    }
+  }
+
+  response_export_values = [
+    "identity.principalId",
+    "properties.internalId"
+  ]
 }

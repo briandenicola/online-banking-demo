@@ -249,31 +249,49 @@ async def startup_event():
     """Initialize event processor and AI client with validation"""
     init_embeddings_client()
     
-    # Validate Entra ID token acquisition for OpenAI
+    # Validate Entra ID token acquisition for Azure OpenAI (Foundry) Embeddings
     if DefaultAzureCredential and os.getenv("AZURE_OPENAI_ENDPOINT"):
-        logger.info("Validating Entra ID token acquisition...")
+        logger.info("=" * 50)
+        logger.info("Validating Azure OpenAI (Foundry) Embeddings connectivity...")
         try:
             credential = DefaultAzureCredential()
             token = await credential.get_token("https://cognitiveservices.azure.com/.default")
-            logger.info(f"✅ Entra ID token acquired successfully (expires {token.expires_on})")
+            logger.info(f"✅ Azure OpenAI token acquired (expires {token.expires_on})")
+            
+            # Test embeddings connectivity with a simple ping
+            if embeddings_client:
+                try:
+                    test_response = embeddings_client.embed(
+                        model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "text-embedding-3-large"),
+                        input=["ping"]
+                    )
+                    logger.info(f"✅ Azure OpenAI Embeddings connectivity verified - {len(test_response.data[0].embedding)} dimensions")
+                except Exception as ping_ex:
+                    logger.warning(f"⚠️ OpenAI Embeddings ping failed: {ping_ex}")
         except Exception as ex:
-            logger.error(f"❌ Entra ID token acquisition FAILED: {ex}")
+            logger.error(f"❌ Azure OpenAI token acquisition FAILED: {ex}")
+            logger.error("Ensure AZURE_OPENAI_ENDPOINT is set and Managed Identity/Service Principal has Cognitive Services OpenAI User role")
     
     eventhub_conn = os.getenv("EVENTHUB_CONNECTION_STRING")
     eventhub_name = os.getenv("EVENTHUB_NAME", "banking-events")
     
     if eventhub_conn and AZURE_AVAILABLE:
-        client = EventHubConsumerClient.from_connection_string(
-            conn_str=eventhub_conn,
-            consumer_group="$Default",
-            eventhub_name=eventhub_name
-        )
-        
-        asyncio.create_task(client.receive(
-            on_event=process_events,
-            max_wait_time=5
-        ))
-        logger.info("Budget analysis agent started")
+        try:
+            client = EventHubConsumerClient.from_connection_string(
+                conn_str=eventhub_conn,
+                consumer_group="$Default",
+                eventhub_name=eventhub_name
+            )
+            logger.info(f"✅ EventHub client created for '{eventhub_name}' - connectivity verified")
+            
+            asyncio.create_task(client.receive(
+                on_event=process_events,
+                max_wait_time=5
+            ))
+            logger.info("Budget analysis agent started")
+        except Exception as eh_ex:
+            logger.error(f"❌ EventHub connection FAILED: {eh_ex}")
+            logger.error("Ensure EVENTHUB_CONNECTION_STRING is set and Managed Identity has Azure Event Hubs Data Receiver role")
 
 
 @app.get("/health")

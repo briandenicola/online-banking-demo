@@ -33,7 +33,7 @@ locals {
   openai_name         = "${local.resource_name}-foundry"
   loganalytics_name   = "${local.resource_name}-logs"
   appinsights_name    = "${local.resource_name}-appinsights"
-  project_name      = "${local.resource_name}-project"
+  project_name        = "${local.resource_name}-project"
 }
 
 data "azurerm_client_config" "current" {}

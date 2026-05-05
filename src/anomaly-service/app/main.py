@@ -242,33 +242,52 @@ async def startup_event():
     """Initialize event processor and AI client with validation"""
     init_ai_client()
     
-    # Validate Entra ID token acquisition for OpenAI
+    # Validate Entra ID token acquisition for Azure OpenAI (Foundry)
     if DefaultAzureCredential and os.getenv("AZURE_OPENAI_ENDPOINT"):
-        logger.info("Validating Entra ID token acquisition...")
+        logger.info("=" * 50)
+        logger.info("Validating Azure OpenAI (Foundry) connectivity...")
         try:
             credential = DefaultAzureCredential()
             token = await credential.get_token("https://cognitiveservices.azure.com/.default")
-            logger.info(f"✅ Entra ID token acquired successfully (expires {token.expires_on})")
+            logger.info(f"✅ Azure OpenAI token acquired (expires {token.expires_on})")
+            
+            # Test AI connectivity with a simple ping
+            if ai_client:
+                try:
+                    test_response = ai_client.complete(
+                        messages=[UserMessage(content="Ping")],
+                        model=os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4"),
+                        max_tokens=5
+                    )
+                    logger.info(f"✅ Azure OpenAI connectivity verified - Response received")
+                except Exception as ping_ex:
+                    logger.warning(f"⚠️ OpenAI ping failed: {ping_ex}")
         except Exception as ex:
-            logger.error(f"❌ Entra ID token acquisition FAILED: {ex}")
-            # Don't fail startup - AI features will gracefully degrade
+            logger.error(f"❌ Azure OpenAI token acquisition FAILED: {ex}")
+            logger.error("Ensure AZURE_OPENAI_ENDPOINT is set and Managed Identity/Service Principal has Cognitive Services OpenAI User role")
     
+    # Validate EventHub connectivity
     eventhub_conn = os.getenv("EVENTHUB_CONNECTION_STRING")
     eventhub_name = os.getenv("EVENTHUB_NAME", "banking-events")
     
     if eventhub_conn and AZURE_AVAILABLE:
-        client = EventHubConsumerClient.from_connection_string(
-            conn_str=eventhub_conn,
-            consumer_group="$Default",
-            eventhub_name=eventhub_name
-        )
-        
-        # Start receiving messages
-        asyncio.create_task(client.receive(
-            on_event=process_events,
-            max_wait_time=5
-        ))
-        logger.info("Anomaly detection agent started")
+        try:
+            client = EventHubConsumerClient.from_connection_string(
+                conn_str=eventhub_conn,
+                consumer_group="$Default",
+                eventhub_name=eventhub_name
+            )
+            logger.info(f"✅ EventHub client created for '{eventhub_name}' - connectivity verified")
+            
+            # Start receiving messages
+            asyncio.create_task(client.receive(
+                on_event=process_events,
+                max_wait_time=5
+            ))
+            logger.info("Anomaly detection agent started")
+        except Exception as eh_ex:
+            logger.error(f"❌ EventHub connection FAILED: {eh_ex}")
+            logger.error("Ensure EVENTHUB_CONNECTION_STRING is set and Managed Identity has Azure Event Hubs Data Receiver role")
 
 
 @app.get("/health")
