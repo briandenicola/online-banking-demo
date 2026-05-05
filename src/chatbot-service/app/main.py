@@ -106,7 +106,8 @@ def analyze_transaction(description: str, amount: float) -> dict:
 async def lifespan(app: FastAPI):
     global agents_client, agent_id
     
-    endpoint = os.getenv("AZURE_AI_AGENTS_ENDPOINT")
+    # Support both AZURE_AI_AGENTS_ENDPOINT and AZURE_OPENAI_ENDPOINT for flexibility
+    endpoint = os.getenv("AZURE_AI_AGENTS_ENDPOINT") or os.getenv("AZURE_OPENAI_ENDPOINT")
     if endpoint and AZURE_AGENTS_AVAILABLE and DefaultAzureCredential:
         # Initialize Agents client
         agents_client = AgentsClient(
@@ -186,8 +187,26 @@ async def chat(request: ChatRequest):
     """
     Get financial advice from the AI agent
     """
+    # Provide mock responses when Azure AI Foundry is not configured
     if not agents_client or not agent_id:
-        raise HTTPException(status_code=500, detail="AI Agent service not configured")
+        logger.info("Azure AI Foundry not configured, returning mock response")
+        
+        mock_responses = [
+            f"Based on typical spending patterns, I'd recommend reviewing your budget. You asked: '{request.message[:50]}...'",
+            "I notice you're interested in financial insights. Consider setting aside 10-15% of income for savings each month.",
+            "Your queries suggest you're focused on financial planning. I recommend tracking expenses for 30 days to identify patterns.",
+        ]
+        
+        suggestions = [
+            "How can I save more each month?",
+            "What's my spending pattern?",
+            "Should I consider a budget?",
+        ]
+        
+        return ChatResponse(
+            response=f"[Local Mode] {mock_responses[0]}",
+            suggestions=suggestions
+        )
     
     tracer = trace.get_tracer(__name__)
     
@@ -270,7 +289,8 @@ async def health():
     return {
         "status": "healthy",
         "agent_id": agent_id,
-        "agents_available": AZURE_AGENTS_AVAILABLE
+        "agents_available": AZURE_AGENTS_AVAILABLE,
+        "local_mode": not agents_client or not agent_id
     }
 
 
