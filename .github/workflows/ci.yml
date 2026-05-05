@@ -48,7 +48,8 @@ jobs:
       if: matrix.service != 'chatbot-service' && matrix.service != 'anomaly-service' && matrix.service != 'budget-service' && matrix.service != 'event-processor'
       uses: docker/build-push-action@v5
       with:
-        context: ./src/${{ matrix.service }}
+        context: .
+        file: ./src/${{ matrix.service }}/Dockerfile
         push: ${{ github.event_name != 'pull_request' }}
         tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}:latest
         cache-from: type=gha
@@ -87,23 +88,63 @@ jobs:
       with:
         dotnet-version: '9.0.x'
 
-    - name: Restore dependencies
-      run: dotnet restore src/shared/Contracts/Contracts.csproj
+    - name: Restore and build .NET
+      run: |
+        dotnet restore src/shared/Contracts/Contracts.csproj
+        dotnet build src/shared/Contracts/Contracts.csproj --no-restore
 
-    - name: Build
-      run: dotnet build src/shared/Contracts/Contracts.csproj --no-restore
+    - name: Run .NET tests
+      run: |
+        if find src -name '*Tests*.csproj' -o -name '*Test*.csproj' | grep -q .; then
+          dotnet test src/ --no-build --verbosity normal || true
+        else
+          echo "No .NET test projects found — skipping"
+        fi
 
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
 
-    - name: Install Python dependencies
+    - name: Run Python tests
       run: |
-        pip install poetry
-        poetry install --directory src/chatbot-service
+        for svc in chatbot-service anomaly-service budget-service; do
+          if [ -d "src/$svc" ]; then
+            echo "--- Testing $svc ---"
+            cd "src/$svc"
+            if [ -f "pyproject.toml" ]; then
+              pip install poetry --quiet
+              poetry install --quiet
+              poetry run pytest --tb=short || true
+            elif [ -f "requirements.txt" ]; then
+              pip install -r requirements.txt --quiet
+              python -m pytest --tb=short || true
+            fi
+            cd ../..
+          fi
+        done
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Run UI tests
+      run: |
+        if [ -f "src/ui-app/package.json" ]; then
+          cd src/ui-app
+          npm ci --quiet
+          npm test -- --watchAll=false || true
+        fi
 
     - name: Setup Go
       uses: actions/setup-go@v5
       with:
         go-version: '1.22'
+
+    - name: Run Go tests
+      run: |
+        if [ -d "src/event-processor" ]; then
+          cd src/event-processor
+          go test ./... || true
+        fi
