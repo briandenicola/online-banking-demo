@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -30,7 +31,7 @@ public class AuthController : ControllerBase
         try
         {
             var user = await _userService.CreateUserAsync(request);
-            return Ok(new { UserId = user.Id, Username = user.Username });
+            return CreatedAtAction(nameof(Register), new { UserId = user.Id, Username = user.Username });
         }
         catch (InvalidOperationException ex)
         {
@@ -62,6 +63,9 @@ public class AuthController : ControllerBase
 
 public class LoginRequest
 {
+    [Required]
     public string Username { get; set; } = null!;
+
+    [Required]
     public string Password { get; set; } = null!;
 }

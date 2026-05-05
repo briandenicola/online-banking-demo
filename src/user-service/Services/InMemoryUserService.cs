@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Concurrent;
 using System.Linq;
-using System.Security.Cryptography;
-using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using OnlineBankingDemo.Contracts.Dtos;
@@ -19,8 +17,7 @@ public class InMemoryUserService : IUserService
     {
         _logger = logger;
         // Seed a default test user for demo purposes
-        var salt = GenerateSalt();
-        var passwordHash = HashPassword("password123", salt);
+        var passwordHash = BCrypt.Net.BCrypt.HashPassword("password123");
         var defaultUser = new User
         {
             Id = "1",
@@ -29,13 +26,12 @@ public class InMemoryUserService : IUserService
             FirstName = "Test",
             LastName = "User",
             PasswordHash = passwordHash,
-            Salt = salt
+            Salt = "" // No longer needed with bcrypt
         };
         _users[defaultUser.Id] = defaultUser;
 
         // Seed a demo user
-        var demoSalt = GenerateSalt();
-        var demoPasswordHash = HashPassword("password123", demoSalt);
+        var demoPasswordHash = BCrypt.Net.BCrypt.HashPassword("password123");
         var demoUser = new User
         {
             Id = "2",
@@ -44,7 +40,7 @@ public class InMemoryUserService : IUserService
             FirstName = "Demo",
             LastName = "User",
             PasswordHash = demoPasswordHash,
-            Salt = demoSalt
+            Salt = ""
         };
         _users[demoUser.Id] = demoUser;
     }
@@ -69,8 +65,7 @@ public class InMemoryUserService : IUserService
             throw new InvalidOperationException("Username already exists");
         }
 
-        var salt = GenerateSalt();
-        var passwordHash = HashPassword(request.Password, salt);
+        var passwordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
 
         var user = new User
         {
@@ -80,7 +75,7 @@ public class InMemoryUserService : IUserService
             FirstName = request.FirstName,
             LastName = request.LastName,
             PasswordHash = passwordHash,
-            Salt = salt
+            Salt = ""
         };
 
         _users[user.Id] = user;
@@ -95,23 +90,6 @@ public class InMemoryUserService : IUserService
         if (user == null)
             return false;
 
-        var hash = HashPassword(password, user.Salt);
-        return hash == user.PasswordHash;
-    }
-
-    private string GenerateSalt()
-    {
-        var bytes = new byte[32];
-        using var rng = RandomNumberGenerator.Create();
-        rng.GetBytes(bytes);
-        return Convert.ToBase64String(bytes);
-    }
-
-    private string HashPassword(string password, string salt)
-    {
-        using var sha256 = SHA256.Create();
-        var saltedPassword = $"{salt}{password}";
-        var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(saltedPassword));
-        return Convert.ToBase64String(hash);
+        return BCrypt.Net.BCrypt.Verify(password, user.PasswordHash);
     }
 }
