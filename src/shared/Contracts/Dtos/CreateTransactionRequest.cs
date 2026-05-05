@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+
 namespace OnlineBankingDemo.Contracts.Dtos;
 
 public class CreateTransactionRequest
@@ -9,4 +12,5 @@ public class CreateTransactionRequest
     public string? Currency { get; set; }
     public string? Category { get; set; }
     public string? RelatedTransactionId { get; set; }
+    public bool AutoCategorize { get; set; } = true; // New flag to trigger AI categorization
 }

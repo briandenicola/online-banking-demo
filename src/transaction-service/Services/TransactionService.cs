@@ -47,8 +47,8 @@ public class TransactionService : ITransactionService
 
         await _container.CreateItemAsync(transaction, new PartitionKey(transaction.AccountId));
         
-        // Publish TransactionCreated event
-        await PublishTransactionCreatedEvent(transaction);
+        // Publish TransactionCreated event (with categorization flag)
+        await PublishTransactionCreatedEvent(transaction, request.AutoCategorize);
 
         return transaction;
     }
@@ -86,7 +86,7 @@ public class TransactionService : ITransactionService
         return results.Take(limit);
     }
 
-    private async Task PublishTransactionCreatedEvent(Transaction transaction)
+    private async Task PublishTransactionCreatedEvent(Transaction transaction, bool needsCategorization = false)
     {
         var evt = new OnlineBankingDemo.Contracts.Events.TransactionCreatedEvent
         {
@@ -95,13 +95,15 @@ public class TransactionService : ITransactionService
             Amount = transaction.Amount,
             Type = transaction.Type,
             Description = transaction.Description,
-            Category = transaction.Category
+            Category = transaction.Category,
+            NeedsCategorization = needsCategorization
         };
 
         var eventData = new Azure.Messaging.EventHubs.EventData(
             System.Text.Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(evt)));
         
         await _eventHubProducer.SendAsync(new[] { eventData });
-        _logger.LogInformation("Published TransactionCreated event for transaction {TransactionId}", transaction.Id);
+        _logger.LogInformation("Published TransactionCreated event for transaction {TransactionId} (needs_categorization: {NeedsCategorization})", 
+            transaction.Id, needsCategorization);
     }
 }

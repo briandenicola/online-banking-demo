@@ -16,4 +16,5 @@ public class TransactionCreatedEvent : IEvent
     public string Type { get; set; } = null!;
     public string Description { get; set; } = null!;
     public string Category { get; set; } = "Uncategorized";
+    public bool NeedsCategorization { get; set; } = false; // Flag to trigger AI categorization
 }

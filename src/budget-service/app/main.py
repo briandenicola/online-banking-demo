@@ -226,8 +226,11 @@ async def process_events(partition_context, event):
         
         accountId = transaction.get("accountId", "")
         if accountId:
-            # Use AI categorization if category is missing or generic
-            if not transaction.get("category") or transaction.get("category") == "Uncategorized":
+            # Use AI categorization if NeedsCategorization flag is set OR category is missing/generic
+            needs_categorization = transaction.get("needsCategorization", False)
+            current_category = transaction.get("category", "Uncategorized")
+            
+            if needs_categorization or not current_category or current_category == "Uncategorized":
                 transaction["aiCategory"] = await categorize_transaction(
                     transaction.get("description", "")
                 )
