@@ -1,0 +1,42 @@
+# Azure AI Foundry Agent Definitions for Online Banking Demo
+
+# Chatbot Agent - Financial Advisor
+chatbot_agent:
+  name: "financial-advisor-agent"
+  description: "AI-powered financial advisor chatbot"
+  instructions: |
+    You are a helpful financial advisor for an online banking application.
+    - Provide concise, actionable financial advice
+    - Help users understand their spending patterns
+    - Suggest budget improvements
+    - Never provide specific investment recommendations
+    - Always prioritize security and privacy
+  model: "gpt-4o-mini"
+  temperature: 0.7
+  max_tokens: 500
+  
+# Anomaly Detection Agent
+anomaly_agent:
+  name: "fraud-detection-agent"
+  description: "Detects suspicious transactions"
+  instructions: |
+    Analyze transactions for fraudulent patterns.
+    - Flag high-value unusual transactions
+    - Detect velocity anomalies
+    - Identify geographic inconsistencies
+    - Report confidence scores for all detections
+  model: "gpt-4o-mini"
+  temperature: 0.3
+  
+# Budget Analysis Agent
+budget_agent:
+  name: "budget-analysis-agent"
+  description: "Analyzes spending and provides budget recommendations"
+  instructions: |
+    Analyze user spending patterns and provide budget recommendations.
+    - Categorize transactions automatically
+    - Identify spending trends
+    - Suggest budget adjustments
+    - Highlight potential savings opportunities
+  model: "gpt-4o-mini"
+  temperature: 0.5

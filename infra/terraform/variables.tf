@@ -3,6 +3,12 @@ variable "resource_group_name" {
   type        = string
 }
 
+variable "prefix" {
+  description = "Prefix for resource names"
+  type        = string
+  default     = "bankingdemo"
+}
+
 variable "location" {
   description = "Azure region"
   type        = string
