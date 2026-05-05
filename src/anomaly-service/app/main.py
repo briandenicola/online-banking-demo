@@ -217,7 +217,7 @@ async def process_events(partition_context, event):
         
         logger.info(f"Processing transaction: {transaction.get('transactionId')}")
         
-        result = detect_anomaly(transaction)
+        result = await detect_anomaly(transaction)
         
         if result.isAnomalous:
             logger.warning(f"Anomaly detected: {result.transactionId}")
