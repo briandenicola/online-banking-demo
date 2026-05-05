@@ -14,17 +14,19 @@ try:
     from azure.ai.inference import ChatCompletionsClient
     from azure.ai.inference.models import SystemMessage, UserMessage
     from azure.identity import DefaultAzureCredential
+    from opentelemetry.instrumentation.azure import AzureInstrumentor
     AZURE_AVAILABLE = True
 except ImportError:
     AZURE_AVAILABLE = False
     EventHubConsumerClient = None
     ChatCompletionsClient = None
-    DefaultAzureCredential = None
+    AzureInstrumentor = None
 
 from fastapi import FastAPI
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -47,11 +49,15 @@ def init_telemetry():
         )
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
+        # Instrument Azure SDK for tracing OpenAI calls
+        if AzureInstrumentor:
+            AzureInstrumentor().instrument()
 
 init_telemetry()
 
 app = FastAPI(title="Anomaly Detection Agent", version="1.0.0")
 FastAPIInstrumentor.instrument_app(app)
+HTTPXClientInstrumentor().instrument()
 
 # ML Model
 model = IsolationForest(contamination=0.1, random_state=42)
@@ -77,8 +83,18 @@ async def explain_anomaly(transaction: dict, ml_reason: str) -> str:
     if not ai_client:
         return ml_reason
     
-    try:
-        prompt = f"""
+    tracer = trace.get_tracer(__name__)
+    
+    with tracer.start_as_current_span("openai.generate-explanation") as span:
+        span.set_attribute("openai.model", os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4"))
+        span.set_attribute("openai.max_tokens", 150)
+        span.set_attribute("openai.temperature", 0.3)
+        span.set_attribute("transaction.amount", transaction.get('amount', 0))
+        span.set_attribute("transaction.type", transaction.get('type', 'Unknown'))
+        span.set_attribute("transaction.description", transaction.get('description', 'N/A')[:100])
+        
+        try:
+            prompt = f"""
 You are a financial security expert. Explain why this transaction might be suspicious:
 
 Transaction Details:
@@ -91,16 +107,18 @@ ML Detection Reason: {ml_reason}
 
 Provide a clear, concise explanation suitable for a bank customer alert (2-3 sentences max).
 """
-        response = ai_client.complete(
-            messages=[UserMessage(content=prompt)],
-            model=os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4"),
-            temperature=0.3,
-            max_tokens=150
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        logger.error(f"Error generating AI explanation: {e}")
-        return ml_reason
+            response = ai_client.complete(
+                messages=[UserMessage(content=prompt)],
+                model=os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4"),
+                temperature=0.3,
+                max_tokens=150
+            )
+            span.set_attribute("openai.response_length", len(response.choices[0].message.content))
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            span.record_exception(e)
+            logger.error(f"Error generating AI explanation: {e}")
+            return ml_reason
 
 
 class TransactionEvent(BaseModel):

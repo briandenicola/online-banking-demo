@@ -13,6 +13,7 @@ try:
     from azure.eventhub import EventHubConsumerClient, EventHubProducerClient
     from azure.ai.inference import EmbeddingsClient
     from azure.identity import DefaultAzureCredential
+    from opentelemetry.instrumentation.azure import AzureInstrumentor
     AZURE_AVAILABLE = True
 except ImportError:
     AZURE_AVAILABLE = False
@@ -20,11 +21,13 @@ except ImportError:
     EventHubProducerClient = None
     EmbeddingsClient = None
     DefaultAzureCredential = None
+    AzureInstrumentor = None
 
 from fastapi import FastAPI, HTTPException
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -46,11 +49,15 @@ def init_telemetry():
         )
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
+        # Instrument Azure SDK for tracing OpenAI calls
+        if AzureInstrumentor:
+            AzureInstrumentor().instrument()
 
 init_telemetry()
 
 app = FastAPI(title="Budget Analysis Agent", version="1.0.0")
 FastAPIInstrumentor.instrument_app(app)
+HTTPXClientInstrumentor().instrument()
 
 # In-memory storage for transactions (in production, use Cosmos DB)
 user_transactions = defaultdict(list)
@@ -95,37 +102,47 @@ async def categorize_transaction(description: str) -> str:
     if not embeddings_client:
         return "Uncategorized"
     
-    try:
-        # Get embedding for transaction description
-        desc_response = embeddings_client.embed(
-            model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "text-embedding-3-large"),
-            input=[description.lower()]
-        )
-        desc_embedding = desc_response.data[0].embedding
+    tracer = trace.get_tracer(__name__)
+    
+    with tracer.start_as_current_span("openai.embedding-categorization") as span:
+        span.set_attribute("openai.model", os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "text-embedding-3-large"))
+        span.set_attribute("transaction.description", description[:100])
         
-        # Compare with category keywords
-        best_category = "Uncategorized"
-        best_score = 0
-        
-        for category, keywords in CATEGORIES.items():
-            for keyword in keywords:
-                keyword_response = embeddings_client.embed(
-                    model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "text-embedding-3-large"),
-                    input=[keyword]
-                )
-                keyword_embedding = keyword_response.data[0].embedding
-                
-                score = cosine_similarity(desc_embedding, keyword_embedding)
-                if score > best_score:
-                    best_score = score
-                    best_category = category
-        
-        if best_score > 0.7:
-            return best_category
-        return "Uncategorized"
-    except Exception as e:
-        logger.error(f"Error categorizing transaction: {e}")
-        return "Uncategorized"
+        try:
+            # Get embedding for transaction description
+            desc_response = embeddings_client.embed(
+                model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "text-embedding-3-large"),
+                input=[description.lower()]
+            )
+            desc_embedding = desc_response.data[0].embedding
+            
+            # Compare with category keywords
+            best_category = "Uncategorized"
+            best_score = 0
+            
+            for category, keywords in CATEGORIES.items():
+                for keyword in keywords:
+                    keyword_response = embeddings_client.embed(
+                        model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "text-embedding-3-large"),
+                        input=[keyword]
+                    )
+                    keyword_embedding = keyword_response.data[0].embedding
+                    
+                    score = cosine_similarity(desc_embedding, keyword_embedding)
+                    if score > best_score:
+                        best_score = score
+                        best_category = category
+            
+            span.set_attribute("category.result", best_category)
+            span.set_attribute("category.confidence", best_score)
+            
+            if best_score > 0.7:
+                return best_category
+            return "Uncategorized"
+        except Exception as e:
+            span.record_exception(e)
+            logger.error(f"Error categorizing transaction: {e}")
+            return "Uncategorized"
 
 
 class TransactionEvent(BaseModel):

@@ -12,6 +12,7 @@ try:
     from azure.ai.inference import ChatCompletionsClient
     from azure.ai.inference.models import SystemMessage, UserMessage
     from azure.identity import DefaultAzureCredential
+    from opentelemetry.instrumentation.azure import AzureInstrumentor
     AZURE_AVAILABLE = True
 except ImportError:
     AZURE_AVAILABLE = False
@@ -19,6 +20,7 @@ except ImportError:
     SystemMessage = None
     UserMessage = None
     DefaultAzureCredential = None
+    AzureInstrumentor = None
 
 from fastapi import FastAPI, HTTPException
 from opentelemetry import trace
@@ -46,6 +48,9 @@ def init_telemetry():
         )
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
+        # Instrument Azure SDK for tracing OpenAI calls
+        if AzureInstrumentor:
+            AzureInstrumentor().instrument()
 
 init_telemetry()
 
@@ -110,6 +115,7 @@ async def chat(request: ChatRequest):
     
     # Enrich context with user data if available
     context_messages = []
+    tracer = trace.get_tracer(__name__)
     
     if request.context:
         context_messages.append(SystemMessage(
@@ -128,14 +134,22 @@ async def chat(request: ChatRequest):
     context_messages.append(UserMessage(content=request.message))
     
     try:
-        response = ai_client.complete(
-            messages=context_messages,
-            model=os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4"),
-            temperature=0.7,
-            max_tokens=500
-        )
-        
-        answer = response.choices[0].message.content
+        with tracer.start_as_current_span("openai.chat-completion") as span:
+            span.set_attribute("openai.model", os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4"))
+            span.set_attribute("openai.max_tokens", 500)
+            span.set_attribute("openai.temperature", 0.7)
+            span.set_attribute("user.message", request.message[:100])
+            
+            response = ai_client.complete(
+                messages=context_messages,
+                model=os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4"),
+                temperature=0.7,
+                max_tokens=500
+            )
+            
+            span.set_attribute("openai.response_length", len(response.choices[0].message.content))
+            
+            answer = response.choices[0].message.content
         
         # Generate suggestions based on the response
         suggestions = [
