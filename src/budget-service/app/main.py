@@ -11,11 +11,14 @@ from typing import Optional
 
 try:
     from azure.eventhub import EventHubConsumerClient, EventHubProducerClient
+    from azure.ai.inference import EmbeddingsClient
+    from azure.core.credentials import AzureKeyCredential
     AZURE_AVAILABLE = True
 except ImportError:
     AZURE_AVAILABLE = False
     EventHubConsumerClient = None
     EventHubProducerClient = None
+    EmbeddingsClient = None
 
 from fastapi import FastAPI, HTTPException
 from opentelemetry import trace
@@ -51,6 +54,79 @@ FastAPIInstrumentor.instrument_app(app)
 # In-memory storage for transactions (in production, use Cosmos DB)
 user_transactions = defaultdict(list)
 
+# AI Client for categorization
+embeddings_client = None
+
+# Category definitions for embedding-based classification
+CATEGORIES = {
+    "Food & Dining": ["restaurant", "dining", "food", "cafe", "coffee", "lunch", "dinner", "takeout"],
+    "Shopping": ["store", "shop", "retail", "mall", "purchase", "amazon", "walmart", "target"],
+    "Transportation": ["gas", "fuel", "uber", "lyft", "taxi", "transport", "parking", "car"],
+    "Entertainment": ["movie", "netflix", "spotify", "game", "entertainment", "streaming"],
+    "Bills & Utilities": ["electric", "water", "gas bill", "internet", "phone", "utility"],
+    "Healthcare": ["doctor", "medical", "pharmacy", "health", "hospital", "clinic"],
+    "Travel": ["hotel", "flight", "airline", "travel", "vacation", "booking"],
+    "Income": ["salary", "payroll", "deposit", "income", "transfer from"],
+}
+
+
+def init_embeddings_client():
+    """Initialize embeddings client for categorization"""
+    global embeddings_client
+    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    key = os.getenv("AZURE_OPENAI_KEY")
+    if endpoint and key and EmbeddingsClient:
+        embeddings_client = EmbeddingsClient(
+            endpoint=endpoint,
+            credential=AzureKeyCredential(key)
+        )
+
+
+def cosine_similarity(a, b):
+    """Calculate cosine similarity between two vectors"""
+    import numpy as np
+    a = np.array(a)
+    b = np.array(b)
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+
+async def categorize_transaction(description: str) -> str:
+    """Use embeddings to categorize transaction description"""
+    if not embeddings_client:
+        return "Uncategorized"
+    
+    try:
+        # Get embedding for transaction description
+        desc_response = embeddings_client.embed(
+            model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "text-embedding-3-large"),
+            input=[description.lower()]
+        )
+        desc_embedding = desc_response.data[0].embedding
+        
+        # Compare with category keywords
+        best_category = "Uncategorized"
+        best_score = 0
+        
+        for category, keywords in CATEGORIES.items():
+            for keyword in keywords:
+                keyword_response = embeddings_client.embed(
+                    model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "text-embedding-3-large"),
+                    input=[keyword]
+                )
+                keyword_embedding = keyword_response.data[0].embedding
+                
+                score = cosine_similarity(desc_embedding, keyword_embedding)
+                if score > best_score:
+                    best_score = score
+                    best_category = category
+        
+        if best_score > 0.7:
+            return best_category
+        return "Uncategorized"
+    except Exception as e:
+        logger.error(f"Error categorizing transaction: {e}")
+        return "Uncategorized"
+
 
 class TransactionEvent(BaseModel):
     transactionId: str
@@ -60,6 +136,7 @@ class TransactionEvent(BaseModel):
     description: str
     category: str
     timestamp: Optional[datetime] = None
+    aiCategory: Optional[str] = None
 
 
 class BudgetInsight(BaseModel):
@@ -132,6 +209,12 @@ async def process_events(partition_context, event):
         
         accountId = transaction.get("accountId", "")
         if accountId:
+            # Use AI categorization if category is missing or generic
+            if not transaction.get("category") or transaction.get("category") == "Uncategorized":
+                transaction["aiCategory"] = await categorize_transaction(
+                    transaction.get("description", "")
+                )
+            
             user_transactions[accountId].append(transaction)
             logger.info(f"Stored transaction for account {accountId}")
         
@@ -143,7 +226,8 @@ async def process_events(partition_context, event):
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize event processor"""
+    """Initialize event processor and AI client"""
+    init_embeddings_client()
     eventhub_conn = os.getenv("EVENTHUB_CONNECTION_STRING")
     eventhub_name = os.getenv("EVENTHUB_NAME", "banking-events")
     
@@ -178,6 +262,13 @@ async def get_insights(userId: str, period: str = "30d"):
     insight = analyze_spending(transactions, period)
     insight.userId = userId
     return insight
+
+
+@app.post("/categorize")
+async def categorize(description: str):
+    """Categorize a transaction description"""
+    category = await categorize_transaction(description)
+    return {"description": description, "category": category}
 
 
 if __name__ == "__main__":

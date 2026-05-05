@@ -11,10 +11,14 @@ import numpy as np
 
 try:
     from azure.eventhub import EventHubConsumerClient
+    from azure.ai.inference import ChatCompletionsClient
+    from azure.ai.inference.models import SystemMessage, UserMessage
+    from azure.core.credentials import AzureKeyCredential
     AZURE_AVAILABLE = True
 except ImportError:
     AZURE_AVAILABLE = False
     EventHubConsumerClient = None
+    ChatCompletionsClient = None
 
 from fastapi import FastAPI
 from opentelemetry import trace
@@ -52,6 +56,52 @@ FastAPIInstrumentor.instrument_app(app)
 model = IsolationForest(contamination=0.1, random_state=42)
 transaction_history = []
 
+# AI Client for explanations
+ai_client = None
+
+
+def init_ai_client():
+    """Initialize Azure OpenAI client for anomaly explanations"""
+    global ai_client
+    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    key = os.getenv("AZURE_OPENAI_KEY")
+    if endpoint and key and ChatCompletionsClient:
+        ai_client = ChatCompletionsClient(
+            endpoint=endpoint,
+            credential=AzureKeyCredential(key)
+        )
+
+
+async def explain_anomaly(transaction: dict, ml_reason: str) -> str:
+    """Generate human-readable explanation for anomaly using GPT"""
+    if not ai_client:
+        return ml_reason
+    
+    try:
+        prompt = f"""
+You are a financial security expert. Explain why this transaction might be suspicious:
+
+Transaction Details:
+- Amount: ${transaction.get('amount', 0):,.2f}
+- Type: {transaction.get('type', 'Unknown')}
+- Description: {transaction.get('description', 'N/A')}
+- Category: {transaction.get('category', 'N/A')}
+
+ML Detection Reason: {ml_reason}
+
+Provide a clear, concise explanation suitable for a bank customer alert (2-3 sentences max).
+"""
+        response = ai_client.complete(
+            messages=[UserMessage(content=prompt)],
+            model=os.getenv("AZURE_OPENAI_MODEL", "gpt-4.1-mini"),
+            temperature=0.3,
+            max_tokens=150
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error(f"Error generating AI explanation: {e}")
+        return ml_reason
+
 
 class TransactionEvent(BaseModel):
     id: str
@@ -68,6 +118,7 @@ class AnomalyResult(BaseModel):
     isAnomalous: bool
     confidenceScore: float
     reason: Optional[str] = None
+    aiExplanation: Optional[str] = None
 
 
 def extract_features(transaction: dict) -> np.ndarray:
@@ -85,7 +136,7 @@ def extract_features(transaction: dict) -> np.ndarray:
     return np.array(features).reshape(1, -1)
 
 
-def detect_anomaly(transaction: dict) -> AnomalyResult:
+async def detect_anomaly(transaction: dict) -> AnomalyResult:
     """Detect if a transaction is anomalous"""
     global model, transaction_history
     
@@ -107,11 +158,19 @@ def detect_anomaly(transaction: dict) -> AnomalyResult:
             if transaction.get("type") == "Transfer" and transaction.get("amount", 0) > 5000:
                 reasons.append("Large transfer")
             
+            ml_reason = "; ".join(reasons) if reasons else None
+            
+            # Get AI explanation for anomalies
+            ai_explanation = None
+            if is_anomalous or len(reasons) > 0:
+                ai_explanation = await explain_anomaly(transaction, ml_reason or "Unusual transaction pattern")
+            
             return AnomalyResult(
                 transactionId=transaction.get("transactionId", ""),
                 isAnomalous=is_anomalous or len(reasons) > 0,
                 confidenceScore=min(confidence, 1.0),
-                reason="; ".join(reasons) if reasons else None
+                reason=ml_reason,
+                aiExplanation=ai_explanation
             )
         
         return AnomalyResult(
@@ -162,7 +221,8 @@ async def process_events(partition_context, event):
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize event processor"""
+    """Initialize event processor and AI client"""
+    init_ai_client()
     eventhub_conn = os.getenv("EVENTHUB_CONNECTION_STRING")
     eventhub_name = os.getenv("EVENTHUB_NAME", "banking-events")
     
@@ -189,7 +249,7 @@ async def health():
 @app.post("/detect", response_model=AnomalyResult)
 async def detect(request: TransactionEvent):
     """Detect anomaly in a single transaction"""
-    return detect_anomaly(request.model_dump())
+    return await detect_anomaly(request.model_dump())
 
 
 if __name__ == "__main__":
