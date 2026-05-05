@@ -296,16 +296,20 @@ resource "azurerm_user_assigned_identity" "openai_managed_identity" {
 
 # Role assignment for OpenAI RBAC access
 resource "azurerm_role_assignment" "openai_cognitive_services_openai_user" {
-  scope                = azurerm_cognitive_account.openai.id
+  scope                = data.azurerm_cognitive_account.openai.id
   role_definition_name = "Cognitive Services OpenAI User"
   principal_id         = azurerm_user_assigned_identity.openai_managed_identity.principal_id
+}
+
+resource "azurerm_role_assignment" "current_user_cognitive_services_openai_user" {
+  scope                = data.azurerm_cognitive_account.openai.id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = data.azurerm_client_config.current.object_id
 }
 
 # AKS workload identity setup for accessing OpenAI
 resource "azurerm_federated_identity_credential" "aks_openai_workload_identity" {
   name                = "aks-openai-workload-identity"
-  resource_group_name = azurerm_resource_group.this.name
-  parent_id           = azurerm_user_assigned_identity.openai_managed_identity.id
   audience            = ["api://AzureADTokenExchange"]
   
   subject             = "system:serviceaccount:banking:anomaly-service"
@@ -313,19 +317,15 @@ resource "azurerm_federated_identity_credential" "aks_openai_workload_identity" 
 }
 
 resource "azurerm_federated_identity_credential" "aks_budget_workload_identity" {
-  name                = "aks-budget-workload-identity"
-  resource_group_name = azurerm_resource_group.this.name
-  parent_id           = azurerm_user_assigned_identity.openai_managed_identity.id
+  name                = "aks-budget-workload-identity" 
+
   audience            = ["api://AzureADTokenExchange"]
-  
   subject             = "system:serviceaccount:banking:budget-service"
   issuer              = azurerm_kubernetes_cluster.main.oidc_issuer_url
 }
 
 resource "azurerm_federated_identity_credential" "aks_chatbot_workload_identity" {
   name                = "aks-chatbot-workload-identity"
-  resource_group_name = azurerm_resource_group.this.name
-  parent_id           = azurerm_user_assigned_identity.openai_managed_identity.id
   audience            = ["api://AzureADTokenExchange"]
   
   subject             = "system:serviceaccount:banking:chatbot-service"
@@ -336,19 +336,6 @@ resource "azurerm_user_assigned_identity" "openai_managed_identity" {
   name                = "${local.resource_name}-openai-mi"
   location            = azurerm_resource_group.this.location
   resource_group_name = azurerm_resource_group.this.name
-}
-
-# Role assignment for OpenAI RBAC access
-resource "azurerm_role_assignment" "openai_cognitive_services_openai_user" {
-  scope                = data.azurerm_cognitive_account.openai.id
-  role_definition_name = "Cognitive Services OpenAI User"
-  principal_id         = azurerm_user_assigned_identity.openai_managed_identity.principal_id
-}
-
-resource "azurerm_role_assignment" "current_user_cognitive_services_openai_user" {
-  scope                = data.azurerm_cognitive_account.openai.id
-  role_definition_name = "Cognitive Services OpenAI User"
-  principal_id         = data.azurerm_client_config.current.object_id
 }
 
 resource "azurerm_cognitive_deployment" "gpt54" {
