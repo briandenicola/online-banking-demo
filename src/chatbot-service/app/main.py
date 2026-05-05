@@ -1,6 +1,7 @@
 """
 AI-powered financial advice chatbot service
 """
+import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -28,6 +29,10 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Initialize telemetry
 def init_telemetry():
@@ -66,6 +71,15 @@ async def lifespan(app: FastAPI):
             endpoint=endpoint,
             credential=DefaultAzureCredential()
         )
+        
+        # Validate Entra ID token acquisition
+        logger.info("Validating Entra ID token acquisition...")
+        try:
+            credential = DefaultAzureCredential()
+            token = await credential.get_token("https://cognitiveservices.azure.com/.default")
+            logger.info(f"✅ Entra ID token acquired successfully (expires {token.expires_on})")
+        except Exception as ex:
+            logger.error(f"❌ Entra ID token acquisition FAILED: {ex}")
     
     yield
     

@@ -226,8 +226,19 @@ async def process_events(partition_context, event):
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize event processor and AI client"""
+    """Initialize event processor and AI client with validation"""
     init_embeddings_client()
+    
+    # Validate Entra ID token acquisition for OpenAI
+    if DefaultAzureCredential and os.getenv("AZURE_OPENAI_ENDPOINT"):
+        logger.info("Validating Entra ID token acquisition...")
+        try:
+            credential = DefaultAzureCredential()
+            token = await credential.get_token("https://cognitiveservices.azure.com/.default")
+            logger.info(f"✅ Entra ID token acquired successfully (expires {token.expires_on})")
+        except Exception as ex:
+            logger.error(f"❌ Entra ID token acquisition FAILED: {ex}")
+    
     eventhub_conn = os.getenv("EVENTHUB_CONNECTION_STRING")
     eventhub_name = os.getenv("EVENTHUB_NAME", "banking-events")
     
