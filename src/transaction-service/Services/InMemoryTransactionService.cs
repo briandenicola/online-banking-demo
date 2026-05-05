@@ -25,7 +25,7 @@ public class InMemoryTransactionService : ITransactionService
         return Task.FromResult(transaction);
     }
 
-    public Task<Transaction?> GetTransactionByIdAsync(string id)
+    public Task<Transaction?> GetTransactionByIdAsync(string id, string? accountId = null)
     {
         _transactions.TryGetValue(id, out var transaction);
         return Task.FromResult(transaction);

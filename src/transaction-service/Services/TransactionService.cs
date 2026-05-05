@@ -53,12 +53,22 @@ public class TransactionService : ITransactionService
         return transaction;
     }
 
-    public async Task<Transaction?> GetTransactionByIdAsync(string id)
+    public async Task<Transaction?> GetTransactionByIdAsync(string id, string? accountId = null)
     {
         try
         {
-            var response = await _container.ReadItemAsync<Transaction>(id, new PartitionKey(id));
-            return response.Resource;
+            if (!string.IsNullOrEmpty(accountId))
+            {
+                var response = await _container.ReadItemAsync<Transaction>(id, new PartitionKey(accountId));
+                return response.Resource;
+            }
+
+            // Cross-partition query when accountId is unknown
+            var query = new QueryDefinition("SELECT * FROM c WHERE c.id = @id")
+                .WithParameter("@id", id);
+            var iterator = _container.GetItemQueryIterator<Transaction>(query);
+            var results = await iterator.ReadNextAsync();
+            return results.FirstOrDefault();
         }
         catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
@@ -78,8 +88,9 @@ public class TransactionService : ITransactionService
 
     public async Task<IEnumerable<Transaction>> GetUserTransactionsAsync(string userId, int limit = 50)
     {
-        // This would require a join with accounts, simplified for demo
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.Type != 'Transfer' ORDER BY c.Timestamp DESC");
+        // Filter by userId to return only this user's transactions
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.UserId = @userId ORDER BY c.Timestamp DESC")
+            .WithParameter("@userId", userId);
         
         var iterator = _container.GetItemQueryIterator<Transaction>(query);
         var results = await iterator.ReadNextAsync();

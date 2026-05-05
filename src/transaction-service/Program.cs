@@ -127,24 +127,19 @@ using (var scope = app.Services.CreateScope())
         logger.LogInformation("ℹ️ Using in-memory database (skip Cosmos DB validation)");
     }
     
-    // Validate Event Hub connectivity
+    // Validate Event Hub connectivity (read-only check, no messages published)
     try
     {
         var eventHubProducer = scope.ServiceProvider.GetRequiredService<EventHubProducerClient>();
         var eventHubName = builder.Configuration["EventHub:Name"] ?? "banking-events";
         
-        // Send a connectivity test event
-        var testEvent = new Azure.Messaging.EventHubs.EventData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { 
-            type = "connectivity-test",
-            timestamp = DateTime.UtcNow 
-        })));
-        
-        await eventHubProducer.SendAsync(new[] { testEvent });
-        logger.LogInformation($"✅ Event Hub connectivity verified for '{eventHubName}'");
+        // Only verify that the producer client was created successfully
+        // Do NOT send test events — they pollute the real event stream
+        logger.LogInformation($"✅ Event Hub producer configured for '{eventHubName}'");
     }
     catch (Exception ex)
     {
-        logger.LogError($"❌ Event Hub connection FAILED: {ex.Message}");
+        logger.LogError($"❌ Event Hub configuration FAILED: {ex.Message}");
         logger.LogError("Ensure EventHub:ConnectionString and EventHub:Name are set and Managed Identity has Azure Event Hubs Data Sender role");
     }
 }
