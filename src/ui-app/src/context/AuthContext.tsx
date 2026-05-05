@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 
 export interface Account {
   id: string;
@@ -32,16 +32,29 @@ export const useAuth = () => {
   return context;
 };
 
-const initialAccounts: Account[] = [
-  { id: '1', name: 'Checking Account', number: '****-1234', balance: 2543.78, type: 'Checking' },
-  { id: '2', name: 'Savings Account', number: '****-5678', balance: 15234.56, type: 'Savings' },
-  { id: '3', name: 'Credit Card', number: '****-9012', balance: -876.23, type: 'Credit' },
-];
-
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [accounts, setAccounts] = useState<Account[]>(initialAccounts);
-  const [nextAccountId, setNextAccountId] = useState(4);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [nextAccountId, setNextAccountId] = useState(1);
+
+  // Fetch accounts from API on mount
+  useEffect(() => {
+    const fetchAccounts = async () => {
+      try {
+        const response = await fetch('/api/accounts');
+        if (response.ok) {
+          const data = await response.json();
+          setAccounts(data);
+          if (data.length > 0) {
+            setNextAccountId(Math.max(...data.map((a: Account) => parseInt(a.id) || 0)) + 1);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to fetch accounts:', e);
+      }
+    };
+    fetchAccounts();
+  }, []);
 
   const transfer = (fromId: string, toId: string, amount: number): boolean => {
     setAccounts(prev => prev.map(acc => {

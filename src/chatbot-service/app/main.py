@@ -70,36 +70,44 @@ user_threads = {}  # In-memory thread storage per user
 
 def get_budget_insights(user_id: str, period: str = "30d") -> dict:
     """Get budget insights for a user - financial advisor tool"""
-    # In production, this would call the budget service
-    return {
-        "userId": user_id,
-        "period": period,
-        "totalSpent": 2450.50,
-        "topCategory": "Dining",
-        "insights": ["High dining spending detected", "Consider meal planning to reduce costs"]
-    }
+    try:
+        budget_service_url = os.getenv("BUDGET_SERVICE_URL", "http://budget-service:8003")
+        response = httpx.get(f"{budget_service_url}/api/budget/insights?userId={user_id}&period={period}", timeout=10.0)
+        if response.ok:
+            return response.json()
+    except Exception as e:
+        logger.warning(f"Failed to get budget insights: {e}")
+    raise ValueError("Unable to retrieve budget insights")
 
 
 def get_spending_pattern(user_id: str) -> dict:
     """Get spending patterns for a user - financial advisor tool"""
-    return {
-        "userId": user_id,
-        "patterns": {
-            "daily_avg": 80.50,
-            "weekly_avg": 563.50,
-            "top_merchant": "Starbucks"
-        }
-    }
+    try:
+        budget_service_url = os.getenv("BUDGET_SERVICE_URL", "http://budget-service:8003")
+        response = httpx.get(f"{budget_service_url}/api/budget/patterns?userId={user_id}", timeout=10.0)
+        if response.ok:
+            return response.json()
+    except Exception as e:
+        logger.warning(f"Failed to get spending patterns: {e}")
+    raise ValueError("Unable to retrieve spending patterns")
 
 
 def analyze_transaction(description: str, amount: float) -> dict:
     """Analyze a transaction for budgeting - financial advisor tool"""
-    return {
-        "description": description,
-        "amount": amount,
-        "suggested_category": "Food & Dining",
-        "note": "Regular expense detected"
-    }
+    try:
+        budget_service_url = os.getenv("BUDGET_SERVICE_URL", "http://budget-service:8003")
+        response = httpx.get(f"{budget_service_url}/api/budget/categorize?description={description}", timeout=10.0)
+        if response.ok:
+            data = response.json()
+            return {
+                "description": description,
+                "amount": amount,
+                "suggested_category": data.get("category", "Uncategorized"),
+                "note": "Transaction analyzed successfully"
+            }
+    except Exception as e:
+        logger.warning(f"Failed to analyze transaction: {e}")
+    raise ValueError("Unable to analyze transaction")
 
 
 @asynccontextmanager
