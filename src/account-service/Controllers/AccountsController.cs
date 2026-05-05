@@ -92,4 +92,24 @@ public class AccountsController : ControllerBase
 
         return Ok(account);
     }
+
+    [HttpPost("{id}/balance")]
+    public async Task<IActionResult> UpdateBalance(string id, [FromBody] UpdateBalanceRequest request)
+    {
+        try
+        {
+            var account = await _accountService.UpdateBalanceAsync(id, request.Amount);
+            return Ok(account);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update balance for account {AccountId}", id);
+            return BadRequest(new { Message = ex.Message });
+        }
+    }
+}
+
+public class UpdateBalanceRequest
+{
+    public decimal Amount { get; set; }
 }

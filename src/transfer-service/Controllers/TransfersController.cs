@@ -31,7 +31,7 @@ public class TransfersController : ControllerBase
         }
 
         var transfer = await _transferService.InitiateTransferAsync(userId, request);
-        return Ok(transfer);
+        return CreatedAtAction(nameof(GetTransfer), new { id = transfer.Id }, transfer);
     }
 
     [HttpGet("{id}")]

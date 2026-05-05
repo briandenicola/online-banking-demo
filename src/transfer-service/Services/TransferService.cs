@@ -156,9 +156,13 @@ public class TransferService : ITransferService
         };
 
         // Create debit transaction
-        await _httpClient.PostAsync(
+        var debitResponse = await _httpClient.PostAsync(
             $"{_configuration["Services:TransactionService"]}/api/transactions",
             new StringContent(JsonConvert.SerializeObject(createTransactionRequest), Encoding.UTF8, "application/json"));
+        if (!debitResponse.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Failed to create debit transaction: {debitResponse.StatusCode}");
+        }
 
         createTransactionRequest = new CreateTransactionRequest
         {
@@ -171,9 +175,38 @@ public class TransferService : ITransferService
         };
 
         // Create credit transaction
-        await _httpClient.PostAsync(
+        var creditResponse = await _httpClient.PostAsync(
             $"{_configuration["Services:TransactionService"]}/api/transactions",
             new StringContent(JsonConvert.SerializeObject(createTransactionRequest), Encoding.UTF8, "application/json"));
+        if (!creditResponse.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Failed to create credit transaction: {creditResponse.StatusCode}");
+        }
+
+        // Update account balances via account-service
+        var accountServiceUrl = _configuration["Services:AccountService"];
+
+        var debitBalanceResponse = await _httpClient.PostAsync(
+            $"{accountServiceUrl}/api/accounts/{fromAccountId}/balance",
+            new StringContent(JsonConvert.SerializeObject(new { amount = -amount }), Encoding.UTF8, "application/json"));
+        if (!debitBalanceResponse.IsSuccessStatusCode)
+        {
+            _logger.LogError("Failed to debit source account {AccountId}. Transfer {TransferId} may be inconsistent.", fromAccountId, transferId);
+            throw new InvalidOperationException($"Failed to debit source account: {debitBalanceResponse.StatusCode}");
+        }
+
+        var creditBalanceResponse = await _httpClient.PostAsync(
+            $"{accountServiceUrl}/api/accounts/{toAccountId}/balance",
+            new StringContent(JsonConvert.SerializeObject(new { amount = amount }), Encoding.UTF8, "application/json"));
+        if (!creditBalanceResponse.IsSuccessStatusCode)
+        {
+            // Compensate: reverse the debit
+            _logger.LogError("Failed to credit destination account {AccountId}. Reversing debit on {FromAccountId}.", toAccountId, fromAccountId);
+            await _httpClient.PostAsync(
+                $"{accountServiceUrl}/api/accounts/{fromAccountId}/balance",
+                new StringContent(JsonConvert.SerializeObject(new { amount = amount }), Encoding.UTF8, "application/json"));
+            throw new InvalidOperationException($"Failed to credit destination account: {creditBalanceResponse.StatusCode}");
+        }
     }
 
     private async Task PublishTransferInitiatedEvent(Transfer transfer)
