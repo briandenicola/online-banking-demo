@@ -1,0 +1,11 @@
+{
+  "assignments": [
+    {
+      "assignment_id": "online-banking-demo-001",
+      "universe": "oceans-eleven",
+      "created_at": "2026-05-05T16:29:00Z",
+      "agents": ["Danny", "Basher", "Linus", "Livingston"],
+      "reason": "Banking application audit — heist universe resonance with financial domain"
+    }
+  ]
+}

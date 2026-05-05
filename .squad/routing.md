@@ -6,12 +6,12 @@ How to decide who handles what.
 
 | Work Type | Route To | Examples |
 |-----------|----------|----------|
-| {domain 1} | {Name} | {example tasks} |
-| {domain 2} | {Name} | {example tasks} |
-| {domain 3} | {Name} | {example tasks} |
-| Code review | {Name} | Review PRs, check quality, suggest improvements |
-| Testing | {Name} | Write tests, find edge cases, verify fixes |
-| Scope & priorities | {Name} | What to build next, trade-offs, decisions |
+| Architecture, design, scope | Danny | Project structure, service boundaries, decisions |
+| .NET services, Python services, APIs, DB | Basher | Backend bugs, API quality, service patterns |
+| React UI, components, frontend | Linus | UI quality, component structure, accessibility |
+| Code review | Danny | Review PRs, check quality, suggest improvements |
+| Testing, QA, coverage | Livingston | Write tests, find edge cases, verify fixes |
+| Scope & priorities | Danny | What to build next, trade-offs, decisions |
 | Session logging | Scribe | Automatic — never needs routing |
 
 ## Issue Routing

@@ -1,0 +1,36 @@
+{
+  "entries": [
+    {
+      "persistent_name": "Danny",
+      "universe": "oceans-eleven",
+      "role": "Lead/Architect",
+      "created_at": "2026-05-05T16:29:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    {
+      "persistent_name": "Basher",
+      "universe": "oceans-eleven",
+      "role": "Backend Dev",
+      "created_at": "2026-05-05T16:29:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    {
+      "persistent_name": "Linus",
+      "universe": "oceans-eleven",
+      "role": "Frontend Dev",
+      "created_at": "2026-05-05T16:29:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    {
+      "persistent_name": "Livingston",
+      "universe": "oceans-eleven",
+      "role": "Tester/QA",
+      "created_at": "2026-05-05T16:29:00Z",
+      "legacy_named": false,
+      "status": "active"
+    }
+  ]
+}

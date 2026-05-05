@@ -1,0 +1,39 @@
+# Danny — History
+
+## Project Context
+- **Project:** online-banking-demo — AI-generated online banking application
+- **User:** Brian
+- **Stack:** C#/.NET + Python/FastAPI microservices, React/TS UI, Redis, Docker Compose, Azure
+- **Services:** user-service, account-service, transaction-service, transfer-service (C#), anomaly-service, budget-service, chatbot-service, event-processor (Python), ui-app (React)
+
+## Learnings
+
+### Architecture Review (2025-07-15)
+- **Service boundaries:** .NET core banking (user/account/transaction/transfer on ports 600x), Python AI agents (chatbot/anomaly/budget on ports 800x), Go event-processor, React UI on 3000
+- **Shared code:** `src/shared/Contracts` has .NET DTOs, Events (IEvent interface), and Models. No shared Python library exists.
+- **Infra split:** `infra/local` = AI Foundry only (dev); `infra/cloud` = full AKS + Cosmos + EventHub + Redis + KeyVault
+- **IaC bug:** `infra/cloud/main.tf` has duplicate `azurerm_user_assigned_identity.openai_managed_identity` resource and a federated identity credential missing `user_assigned_identity_id`
+- **CI bug:** CI workflow uses `context: ./src/${{ matrix.service }}` but .NET Dockerfiles expect repo root context (they COPY src/shared/)
+- **Security pattern:** Azure side uses RBAC + Managed Identity (good). Local dev has JWT key hardcoded in docker-compose.yml and appsettings.json.
+- **Gateway:** nginx.conf provides API routing but no auth, CORS, rate limiting, or TLS
+- **Redis:** Declared in docker-compose but no service references it
+- **Deploy path:** Flux GitOps → deploy/kustomize/base/app.yaml (full K8s manifests)
+- **Taskfile:** Root includes local + cloud sub-taskfiles; `local:run` wires Terraform outputs to Docker Compose env vars
+- **Key files:** docker-compose.yml, nginx.conf, Taskfile.local.yml, infra/cloud/main.tf, deploy/kustomize/base/app.yaml, .github/workflows/ci.yml
+
+## Cross-Team Findings (2026-05-05)
+
+### From Basher (Backend)
+- **CI context bug blocks .NET builds** — Confirms critical issue preventing successful deployment
+- **6 critical backend bugs** — Infrastructure defects ripple through to deployment layer; missing money-move logic means transfers fail end-to-end
+
+### From Linus (Frontend)
+- **Transfer API missing** — Frontend transfer() is mock; backend CI/CD must support persistence layer
+- **No CORS configuration** — Nginx gateway lacks auth/CORS config, blocking frontend API calls
+
+### From Livingston (Test/QA)
+- **Zero test coverage** — No tests will catch architecture/deployment issues before production
+- **CI "test" job fake** — False confidence in deployment pipeline
+
+### Architectural Impact
+The project's microservice decomposition is sound, but execution gaps (code bugs, missing infrastructure, zero tests) compound each other. Terraform errors block cloud deployment; CI context errors block local builds. Backend bugs (partition keys, missing money-move) mean transfers fail silently. Frontend can't call undeployed APIs. Tests don't catch any of this.
