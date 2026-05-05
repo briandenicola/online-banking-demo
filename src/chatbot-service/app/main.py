@@ -187,25 +187,10 @@ async def chat(request: ChatRequest):
     """
     Get financial advice from the AI agent
     """
-    # Provide mock responses when Azure AI Foundry is not configured
     if not agents_client or not agent_id:
-        logger.info("Azure AI Foundry not configured, returning mock response")
-        
-        mock_responses = [
-            f"Based on typical spending patterns, I'd recommend reviewing your budget. You asked: '{request.message[:50]}...'",
-            "I notice you're interested in financial insights. Consider setting aside 10-15% of income for savings each month.",
-            "Your queries suggest you're focused on financial planning. I recommend tracking expenses for 30 days to identify patterns.",
-        ]
-        
-        suggestions = [
-            "How can I save more each month?",
-            "What's my spending pattern?",
-            "Should I consider a budget?",
-        ]
-        
-        return ChatResponse(
-            response=f"[Local Mode] {mock_responses[0]}",
-            suggestions=suggestions
+        raise HTTPException(
+            status_code=503, 
+            detail="Azure AI Foundry not configured. Set AZURE_AI_AGENTS_ENDPOINT environment variable."
         )
     
     tracer = trace.get_tracer(__name__)
@@ -289,8 +274,7 @@ async def health():
     return {
         "status": "healthy",
         "agent_id": agent_id,
-        "agents_available": AZURE_AGENTS_AVAILABLE,
-        "local_mode": not agents_client or not agent_id
+        "agents_available": AZURE_AGENTS_AVAILABLE
     }
 
 

@@ -78,61 +78,13 @@ const Transactions: React.FC = () => {
   const fetchTransactions = async () => {
     try {
       setLoading(true);
-      // In production, this would call the transaction service
-      // For demo, we use mock data but check each for anomalies
-      const mockData: Transaction[] = [
-        { id: '1', date: '2026-05-04', description: 'Grocery Store', amount: -87.56, balance: 2543.78 },
-        { id: '2', date: '2026-05-03', description: 'Paycheck Deposit', amount: 3500.00, balance: 2631.34 },
-        { id: '3', date: '2026-05-02', description: 'Gas Station', amount: -45.30, balance: -868.66 },
-        { id: '4', date: '2026-05-01', description: 'Online Transfer', amount: -500.00, balance: -913.96 },
-      ];
-
-      // Check each transaction for anomalies using the anomaly service
-      const checkedTransactions = await Promise.all(
-        mockData.map(async (txn) => {
-          try {
-            const anomalyResponse = await fetch('/api/anomaly/detect', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                id: txn.id,
-                transactionId: txn.id,
-                accountId: 'acc-001',
-                amount: Math.abs(txn.amount),
-                type: txn.amount < 0 ? 'Debit' : 'Credit',
-                category: 'Uncategorized',
-                description: txn.description
-              })
-            });
-            
-            if (anomalyResponse.ok) {
-              const anomaly = await anomalyResponse.json();
-              return { ...txn, isAnomalous: anomaly.isAnomalous, aiExplanation: anomaly.aiExplanation };
-            }
-            return txn;
-          } catch (e) {
-            return txn;
-          }
-        })
-      );
-
-      // Categorize uncategorized transactions using the budget service
-      const categorizedTransactions = await Promise.all(
-        checkedTransactions.map(async (txn) => {
-          try {
-            const catResponse = await fetch(`/api/budget/categorize?description=${encodeURIComponent(txn.description)}`);
-            if (catResponse.ok) {
-              const cat = await catResponse.json();
-              return { ...txn, category: cat.category };
-            }
-            return { ...txn, category: 'Uncategorized' };
-          } catch (e) {
-            return { ...txn, category: 'Uncategorized' };
-          }
-        })
-      );
-
-      setTransactions(categorizedTransactions);
+      const response = await fetch('/api/transactions');
+      if (response.ok) {
+        const data = await response.json();
+        setTransactions(data.transactions || []);
+      } else {
+        throw new Error('Failed to fetch transactions');
+      }
     } catch (e) {
       setError('Failed to load transactions');
     } finally {

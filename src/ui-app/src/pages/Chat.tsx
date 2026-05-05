@@ -51,32 +51,9 @@ const Chat: React.FC = () => {
         throw new Error('API error');
       }
     } catch (error) {
-      // Fallback for local development when Azure AI Foundry is not configured
-      const fallbackResponses: Record<string, string> = {
-        "budget": "Based on your recent activity, I recommend creating a monthly budget of $2,000 for essentials. Would you like me to analyze your spending patterns?",
-        "spending": "Your average monthly spending is around $2,450, with dining at $450 being your highest category. Consider meal planning to reduce costs.",
-        "save": "You could potentially save $300 monthly by reducing discretionary spending. Setting up automatic transfers to your savings account would help.",
-        "invest": "I can't provide specific investment advice, but I recommend consulting a certified financial planner for personalized recommendations.",
-        "hello": "Hello! I'm your AI financial assistant. I can help with budget insights, spending patterns, and transaction analysis.",
-      };
-      
-      const inputLower = input.toLowerCase();
-      let responseText = "I'm running in local mode without Azure AI Foundry connectivity. ";
-      
-      for (const [key, text] of Object.entries(fallbackResponses)) {
-        if (inputLower.includes(key)) {
-          responseText = text;
-          break;
-        }
-      }
-      
-      if (responseText === "I'm running in local mode without Azure AI Foundry connectivity. ") {
-        responseText += "Try asking about your budget, spending patterns, or savings goals!";
-      }
-      
       const botResponse: Message = {
         id: Date.now() + 1,
-        text: responseText,
+        text: "Unable to connect to the AI assistant. Please ensure the chatbot service is running and Azure AI Foundry is configured.",
         sender: 'bot',
       };
       setMessages(prev => [...prev, botResponse]);
