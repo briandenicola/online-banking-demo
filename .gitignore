@@ -4,6 +4,12 @@
 **/build/
 **/.vs/
 
+# Terraform
+.infra/terraform/.terraform/
+.infra/terraform/terraform.tfstate.d/
+.infra/terraform/*.tfstate
+.infra/terraform/*.tfstate.backup
+
 # IDE
 .idea/
 .vscode/
