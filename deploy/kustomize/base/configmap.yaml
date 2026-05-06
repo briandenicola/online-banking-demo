@@ -7,6 +7,7 @@ data:
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4317"
   REDIS_HOST: "redis.banking-demo.svc.cluster.local"
   REDIS_PORT: "6379"
+  REDIS__CONNECTIONSTRING: "redis.banking-demo.svc.cluster.local:6379"
   USER_SERVICE_URL: "http://user-service.banking-demo.svc.cluster.local"
   ACCOUNT_SERVICE_URL: "http://account-service.banking-demo.svc.cluster.local"
   TRANSACTION_SERVICE_URL: "http://transaction-service.banking-demo.svc.cluster.local"

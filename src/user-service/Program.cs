@@ -9,6 +9,7 @@ using Microsoft.IdentityModel.Tokens;
 using Swashbuckle.AspNetCore;
 using System.Text;
 using Banking.Observability;
+using StackExchange.Redis;
 using UserService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -85,6 +86,12 @@ else
         var cosmosClient = new CosmosClient(configuration["CosmosDb:ConnectionString"]);
         return cosmosClient;
     });
+
+    // Redis for event streaming
+    var redisHost = builder.Configuration["REDIS_HOST"] ?? "redis";
+    var redisPort = builder.Configuration["REDIS_PORT"] ?? "6379";
+    builder.Services.AddSingleton<IConnectionMultiplexer>(
+        ConnectionMultiplexer.Connect($"{redisHost}:{redisPort}"));
 
     // Services
     builder.Services.AddScoped<IUserService, UserService.Services.UserService>();

@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using OnlineBankingDemo.Contracts.Dtos;
 using OnlineBankingDemo.Contracts.Events;
+using StackExchange.Redis;
 using UserModel = UserService.Models.User;
 using BC = global::BCrypt.Net.BCrypt;
 
@@ -15,17 +16,20 @@ namespace UserService.Services;
 public class UserService : IUserService
 {
     private readonly Container _container;
+    private readonly IConnectionMultiplexer _redis;
     private readonly ILogger<UserService> _logger;
     private readonly IConfiguration _configuration;
 
     public UserService(
         CosmosClient cosmosClient,
+        IConnectionMultiplexer redis,
         ILogger<UserService> logger,
         IConfiguration configuration)
     {
         var databaseName = configuration["CosmosDb:DatabaseName"];
         var containerName = configuration["CosmosDb:ContainerName"];
         _container = cosmosClient.GetContainer(databaseName, containerName);
+        _redis = redis;
         _logger = logger;
         _configuration = configuration;
     }
@@ -91,7 +95,8 @@ public class UserService : IUserService
         };
 
         var response = await _container.CreateItemAsync(user, new PartitionKey(user.Id));
-        _logger.LogInformation("User registered: {UserId}", user.Id);
+        
+        await PublishUserRegisteredEvent(user);
 
         return response;
     }
@@ -103,5 +108,36 @@ public class UserService : IUserService
             return false;
 
         return BC.Verify(password, user.PasswordHash);
+    }
+
+    private async Task PublishUserRegisteredEvent(UserModel user)
+    {
+        try
+        {
+            var evt = new UserRegisteredEvent
+            {
+                UserId = user.Id,
+                Username = user.Username,
+                Email = user.Email
+            };
+
+            var payload = JsonConvert.SerializeObject(new
+            {
+                eventType = "UserRegistered",
+                timestamp = DateTime.UtcNow.ToString("o"),
+                data = evt
+            });
+
+            var db = _redis.GetDatabase();
+            await db.StreamAddAsync("banking-events", new NameValueEntry[]
+            {
+                new("payload", payload)
+            });
+            _logger.LogInformation("Published UserRegistered event to Redis Stream for user {UserId}", user.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to publish UserRegistered event — non-critical");
+        }
     }
 }
