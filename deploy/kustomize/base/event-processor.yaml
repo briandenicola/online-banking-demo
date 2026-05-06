@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: event-processor
+  namespace: banking-demo
+  labels:
+    app: event-processor
+    app.kubernetes.io/part-of: banking-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: event-processor
+  template:
+    metadata:
+      labels:
+        app: event-processor
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - name: event-processor
+        image: ghcr.io/banking-demo/event-processor:1.0.0
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        env:
+        - name: EVENTHUB_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: eventhub-connection-string
+        envFrom:
+        - configMapRef:
+            name: banking-demo-config
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: event-processor
+  namespace: banking-demo
+  labels:
+    app: event-processor
+spec:
+  type: ClusterIP
+  selector:
+    app: event-processor
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP

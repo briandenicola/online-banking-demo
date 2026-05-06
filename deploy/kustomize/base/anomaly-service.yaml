@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anomaly-service
+  namespace: banking-demo
+  labels:
+    app: anomaly-service
+    app.kubernetes.io/part-of: banking-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: anomaly-service
+  template:
+    metadata:
+      labels:
+        app: anomaly-service
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - name: anomaly-service
+        image: ghcr.io/banking-demo/anomaly-service:1.0.0
+        ports:
+        - containerPort: 8002
+          protocol: TCP
+        env:
+        - name: EVENTHUB_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: eventhub-connection-string
+        - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: appinsights-connection-string
+        envFrom:
+        - configMapRef:
+            name: banking-demo-config
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8002
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8002
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: anomaly-service
+  namespace: banking-demo
+  labels:
+    app: anomaly-service
+spec:
+  type: ClusterIP
+  selector:
+    app: anomaly-service
+  ports:
+  - port: 80
+    targetPort: 8002
+    protocol: TCP
