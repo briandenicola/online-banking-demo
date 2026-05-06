@@ -327,7 +327,7 @@ resource "azurerm_key_vault" "main" {
 
 # Azure OpenAI
 resource "azapi_resource" "this" {
-  type                      = "Microsoft.CognitiveServices/accounts@2026-03-01"
+  type                      = "Microsoft.CognitiveServices/accounts@2025-04-01-preview"
   name                      = local.openai_name
   parent_id                 = azurerm_resource_group.this.id
   location                  = azurerm_resource_group.this.location
@@ -390,7 +390,7 @@ resource "azurerm_federated_identity_credential" "aks_openai_workload_identity" 
 }
 
 resource "azapi_resource" "gpt54_mini" {
-  type      = "Microsoft.CognitiveServices/accounts/deployments@2026-03-01"
+  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview"
   name      = "gpt-5.4-mini"
   parent_id = data.azurerm_cognitive_account.openai.id
 
@@ -412,8 +412,7 @@ resource "azapi_resource" "gpt54_mini" {
 }
 
 resource "azapi_resource" "text_embedding" {
-  count     = var.deploy_embedding_model ? 1 : 0
-  type      = "Microsoft.CognitiveServices/accounts/deployments@2026-03-01"
+  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview"
   name      = "text-embedding-ada-002"
   parent_id = data.azurerm_cognitive_account.openai.id
 
@@ -435,7 +434,7 @@ resource "azapi_resource" "text_embedding" {
 }
 
 resource "azapi_resource" "ai_foundry_project" {
-  type                      = "Microsoft.CognitiveServices/accounts/projects@2026-03-01"
+  type                      = "Microsoft.CognitiveServices/accounts/projects@2025-04-01-preview"
   name                      = local.project_name
   parent_id                 = data.azurerm_cognitive_account.openai.id
   location                  = azurerm_resource_group.this.location

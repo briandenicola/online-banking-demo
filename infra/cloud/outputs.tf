@@ -6,18 +6,8 @@ output "aks_name" {
   value = azurerm_kubernetes_cluster.main.name
 }
 
-output "aks_kube_config" {
-  value     = azurerm_kubernetes_cluster.main.kube_config_raw
-  sensitive = true
-}
-
 output "storage_account_name" {
   value = azurerm_storage_account.main.name
-}
-
-output "storage_connection_string" {
-  value     = azurerm_storage_account.main.primary_connection_string
-  sensitive = true
 }
 
 output "cosmos_db_endpoint" {
@@ -32,11 +22,6 @@ output "cosmos_db_key" {
 
 output "redis_host" {
   value = azurerm_managed_redis.main.hostname
-}
-
-output "redis_primary_key" {
-  value     = azurerm_managed_redis.main.default_database[0].primary_access_key
-  sensitive = true
 }
 
 output "application_insights_key" {
@@ -60,11 +45,6 @@ output "openai_endpoint" {
 
 output "managed_identity_client_id" {
   value = azurerm_user_assigned_identity.openai_managed_identity.client_id
-}
-
-output "kube_config" {
-  value     = azurerm_kubernetes_cluster.main.kube_config_raw
-  sensitive = true
 }
 
 output "acr_name" {
