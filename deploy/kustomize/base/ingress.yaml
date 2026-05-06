@@ -1,0 +1,48 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: banking-demo-ingress
+  namespace: banking-demo
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: banking-demo.local
+    http:
+      paths:
+      - path: /api/users
+        pathType: Prefix
+        backend:
+          service:
+            name: user-service
+            port:
+              number: 80
+      - path: /api/accounts
+        pathType: Prefix
+        backend:
+          service:
+            name: account-service
+            port:
+              number: 80
+      - path: /api/transactions
+        pathType: Prefix
+        backend:
+          service:
+            name: transaction-service
+            port:
+              number: 80
+      - path: /api/transfers
+        pathType: Prefix
+        backend:
+          service:
+            name: transfer-service
+            port:
+              number: 80
+      - path: /api/chat
+        pathType: Prefix
+        backend:
+          service:
+            name: chatbot-service
+            port:
+              number: 80

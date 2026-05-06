@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chatbot-service
+  namespace: banking-demo
+  labels:
+    app: chatbot-service
+    app.kubernetes.io/part-of: banking-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: chatbot-service
+  template:
+    metadata:
+      labels:
+        app: chatbot-service
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - name: chatbot-service
+        image: ghcr.io/banking-demo/chatbot-service:1.0.0
+        ports:
+        - containerPort: 8001
+          protocol: TCP
+        env:
+        - name: AZURE_OPENAI_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: openai-endpoint
+        - name: AZURE_OPENAI_KEY
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: openai-key
+        envFrom:
+        - configMapRef:
+            name: banking-demo-config
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8001
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8001
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chatbot-service
+  namespace: banking-demo
+  labels:
+    app: chatbot-service
+spec:
+  type: ClusterIP
+  selector:
+    app: chatbot-service
+  ports:
+  - port: 80
+    targetPort: 8001
+    protocol: TCP

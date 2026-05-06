@@ -190,3 +190,20 @@ The project's microservice decomposition is sound, but execution gaps (code bugs
 - Architecture.md includes ASCII diagrams for local and cloud deployments
 - deployment-local.md includes port mappings for all 9 services
 - deployment-azure.md includes estimated cost breakdown and optimization tips
+### 2026-05 — Kubernetes Deployment Best Practices Remediation
+
+**Task:** Full review and remediation of `deploy/kustomize/base/` manifests.
+
+**Issues Found & Fixed:**
+1. Wrong container ports (docker-compose host ports instead of internal 8080)
+2. No health probes — Added liveness (/healthz) and readiness (/readyz)
+3. Missing Services for anomaly, budget, event-processor, redis
+4. No HPA — Added for user-service and account-service (2-5, 70% CPU)
+5. No security contexts — Added runAsNonRoot, no privilege escalation, RO filesystem
+6. Image tag :latest — Replaced with :1.0.0 semver
+7. No ConfigMap — Added shared non-secret config
+8. No Redis in K8s — Added deployment + service
+9. Monolithic manifest — Split into per-service files
+10. Ingress deprecation — Used ingressClassName instead of annotation
+
+**Deferred:** NetworkPolicies, PodDisruptionBudgets (need overlay-specific config)

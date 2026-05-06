@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transfer-service
+  namespace: banking-demo
+  labels:
+    app: transfer-service
+    app.kubernetes.io/part-of: banking-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: transfer-service
+  template:
+    metadata:
+      labels:
+        app: transfer-service
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - name: transfer-service
+        image: ghcr.io/banking-demo/transfer-service:1.0.0
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        env:
+        - name: CosmosDb__ConnectionString
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: cosmos-connection-string
+        - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: appinsights-connection-string
+        envFrom:
+        - configMapRef:
+            name: banking-demo-config
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: transfer-service
+  namespace: banking-demo
+  labels:
+    app: transfer-service
+spec:
+  type: ClusterIP
+  selector:
+    app: transfer-service
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
