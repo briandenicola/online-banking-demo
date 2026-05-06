@@ -154,7 +154,7 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
             slotProps={{ paper: { sx: { minWidth: 200, mt: 1 } } }}
           >
             <Box sx={{ px: 2, py: 1 }}>
-              <Typography variant="subtitle2" fontWeight={600}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                 {user?.firstName} {user?.lastName}
               </Typography>
               <Typography variant="caption" color="text.secondary">
@@ -226,7 +226,7 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
                 </Typography>
               </Box>
               <Box sx={{ textAlign: 'right' }}>
-                <Typography variant="caption" display="block" sx={{ color: 'rgba(255,255,255,0.5)' }}>
+                <Typography variant="caption" sx={{ display: 'block', color: 'rgba(255,255,255,0.5)' }}>
                   © {new Date().getFullYear()} SecureBank. All rights reserved.
                 </Typography>
                 <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.4)' }}>

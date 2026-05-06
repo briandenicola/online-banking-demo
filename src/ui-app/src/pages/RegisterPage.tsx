@@ -134,7 +134,7 @@ const RegisterPage: React.FC = () => {
             >
               <PersonAddOutlinedIcon sx={{ color: 'white', fontSize: 28 }} />
             </Box>
-            <Typography component="h1" variant="h5" fontWeight={700} color="primary.dark">
+            <Typography component="h1" variant="h5" sx={{ fontWeight: 700, color: 'primary.dark' }}>
               Open an Account
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
