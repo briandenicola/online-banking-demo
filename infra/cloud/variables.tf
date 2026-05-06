@@ -13,13 +13,13 @@ variable "tags" {
 variable "aks_node_count" {
   description = "Number of AKS nodes"
   type        = number
-  default     = 2
+  default     = 3
 }
 
 variable "aks_node_size" {
   description = "VM size for AKS nodes"
   type        = string
-  default     = "Standard_D2s_v3"
+  default     = "Standard_D4s_v3"
 }
 
 variable "kubernetes_version" {
