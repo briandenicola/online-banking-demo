@@ -58,12 +58,24 @@ public class InMemoryUserService : IUserService
         return Task.FromResult(user);
     }
 
+    public Task<User?> GetUserByEmailAsync(string email)
+    {
+        var user = _users.Values.FirstOrDefault(u => u.Email.Equals(email, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(user);
+    }
+
     public async Task<User> CreateUserAsync(RegisterUserRequest request)
     {
         var existingUser = await GetUserByUsernameAsync(request.Username);
         if (existingUser != null)
         {
             throw new InvalidOperationException("Username already exists");
+        }
+
+        var existingEmail = await GetUserByEmailAsync(request.Email);
+        if (existingEmail != null)
+        {
+            throw new InvalidOperationException("Email already exists");
         }
 
         var passwordHash = BC.HashPassword(request.Password);

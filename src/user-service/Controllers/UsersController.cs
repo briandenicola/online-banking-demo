@@ -1,7 +1,11 @@
+using System;
+using System.Net.Http;
+using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
 using OnlineBankingDemo.Contracts.Dtos;
 using UserService.Services;
 
@@ -14,12 +18,18 @@ public class UsersController : ControllerBase
 {
     private readonly IUserService _userService;
     private readonly IAuthService _authService;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<UsersController> _logger;
 
-    public UsersController(IUserService userService, IAuthService authService, ILogger<UsersController> logger)
+    public UsersController(
+        IUserService userService,
+        IAuthService authService,
+        IHttpClientFactory httpClientFactory,
+        ILogger<UsersController> logger)
     {
         _userService = userService;
         _authService = authService;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
@@ -49,14 +59,33 @@ public class UsersController : ControllerBase
     [HttpPost("register")]
     public async Task<IActionResult> Register([FromBody] RegisterUserRequest request)
     {
+        // Check email uniqueness
+        var existingEmail = await _userService.GetUserByEmailAsync(request.Email);
+        if (existingEmail != null)
+        {
+            return Conflict(new { Message = "Email already exists" });
+        }
+
         try
         {
             var user = await _userService.CreateUserAsync(request);
-            return CreatedAtAction(nameof(GetUser), new { id = user.Id }, new { UserId = user.Id, Username = user.Username });
+
+            // Provision a default checking account (best-effort)
+            await ProvisionDefaultAccountAsync(user.Id);
+
+            return CreatedAtAction(nameof(GetUser), new { id = user.Id }, new
+            {
+                UserId = user.Id,
+                Username = user.Username,
+                Email = user.Email,
+                FirstName = user.FirstName,
+                LastName = user.LastName,
+                CreatedAt = user.CreatedAt
+            });
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException ex) when (ex.Message.Contains("already exists"))
         {
-            return BadRequest(new { Message = ex.Message });
+            return Conflict(new { Message = ex.Message });
         }
     }
 
@@ -106,5 +135,40 @@ public class UsersController : ControllerBase
             user.CreatedAt,
             user.IsActive
         });
+    }
+
+    private async Task ProvisionDefaultAccountAsync(string userId)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient("AccountService");
+            var accountRequest = new CreateAccountRequest
+            {
+                AccountType = "checking",
+                InitialBalance = 0m,
+                Currency = "USD"
+            };
+
+            var json = JsonConvert.SerializeObject(accountRequest);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            content.Headers.Add("X-User-Id", userId);
+
+            var response = await client.PostAsync("/api/accounts", content);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning(
+                    "Failed to provision default account for user {UserId}. Status: {StatusCode}",
+                    userId, response.StatusCode);
+            }
+            else
+            {
+                _logger.LogInformation("Provisioned default checking account for user {UserId}", userId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error provisioning default account for user {UserId}", userId);
+        }
     }
 }

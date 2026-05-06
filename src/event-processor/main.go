@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -95,6 +96,23 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	go processor.consumeEvents(ctx)
+
+	// Start health probe HTTP server
+	go func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"status":"healthy","service":"event-processor","timestamp":"%s"}`, time.Now().UTC().Format(time.RFC3339))
+		})
+		mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"status":"ready"}`)
+		})
+		log.Println("Health probe server listening on :8080")
+		if err := http.ListenAndServe(":8080", mux); err != nil {
+			log.Printf("Health server error: %v", err)
+		}
+	}()
 
 	log.Println("Event processor started — consuming from Redis Stream")
 

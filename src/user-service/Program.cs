@@ -1,3 +1,4 @@
+using System;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Azure.Cosmos;
@@ -51,6 +52,14 @@ builder.Services.AddCors(options =>
     });
 });
 
+// HttpClient for account-service communication
+builder.Services.AddHttpClient("AccountService", client =>
+{
+    var accountServiceUrl = builder.Configuration["Services:AccountServiceUrl"] ?? "http://account-service:8080";
+    client.BaseAddress = new Uri(accountServiceUrl);
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
+
 // Use in-memory database for development if configured
 var useInMemory = builder.Configuration.GetValue<bool>("UseInMemoryDatabase", false);
 
@@ -92,5 +101,8 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+app.MapGet("/healthz", () => Results.Ok(new { status = "healthy", service = "user-service", timestamp = DateTime.UtcNow }));
+app.MapGet("/readyz", () => Results.Ok(new { status = "ready" }));
 
 app.Run();
