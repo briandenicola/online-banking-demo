@@ -433,6 +433,7 @@ resource "azapi_resource" "gpt54_mini" {
 }
 
 resource "azapi_resource" "text_embedding" {
+  count     = var.deploy_embedding_model ? 1 : 0
   type      = "Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview"
   name      = "text-embedding-ada-002"
   parent_id = data.azurerm_cognitive_account.openai.id
