@@ -52,3 +52,70 @@
 
 ### Frontend-Specific Impact
 The 5 critical bugs (broken test, unauthenticated account fetch, client-only transfers, missing dependency, stale closure) are compounded by backend issues. Transfer API doesn't exist at all. Auth token handling is inconsistent because frontend tries to work around missing backend auth. God object AuthContext can't be tested because no test framework runs.
+
+## 2026-05 — Parallel Backlog Batch (May 6)
+
+### User Registration UI
+
+**Scope:** Added RegisterPage.tsx and /register route to enable user self-registration.
+
+**Implementation:**
+- RegisterPage.tsx: Email + password + confirm password form with validation
+- Form validation: Email format, password length, password match
+- Submit: POST to /api/users/register (implemented by Basher)
+- Success flow: Navigate to LoginPage with "Account created" toast
+- Error handling: Display validation errors from backend (400 responses)
+
+**Integration:** LoginPage.tsx now includes "Don't have an account? Register here" link. Users flow from login → register → create account → login again.
+
+**Outcome:** User signup flow complete end-to-end. Supports new user onboarding without manual admin provisioning.
+
+### Admin Dashboard UI
+
+**Scope:** Added AdminPage.tsx with stats cards, flagged transactions table, and review actions.
+
+**Implementation:**
+- AdminPage.tsx: Dashboard layout with MUI Grid
+- Stats cards: User count, total accounts, total transactions (fetches from /api/admin/stats)
+- Flagged transactions DataGrid: Columns for date, user, amount, anomaly reason, action buttons
+- Review actions: Approve/Reject buttons with POST to /api/admin/review
+- Protected route: /admin only accessible with admin token; redirects to LoginPage if unauthorized
+- Loading states: Spinners during data fetch and action submission
+- Toast notifications: Feedback on successful/failed review actions
+
+**API Integration:**
+- GET /api/admin/stats: Fetches and displays KPIs on mount
+- GET /api/admin/flagged-transactions: Populates table with pagination
+- POST /api/admin/review: Submits review action (approve/reject)
+
+**UX Flow:**
+1. Admin login → /admin route (if authorized)
+2. Dashboard loads stats cards (user count, accounts, transactions)
+3. Flagged transactions table displays anomalies
+4. Admin clicks Approve/Reject button
+5. Action submitted to backend; table refreshes
+6. Toast confirms action result
+
+**Outcome:** Admin dashboard fully functional. Admins can now review and act on flagged transactions without backend access.
+
+**Cross-Team Impact:**
+- Basher (Backend): Implemented corresponding /api/admin/* endpoints and Redis flagged transaction storage
+- Danny (Infrastructure): nginx routing for /api/admin/* verified
+- All branches merged to main; AdminPage production-ready
+
+### Premium Banking UI Theme (Backlog)
+
+**Status:** Assigned to Linus (backlog priority, next sprint)
+
+**Scope:** Redesign UI with professional banking aesthetic (JPMC/BofA style).
+
+**Planned Work:**
+- Color palette: Navy/dark blue primary, white/gray surfaces, gold/green accents
+- Typography scale: Hierarchy across headings, body, labels
+- Navigation redesign: Header with account summary hero section
+- Dashboard layout: Card-based grid with KPIs
+- Transaction table: Status badges, icons, professional styling
+- Transfer flow: Polished multi-step form
+
+**Dependencies:** Complete; no backend dependencies. MUI theme update only.
+

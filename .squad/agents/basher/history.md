@@ -116,3 +116,70 @@ These bugs are end-to-end blockers: partition key mismatch means transaction ser
 - Event Hub's built-in consumer group management → manual partition handling in event-processor
 - Event Hub's at-least-once guarantees → Redis Streams' at-most-once (acceptable for this app)
 - Future: can migrate back to Event Hub or Kafka without changing event schema (IEvent interface abstraction works)
+
+## 2026-05 — Parallel Backlog Batch (May 6)
+
+### Health Check Endpoints
+
+**Scope:** Added `/healthz` (liveness) and `/readyz` (readiness) to all 8 services (user, account, transaction, transfer, anomaly, budget, chatbot, event-processor).
+
+**Implementation:**
+- C# services: HealthCheck middleware in Program.cs, returns 200 OK on both endpoints
+- Python services: FastAPI /healthz and /readyz routes
+- Go event-processor: HTTP handlers for health checks
+- Docker Compose: Added HEALTHCHECK directives to all service containers
+
+**Outcome:** All services now report health status. Ready for Kubernetes probes and monitoring.
+
+### User Registration & Signup Backend
+
+**Scope:** Added `POST /api/users/register` endpoint with password hashing and account provisioning.
+
+**Implementation:**
+- UsersController.Register: Accepts email + password, validates, creates user with BCrypt hashing
+- Account provisioning: Automatically creates linked checking/savings accounts on registration
+- HTTP 201 Created on success; 400 Bad Request on validation failure
+- BCrypt.Net-Next (12 rounds) replaces previous SHA256 hashing across all user operations
+
+**Integration:** Frontend RegisterPage.tsx calls this endpoint (implemented by Linus). Users can now self-register and provision accounts.
+
+**Outcome:** User signup flow end-to-end working. Passwords secure with BCrypt.
+
+### Seed Data Script
+
+**Scope:** Created `scripts/seed-data.sh` for populating demo database.
+
+**Implementation:**
+- Bash script creates 5 test users with BCrypt-hashed passwords
+- Provisions linked checking/savings accounts per user
+- Inserts 50 sample transactions with various statuses
+- Pre-populates budget categories
+
+**Integration:** docker-compose.yml runs seed script during initialization (optional). Enables repeatable demo state resets and E2E test data setup.
+
+**Outcome:** Demo environment ready with realistic data. Simplifies onboarding and testing.
+
+### Admin API Endpoints
+
+**Scope:** Added admin endpoints for stats, flagged transactions, and review actions.
+
+**Endpoints:**
+- `GET /api/admin/stats`: Returns user count, total accounts, total transactions
+- `GET /api/admin/flagged-transactions`: Returns list of anomaly-flagged transactions with details
+- `POST /api/admin/review`: Approve/reject flagged transaction review
+
+**Implementation:**
+- AdminController in user-service for stats
+- Flagged transaction storage in Redis streams (IEventPublisher pattern)
+- nginx routes /api/admin/* through to services
+- Bearer token validation for admin requests
+
+**Integration:** AdminPage.tsx (Linus) calls these endpoints for dashboard. Anomaly service publishes flags to Redis stream.
+
+**Outcome:** Admin dashboard functional. Flagged transactions persisted and reviewable.
+
+**Cross-Team Impact:**
+- Linus (Frontend): Implemented corresponding AdminPage.tsx and review UI
+- Danny (Infrastructure): nginx admin route configuration verified
+- All branches merged to main; ready for staging deployment
+
