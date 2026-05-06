@@ -80,3 +80,14 @@ The project's microservice decomposition is sound, but execution gaps (code bugs
 - CI/CD no longer needs Event Hub credentials
 - Cloud deployment can use Event Hub (via cloud/main.tf) or continue with Redis (via managed Redis cache in Azure)
 - Event schema backward-compatible (no breaking changes to existing services)
+
+### Gateway Security Implementation (squad/security)
+**Date:** 2025-01-06
+**What:** Implemented gateway-level security: JWT validation via nginx njs module, rate limiting, security headers, and externalized secrets.
+
+**Key Learnings:**
+- nginx:alpine ships nginx-module-njs as an installable apk package — no custom builds needed
+- njs has access to `require('crypto')` for HMAC verification and `process.env` for reading environment variables (requires `env` directive in nginx.conf main context)
+- nginx `location` matching is prefix-based; more specific paths (e.g., `/api/users/login`) match before general ones (`/api/users/`)
+- `internalRedirect` in njs allows request to be validated then forwarded to a named location (`@upstream`) for proxying
+- Docker Compose variable substitution with `${VAR:-default}` syntax allows gradual migration from hardcoded secrets without breaking existing dev workflows
