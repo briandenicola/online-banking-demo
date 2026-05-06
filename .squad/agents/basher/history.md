@@ -58,3 +58,27 @@
 
 ### Backend-Specific Impact
 These bugs are end-to-end blockers: partition key mismatch means transaction service queries fail (reads always fail); transfer service never updates balances (money doesn't move); anomaly detection missing await (AI features don't work); chatbot-budget route mismatch (integration completely broken). Frontend can't work around these.
+
+### 2026-05 — Critical Bug Fix Sprint
+
+**Fixes Applied:**
+
+1. **transaction-service** — Fixed partition key mismatch (reads now use cross-partition query or correct accountId); fixed GetUserTransactionsAsync to filter by userId; removed startup Event Hub test event spam; returns 201 on POST.
+
+2. **transfer-service** — Added account-service balance update calls (debit/credit) after creating transaction records; added compensation logic if credit fails; checks HTTP response status from downstream; returns 201 on POST.
+
+3. **user-service** — Fixed login 404 by adding /api/users/login and /api/users/register endpoints to UsersController (frontend calls /api/users/login, which routes via nginx to user-service, but only AuthController at /api/auth/login existed); replaced SHA256 with BCrypt.Net-Next for password hashing.
+
+4. **anomaly-service** — Added missing `await` on `detect_anomaly()` call in event processor.
+
+5. **chatbot-service** — Fixed lifespan (pass to FastAPI constructor); fixed busy-wait polling with `await asyncio.sleep(0.5)`; fixed budget-service URLs to match actual routes (`/insights/{userId}`, `/categorize`); fixed mutable default with `Field(default_factory=list)`.
+
+6. **shared DTOs** — Added DataAnnotations ([Required], [Range], [StringLength]) to all request DTOs.
+
+7. **account-service** — Added `POST /api/accounts/{id}/balance` endpoint for transfer-service to call.
+
+**Key Learnings:**
+- BCrypt.Net-Next in .NET requires `using BC = global::BCrypt.Net.BCrypt;` alias due to namespace/class name collision
+- nginx strips `/api/budget/` before forwarding to budget-service, so service-to-service calls should use direct routes
+- FastAPI lifespan must be passed to constructor; `app.router.lifespan = ...` doesn't work
+- User-service has both `/api/auth/` and `/api/users/` nginx routes; login needs to be on both controllers
