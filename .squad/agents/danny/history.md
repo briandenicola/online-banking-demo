@@ -263,3 +263,24 @@ The project's microservice decomposition is sound, but execution gaps (code bugs
 **Backlog Location:** `.squad/playbooks/playwright-e2e-backlog.md`
 
 **Ready for Squad Input:** Backlog awaits Brian/team review before GitHub issue creation
+
+### 2026-07 — AKS Best Practices Alignment & API Version Updates
+
+**Task:** Update Azure API versions to GA and align AKS cluster config to Brian's reference patterns.
+
+**Changes Made:**
+1. **API Versions:** Both azapi_resource blocks (AI Services + AI Foundry project) updated from preview to `2026-03-01` GA
+2. **AKS Security:** local_account_disabled, run_command_enabled=false, azure_policy_enabled
+3. **AKS Networking:** Migrated from basic Azure CNI to Azure CNI Overlay + Cilium (network_plugin_mode=overlay, network_data_plane=cilium)
+4. **AKS Node Pool:** Renamed default→system, AzureLinux OS, autoscaling (1 to var.aks_node_count), max_pods=250, upgrade_settings max_surge=25%
+5. **AKS Autoscaling:** KEDA + VPA enabled via workload_autoscaler_profile
+6. **AKS Upgrades:** automatic_upgrade_channel=patch, node_os_upgrade_channel=SecurityPatch, maintenance windows Fri/Sat 9PM CT
+7. **AKS Observability:** monitor_metrics, cost_analysis_enabled, image_cleaner (48h)
+8. **AKS Auth:** Azure AD RBAC, Key Vault secrets provider with 2m rotation
+9. **Lifecycle:** ignore_changes for node_count and kubernetes_version (prevents drift on plan)
+10. **Network CIDRs:** service_cidr=100.64.0.0/16, dns_service_ip=100.64.0.10, pod_cidr=100.65.0.0/16
+
+**Decisions:**
+- Kept SystemAssigned identity (simpler for demo, no extra managed identity needed)
+- Skipped NAT gateway, public IP prefix, SSH, Defender, Istio (not needed for demo)
+- Used 100.64.x.x (RFC 6598) for service/pod CIDRs to avoid overlap with VNet 10.0.0.0/8
