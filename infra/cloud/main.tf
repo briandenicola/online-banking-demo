@@ -124,7 +124,7 @@ resource "azurerm_kubernetes_cluster" "main" {
     type                 = "VirtualMachineScaleSets"
     auto_scaling_enabled = true
     min_count            = 1
-    max_count            = var.aks_node_count
+    max_count            = var.aks_node_count * 2
     max_pods             = 250
     os_sku               = "AzureLinux"
 
