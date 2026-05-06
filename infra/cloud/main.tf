@@ -27,20 +27,20 @@ provider "azurerm" {
 }
 
 locals {
-  location              = var.region
-  resource_name         = "${random_pet.this.id}-${random_id.this.dec}"
-  resource_group_name   = "${local.resource_name}-rg"
-  aks_name              = "${local.resource_name}-aks"
-  vnet_name             = "${local.resource_name}-vnet"
-  storage_name          = "${substr(replace(random_uuid.guid.result, "-", ""), 0, 22)}sa"
-  cosmos_name           = "${local.resource_name}-cosmos"
-  openai_name           = "${local.resource_name}-foundry"
-  project_name          = "${local.resource_name}-project"
-  redis_name            = "${local.resource_name}-redis"
-  loganalytics_name     = "${local.resource_name}-logs"
-  appinsights_name      = "${local.resource_name}-ai"
-  keyvault_name         = "${local.resource_name}-kv"
-  acr_name              = "${replace(local.resource_name, "-", "")}acr"
+  location            = var.region
+  resource_name       = "${random_pet.this.id}-${random_id.this.dec}"
+  resource_group_name = "${local.resource_name}-rg"
+  aks_name            = "${local.resource_name}-aks"
+  vnet_name           = "${local.resource_name}-vnet"
+  storage_name        = "${substr(replace(random_uuid.guid.result, "-", ""), 0, 22)}sa"
+  cosmos_name         = "${local.resource_name}-cosmos"
+  openai_name         = "${local.resource_name}-foundry"
+  project_name        = "${local.resource_name}-project"
+  redis_name          = "${local.resource_name}-redis"
+  loganalytics_name   = "${local.resource_name}-logs"
+  appinsights_name    = "${local.resource_name}-ai"
+  keyvault_name       = "${local.resource_name}-kv"
+  acr_name            = "${replace(local.resource_name, "-", "")}acr"
 }
 
 data "azurerm_client_config" "current" {}
@@ -64,12 +64,12 @@ resource "azurerm_resource_group" "this" {
 }
 
 resource "azurerm_storage_account" "main" {
-  name                          = local.storage_name
-  resource_group_name           = azurerm_resource_group.this.name
-  location                      = azurerm_resource_group.this.location
-  account_tier                  = "Standard"
-  account_replication_type      = "LRS"
-  shared_access_key_enabled     = false
+  name                      = local.storage_name
+  resource_group_name       = azurerm_resource_group.this.name
+  location                  = azurerm_resource_group.this.location
+  account_tier              = "Standard"
+  account_replication_type  = "LRS"
+  shared_access_key_enabled = false
 }
 
 resource "azurerm_virtual_network" "main" {
@@ -90,6 +90,13 @@ resource "azurerm_subnet" "aks" {
 }
 
 resource "azurerm_kubernetes_cluster" "main" {
+  lifecycle {
+    ignore_changes = [
+      default_node_pool[0].node_count,
+      kubernetes_version
+    ]
+  }
+
   name                = local.aks_name
   location            = azurerm_resource_group.this.location
   resource_group_name = azurerm_resource_group.this.name
@@ -97,29 +104,88 @@ resource "azurerm_kubernetes_cluster" "main" {
   dns_prefix          = local.aks_name
   sku_tier            = "Standard"
 
+  automatic_upgrade_channel = "patch"
+  node_os_upgrade_channel   = "SecurityPatch"
+
+  local_account_disabled = true
+  run_command_enabled    = false
+  azure_policy_enabled   = true
+
+  image_cleaner_enabled        = true
+  image_cleaner_interval_hours = 48
+
+  cost_analysis_enabled = true
+
   default_node_pool {
-    name           = "default"
-    node_count     = var.aks_node_count
-    vm_size        = var.aks_node_size
-    vnet_subnet_id = azurerm_subnet.aks.id
-    type           = "VirtualMachineScaleSets"
+    name                 = "system"
+    node_count           = var.aks_node_count
+    vm_size              = var.aks_node_size
+    vnet_subnet_id       = azurerm_subnet.aks.id
+    type                 = "VirtualMachineScaleSets"
+    auto_scaling_enabled = true
+    min_count            = 1
+    max_count            = var.aks_node_count
+    max_pods             = 250
+    os_sku               = "AzureLinux"
+
+    upgrade_settings {
+      max_surge = "25%"
+    }
   }
 
   identity {
     type = "SystemAssigned"
   }
 
+  azure_active_directory_role_based_access_control {
+    azure_rbac_enabled = true
+  }
+
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
 
   network_profile {
-    network_plugin = "azure"
-    service_cidr   = "10.0.0.0/16"
-    dns_service_ip = "10.0.0.10"
+    network_plugin      = "azure"
+    network_plugin_mode = "overlay"
+    network_data_plane  = "cilium"
+    network_policy      = "cilium"
+    service_cidr        = "100.64.0.0/16"
+    dns_service_ip      = "100.64.0.10"
+    pod_cidr            = "100.65.0.0/16"
+  }
+
+  workload_autoscaler_profile {
+    keda_enabled                    = true
+    vertical_pod_autoscaler_enabled = true
+  }
+
+  key_vault_secrets_provider {
+    secret_rotation_enabled  = true
+    secret_rotation_interval = "2m"
   }
 
   oms_agent {
     log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+  }
+
+  monitor_metrics {}
+
+  maintenance_window_auto_upgrade {
+    frequency   = "Weekly"
+    interval    = 1
+    duration    = 4
+    day_of_week = "Friday"
+    start_time  = "21:00"
+    utc_offset  = "-06:00"
+  }
+
+  maintenance_window_node_os {
+    frequency   = "Weekly"
+    interval    = 1
+    duration    = 4
+    day_of_week = "Saturday"
+    start_time  = "21:00"
+    utc_offset  = "-06:00"
   }
 
   tags = {
@@ -164,7 +230,7 @@ resource "azurerm_cosmosdb_account" "main" {
   resource_group_name = azurerm_resource_group.this.name
   offer_type          = "Standard"
   kind                = "GlobalDocumentDB"
-  
+
   consistency_policy {
     consistency_level = "Session"
   }
@@ -259,7 +325,7 @@ resource "azurerm_key_vault" "main" {
 
 # Azure OpenAI
 resource "azapi_resource" "this" {
-  type                      = "Microsoft.CognitiveServices/accounts@2025-10-01-preview"
+  type                      = "Microsoft.CognitiveServices/accounts@2026-03-01"
   name                      = local.openai_name
   parent_id                 = azurerm_resource_group.this.id
   location                  = azurerm_resource_group.this.location
@@ -322,7 +388,7 @@ resource "azurerm_federated_identity_credential" "aks_openai_workload_identity" 
 }
 
 resource "azurerm_federated_identity_credential" "aks_budget_workload_identity" {
-  name                      = "aks-budget-workload-identity" 
+  name                      = "aks-budget-workload-identity"
   user_assigned_identity_id = azurerm_user_assigned_identity.openai_managed_identity.id
   audience                  = ["api://AzureADTokenExchange"]
   subject                   = "system:serviceaccount:banking:budget-service"
@@ -371,7 +437,7 @@ resource "azurerm_cognitive_deployment" "cohere_embedding" {
 }
 
 resource "azapi_resource" "ai_foundry_project" {
-  type                      = "Microsoft.CognitiveServices/accounts/projects@2026-01-15-preview"
+  type                      = "Microsoft.CognitiveServices/accounts/projects@2026-03-01"
   name                      = local.project_name
   parent_id                 = data.azurerm_cognitive_account.openai.id
   location                  = azurerm_resource_group.this.location
