@@ -17,6 +17,18 @@ tasks:
     cmds:
       - npx playwright test
 
+  ui:
+    desc: Open Playwright UI mode (interactive test runner)
+    dir: '{{.E2E_DIR}}'
+    cmds:
+      - npx playwright test --ui
+
+  headed:
+    desc: Run E2E tests with visible browser window
+    dir: '{{.E2E_DIR}}'
+    cmds:
+      - npx playwright test --headed
+
   debug:
     desc: Run E2E tests in debug mode (headed browser with inspector)
     dir: '{{.E2E_DIR}}'
@@ -28,6 +40,30 @@ tasks:
     dir: '{{.E2E_DIR}}'
     cmds:
       - npx playwright show-report
+
+  phase1:
+    desc: "Run Phase 1 — Auth specs (registration, login, session, logout)"
+    dir: '{{.E2E_DIR}}'
+    cmds:
+      - npx playwright test specs/auth/
+
+  phase2:
+    desc: "Run Phase 2 — Core banking specs (dashboard, accounts, transactions)"
+    dir: '{{.E2E_DIR}}'
+    cmds:
+      - npx playwright test specs/core/
+
+  phase3:
+    desc: "Run Phase 3 — Transfers & budgets"
+    dir: '{{.E2E_DIR}}'
+    cmds:
+      - npx playwright test specs/advanced/
+
+  phase4:
+    desc: "Run Phase 4 — Admin, chatbot, concurrency"
+    dir: '{{.E2E_DIR}}'
+    cmds:
+      - npx playwright test specs/admin-ai/
 
   chromium:
     desc: Run E2E tests in Chromium only

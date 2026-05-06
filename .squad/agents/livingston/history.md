@@ -107,3 +107,15 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
   - E2E-206: Account details viewing (13 tests)
   - E2E-207: Transaction list display (14 tests)
 - **Total**: 72 test cases across 7 spec files
+
+## Testing Documentation & Taskfile Update (2026-07)
+
+### Completed
+- Created `docs/testing.md` — comprehensive guide covering prerequisites, quick start, all task commands, test structure, phases, config, auth fixtures, and debugging tips
+- Updated `Taskfile.e2e.yml` — added `ui`, `headed`, `phase1`–`phase4` tasks (total 12 tasks now)
+- All tasks verified with `task --list`; accessible via `task e2e:run`, `task e2e:ui`, etc.
+
+### Learnings
+- Taskfile.e2e.yml is included in root Taskfile.yml under `e2e:` namespace — commands use `task e2e:*` prefix
+- 4 test phases: auth (4 specs), core (3 specs), advanced (6 specs), admin-ai (7 specs) = 20 spec files total
+- Playwright config uses `BASE_URL` env var for override (default: http://localhost)
