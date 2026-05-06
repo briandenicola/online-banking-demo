@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation, Link as RouterLink } from 'react-router-dom';
 import { useAuthContext } from '../contexts/AuthContext';
 import {
   Container,
@@ -9,6 +9,7 @@ import {
   Button,
   Paper,
   Alert,
+  Link,
 } from '@mui/material';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 
@@ -18,6 +19,8 @@ const Login: React.FC = () => {
   const [error, setError] = useState('');
   const { login } = useAuthContext();
   const navigate = useNavigate();
+  const location = useLocation();
+  const successMessage = (location.state as any)?.message || '';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,6 +50,7 @@ const Login: React.FC = () => {
               Sign in to Online Banking
             </Typography>
             <Box component="form" onSubmit={handleSubmit} sx={{ mt: 1, width: '100%' }}>
+              {successMessage && <Alert severity="success" sx={{ mb: 1 }}>{successMessage}</Alert>}
               {error && <Alert severity="error">{error}</Alert>}
               <TextField
                 margin="normal"
@@ -73,6 +77,12 @@ const Login: React.FC = () => {
               </Button>
               <Typography variant="body2" color="text.secondary" align="center">
                 Demo credentials: demo@banking-demo.com / password123
+              </Typography>
+              <Typography variant="body2" align="center" sx={{ mt: 2 }}>
+                Don't have an account?{' '}
+                <Link component={RouterLink} to="/register">
+                  Sign up
+                </Link>
               </Typography>
             </Box>
           </Box>

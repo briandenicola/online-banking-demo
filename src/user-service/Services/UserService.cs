@@ -57,12 +57,28 @@ public class UserService : IUserService
         return results.FirstOrDefault();
     }
 
+    public async Task<UserModel?> GetUserByEmailAsync(string email)
+    {
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.Email = @email")
+            .WithParameter("@email", email);
+
+        var iterator = _container.GetItemQueryIterator<UserModel>(query);
+        var results = await iterator.ReadNextAsync();
+        return results.FirstOrDefault();
+    }
+
     public async Task<UserModel> CreateUserAsync(RegisterUserRequest request)
     {
         var existingUser = await GetUserByUsernameAsync(request.Username);
         if (existingUser != null)
         {
             throw new InvalidOperationException("Username already exists");
+        }
+
+        var existingEmail = await GetUserByEmailAsync(request.Email);
+        if (existingEmail != null)
+        {
+            throw new InvalidOperationException("Email already exists");
         }
 
         var passwordHash = BC.HashPassword(request.Password);

@@ -8,6 +8,7 @@ public interface IUserService
 {
     Task<User?> GetUserByIdAsync(string id);
     Task<User?> GetUserByUsernameAsync(string username);
+    Task<User?> GetUserByEmailAsync(string email);
     Task<User> CreateUserAsync(RegisterUserRequest request);
     Task<bool> ValidateCredentialsAsync(string username, string password);
 }

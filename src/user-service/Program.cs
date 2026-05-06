@@ -1,3 +1,4 @@
+using System;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Azure.Cosmos;
@@ -49,6 +50,14 @@ builder.Services.AddCors(options =>
               .AllowAnyHeader()
               .AllowCredentials();
     });
+});
+
+// HttpClient for account-service communication
+builder.Services.AddHttpClient("AccountService", client =>
+{
+    var accountServiceUrl = builder.Configuration["Services:AccountServiceUrl"] ?? "http://account-service:8080";
+    client.BaseAddress = new Uri(accountServiceUrl);
+    client.Timeout = TimeSpan.FromSeconds(10);
 });
 
 // Use in-memory database for development if configured
