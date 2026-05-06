@@ -318,3 +318,70 @@ Previous attempt passed only managed identity client ID without secret, which cr
 - `docker-compose config` — YAML syntax valid
 - `terraform validate` — requires `terraform init` to download azuread provider (expected)
 
+### 2026-05 — Build Context Review & Fixes
+
+**Task:** Review Taskfile.cloud.yml and docker-compose.yml build contexts to ensure they match Dockerfile requirements.
+
+**Analysis:**
+- .NET services (user, account, transaction, transfer) all have Dockerfiles that `COPY src/shared/` — require **repo root** as build context
+- Python services (chatbot, budget, anomaly) use relative paths (`./app`, `./pyproject.toml`) — require **service directory** as build context
+- event-processor (Go) uses relative paths (`go.mod`, `main.go`) — requires **service directory** as build context
+
+**Findings:**
+
+1. **Taskfile.cloud.yml** — ✅ CORRECT
+   - `build:dotnet` tasks use `-f ./src/{service}/Dockerfile .` (repo root context)
+   - `build:python` tasks use `./src/{service}/` (service directory context)
+   - `build:ui` uses `./src/ui-app/` (service directory context)
+   - No changes needed
+
+2. **docker-compose.yml** — ❌ ISSUES FOUND
+   - chatbot-service (line 107): Used `context: .` but should be `context: ./src/chatbot-service`
+   - anomaly-service (line 129): Used `context: .` but should be `context: ./src/anomaly-service`
+   - budget-service (line 151): Used `context: .` but should be `context: ./src/budget-service`
+   - .NET services correctly used `context: .` + `dockerfile: src/{service}/Dockerfile`
+   - event-processor correctly used `context: ./src/event-processor`
+
+3. **Heredoc Syntax** — ✅ NO ISSUES
+   - Taskfile.cloud.yml line 127 uses `cat <<EOF` in `_secrets:create` task
+   - Syntax is valid bash; no issues found
+
+**Fixes Applied:**
+- Updated docker-compose.yml Python services to use service-directory context + relative Dockerfile path
+- All services now follow the team decision: .NET = repo root, Python/Go = service directory
+
+**Key Learning:**
+- Build context determines what files Docker can access during build
+- Python Dockerfiles use relative COPY paths (./app) — must use service directory as context
+- .NET Dockerfiles use absolute paths from context root (src/shared/) — must use repo root as context
+- Mixing contexts breaks builds: wrong context = file not found errors
+
+
+### 2025-07 — Redis Cleanup: Remove In-Cluster Pod
+
+**Changes Made:**
+- Deleted `deploy/kustomize/base/redis.yaml` (redundant redis:7-alpine pod)
+- Removed `redis.yaml` from `deploy/kustomize/base/kustomization.yaml`
+- Updated `deploy/kustomize/base/configmap.yaml` — placeholder values for Azure Managed Redis (port 10000, TLS)
+- Updated `docs/deployment-azure.md` — corrected Redis tier, port, auth method references
+
+**Architecture:**
+- Azure Managed Redis (Balanced_B0) is provisioned via Terraform at `infra/cloud/main.tf:310-322`
+- Terraform output `redis_host` provides the hostname (`infra/cloud/outputs.tf:23-25`)
+- `access_keys_authentication_enabled = false` → Entra ID auth only, no password keys
+- Azure Managed Redis Balanced tier uses port 10000 (not 6379 or 6380)
+
+**Redis Client Libraries Per Service:**
+- .NET services (user, transaction, transfer): StackExchange.Redis, config key `Redis:ConnectionString` or `REDIS_HOST`+`REDIS_PORT`
+- Python anomaly-service: redis-py asyncio, env var `REDIS__CONNECTIONSTRING`
+- Go event-processor: go-redis/v9, env var `REDIS__CONNECTIONSTRING`
+
+**User Preferences:**
+- Brian prefers convention and simplicity over extra variables
+- Local dev Redis in docker-compose.yml must always be preserved
+
+**Follow-up Needed:**
+- All services need Entra ID token-based Redis auth for cloud deployment
+- .NET: add `Microsoft.Azure.StackExchangeRedis` NuGet package
+- Python: add `azure-identity` token provider to redis-py connection
+- Go: add `azidentity` credential to go-redis client

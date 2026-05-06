@@ -14,7 +14,6 @@ resources:
 - budget-service.yaml
 - chatbot-service.yaml
 - event-processor.yaml
-- redis.yaml
 - hpa.yaml
 - ingress.yaml
 - ui-app.yaml

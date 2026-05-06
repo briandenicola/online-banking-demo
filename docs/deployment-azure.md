@@ -32,7 +32,7 @@ Azure Resource Group
 |----------|---------|----------------|
 | **AKS** | Container orchestration | 3-5 nodes, auto-scaling |
 | **Cosmos DB** | Primary database | Multi-region, SSD storage |
-| **Azure Cache Redis** | Distributed caching, events | Premium tier |
+| **Azure Managed Redis** | Distributed caching, events | Balanced_B0 (Entra ID auth) |
 | **Azure OpenAI** | AI services | gpt-4o-mini deployment |
 | **Application Insights** | Logging & monitoring | Workspace-based |
 | **Key Vault** | Secrets management | RBAC-protected |
@@ -129,10 +129,13 @@ COSMOS_CONNECTION_STRING=$(az cosmosdb keys list \
   --query "connectionStrings[0].connectionString" -o tsv)
 echo "COSMOS_CONNECTION_STRING: $COSMOS_CONNECTION_STRING"
 
-# Redis Connection String
-REDIS_HOSTNAME=$(az redis show -g $RESOURCE_GROUP -n $REDIS_NAME --query "hostName" -o tsv)
-REDIS_KEY=$(az redis list-keys -g $RESOURCE_GROUP -n $REDIS_NAME --query "primaryKey" -o tsv)
-REDIS_CONNECTION_STRING="${REDIS_HOSTNAME}:6380,password=${REDIS_KEY},ssl=True"
+# Redis Connection String (Azure Managed Redis — Balanced tier, port 10000, TLS)
+# Note: access_keys_authentication_enabled = false means Entra ID auth is used.
+# For StackExchange.Redis connection string format with Entra ID, see:
+# https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/cache-azure-active-directory-for-authentication
+REDIS_HOST=$(terraform output -raw redis_host)
+REDIS_CONNECTION_STRING="${REDIS_HOST}:10000,ssl=True,abortConnect=False"
+echo "REDIS_HOST: $REDIS_HOST"
 echo "REDIS_CONNECTION_STRING: $REDIS_CONNECTION_STRING"
 
 # Azure OpenAI Endpoint & Keys
@@ -263,7 +266,7 @@ All of the following must be set before deploying to Azure:
 | **Jwt__Issuer** | ✓ | JWT token issuer claim | `user-service` |
 | **UseInMemoryDatabase** | ✓ | Must be `false` for production | `false` |
 | **COSMOS_CONNECTION_STRING** | ✓ | Cosmos DB connection string | `DefaultEndpoint=https://...;AccountKey=...;` |
-| **REDIS__CONNECTIONSTRING** | ✓ | Azure Cache for Redis connection | `<cache-name>.redis.cache.windows.net:6380` |
+| **REDIS__CONNECTIONSTRING** | ✓ | Azure Managed Redis connection | `<host>.redis.cache.windows.net:10000,ssl=True` |
 | **AZURE_TENANT_ID** | ✓ | Azure AD tenant ID | `12345678-1234-1234-1234-123456789012` |
 | **AZURE_CLIENT_ID** | ✓ | Managed Identity or Service Principal client ID | `12345678-1234-1234-1234-123456789012` |
 | **AZURE_CLIENT_SECRET** | ✗ (optional) | Service Principal secret (use managed identity instead) | - |
@@ -303,7 +306,7 @@ az keyvault secret set --vault-name $KEYVAULT_NAME \
 
 az keyvault secret set --vault-name $KEYVAULT_NAME \
   --name "RedisConnectionString" \
-  --value "<cache-name>.redis.cache.windows.net:6380,password=<key>,ssl=True"
+  --value "${REDIS_HOST}:10000,ssl=True,abortConnect=False"
 
 az keyvault secret set --vault-name $KEYVAULT_NAME \
   --name "AzureOpenAiEndpoint" \
@@ -571,7 +574,7 @@ kubectl logs -l app=user-service -n banking-demo > user-logs.txt
 |----------|-----|------|
 | AKS | 3 nodes (Standard_DS2_v2) | $400-500 |
 | Cosmos DB | 400 RU/s provisioned | $200-300 |
-| Azure Cache Redis | Premium, 2GB | $100-150 |
+| Azure Managed Redis | Balanced_B0 | $50-100 |
 | Application Insights | 1GB ingestion | $50-100 |
 | Azure OpenAI | ~1000 tokens/day | $50-100 |
 | **Total** | | **~$850-1200** |

@@ -5,9 +5,12 @@ metadata:
   namespace: banking-demo
 data:
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4317"
-  REDIS_HOST: "redis.banking-demo.svc.cluster.local"
-  REDIS_PORT: "6379"
-  REDIS__CONNECTIONSTRING: "redis.banking-demo.svc.cluster.local:6379"
+  # Redis config: values come from Terraform output (redis_host).
+  # Azure Managed Redis (Balanced tier) uses port 10000 with TLS.
+  # Override REDIS__CONNECTIONSTRING via Kubernetes secret for auth credentials.
+  REDIS_HOST: "REPLACE_WITH_TERRAFORM_OUTPUT_redis_host"
+  REDIS_PORT: "10000"
+  REDIS__CONNECTIONSTRING: "REPLACE_WITH_TERRAFORM_OUTPUT_redis_host:10000,ssl=True,abortConnect=False"
   USER_SERVICE_URL: "http://user-service.banking-demo.svc.cluster.local"
   ACCOUNT_SERVICE_URL: "http://account-service.banking-demo.svc.cluster.local"
   TRANSACTION_SERVICE_URL: "http://transaction-service.banking-demo.svc.cluster.local"
