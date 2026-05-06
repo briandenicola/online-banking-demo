@@ -127,3 +127,9 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 - MUI v9 renamed `primaryTypographyProps`/`secondaryTypographyProps` on ListItemText to `slotProps.primary`/`slotProps.secondary`
 - When using mock routers in tests (that render all Route children), assertions should use `getAllBy*` instead of `getBy*` to handle multiple rendered pages
 - Professional banking aesthetic relies on: deep navy primary, gold accent, system font stack, subtle shadows (elevation 1-2), 12px border-radius on cards, and clear visual hierarchy through font-weight rather than color
+
+### 2025-07-22 — Transactions Endpoint Fix
+- Changed `GET /transactions` → `GET /transactions/my` in Transactions.tsx (line 78)
+- The `/transactions/my` endpoint returns the authenticated user's transactions
+- The POST to `/transactions` for creating new transactions was left unchanged (correct endpoint)
+- Admin pages use separate endpoints (e.g., `/transactions/flagged`) — not touched

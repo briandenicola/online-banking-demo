@@ -75,7 +75,7 @@ const Transactions: React.FC = () => {
   const fetchTransactions = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await apiClient.get('/transactions');
+      const response = await apiClient.get('/transactions/my');
       setTransactions(response.data.transactions || []);
     } catch (e) {
       setError('Failed to load transactions');

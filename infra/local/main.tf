@@ -10,6 +10,10 @@ terraform {
       source  = "azure/azapi"
       version = "~> 2"
     }
+    azuread = {
+      source  = "hashicorp/azuread"
+      version = "~> 3"
+    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3"
@@ -25,6 +29,8 @@ provider "azurerm" {
   }
   storage_use_azuread = true
 }
+
+provider "azuread" {}
 
 locals {
   location            = var.region
@@ -73,7 +79,7 @@ resource "azurerm_application_insights" "main" {
   resource_group_name = azurerm_resource_group.this.name
   application_type    = "web"
   workspace_id        = azurerm_log_analytics_workspace.main.id
-  
+
   tags = {
     AppName = local.resource_name
   }
@@ -134,6 +140,19 @@ resource "azurerm_role_assignment" "current_user_cognitive_services_openai_user"
   principal_id         = data.azurerm_client_config.current.object_id
 }
 
+# Azure AI Developer role for AI Foundry project (required by AgentsClient in chatbot-service)
+resource "azurerm_role_assignment" "current_user_ai_developer" {
+  scope                = azapi_resource.ai_foundry_project.id
+  role_definition_name = "Azure AI Developer"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
+resource "azurerm_role_assignment" "managed_identity_ai_developer" {
+  scope                = azapi_resource.ai_foundry_project.id
+  role_definition_name = "Azure AI Developer"
+  principal_id         = azurerm_user_assigned_identity.openai_managed_identity.principal_id
+}
+
 resource "azurerm_cognitive_deployment" "gpt54" {
   name                 = "gpt-5.4"
   cognitive_account_id = data.azurerm_cognitive_account.openai.id
@@ -189,4 +208,35 @@ resource "azapi_resource" "ai_foundry_project" {
     "identity.principalId",
     "properties.internalId"
   ]
+}
+
+# Azure AD Application and Service Principal for chatbot-service local Docker auth
+resource "azuread_application" "chatbot_local" {
+  display_name = "banking-demo-chatbot-local"
+  owners       = [data.azurerm_client_config.current.object_id]
+}
+
+resource "azuread_service_principal" "chatbot_local" {
+  client_id = azuread_application.chatbot_local.client_id
+  owners    = [data.azurerm_client_config.current.object_id]
+}
+
+resource "azuread_application_password" "chatbot_local" {
+  application_id = azuread_application.chatbot_local.id
+  display_name   = "chatbot-local-secret"
+  end_date       = timeadd(timestamp(), "168h") # 7 days
+}
+
+# Assign Azure AI Developer role to SPN for AI Foundry project access
+resource "azurerm_role_assignment" "chatbot_spn_ai_developer" {
+  scope                = azapi_resource.ai_foundry_project.id
+  role_definition_name = "Azure AI Developer"
+  principal_id         = azuread_service_principal.chatbot_local.object_id
+}
+
+# Assign Cognitive Services OpenAI User role to SPN
+resource "azurerm_role_assignment" "chatbot_spn_cognitive_services_openai_user" {
+  scope                = data.azurerm_cognitive_account.openai.id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = azuread_service_principal.chatbot_local.object_id
 }

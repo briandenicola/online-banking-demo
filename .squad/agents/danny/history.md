@@ -207,3 +207,59 @@ The project's microservice decomposition is sound, but execution gaps (code bugs
 10. Ingress deprecation — Used ingressClassName instead of annotation
 
 **Deferred:** NetworkPolicies, PodDisruptionBudgets (need overlay-specific config)
+
+### 2026-05 — Playwright E2E Testing Backlog Planning
+
+**Objective:** Create comprehensive Playwright-based E2E testing strategy + MCP tooling for squad development workflows.
+
+**Scope:** 5 phases, 24 backlog items (28 story points over ~10.5 weeks)
+
+**Key Decisions:**
+
+1. **Playwright as primary E2E framework:**
+   - TypeScript + Chromium/Firefox/WebKit targets
+   - Page Object Model pattern for maintainability
+   - Fixture-based auth (register/login helpers)
+   - CI/CD integration via GitHub Actions
+
+2. **Playwright MCP as squad development tool:**
+   - MCP server exposing Playwright actions: navigate, click, fill, screenshot, getPageState, extractText
+   - Squad can interact with running app without browser: `/playwright click [selector]`
+   - Enables debugging without manual browser interactions
+   - Session context persisted across commands
+
+3. **Phased approach:**
+   - Phase 1: Infrastructure (Taskfile, config, health checks, GHA workflow)
+   - Phase 2: Auth flows (register, login, session, logout)
+   - Phase 3: Money movement (transfers, budgets, anomaly detection)
+   - Phase 4: Admin & AI (user management, chatbot with graceful fallback)
+   - Phase 5: MCP integration & squad tools
+
+4. **Test isolation & data:**
+   - Fixture-based cleanup (no test pollution)
+   - Seed data via existing `scripts/seed-data.sh`
+   - Mock Azure services when unavailable (chatbot, anomaly)
+   - 3x retry for transient failures
+
+5. **Security & auth:**
+   - Dynamic JWT generation per test
+   - No hardcoded credentials
+   - Admin tests use separate admin-role user
+
+6. **MCP architecture:**
+   - Browser/page instances cached in server
+   - Session management for parallel test scenarios
+   - State inspection: DOM snapshots, text extraction, element counting
+   - < 1s round-trip latency target
+
+**Related Findings:**
+- Project has zero E2E coverage (Livingston finding: "Zero test coverage")
+- Backend tests exist (.NET, Python unit tests) but no integration
+- CI "test" job conditional but never caught architecture/deployment issues
+- Docker Compose fully orchestrates 9 services — ideal for E2E testing without cloud
+- Redis Streams event pipeline (transfer → anomaly → budget) can be verified end-to-end
+- JWT validation + gateway routing verified via E2E (confirms auth layer works)
+
+**Backlog Location:** `.squad/playbooks/playwright-e2e-backlog.md`
+
+**Ready for Squad Input:** Backlog awaits Brian/team review before GitHub issue creation

@@ -16,7 +16,6 @@ try:
     from azure.ai.agents import AgentsClient
     from azure.ai.agents.models import FunctionTool, ToolSet, FunctionDefinition
     from azure.identity import DefaultAzureCredential
-    from opentelemetry.instrumentation.azure import AzureInstrumentor
     AZURE_AGENTS_AVAILABLE = True
 except ImportError:
     AZURE_AGENTS_AVAILABLE = False
@@ -25,6 +24,10 @@ except ImportError:
     ToolSet = None
     FunctionDefinition = None
     DefaultAzureCredential = None
+
+try:
+    from opentelemetry.instrumentation.azure import AzureInstrumentor
+except ImportError:
     AzureInstrumentor = None
 
 from fastapi import FastAPI, HTTPException, Request
@@ -134,70 +137,93 @@ def analyze_transaction(description: str, amount: float) -> dict:
     raise ValueError("Unable to analyze transaction")
 
 
+def _create_toolset():
+    """Build ToolSet with financial advisor functions."""
+    toolset = ToolSet()
+    functions = FunctionTool(functions={get_budget_insights, get_spending_pattern, analyze_transaction})
+    toolset.add(functions)
+    return toolset
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global agents_client, agent_id
     
+    logger.info("=" * 60)
+    logger.info("🤖 Chatbot Service — Startup")
+    logger.info("=" * 60)
+    
     # Support both AZURE_AI_AGENTS_ENDPOINT and AZURE_OPENAI_ENDPOINT for flexibility
     endpoint = os.getenv("AZURE_AI_AGENTS_ENDPOINT") or os.getenv("AZURE_OPENAI_ENDPOINT")
-    if endpoint and AZURE_AGENTS_AVAILABLE and DefaultAzureCredential:
-        # Initialize Agents client
-        agents_client = AgentsClient(
-            endpoint=endpoint,
-            credential=DefaultAzureCredential()
-        )
-        
-        logger.info("=" * 50)
-        logger.info("Validating Azure AI Foundry connectivity...")
-        
-        # Validate Entra ID token acquisition for Azure AI Agents
+    model = os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4")
+    
+    logger.info(f"  AZURE_AI_AGENTS_ENDPOINT: {endpoint or '❌ NOT SET'}")
+    logger.info(f"  AZURE_OPENAI_MODEL: {model}")
+    logger.info(f"  AZURE_TENANT_ID: {'✅ set' if os.getenv('AZURE_TENANT_ID') else '❌ not set'}")
+    logger.info(f"  AZURE_CLIENT_ID: {'✅ set' if os.getenv('AZURE_CLIENT_ID') else '❌ not set'}")
+    logger.info(f"  AZURE_CLIENT_SECRET: {'✅ set' if os.getenv('AZURE_CLIENT_SECRET') else '❌ not set'}")
+    logger.info(f"  AZURE_AGENTS_AVAILABLE (SDK): {AZURE_AGENTS_AVAILABLE}")
+    
+    if not endpoint:
+        logger.warning("⚠️  No Azure endpoint configured — chatbot will return 503 on requests")
+    elif not AZURE_AGENTS_AVAILABLE:
+        logger.warning("⚠️  azure-ai-agents SDK not installed — chatbot will return 503 on requests")
+    else:
+        logger.info("🔐 Acquiring Azure credential...")
         try:
             credential = DefaultAzureCredential()
-            token = await credential.get_token("https://ai.azure.com/.default")
-            logger.info(f"✅ Azure AI Foundry token acquired (expires {token.expires_on})")
+            token = credential.get_token("https://cognitiveservices.azure.com/.default")
+            logger.info(f"✅ Token acquired successfully (expires: {token.expires_on})")
         except Exception as ex:
-            logger.error(f"❌ Azure AI Foundry token acquisition FAILED: {ex}")
-            logger.error("Ensure AZURE_AI_AGENTS_ENDPOINT is set and Managed Identity/Service Principal has Azure AI Account role")
-            raise
+            logger.error(f"❌ Credential acquisition FAILED: {ex}")
+            logger.error("   Check AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET are correct")
+            logger.info("=" * 60)
+            yield
+            return
         
-        # Test connectivity with a simple ping
+        logger.info(f"🔌 Connecting to Azure AI Foundry at: {endpoint}")
         try:
-            test_run = agents_client.create_agent(
-                model=os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4"),
-                name="connectivity-test-agent",
-                instructions="Test agent"
+            agents_client = AgentsClient(
+                endpoint=endpoint,
+                credential=DefaultAzureCredential()
             )
-            agents_client.delete_agent(test_run.id)
-            logger.info("✅ Azure AI Foundry connectivity verified - Agent creation/deletion works")
-        except Exception as ping_ex:
-            logger.warning(f"⚠️ Azure AI Foundry ping test failed: {ping_ex}")
+            logger.info("✅ AgentsClient created")
+        except Exception as ex:
+            logger.error(f"❌ Failed to create AgentsClient: {ex}")
+            logger.info("=" * 60)
+            yield
+            return
         
-        # Create agent with tools for financial advisor
-        agent = agents_client.create_agent(
-            model=os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4"),
-            name="financial-advisor-agent",
-            instructions="""You are a helpful financial advisor agent. 
-            Provide concise, actionable financial advice. 
-            Never provide specific investment recommendations.
-            Use the available tools to get budget insights, spending patterns, and analyze transactions.
-            Always cite data from tools when providing advice.""",
-            toolset=ToolSet(
-                FunctionTool(get_budget_insights),
-                FunctionTool(get_spending_pattern),
-                FunctionTool(analyze_transaction)
+        logger.info(f"🏗️  Creating financial-advisor-agent (model: {model})...")
+        try:
+            agent = agents_client.create_agent(
+                model=model,
+                name="financial-advisor-agent",
+                instructions="""You are a helpful financial advisor agent. 
+                Provide concise, actionable financial advice. 
+                Never provide specific investment recommendations.
+                Use the available tools to get budget insights, spending patterns, and analyze transactions.
+                Always cite data from tools when providing advice.""",
+                toolset=_create_toolset()
             )
-        )
-        agent_id = agent.id
-        logger.info(f"✅ Created Azure AI Agent: {agent_id}")
+            agent_id = agent.id
+            logger.info(f"✅ Agent created successfully! ID: {agent_id}")
+            logger.info("🟢 Chatbot service READY — accepting requests")
+        except Exception as ex:
+            logger.error(f"❌ Agent creation FAILED: {ex}")
+            logger.error("   Ensure 'Azure AI Developer' role is assigned on the AI Foundry project")
+            agents_client = None
+    
+    logger.info("=" * 60)
     
     yield
     
     if agent_id and agents_client:
         try:
             agents_client.delete_agent(agent_id)
-            logger.info(f"Cleaned up agent {agent_id}")
+            logger.info(f"🧹 Cleaned up agent {agent_id}")
         except Exception as e:
-            logger.warning(f"Error cleaning up agent: {e}")
+            logger.warning(f"⚠️  Error cleaning up agent: {e}")
 
 
 app = FastAPI(title="Chatbot Service", version="1.0.0", lifespan=lifespan)

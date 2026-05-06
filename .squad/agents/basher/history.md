@@ -249,3 +249,72 @@ These bugs are end-to-end blockers: partition key mismatch means transaction ser
 - Account IDs are deterministic (`acct-{userId}-{type}`) for cross-service references
 - Transaction seed uses relative timestamps (now minus N days) so data always looks recent
 - JWT claim key is `userId` (lowercase) per existing pattern in GetUserTransactions
+
+### 2026-05 — Azure AI Developer RBAC for Chatbot Service
+
+**Task:** Fix chatbot 503 — DefaultAzureCredential authenticates but lacks correct RBAC role for Azure AI Agent Service.
+
+**Root Cause:** Chatbot uses `AgentsClient` from `azure-ai-agents` SDK, which requires the `Azure AI Developer` role scoped to the AI Foundry project resource — not just `Cognitive Services OpenAI User` on the OpenAI account.
+
+**Fix:**
+- Added `azurerm_role_assignment.current_user_ai_developer` — grants current user `Azure AI Developer` on `azapi_resource.ai_foundry_project`
+- Added `azurerm_role_assignment.managed_identity_ai_developer` — same role for managed identity
+- File: `infra/local/main.tf` (lines ~136-149)
+- `terraform validate` passes; Brian to run `terraform apply`
+
+**Key Learnings:**
+- Azure AI Agent Framework (AgentsClient) requires `Azure AI Developer` role, not `Cognitive Services OpenAI User`
+- Role must be scoped to the AI Foundry *project* resource (`azapi_resource`), not the Cognitive Services account
+- Both human user and managed identity need the role for local dev + production parity
+
+### 2026-05 — Service Principal Auth for Docker Containers
+
+**Task:** Create Azure Service Principal for chatbot-service Docker container authentication to Azure AI Foundry.
+
+**Root Cause:** DefaultAzureCredential in Docker requires either:
+- EnvironmentCredential (tenant ID + client ID + client secret)
+- AzureCliCredential (requires `az` CLI installed — not in container)
+
+Previous attempt passed only managed identity client ID without secret, which crashed. Container doesn't have `az` CLI, so AzureCliCredential fails.
+
+**Solution:** Created App Registration + Service Principal in Terraform with full credentials (tenant/client ID/secret) for Docker local dev.
+
+**Implementation:**
+1. **infra/local/main.tf** — Added:
+   - `azuread` provider
+   - `azuread_application.chatbot_local` — "banking-demo-chatbot-local" app registration
+   - `azuread_service_principal.chatbot_local` — service principal for the app
+   - `azuread_application_password.chatbot_local` — client secret (1-year expiry)
+   - `azurerm_role_assignment.chatbot_spn_ai_developer` — Azure AI Developer on AI Foundry project
+   - `azurerm_role_assignment.chatbot_spn_cognitive_services_openai_user` — OpenAI User role
+
+2. **infra/local/outputs.tf** — Added:
+   - `chatbot_spn_tenant_id` (from data.azurerm_client_config.current)
+   - `chatbot_spn_client_id` (SPN's application/client ID)
+   - `chatbot_spn_client_secret` (client secret, marked sensitive)
+
+3. **Taskfile.local.yml** — Updated both `_init-env` and `output-env`:
+   - Replaced single `AZURE_CLIENT_ID` (from managed identity) with three SPN vars:
+   - `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`
+   - All three sourced from new Terraform outputs
+
+4. **docker-compose.yml** — chatbot-service environment:
+   - Added `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` env vars
+   - Kept `.azure` volume mount as fallback (won't hurt)
+
+**Key Decisions:**
+- Service Principal is for local Docker dev only — managed identity still used for production
+- 1-year secret expiry provides balance between security and convenience
+- Both "Azure AI Developer" and "Cognitive Services OpenAI User" roles assigned (SPN may need both)
+- Managed identity role assignments remain unchanged (for production parity)
+
+**Trade-offs:**
+- Service Principal credentials are long-lived (1 year) vs managed identity's automatic rotation
+- Acceptable for local dev; production uses managed identity with shorter-lived tokens
+- Secrets stored in .env file — developers must protect local environment
+
+**Validation:**
+- `terraform fmt` — passed (auto-formatted)
+- `docker-compose config` — YAML syntax valid
+- `terraform validate` — requires `terraform init` to download azuread provider (expected)
+
