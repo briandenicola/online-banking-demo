@@ -28,8 +28,10 @@ tasks:
     cmds:
       - terraform -chdir=./{{.INFRA_DIR}} apply -auto-approve -compact-warnings
         -var "region={{.REGION}}"
+        -var "deploy_embedding_model={{.DEPLOY_EMBEDDING_MODEL}}"
     vars:
       REGION: '{{default .DEFAULT_REGION .CLI_ARGS}}'
+      DEPLOY_EMBEDDING_MODEL: '{{default "false" .DEPLOY_EMBEDDING_MODEL}}'
 
   down:
     desc: Destroys all Azure resources and cleans up Terraform

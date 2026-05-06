@@ -420,6 +420,7 @@ resource "azurerm_cognitive_deployment" "gpt54_mini" {
 }
 
 resource "azurerm_cognitive_deployment" "text_embedding" {
+  count                = var.deploy_embedding_model ? 1 : 0
   name                 = "text-embedding-ada-002"
   cognitive_account_id = data.azurerm_cognitive_account.openai.id
 

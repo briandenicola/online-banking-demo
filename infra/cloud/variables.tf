@@ -27,3 +27,9 @@ variable "kubernetes_version" {
   type        = string
   default     = "1.35.3"
 }
+
+variable "deploy_embedding_model" {
+  description = "Deploy the text-embedding-ada-002 model (not available in all regions)"
+  type        = bool
+  default     = false
+}
