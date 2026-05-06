@@ -164,9 +164,6 @@ resource "azurerm_kubernetes_cluster" "main" {
     tenant_id          = data.azurerm_client_config.current.tenant_id
   }
 
-  oidc_issuer_enabled       = true
-  workload_identity_enabled = true
-
   network_profile {
     network_plugin      = "azure"
     network_plugin_mode = "overlay"
