@@ -183,6 +183,7 @@ These bugs are end-to-end blockers: partition key mismatch means transaction ser
 - Danny (Infrastructure): nginx admin route configuration verified
 - All branches merged to main; ready for staging deployment
 
+
 ### 2026-05 — Structured Logging & OpenTelemetry Observability
 
 **Scope:** Added structured logging (Serilog/.NET, structlog/Python) and OpenTelemetry tracing to all services with correlation ID propagation.
@@ -225,3 +226,12 @@ These bugs are end-to-end blockers: partition key mismatch means transaction ser
 - Volume mount must target `/home/appuser/.azure` to match container user's home directory
 - Token acquisition check via `credential.get_token()` is the canonical way to verify credential availability
 - Read-only mount (`:ro`) is essential — containers must never write to host credential cache
+1. **Shared Observability Library (.NET)** — `src/shared/Observability/` with CorrelationIdMiddleware, Serilog JSON config, OTLP tracing
+2. **Python Services (structlog)** — JSON structured logging with correlation ID via contextvars
+3. **nginx Gateway** — Generates X-Correlation-ID using $request_id, propagates to all upstreams
+4. **docker-compose.yml** — OTEL_EXPORTER_OTLP_ENDPOINT + OTEL_SERVICE_NAME on all services; optional Jaeger
+
+**Key Decisions:**
+- Env-var-driven OTLP export (empty = disabled) for zero-config local dev
+- Shared .NET library avoids duplication
+- structlog contextvars propagates correlation without function arg threading

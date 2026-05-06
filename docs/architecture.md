@@ -54,7 +54,7 @@ The Online Banking Demo is a microservices-based banking platform built on .NET,
 
 ```
 1. User POST /api/auth/login (email + password)
-   └─> User Service validates credentials against in-memory store
+   └─> User Service validates credentials
    
 2. User Service returns JWT token:
    - Issuer: "user-service"
@@ -82,39 +82,27 @@ The Online Banking Demo is a microservices-based banking platform built on .NET,
 ### Transaction Flow Example
 
 ```
-User calls /api/transfers/execute with from_account, to_account, amount
+User calls /api/transfers/execute
 
 Transfer Service:
-  ├─ Validates request (requires JWT token)
-  ├─ Calls Account Service (get_account_details, lock for transfer)
-  ├─ Calls Transaction Service (record_transaction)
-  ├─ Publishes event to banking-events Redis Stream:
-  │   {
-  │     "event_type": "transfer.completed",
-  │     "from_account_id": "...",
-  │     "to_account_id": "...",
-  │     "amount": 150.00,
-  │     "timestamp": "2024-01-15T10:30:00Z"
-  │   }
+  ├─ Validates request (JWT token)
+  ├─ Calls Account Service (get details, lock)
+  ├─ Calls Transaction Service (record)
+  ├─ Publishes event to banking-events stream
+  │   {"event_type": "transfer.completed", ...}
   └─ Returns transfer ID and status
 
 Event Processor (subscribes to banking-events):
-  ├─ Receives transfer.completed event
-  ├─ Routes to:
-  │   ├─ Audit logger (for compliance)
-  │   ├─ Anomaly detection consumer (fraud check)
-  │   └─ Budget tracker (for spending categorization)
+  ├─ Routes to audit logger, anomaly detector
   └─ Updates consumer group offset
 
-Anomaly Service (if subscribed):
-  ├─ Receives event
-  ├─ Analyzes: velocity, patterns, merchant risk
-  ├─ If anomalous: publishes to anomaly.detected event
+Anomaly Service:
+  ├─ Analyzes transaction patterns
+  ├─ Publishes anomaly.detected if suspicious
   └─ Returns risk score
 
-Budget Service (if subscribed):
-  ├─ Receives event
-  ├─ Categorizes transaction
+Budget Service:
+  ├─ Categorizes spending
   ├─ Updates budget tracking
   └─ Scores financial health
 ```
@@ -133,15 +121,12 @@ Budget Service (if subscribed):
 
 ### Local Development (Docker Compose)
 
-```
-docker-compose.yml defines:
-  - 4 .NET services (user, account, transaction, transfer)
-  - 3 Python services (chatbot, anomaly, budget)
-  - 1 Go service (event-processor)
-  - 1 React UI
-  - 1 NGINX gateway
-  - 1 Redis instance
-```
+- 4 .NET services (user, account, transaction, transfer)
+- 3 Python services (chatbot, anomaly, budget)
+- 1 Go service (event-processor)
+- 1 React UI
+- 1 NGINX gateway
+- 1 Redis instance
 
 **Network**: Docker bridge network (compose auto-networking)
 **Storage**: Redis persistence to `redis-data` volume
@@ -153,38 +138,17 @@ docker-compose.yml defines:
 Azure Resource Group
 ├─ AKS Cluster (Kubernetes)
 │  ├─ Namespace: banking-demo
-│  ├─ Deployments (2 replicas each):
-│  │  ├─ user-service
-│  │  ├─ account-service
-│  │  ├─ transaction-service
-│  │  ├─ transfer-service
-│  │  ├─ chatbot-service
-│  │  ├─ anomaly-service
-│  │  └─ budget-service
-│  ├─ Services (ClusterIP, LoadBalancer for gateway)
-│  ├─ ConfigMaps (app configuration)
-│  └─ Secrets (banking-secrets: DB, API keys)
+│  ├─ Deployments (2 replicas each)
+│  ├─ Services (ClusterIP, LoadBalancer)
+│  ├─ ConfigMaps & Secrets (banking-secrets)
 │
 ├─ Cosmos DB (managed database)
-│  └─ Connection string in banking-secrets K8s Secret
-│
 ├─ Azure Cache for Redis (managed Redis)
-│  └─ Used for distributed sessions and event streaming
-│
 ├─ Container Registry (ghcr.io)
-│  └─ Hosts all service images: ghcr.io/banking-demo/{service}:latest
-│
 ├─ Azure OpenAI (AI endpoint)
-│  └─ Used by chatbot, anomaly, budget services
-│
-├─ Application Insights
-│  └─ Centralized logging, metrics, tracing
-│
-├─ Key Vault
-│  └─ Centralized secrets management
-│
-└─ Log Analytics Workspace
-   └─ Application logs and diagnostics
+├─ Application Insights (logging)
+├─ Key Vault (secrets)
+└─ Log Analytics Workspace (diagnostics)
 ```
 
 **GitOps**: Flux CD watches GitHub repo (`deploy/flux/` and `deploy/kustomize/`)
@@ -193,16 +157,16 @@ Azure Resource Group
 
 ### Horizontal Scaling
 
-- **Stateless services** (.NET & Python services): Scale replicas in K8s based on CPU/memory metrics
-- **Redis**: Switch to Azure Cache for Redis (managed) in production
+- **Stateless services**: Scale replicas in K8s based on CPU/memory metrics
+- **Redis**: Switch to Azure Cache for Redis in production
 - **Database**: Cosmos DB handles scaling automatically
 
-### Bottlenecks & Optimization
+### Optimization
 
-1. **API Gateway** - NGINX can handle ~1000 req/s on single instance; use K8s HPA to scale ingress controller
-2. **Transaction Service** - Heavy read/write; cache frequently accessed transactions in Redis
-3. **Event Processing** - Redis Streams can handle millions of events/sec; use consumer groups for parallel processing
-4. **Authentication** - Cache JWT validation results in-memory to reduce User Service calls
+1. **API Gateway** - NGINX can handle ~1000 req/s; use K8s HPA to scale
+2. **Transaction Service** - Cache frequently accessed transactions in Redis
+3. **Event Processing** - Use consumer groups for parallel processing
+4. **Authentication** - Cache JWT validation results in-memory
 
 ## Security Architecture
 
@@ -210,57 +174,56 @@ Azure Resource Group
 
 - **Services isolated** within K8s network namespace in production
 - **NGINX Gateway** validates all external requests
-- **Service-to-service** calls use internal service names (no external exposure)
+- **Service-to-service** calls use internal service names
 
 ### Data Security
 
-- **In-transit**: TLS/SSL for all external communication (enforced by HTTPS ingress)
+- **In-transit**: TLS/SSL for all external communication
 - **At-rest**: Cosmos DB encryption, Redis TLS in production
 - **Secrets**: K8s Secrets (backed by Azure Key Vault in production)
 
 ### Identity & Access
 
-- **JWT tokens** for API authentication (bearer tokens)
-- **Service accounts** for pod-to-pod communication (K8s service account tokens)
-- **RBAC**: Namespace isolation (banking-demo namespace separate from system namespaces)
+- **JWT tokens** for API authentication
+- **Service accounts** for pod-to-pod communication
+- **RBAC**: Namespace isolation (banking-demo separate from system)
 
 ## Monitoring & Observability
 
 ### Logging
 
 - **Application Insights**: Instrumented via `APPLICATIONINSIGHTS_CONNECTION_STRING`
-- **Log destination**: Application Insights workspace (trace, dependency tracking)
 - **Local dev**: Logs to stdout/stderr (captured by Docker)
 
 ### Metrics
 
-- **Request metrics**: Request count, latency, error rate per endpoint
+- **Request metrics**: Count, latency, error rate per endpoint
 - **System metrics**: CPU, memory, disk I/O
-- **Business metrics**: Transaction volume, anomaly detection rate, user activity
+- **Business metrics**: Transaction volume, anomaly rate
 
 ### Tracing
 
-- **Distributed tracing**: Trace IDs propagated across service calls via X-Trace-Id header
-- **Service dependency map**: Automatically generated from trace data
+- **Distributed tracing**: Trace IDs across service calls
+- **Service dependency map**: Generated from trace data
 - **Error tracking**: Exceptions logged with full context
 
 ## Resilience Patterns
 
 ### Retry Logic
 
-- **Transient failures**: Services implement exponential backoff (2s, 4s, 8s, etc.)
-- **Circuit breaker**: Transfer Service breaks circuit to Account Service if >5 failures in 30s
+- **Transient failures**: Exponential backoff (2s, 4s, 8s, etc.)
+- **Circuit breaker**: Break circuit after 5 failures in 30s
 
 ### Fallback
 
-- **Account Service unavailable**: Transfer Service returns HTTP 503 (Service Unavailable)
-- **Redis unavailable**: Transaction Service continues but disables event publishing
+- **Account Service unavailable**: Return HTTP 503
+- **Redis unavailable**: Continue but disable event publishing
 
 ### Health Checks
 
 - **Liveness probe**: Kubernetes restarts unhealthy pods
-- **Readiness probe**: Kubernetes removes unhealthy pods from load balancer
-- **Startup probe**: Grace period for services to initialize (30s)
+- **Readiness probe**: Removes unhealthy pods from load balancer
+- **Startup probe**: Grace period for initialization (30s)
 
 ---
 

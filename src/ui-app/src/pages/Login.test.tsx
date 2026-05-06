@@ -39,7 +39,7 @@ describe('Login Page', () => {
   test('renders sign in title', () => {
     renderLogin();
 
-    expect(screen.getByText(/Sign in to Online Banking/i)).toBeInTheDocument();
+    expect(screen.getByText(/Welcome Back/i)).toBeInTheDocument();
   });
 
   test('has pre-filled demo credentials', () => {

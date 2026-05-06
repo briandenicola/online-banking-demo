@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, useLocation, Link as RouterLink } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthContext } from '../contexts/AuthContext';
 import {
   Container,
@@ -10,7 +10,9 @@ import {
   Paper,
   Alert,
   Link,
+  Divider,
 } from '@mui/material';
+import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 
 const Login: React.FC = () => {
@@ -29,66 +31,142 @@ const Login: React.FC = () => {
       await login(email, password);
       navigate('/');
     } catch (err) {
-      setError('Login failed. Please try again.');
+      setError('Login failed. Please check your credentials and try again.');
     }
   };
 
   return (
-    <Container component="main" maxWidth="xs">
-      <Box
-        sx={{
-          marginTop: 8,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-        }}
-      >
-        <Paper elevation={3} sx={{ padding: 4, width: '100%' }}>
-          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <LockOutlinedIcon sx={{ fontSize: 40, color: 'primary.main', mb: 1 }} />
-            <Typography component="h1" variant="h5">
-              Sign in to Online Banking
-            </Typography>
-            <Box component="form" onSubmit={handleSubmit} sx={{ mt: 1, width: '100%' }}>
-              {successMessage && <Alert severity="success" sx={{ mb: 1 }}>{successMessage}</Alert>}
-              {error && <Alert severity="error">{error}</Alert>}
-              <TextField
-                margin="normal"
-                required
-                fullWidth
-                label="Email Address"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                autoComplete="email"
-                autoFocus
-              />
-              <TextField
-                margin="normal"
-                required
-                fullWidth
-                label="Password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-              />
-              <Button type="submit" fullWidth variant="contained" sx={{ mt: 3, mb: 2 }}>
-                Sign In
-              </Button>
-              <Typography variant="body2" color="text.secondary" align="center">
-                Demo credentials: demo@banking-demo.com / password123
-              </Typography>
-              <Typography variant="body2" align="center" sx={{ mt: 2 }}>
-                Don't have an account?{' '}
-                <Link component={RouterLink} to="/register">
-                  Sign up
-                </Link>
-              </Typography>
+    <Box
+      sx={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        bgcolor: '#f5f7fa',
+      }}
+    >
+      <Box sx={{ bgcolor: 'primary.main', py: 2, px: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <AccountBalanceIcon sx={{ color: 'white', fontSize: 32 }} />
+          <Typography variant="h6" component="span" sx={{ color: 'white', fontWeight: 700 }}>
+            SecureBank
+          </Typography>
+        </Box>
+      </Box>
+
+      <Container component="main" maxWidth="sm" sx={{ flex: 1, display: 'flex', alignItems: 'center', py: 4 }}>
+        <Paper
+          elevation={2}
+          sx={{
+            p: { xs: 3, sm: 5 },
+            width: '100%',
+            border: '1px solid',
+            borderColor: 'divider',
+          }}
+        >
+          <Box sx={{ textAlign: 'center', mb: 4 }}>
+            <Box
+              sx={{
+                width: 56,
+                height: 56,
+                borderRadius: '50%',
+                bgcolor: 'primary.main',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                mx: 'auto',
+                mb: 2,
+              }}
+            >
+              <LockOutlinedIcon sx={{ color: 'white', fontSize: 28 }} />
             </Box>
+            <Typography component="h1" variant="h5" sx={{ fontWeight: 700, color: 'primary.dark' }}>
+              Welcome Back
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Sign in to access your accounts securely
+            </Typography>
+          </Box>
+
+          <Box component="form" onSubmit={handleSubmit}>
+            {successMessage && (
+              <Alert severity="success" sx={{ mb: 2 }}>{successMessage}</Alert>
+            )}
+            {error && (
+              <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>
+            )}
+
+            <TextField
+              margin="normal"
+              required
+              fullWidth
+              label="Email Address"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              autoFocus
+              variant="outlined"
+            />
+            <TextField
+              margin="normal"
+              required
+              fullWidth
+              label="Password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              variant="outlined"
+            />
+
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
+              <Link
+                component="button"
+                type="button"
+                variant="body2"
+                sx={{ color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
+              >
+                Forgot password?
+              </Link>
+            </Box>
+
+            <Button
+              type="submit"
+              fullWidth
+              variant="contained"
+              size="large"
+              sx={{ mt: 3, mb: 2, py: 1.5 }}
+            >
+              Sign In
+            </Button>
+
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', mb: 2 }}>
+              Demo credentials: demo@banking-demo.com / password123
+            </Typography>
+
+            <Divider sx={{ my: 2 }}>
+              <Typography variant="caption" color="text.secondary">
+                New to SecureBank?
+              </Typography>
+            </Divider>
+
+            <Button
+              fullWidth
+              variant="outlined"
+              onClick={() => navigate('/register')}
+              sx={{ py: 1.2 }}
+            >
+              Enroll Now
+            </Button>
           </Box>
         </Paper>
+      </Container>
+
+      <Box sx={{ textAlign: 'center', py: 2, px: 2, bgcolor: '#f5f7fa' }}>
+        <Typography variant="caption" color="text.secondary">
+          SecureBank is FDIC insured. {'\u00A9'} {new Date().getFullYear()} SecureBank. All rights reserved.
+        </Typography>
       </Box>
-    </Container>
+    </Box>
   );
 };
 

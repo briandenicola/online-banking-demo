@@ -2,212 +2,96 @@
 
 ## Architecture Overview
 
-The Online Banking Demo is designed for cloud-native deployment on Azure using modern DevOps practices. This guide covers the complete infrastructure provisioning and deployment pipeline.
+The Online Banking Demo is designed for cloud-native deployment on Azure using modern DevOps practices and GitOps principles.
 
 ### High-Level Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                      AZURE CLOUD PLATFORM                           │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                       │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │              KUBERNETES (AKS)                                │  │
-│  │  ┌────────────────────────────────────────────────────────┐  │  │
-│  │  │  banking-demo Namespace                               │  │  │
-│  │  │  ┌──────────┐ ┌──────────┐ ┌─────────────────────┐   │  │  │
-│  │  │  │user-svc  │ │acct-svc  │ │ Ingress Controller │   │  │  │
-│  │  │  │(2 pods)  │ │(2 pods)  │ │ (Public IP/TLS)    │   │  │  │
-│  │  │  └──────────┘ └──────────┘ └─────────────────────┘   │  │  │
-│  │  │  ┌──────────┐ ┌──────────┐ ┌─────────────────────┐   │  │  │
-│  │  │  │txn-svc   │ │xfer-svc  │ │  ConfigMaps &      │   │  │  │
-│  │  │  │(2 pods)  │ │(2 pods)  │ │  Secrets           │   │  │  │
-│  │  │  └──────────┘ └──────────┘ └─────────────────────┘   │  │  │
-│  │  │  ┌──────────┐ ┌──────────┐ ┌──────────────────────┐  │  │  │
-│  │  │  │chatbot   │ │anomaly   │ │  event-processor   │  │  │  │
-│  │  │  │(1 pod)   │ │(1 pod)   │ │  (1 pod)           │  │  │  │
-│  │  │  └──────────┘ └──────────┘ └──────────────────────┘  │  │  │
-│  │  └────────────────────────────────────────────────────┘  │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                                │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │              DATA LAYER                                  │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │  │
-│  │  │ Cosmos DB    │  │ Redis Cache  │  │ Event Hub    │   │  │
-│  │  │ (SQL API)    │  │ (Managed)    │  │ (Streaming)  │   │  │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘   │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                                │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │              AI & MONITORING                             │  │
-│  │  ┌──────────────────┐  ┌─────────────────────────────┐   │  │
-│  │  │ Azure OpenAI     │  │ Application Insights (Logs) │   │  │
-│  │  └──────────────────┘  │ Key Vault (Secrets)         │   │  │
-│  │                        └─────────────────────────────┘   │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                                │
-└─────────────────────────────────────────────────────────────────────┘
-
-External Access:
-┌──────────────┐
-│ Users/GitHub │ ──┐
-│  CI/CD       │   │
-└──────────────┘   │
-                   ├──> Application Ingress (TLS) ──> AKS Public IP
-                   │
-┌──────────────┐   │
-│Container     │   │
-│Registry      │ ──┘
-│(ghcr.io)     │
-└──────────────┘
+Azure Resource Group
+├─ AKS Cluster (Kubernetes)
+│  ├─ Namespace: banking-demo
+│  ├─ Deployments (2 replicas each):
+│  │  ├─ user-service, account-service
+│  │  ├─ transaction-service, transfer-service
+│  │  └─ chatbot-service, anomaly-service, budget-service
+│  ├─ Services (ClusterIP, LoadBalancer for gateway)
+│  ├─ ConfigMaps & Secrets (banking-secrets)
+│
+├─ Cosmos DB (managed database)
+├─ Azure Cache for Redis (managed Redis)
+├─ Container Registry (ghcr.io)
+├─ Azure OpenAI (AI endpoint)
+├─ Application Insights (logging & monitoring)
+├─ Key Vault (secrets management)
+└─ Log Analytics Workspace (diagnostics)
 ```
 
-### Azure Resources Summary
+### Azure Resources
 
 | Resource | Purpose | Configuration |
 |----------|---------|----------------|
-| **Azure Kubernetes Service (AKS)** | Container orchestration, manages pod lifecycle | 3-5 nodes, auto-scaling enabled |
-| **Cosmos DB (SQL API)** | Primary data store for users, accounts, transactions | Multi-region replication, SSD storage |
-| **Azure Cache for Redis** | Distributed caching, session management, event streaming | Premium tier, clustering enabled |
-| **Azure OpenAI** | AI services for chatbot, anomaly detection, budget analysis | Deployment: gpt-4o-mini model |
-| **Container Registry (ghcr.io)** | Docker image storage and distribution | GitHub Container Registry |
-| **Application Insights** | Centralized logging, monitoring, distributed tracing | Workspace-based, 2-year retention |
-| **Key Vault** | Centralized secrets management | RBAC-protected, audit logging |
-| **Event Hub** | High-scale event ingestion (optional, uses Redis Streams by default) | 20+ throughput units |
-| **Log Analytics Workspace** | Query and analyze logs, metrics | 5GB/day ingestion, 90-day retention |
+| **AKS** | Container orchestration | 3-5 nodes, auto-scaling |
+| **Cosmos DB** | Primary database | Multi-region, SSD storage |
+| **Azure Cache Redis** | Distributed caching, events | Premium tier |
+| **Azure OpenAI** | AI services | gpt-4o-mini deployment |
+| **Application Insights** | Logging & monitoring | Workspace-based |
+| **Key Vault** | Secrets management | RBAC-protected |
+| **Container Registry** | Image storage | ghcr.io (GitHub) |
 
 ## Prerequisites
 
-### Azure Account Setup
+### Required Tools
 
-1. **Azure Subscription**: Active subscription with billing enabled
-2. **Azure CLI**: Version 2.50+ ([install](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli))
-3. **kubectl**: Kubernetes command-line tool ([install](https://kubernetes.io/docs/tasks/tools/))
-4. **Flux CLI**: GitOps management ([install](https://fluxcd.io/docs/installation/))
-5. **Terraform**: Version 1.5+ ([install](https://www.terraform.io/downloads))
+- **Azure CLI**: Version 2.50+ ([install](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli))
+- **kubectl**: Kubernetes CLI ([install](https://kubernetes.io/docs/tasks/tools/))
+- **Flux CLI**: GitOps management ([install](https://fluxcd.io/docs/installation/))
+- **Terraform**: Version 1.5+ ([install](https://www.terraform.io/downloads))
 
-### Verification Commands
+### Azure Account
 
-```bash
-# Verify Azure CLI
-az --version
-# Output: azure-cli 2.50.0
-
-# Verify kubectl
-kubectl version --client
-# Output: Client Version: v1.28.0
-
-# Verify Flux CLI
-flux --version
-# Output: flux version 2.1.0
-
-# Verify Terraform
-terraform --version
-# Output: Terraform v1.5.0
-```
-
-### Azure Service Requirements
-
-1. **Owner or Contributor** role in target subscription
-2. **Permissions for**:
-   - Creating resource groups
-   - Managing AKS clusters
-   - Creating Cosmos DB instances
-   - Provisioning managed services (Redis, OpenAI, etc.)
-   - Managing Azure Container Registry
-
-### GitHub Integration
-
-1. **Repository Settings**: Ensure `Settings > Actions` allows GitHub Actions
-2. **GitHub Token**: Personal access token (PAT) with `repo`, `write:packages`, `read:packages` scopes
-3. **Container Registry**: Credentials configured in GitHub Secrets for `ghcr.io`
+- **Active subscription** with billing enabled
+- **Owner or Contributor** role in subscription
+- **Permissions** for AKS, Cosmos DB, managed services
 
 ## Infrastructure Provisioning with Terraform
 
-### 1. Prepare Terraform Configuration
+### 1. Initialize Infrastructure
 
 ```bash
-# Navigate to infrastructure directory
 cd infra/cloud
 
-# Examine main.tf for resources to be created
-cat main.tf | head -50
-
-# Check variables
-cat variables.tf
-
-# View outputs (what will be returned after provisioning)
-cat outputs.tf
-```
-
-### 2. Initialize Terraform
-
-```bash
-# Download required providers
+# Initialize Terraform
 terraform init
 
-# Output: Successfully configured the backend "local"!
-
-# Verify backend is ready
+# Validate configuration
 terraform validate
-# Output: Success! The configuration is valid.
 ```
 
-### 3. Plan Infrastructure
+### 2. Plan Deployment
 
 ```bash
-# Generate execution plan (review before applying)
+# Generate execution plan
 terraform plan -out=tfplan
 
-# Output shows:
-# Plan: X to add, 0 to change, 0 to destroy.
-# - Resource Group
-# - AKS Cluster
-# - Cosmos DB
-# - Redis Cache
-# - Application Insights
-# - Key Vault
-# etc.
+# Review resources to be created
 ```
 
-### 4. Apply Infrastructure
+### 3. Apply Infrastructure
 
 ```bash
-# Create infrastructure (this takes 15-25 minutes)
+# Create infrastructure (15-25 minutes)
 terraform apply tfplan
 
-# Monitor progress
-# Watch AKS cluster creation, may show:
-# "Still creating... [2m30s elapsed]"
-# "Still creating... [10m15s elapsed]"
-
-# Once complete, Terraform outputs:
-# Outputs:
-# aks_cluster_name = "..."
-# cosmos_endpoint = "https://..."
-# redis_host = "..."
+# Note the outputs:
+# - aks_cluster_name
+# - cosmos_endpoint
+# - redis_host
 ```
 
-### 5. Save Outputs
+### 4. Get Kubernetes Credentials
 
 ```bash
-# Export important values for next steps
-terraform output -json > cluster-config.json
-
-# Extract specific values
-CLUSTER_NAME=$(terraform output -raw aks_cluster_name)
-RESOURCE_GROUP=$(terraform output -raw resource_group_name)
-COSMOS_ENDPOINT=$(terraform output -raw cosmos_db_endpoint)
-REDIS_HOST=$(terraform output -raw redis_host)
-
-echo "Cluster: $CLUSTER_NAME"
-echo "Resource Group: $RESOURCE_GROUP"
-```
-
-### 6. Get Kubernetes Credentials
-
-```bash
-# Configure kubectl to access your AKS cluster
+# Configure kubectl
 CLUSTER_NAME=$(terraform output -raw aks_cluster_name)
 RESOURCE_GROUP=$(terraform output -raw resource_group_name)
 
@@ -218,96 +102,146 @@ az aks get-credentials \
 
 # Verify connectivity
 kubectl get nodes
+```
 
-# Output:
-# NAME                                STATUS   ROLES   AGE
-# aks-default-12345678-vmss000000     Ready    agent   5m
-# aks-default-12345678-vmss000001     Ready    agent   5m
-# aks-default-12345678-vmss000002     Ready    agent   5m
+### 5. Collect Resource Connection Details
+
+Before configuring secrets, gather connection strings and endpoints from the Azure resources provisioned by Terraform:
+
+```bash
+# Set variables for easy access
+CLUSTER_NAME=$(terraform output -raw aks_cluster_name)
+RESOURCE_GROUP=$(terraform output -raw resource_group_name)
+KEYVAULT_NAME=$(terraform output -raw keyvault_name)
+COSMOS_ACCOUNT=$(terraform output -raw cosmos_account_name)
+REDIS_NAME=$(terraform output -raw redis_name)
+OPENAI_RESOURCE=$(terraform output -raw openai_resource_name)
+AI_RESOURCE=$(terraform output -raw ai_resource_name)
+
+# Get AKS Managed Identity
+IDENTITY_PRINCIPAL_ID=$(az aks show -g $RESOURCE_GROUP -n $CLUSTER_NAME --query "identity.principalId" -o tsv)
+
+# Cosmos DB Connection String
+COSMOS_CONNECTION_STRING=$(az cosmosdb keys list \
+  --name $COSMOS_ACCOUNT \
+  --resource-group $RESOURCE_GROUP \
+  --type connection-strings \
+  --query "connectionStrings[0].connectionString" -o tsv)
+echo "COSMOS_CONNECTION_STRING: $COSMOS_CONNECTION_STRING"
+
+# Redis Connection String
+REDIS_HOSTNAME=$(az redis show -g $RESOURCE_GROUP -n $REDIS_NAME --query "hostName" -o tsv)
+REDIS_KEY=$(az redis list-keys -g $RESOURCE_GROUP -n $REDIS_NAME --query "primaryKey" -o tsv)
+REDIS_CONNECTION_STRING="${REDIS_HOSTNAME}:6380,password=${REDIS_KEY},ssl=True"
+echo "REDIS_CONNECTION_STRING: $REDIS_CONNECTION_STRING"
+
+# Azure OpenAI Endpoint & Keys
+AZURE_OPENAI_ENDPOINT=$(az cognitiveservices account show \
+  -n $OPENAI_RESOURCE \
+  -g $RESOURCE_GROUP \
+  --query "properties.endpoint" -o tsv)
+echo "AZURE_OPENAI_ENDPOINT: $AZURE_OPENAI_ENDPOINT"
+
+# Azure AI Services Endpoint
+AZURE_AI_ENDPOINT=$(az cognitiveservices account show \
+  -n $AI_RESOURCE \
+  -g $RESOURCE_GROUP \
+  --query "properties.endpoint" -o tsv)
+echo "AZURE_AI_AGENTS_ENDPOINT: $AZURE_AI_ENDPOINT"
+
+# Application Insights Connection String
+APPINSIGHTS_NAME="${CLUSTER_NAME}-insights"
+APPINSIGHTS_CONNECTION=$(az monitor app-insights component show \
+  -g $RESOURCE_GROUP \
+  -a $APPINSIGHTS_NAME \
+  --query "connectionString" -o tsv)
+echo "APPLICATIONINSIGHTS_CONNECTION_STRING: $APPINSIGHTS_CONNECTION"
+
+# Generate JWT Secret (one-time)
+JWT_KEY=$(openssl rand -base64 32)
+echo "Jwt__Key: $JWT_KEY"
+
+# Azure Tenant & Client ID (for managed identity)
+AZURE_TENANT_ID=$(az account show --query "tenantId" -o tsv)
+AZURE_CLIENT_ID=$(az aks show -g $RESOURCE_GROUP -n $CLUSTER_NAME --query "identity.userAssignedIdentities" -o tsv | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -1)
+echo "AZURE_TENANT_ID: $AZURE_TENANT_ID"
+echo "AZURE_CLIENT_ID: $AZURE_CLIENT_ID"
+
+# Save to file for later use (keep this secure!)
+cat > azure-credentials.env << EOF
+Jwt__Key=$JWT_KEY
+COSMOS_CONNECTION_STRING=$COSMOS_CONNECTION_STRING
+REDIS__CONNECTIONSTRING=$REDIS_CONNECTION_STRING
+AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT
+AZURE_OPENAI_MODEL=gpt-4o-mini
+AZURE_AI_AGENTS_ENDPOINT=$AZURE_AI_ENDPOINT
+APPLICATIONINSIGHTS_CONNECTION_STRING=$APPINSIGHTS_CONNECTION
+AZURE_TENANT_ID=$AZURE_TENANT_ID
+AZURE_CLIENT_ID=$AZURE_CLIENT_ID
+UseInMemoryDatabase=false
+Jwt__Issuer=user-service
+ASPNETCORE_ENVIRONMENT=Production
+EOF
+
+# IMPORTANT: Keep azure-credentials.env secret
+# Add to .gitignore if not already there
+echo "azure-credentials.env" >> .gitignore
 ```
 
 ## Flux GitOps Setup
 
-### 1. Install Flux on the Cluster
+### 1. Install Flux on Cluster
 
 ```bash
-# Check if Flux is already installed
-flux check --pre
-
 # Install Flux components
 flux install
 
 # Verify installation
 kubectl get pods -n flux-system
-# Output: source-controller, kustomize-controller, etc. all Running
 ```
 
-### 2. Create Git Repository Secret
+### 2. Create GitHub Authentication
 
 ```bash
-# Create secret for GitHub authentication (Flux needs to pull from private repo)
+# Create secret for GitHub access
 flux create secret git github-pat \
   --namespace=flux-system \
   --url=https://github.com \
   --username=git \
   --password=$GITHUB_PAT
-
-# Verify secret created
-kubectl get secrets -n flux-system github-pat
 ```
 
-### 3. Create Git Repository Source
-
-Flux needs to know where to pull manifests from:
+### 3. Apply Git Repository Source
 
 ```bash
-# Check existing source (deploy/flux/repository.yaml)
-cat deploy/flux/repository.yaml
-
-# Apply Git source to cluster
+# Apply Git source configuration
 kubectl apply -f deploy/flux/repository.yaml
 
-# Verify source is created
+# Verify source
 kubectl get gitrepository -n flux-system
 
-# Monitor sync status
+# Monitor sync
 flux get source git banking-demo --watch
-# Output:
-# banking-demo    	  True  	Fetched revision... (ready)
 ```
 
 ### 4. Apply Kustomization
 
-Flux uses Kustomize to render and deploy manifests:
-
 ```bash
-# Check Kustomization config (deploy/flux/kustomization.yaml)
-cat deploy/flux/kustomization.yaml
-
-# Apply Kustomization to cluster
+# Apply Kustomization config
 kubectl apply -f deploy/flux/kustomization.yaml
-
-# Verify Kustomization is created
-kubectl get kustomization -n flux-system
 
 # Monitor reconciliation
 flux get kustomization banking-demo --watch
-# Output:
-# banking-demo    	  True  	Applied revision...
 ```
 
 ### 5. Verify Deployments
 
 ```bash
-# Check namespace was created
-kubectl get namespaces | grep banking-demo
-
-# List all deployments in banking-demo namespace
+# Check deployments in banking-demo namespace
 kubectl get deployments -n banking-demo
 
 # View running pods
 kubectl get pods -n banking-demo
-# Output: user-service, account-service, transaction-service, transfer-service, etc.
 
 # Check pod status (should be Running)
 kubectl describe pod -n banking-demo user-service-xxx-yyy
@@ -315,47 +249,232 @@ kubectl describe pod -n banking-demo user-service-xxx-yyy
 
 ## Configuration Management
 
-### 1. Create Banking Secrets
+### 1. Environment & Secrets Configuration
 
-Store sensitive data in K8s Secrets:
+Azure deployment requires all secrets to be stored in Azure Key Vault (not committed to git). Create an `.env` file locally for the deploy process, or set them directly in Key Vault.
+
+#### Required Variables for Azure Deployment
+
+All of the following must be set before deploying to Azure:
+
+| Variable | Required | Purpose | Example |
+|----------|----------|---------|---------|
+| **Jwt__Key** | ✓ | JWT token signing secret | Generated with `openssl rand -base64 32` |
+| **Jwt__Issuer** | ✓ | JWT token issuer claim | `user-service` |
+| **UseInMemoryDatabase** | ✓ | Must be `false` for production | `false` |
+| **COSMOS_CONNECTION_STRING** | ✓ | Cosmos DB connection string | `DefaultEndpoint=https://...;AccountKey=...;` |
+| **REDIS__CONNECTIONSTRING** | ✓ | Azure Cache for Redis connection | `<cache-name>.redis.cache.windows.net:6380` |
+| **AZURE_TENANT_ID** | ✓ | Azure AD tenant ID | `12345678-1234-1234-1234-123456789012` |
+| **AZURE_CLIENT_ID** | ✓ | Managed Identity or Service Principal client ID | `12345678-1234-1234-1234-123456789012` |
+| **AZURE_CLIENT_SECRET** | ✗ (optional) | Service Principal secret (use managed identity instead) | - |
+| **AZURE_OPENAI_ENDPOINT** | ✓ | Azure OpenAI service endpoint | `https://<resource>.openai.azure.com/` |
+| **AZURE_OPENAI_MODEL** | ✓ | Deployment name for GPT model | `gpt-4o-mini` |
+| **AZURE_AI_AGENTS_ENDPOINT** | ✓ | Azure AI Services endpoint | `https://<resource>.cognitiveservices.azure.com/` |
+| **APPLICATIONINSIGHTS_CONNECTION_STRING** | ✓ | Application Insights ingestion endpoint | `InstrumentationKey=...;` |
+
+#### Optional Variables
+
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| **Services__AccountService** | Account service URL | `https://account-service.banking-demo.svc.cluster.local` |
+| **Services__TransactionService** | Transaction service URL | `https://transaction-service.banking-demo.svc.cluster.local` |
+| **CORS_ALLOWED_ORIGINS** | Allowed CORS origins | `https://banking-demo.azurewebsites.net` |
+| **ASPNETCORE_ENVIRONMENT** | ASP.NET Core environment | `Production` |
+
+### 2. Azure Key Vault Setup
+
+Store all secrets in Azure Key Vault for secure, centralized management:
 
 ```bash
-# Create secret with connection strings and API keys
+# Create Key Vault (if not already created by Terraform)
+KEYVAULT_NAME="banking-demo-kv"
+az keyvault create \
+  --name $KEYVAULT_NAME \
+  --resource-group $RESOURCE_GROUP
+
+# Set secrets in Key Vault
+az keyvault secret set --vault-name $KEYVAULT_NAME \
+  --name "JwtKey" \
+  --value "$(openssl rand -base64 32)"
+
+az keyvault secret set --vault-name $KEYVAULT_NAME \
+  --name "CosmosConnectionString" \
+  --value "DefaultEndpoint=https://<account>.documents.azure.com:443/;AccountKey=<key>;"
+
+az keyvault secret set --vault-name $KEYVAULT_NAME \
+  --name "RedisConnectionString" \
+  --value "<cache-name>.redis.cache.windows.net:6380,password=<key>,ssl=True"
+
+az keyvault secret set --vault-name $KEYVAULT_NAME \
+  --name "AzureOpenAiEndpoint" \
+  --value "https://<resource>.openai.azure.com/"
+
+az keyvault secret set --vault-name $KEYVAULT_NAME \
+  --name "AzureAiAgentsEndpoint" \
+  --value "https://<resource>.cognitiveservices.azure.com/"
+
+az keyvault secret set --vault-name $KEYVAULT_NAME \
+  --name "ApplicationInsightsConnectionString" \
+  --value "InstrumentationKey=<key>;IngestionEndpoint=https://..."
+
+# Grant AKS managed identity access to Key Vault
+IDENTITY_PRINCIPAL_ID=$(az aks show -g $RESOURCE_GROUP -n $CLUSTER_NAME --query "identity.principalId" -o tsv)
+az keyvault set-policy --name $KEYVAULT_NAME \
+  --object-id $IDENTITY_PRINCIPAL_ID \
+  --secret-permissions get list
+
+# Verify secrets are set
+az keyvault secret list --vault-name $KEYVAULT_NAME --query "[].[name]" -o tsv
+```
+
+### 3. Create Kubernetes Secrets from Key Vault
+
+Option A: **Automated (Using External Secrets Operator)**
+
+```bash
+# Install External Secrets Operator (Helm)
+helm repo add external-secrets https://charts.external-secrets.io
+helm repo update
+helm install external-secrets \
+  external-secrets/external-secrets \
+  -n external-secrets-system \
+  --create-namespace
+
+# Create SecretStore resource pointing to Key Vault
+kubectl apply -f - <<EOF
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: azure-keyvault
+  namespace: banking-demo
+spec:
+  provider:
+    azure:
+      authType: managedIdentity
+      vaultUrl: https://${KEYVAULT_NAME}.vault.azure.net
+      identityID: ${AZURE_CLIENT_ID}
+EOF
+
+# Create ExternalSecret to sync secrets into K8s
+kubectl apply -f - <<EOF
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: banking-secrets
+  namespace: banking-demo
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: azure-keyvault
+    kind: SecretStore
+  target:
+    name: banking-secrets
+    creationPolicy: Owner
+  data:
+    - secretKey: jwt-key
+      remoteRef:
+        key: JwtKey
+    - secretKey: cosmos-connection-string
+      remoteRef:
+        key: CosmosConnectionString
+    - secretKey: redis-connection-string
+      remoteRef:
+        key: RedisConnectionString
+    - secretKey: azure-openai-endpoint
+      remoteRef:
+        key: AzureOpenAiEndpoint
+    - secretKey: azure-ai-agents-endpoint
+      remoteRef:
+        key: AzureAiAgentsEndpoint
+    - secretKey: appinsights-connection-string
+      remoteRef:
+        key: ApplicationInsightsConnectionString
+EOF
+```
+
+Option B: **Manual Kubernetes Secret Creation**
+
+```bash
+# Get secrets from Key Vault
+JWT_KEY=$(az keyvault secret show --vault-name $KEYVAULT_NAME --name "JwtKey" -o tsv --query "value")
+COSMOS_CS=$(az keyvault secret show --vault-name $KEYVAULT_NAME --name "CosmosConnectionString" -o tsv --query "value")
+REDIS_CS=$(az keyvault secret show --vault-name $KEYVAULT_NAME --name "RedisConnectionString" -o tsv --query "value")
+OPENAI_EP=$(az keyvault secret show --vault-name $KEYVAULT_NAME --name "AzureOpenAiEndpoint" -o tsv --query "value")
+AI_AGENTS_EP=$(az keyvault secret show --vault-name $KEYVAULT_NAME --name "AzureAiAgentsEndpoint" -o tsv --query "value")
+APPINSIGHTS_CS=$(az keyvault secret show --vault-name $KEYVAULT_NAME --name "ApplicationInsightsConnectionString" -o tsv --query "value")
+
+# Create Kubernetes secret
 kubectl create secret generic banking-secrets \
   --namespace=banking-demo \
-  --from-literal=cosmos-connection-string="DefaultEndpoint=https://...;AccountKey=..." \
-  --from-literal=redis-connection-string="redis-host.redis.cache.windows.net:6380,ssl=True,password=..." \
-  --from-literal=appinsights-connection-string="InstrumentationKey=...;IngestionEndpoint=..." \
-  --from-literal=openai-endpoint="https://your-openai.openai.azure.com/" \
-  --from-literal=openai-api-key="..." \
-  --from-literal=jwt-key="YourSuperSecretKeyForJWTTokenGeneration12345"
+  --from-literal=jwt-key="$JWT_KEY" \
+  --from-literal=cosmos-connection-string="$COSMOS_CS" \
+  --from-literal=redis-connection-string="$REDIS_CS" \
+  --from-literal=azure-openai-endpoint="$OPENAI_EP" \
+  --from-literal=azure-ai-agents-endpoint="$AI_AGENTS_EP" \
+  --from-literal=appinsights-connection-string="$APPINSIGHTS_CS"
 
-# Verify secret created
-kubectl get secrets -n banking-demo banking-secrets -o yaml
-
-# Update if needed
-kubectl patch secret banking-secrets \
-  --namespace=banking-demo \
-  -p '{"data":{"jwt-key":"...'
+# Verify secret was created
+kubectl describe secret banking-secrets -n banking-demo
 ```
 
-### 2. Update ConfigMap
-
-Application configuration (non-sensitive):
+### 4. Create ConfigMap for Non-Sensitive Configuration
 
 ```bash
-# Check existing ConfigMap (deploy/kustomize/base/app.yaml)
-kubectl get configmap -n banking-demo banking-demo-config -o yaml
-
-# Update ConfigMap if needed
-kubectl patch configmap banking-demo-config \
+# Create ConfigMap with environment variables and service URLs
+kubectl create configmap banking-config \
   --namespace=banking-demo \
-  -p '{"data":{"REGISTRY":"ghcr.io","ASPNETCORE_ENVIRONMENT":"Production"}}'
+  --from-literal=UseInMemoryDatabase="false" \
+  --from-literal=Jwt__Issuer="user-service" \
+  --from-literal=AZURE_OPENAI_MODEL="gpt-4o-mini" \
+  --from-literal=ASPNETCORE_ENVIRONMENT="Production" \
+  --from-literal=Services__AccountService="http://account-service:8080" \
+  --from-literal=Services__TransactionService="http://transaction-service:8080"
+
+# Verify ConfigMap
+kubectl describe configmap banking-config -n banking-demo
 ```
 
-### 3. Configure Image Registry
+### 5. Mount Secrets in Deployment Specs
 
-For container image pulls:
+Reference these secrets/configs in your Kubernetes deployment files:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  template:
+    spec:
+      containers:
+      - name: user-service
+        image: ghcr.io/your-org/banking-demo/user-service:latest
+        env:
+          # From Secrets
+          - name: Jwt__Key
+            valueFrom:
+              secretKeyRef:
+                name: banking-secrets
+                key: jwt-key
+          - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+            valueFrom:
+              secretKeyRef:
+                name: banking-secrets
+                key: appinsights-connection-string
+          # From ConfigMap
+          - name: Jwt__Issuer
+            valueFrom:
+              configMapKeyRef:
+                name: banking-config
+                key: Jwt__Issuer
+          - name: UseInMemoryDatabase
+            valueFrom:
+              configMapKeyRef:
+                name: banking-config
+                key: UseInMemoryDatabase
+```
+
+### 2. Configure Image Registry
 
 ```bash
 # Create image pull secret for ghcr.io
@@ -366,21 +485,21 @@ kubectl create secret docker-registry ghcr-secret \
   --docker-password=$GITHUB_PAT \
   --docker-email=your-email@example.com
 
-# Link secret to service account
+# Link to service account
 kubectl patch serviceaccount default \
   --namespace=banking-demo \
   -p '{"imagePullSecrets":[{"name":"ghcr-secret"}]}'
 ```
 
-## Container Registry Setup
+## Container Registry & CI/CD
 
-### 1. Build and Push Images
+### Build & Push Images
 
 ```bash
 # Login to GitHub Container Registry
-echo $GITHUB_PAT | docker login ghcr.io -u your-github-username --password-stdin
+echo $GITHUB_PAT | docker login ghcr.io -u your-username --password-stdin
 
-# Build images (locally or in CI/CD)
+# Build image
 docker build -t ghcr.io/your-username/banking-demo/user-service:latest src/user-service/
 
 # Push to registry
@@ -392,157 +511,26 @@ docker tag ghcr.io/your-username/banking-demo/user-service:latest \
 docker push ghcr.io/your-username/banking-demo/user-service:v1.0.0
 ```
 
-### 2. Configure GitHub Actions CI/CD
+### GitHub Actions CI/CD Pipeline
 
-```bash
-# CI/CD pipeline automatically:
-# 1. Builds images on GitHub
-# 2. Pushes to ghcr.io
-# 3. Triggers Flux to reconcile with new images
-# 4. Flux applies new deployments to AKS
+CI/CD automatically:
+1. Builds images on GitHub
+2. Pushes to ghcr.io
+3. Triggers Flux to reconcile
+4. Flux applies new deployments to AKS
 
-# See .github/workflows/ for pipeline configuration
-cat .github/workflows/build-and-push.yml
-```
+See `.github/workflows/` for configuration.
 
-## Secrets Management
-
-### 1. Azure Key Vault Integration
-
-Store secrets securely in Key Vault:
-
-```bash
-# Get Key Vault name from Terraform output
-KEY_VAULT=$(terraform output -raw key_vault_name)
-
-# Store secret
-az keyvault secret set \
-  --vault-name $KEY_VAULT \
-  --name jwt-key \
-  --value "YourSuperSecretKeyForJWTTokenGeneration12345"
-
-# Retrieve secret
-az keyvault secret show \
-  --vault-name $KEY_VAULT \
-  --name jwt-key --query value -o tsv
-```
-
-### 2. Sync Secrets to Kubernetes
-
-Use Azure Key Vault Provider for Secrets Store CSI Driver:
-
-```bash
-# Install CSI driver for Key Vault integration
-helm repo add csi-secrets-store-provider-azure https://raw.githubusercontent.com/Azure/secrets-store-csi-driver-provider-azure/master/charts
-helm install csi-secrets-store-provider-azure/csi-secrets-store-provider-azure \
-  --namespace kube-system
-
-# Create SecretProviderClass that references Key Vault
-kubectl apply -f - <<EOF
-apiVersion: secrets-store.csi.x-k8s.io/v1
-kind: SecretProviderClass
-metadata:
-  name: banking-secrets-provider
-  namespace: banking-demo
-spec:
-  provider: azure
-  parameters:
-    usePodIdentity: "true"
-    keyvaultName: $KEY_VAULT
-    tenantId: $(az account show --query tenantId -o tsv)
-    objects: |
-      array:
-        - |
-          objectName: jwt-key
-          objectType: secret
-EOF
-
-# Verify provider class
-kubectl get secretproviderclass -n banking-demo
-```
-
-## CI/CD Pipeline Overview
-
-### GitHub Actions Workflow
-
-The repository includes automated CI/CD:
-
-```
-┌─────────────────────────────────────────────────────────┐
-│  Developer Pushes to Main Branch                        │
-└────────────────────┬────────────────────────────────────┘
-                     │
-        ┌────────────▼─────────────┐
-        │ GitHub Actions Triggered │
-        └────────────┬─────────────┘
-                     │
-     ┌───────────────┼───────────────┐
-     │               │               │
-     ▼               ▼               ▼
-┌────────┐    ┌──────────┐    ┌──────────┐
-│ Lint   │    │  Test    │    │  Build   │
-│ Code   │    │  Unit    │    │  Docker  │
-└────────┘    │  Tests   │    │ Images   │
-              └──────────┘    └──────────┘
-                     │               │
-                     └───────┬───────┘
-                            │
-                    ┌───────▼────────┐
-                    │ Push to        │
-                    │ ghcr.io        │
-                    │ Registry       │
-                    └───────┬────────┘
-                            │
-                  ┌─────────▼──────────┐
-                  │ Update Kustomize  │
-                  │ Image Tags         │
-                  │ in deploy/kustomize│
-                  └─────────┬──────────┘
-                            │
-                  ┌─────────▼──────────┐
-                  │ Commit & Push     │
-                  │ Updated Manifests │
-                  └─────────┬──────────┘
-                            │
-                  ┌─────────▼──────────┐
-                  │ Flux Detects      │
-                  │ Changes in Git    │
-                  │ Repository        │
-                  └─────────┬──────────┘
-                            │
-                  ┌─────────▼──────────┐
-                  │ Flux Reconciles   │
-                  │ Deploys New       │
-                  │ Service Versions  │
-                  └───────────────────┘
-```
-
-### Manual Deployment Trigger
-
-If automatic deployment doesn't trigger:
-
-```bash
-# Manually reconcile Flux
-flux reconcile kustomization banking-demo --with-source
-
-# Check reconciliation status
-kubectl get kustomization -n flux-system -o wide
-
-# View Flux events for debugging
-kubectl get events -n flux-system --sort-by='.lastTimestamp' | tail -20
-```
-
-## Monitoring and Observability
+## Monitoring & Observability
 
 ### Application Insights
 
 ```bash
-# Get Application Insights connection string
+# Get connection string
 APPINSIGHTS_CONNECTION=$(terraform output -raw appinsights_connection_string)
 
-# Query logs in Azure Portal
-# Navigate to: Resource Group > Application Insights > Logs
-# Run KQL:
+# Query logs in Azure Portal → Application Insights → Logs
+# KQL examples:
 # traces | where timestamp > ago(1h) | summarize count() by severityLevel
 # requests | where duration > 5000 | summarize count() by name
 ```
@@ -554,108 +542,89 @@ APPINSIGHTS_CONNECTION=$(terraform output -raw appinsights_connection_string)
 kubectl get nodes
 kubectl get componentstatuses
 
-# View pod metrics (requires metrics-server)
+# View pod metrics
 kubectl top nodes
 kubectl top pods -n banking-demo
 
 # Check persistent volumes
 kubectl get pvc -n banking-demo
-
-# View service mesh (if Istio installed)
-kubectl get virtualservices -n banking-demo
 ```
 
 ### Log Aggregation
 
 ```bash
-# Stream logs from all pods
+# Stream pod logs
 kubectl logs -f -l app=user-service -n banking-demo
 
 # View logs from crashed pod
 kubectl logs <pod-name> --previous -n banking-demo
 
-# Export logs for analysis
-kubectl logs -l app=user-service -n banking-demo > user-service-logs.txt
+# Export logs
+kubectl logs -l app=user-service -n banking-demo > user-logs.txt
 ```
 
 ## Cost Considerations
 
-### Azure Resource Costs (Estimated Monthly)
+### Estimated Monthly Costs
 
-| Resource | SKU | Estimated Cost | Notes |
-|----------|-----|---|---|
-| AKS | 3 nodes (Standard_DS2_v2) | $400-500 | Auto-scaling can increase |
-| Cosmos DB | 400 RU/s (provisioned) | $200-300 | Pay-per-request cheaper for low traffic |
-| Azure Cache Redis | Premium, 2GB | $100-150 | Managed Redis |
-| Application Insights | 1GB ingestion | $50-100 | Log ingestion costs |
-| Azure OpenAI | ~1000 tokens/day | $50-100 | Per token pricing |
-| Managed Identity, Key Vault | Pay-per-operation | <$10 | Minimal cost |
-| **Total Estimated** | | **~$850-1200** | Can be optimized |
+| Resource | SKU | Cost |
+|----------|-----|------|
+| AKS | 3 nodes (Standard_DS2_v2) | $400-500 |
+| Cosmos DB | 400 RU/s provisioned | $200-300 |
+| Azure Cache Redis | Premium, 2GB | $100-150 |
+| Application Insights | 1GB ingestion | $50-100 |
+| Azure OpenAI | ~1000 tokens/day | $50-100 |
+| **Total** | | **~$850-1200** |
 
-### Cost Optimization Tips
+### Optimization Tips
 
-1. **Use Dev/Test Environments**: Lower-cost SKUs for non-production
-2. **Auto-scaling**: Set appropriate CPU/memory thresholds to avoid over-provisioning
-3. **Reserved Instances**: Commit 1-3 years for 30-40% discount on compute
-4. **Spot VMs**: Use Azure Spot for non-critical workloads (up to 90% discount)
-5. **Log Retention**: Reduce Application Insights retention to 30 days if not needed
-6. **Redis**: Switch from Premium to Standard for dev environments
-7. **Cosmos DB**: Use shared throughput for multiple containers
-8. **Shutdown**: Stop AKS cluster during off-hours (dev environments only)
+- Use Dev/Test environments with lower-cost SKUs
+- Enable auto-scaling based on CPU/memory
+- Use Reserved Instances for 30-40% discount
+- Use Azure Spot VMs (up to 90% discount) for non-critical workloads
+- Reduce Application Insights retention to 30 days
+- Shut down AKS cluster during off-hours (dev environments)
 
-## Troubleshooting Deployment
+## Troubleshooting
 
-### Common Issues
-
-#### Flux Not Reconciling
+### Flux Not Reconciling
 
 ```bash
-# Check Flux reconciliation status
+# Check reconciliation status
 flux get kustomization banking-demo
 
 # Force reconciliation
 flux reconcile kustomization banking-demo --with-source
 
-# View Flux controller logs
+# View controller logs
 kubectl logs -n flux-system -l app=kustomize-controller -f
 ```
 
-#### Pods Stuck in Pending
+### Pods Stuck in Pending
 
 ```bash
 # Check pod events
 kubectl describe pod <pod-name> -n banking-demo
 
-# Common causes:
-# - Insufficient resources: kubectl top nodes
-# - Image pull issues: kubectl describe pod -n banking-demo | grep ImagePull
-# - Node affinity/tolerations: kubectl get nodes --show-labels
+# Check node resources
+kubectl top nodes
+
+# Check image pull issues
+kubectl describe pod -n banking-demo | grep ImagePull
 ```
 
-#### Service Connectivity Issues
+### Service Connectivity Issues
 
 ```bash
-# Check service DNS resolution
-kubectl run -it --rm debug --image=busybox:1.28 --restart=Never -- nslookup user-service.banking-demo
+# Test DNS resolution
+kubectl run -it --rm debug --image=busybox:1.28 --restart=Never \
+  -- nslookup user-service.banking-demo
 
 # Test inter-service connectivity
 kubectl exec -it <pod-name> -n banking-demo -- curl http://account-service:8080/health
 
 # Check service endpoints
 kubectl get endpoints -n banking-demo
-```
-
-#### Secret Not Found
-
-```bash
-# Verify secret exists
-kubectl get secrets -n banking-demo banking-secrets
-
-# Verify pod mounts secret
-kubectl describe pod <pod-name> -n banking-demo | grep banking-secrets
-
-# Check secret data
-kubectl get secret banking-secrets -n banking-demo -o yaml
 ```
 
 ---

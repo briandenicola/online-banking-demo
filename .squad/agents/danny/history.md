@@ -91,3 +91,102 @@ The project's microservice decomposition is sound, but execution gaps (code bugs
 - nginx `location` matching is prefix-based; more specific paths (e.g., `/api/users/login`) match before general ones (`/api/users/`)
 - `internalRedirect` in njs allows request to be validated then forwarded to a named location (`@upstream`) for proxying
 - Docker Compose variable substitution with `${VAR:-default}` syntax allows gradual migration from hardcoded secrets without breaking existing dev workflows
+### 2026-05 — Deployment Documentation Compilation
+
+**Objective:** Create comprehensive deployment documentation for local and cloud (Azure) environments, plus detailed system architecture guide.
+
+**Scope:** Four documentation artifacts:
+1. **docs/deployment-local.md** — Local Docker Compose development guide
+2. **docs/deployment-azure.md** — Azure AKS + Flux GitOps production deployment
+3. **docs/architecture.md** — Comprehensive system design documentation
+4. **README.md** — Updated with documentation links and enhanced overview
+
+**Key Discoveries During Documentation:**
+
+1. **Service Census (9 Services Total)**
+   - 4 .NET Core Banking Services (user/account/transaction/transfer on ports 6001-6004)
+   - 3 Python Agent Services (chatbot/anomaly/budget on ports 8001-8003)
+   - 1 Go Event Processor (no exposed port)
+   - 1 React UI (port 3000)
+   - 1 NGINX API Gateway (port 80)
+   - 1 Redis instance (port 6380, shared by multiple services)
+
+2. **Event Architecture Clarification**
+   - Primary event bus: Redis Streams using `banking-events` stream
+   - Event publishers: Transaction Service, Transfer Service, Anomaly Service
+   - Event consumers: Event Processor (Go), Anomaly Service, Budget Service
+   - Event types: transfer.completed, transaction.recorded, anomaly.detected, budget.updated, etc.
+   - Consumer groups enable parallel processing and offset tracking
+
+3. **Authentication & Authorization Flow**
+   - JWT tokens issued by User Service with shared key (`Jwt__Key` env var)
+   - Tokens contain user_id, email, roles
+   - API Gateway passes Authorization header; each service validates JWT signature independently
+   - Protected endpoints: /api/users/*, /api/accounts/*, /api/transactions/*, /api/transfers/*, /api/chat/*
+
+4. **Local Development Environment Variables (.env)**
+   - JWT settings: Jwt__Key, Jwt__Issuer
+   - Database: UseInMemoryDatabase=true (for local dev)
+   - Redis: REDIS__CONNECTIONSTRING=redis:6379 (container internal DNS)
+   - Inter-service URLs: Services__AccountService=http://account-service:8080, etc.
+   - Optional Azure services: AZURE_OPENAI_ENDPOINT, AZURE_CLIENT_ID, APPLICATIONINSIGHTS_CONNECTION_STRING (empty for basic local dev)
+
+5. **Docker Compose Networking Insights**
+   - Services communicate via Docker internal DNS using container names (not localhost)
+   - Example: transfer-service calls account-service via http://account-service:8080
+   - Redis persistence to named volume (redis-data)
+   - Health checks: redis, user-service, account-service, transaction-service have liveness probes
+
+6. **Azure Infrastructure Components (from Terraform/Kustomize review)**
+   - AKS cluster (3-5 nodes, auto-scaling)
+   - Cosmos DB (SQL API) with multi-region replication
+   - Azure Cache for Redis (Premium tier with clustering)
+   - Azure OpenAI (gpt-4o-mini model deployment)
+   - Application Insights (workspace-based logging)
+   - Key Vault (RBAC-protected secrets store)
+   - Container Registry: ghcr.io (GitHub Container Registry)
+   - Flux GitOps watches deploy/flux/ and deploy/kustomize/ for declarative deployments
+
+7. **Seed Data Script (scripts/seed-data.sh)**
+   - Creates demo users (idempotent — skips already-existing users)
+   - Generates checking/savings accounts with initial balances
+   - Executes sample transfers between accounts
+   - Extracts JWT tokens for each user during execution
+   - Designed to run against local services (curl to localhost:6001, :6002, etc.)
+
+8. **Deployment Patterns Identified**
+   - **Local:** docker-compose.yml orchestrates all 9 services with health checks and dependency management
+   - **Cloud:** Terraform (infra/cloud/) provisions Azure resources; Kustomize (deploy/kustomize/) defines K8s manifests; Flux (deploy/flux/) reconciles desired state from Git
+
+9. **Scaling & Optimization Strategies**
+   - Stateless .NET/Python services can scale horizontally via K8s HPA based on CPU/memory metrics
+   - NGINX gateway can handle ~1000 req/s per instance; use K8s HPA for ingress controller
+   - Redis Streams handles millions of events/sec with consumer groups for parallel processing
+   - Cache frequently accessed transactions in Redis to reduce Transaction Service load
+   - JWT validation results can be cached in-memory per service
+
+10. **Security Considerations Documented**
+    - Network: Services isolated in K8s namespace; no external exposure except via API Gateway
+    - Data: TLS/SSL in transit (enforced by HTTPS ingress); Cosmos DB encryption at rest; Redis TLS in production
+    - Secrets: K8s Secrets backed by Azure Key Vault in production
+    - Identity: JWT for API auth; K8s service accounts for pod-to-pod; RBAC with namespace isolation
+
+**Documentation Structure:**
+- **deployment-local.md** (538 lines): Prerequisites, quick start, service ports, environment setup, seed script, API docs, dev workflows, troubleshooting
+- **deployment-azure.md** (664 lines): Terraform provisioning, AKS setup, Flux GitOps, secrets management, CI/CD overview, monitoring, cost analysis, troubleshooting
+- **architecture.md** (268 lines): Service map, communication patterns, auth flow, event pipeline, deployment models, scaling, security, resilience
+- **README.md** (enhanced): Quick start, documentation links, architecture diagram, services table, API endpoints, project structure, dev setup, Azure overview
+
+**Impact:**
+- Developers can follow deployment-local.md for reproducible local setup without cloud subscription
+- Operators can follow deployment-azure.md for production deployment on Azure with GitOps principles
+- Architects/contributors can reference architecture.md for system design decisions and trade-offs
+- README.md now serves as hub directing users to appropriate guide based on their workflow
+- All four documents are linked and cross-referenced for seamless navigation
+
+**Deliverables:**
+- Committed to squad/deployment-docs branch (9fdc96e)
+- All docs include code examples, command snippets, troubleshooting, and diagrams
+- Architecture.md includes ASCII diagrams for local and cloud deployments
+- deployment-local.md includes port mappings for all 9 services
+- deployment-azure.md includes estimated cost breakdown and optimization tips

@@ -2,6 +2,48 @@
 
 A microservices-based online banking application demonstrating agentic capabilities with .NET, Python, Go, and cloud-native Azure services.
 
+## Quick Start
+
+### Prerequisites
+- Docker & Docker Compose
+- Git, Node.js 18+ (for UI development)
+- 8GB RAM, 10GB disk space
+
+### Running Locally
+
+```bash
+# Clone the repository
+git clone https://github.com/briandenicola/online-banking-demo.git
+cd online-banking-demo
+
+# Start all services
+docker-compose up -d --build
+
+# Check services are running
+docker-compose ps
+
+# Seed demo data (optional)
+chmod +x scripts/seed-data.sh
+./scripts/seed-data.sh
+```
+
+### Access Points
+
+- **React UI**: http://localhost:3000/
+- **API Gateway**: http://localhost/
+- **Health Check**: http://localhost/health
+- **Demo Credentials**: demo@banking-demo.com / password123 (after seed)
+
+## Documentation
+
+Comprehensive guides for local development and cloud deployment:
+
+- **[Local Development Deployment](docs/deployment-local.md)** — Quick start guide for Docker Compose setup, environment variables, service ports, troubleshooting, and development workflows (hot reload)
+
+- **[Azure Cloud Deployment](docs/deployment-azure.md)** — Production deployment guide with Terraform infrastructure provisioning, AKS setup, Flux GitOps, secrets management, CI/CD pipeline, and cost considerations
+
+- **[System Architecture](docs/architecture.md)** — Detailed architecture documentation with service map, communication patterns, authentication flow, event pipeline, scaling considerations, security, and monitoring
+
 ## Architecture
 
 The Online Banking Demo showcases a modern microservices architecture with cloud-native patterns and agentic AI capabilities.
@@ -56,75 +98,40 @@ The Online Banking Demo showcases a modern microservices architecture with cloud
 - **UI Application** (React, Port 3000) — Web interface
 - **Redis** (Port 6380) — Cache, session store, event streaming (banking-events stream)
 
-### Event-Driven Communication
+### Key Features
 
-- **Asynchronous**: Redis Streams (`banking-events`) for inter-service events
-- **Synchronous**: Direct HTTP calls for immediate responses (Transfer → Account)
-- **Event Types**: `transfer.completed`, `transaction.recorded`, `anomaly.detected`, etc.
-
-### Authentication
-
-- **JWT Tokens** issued by User Service
-- **Shared Key** across all services for token validation
-- **Default Credentials**: demo@banking-demo.com / password123 (after seed)
-
-### Data Storage
-
-- **In-Memory Store** (development) — Fast, ephemeral
-- **Cosmos DB** (Azure production) — Managed NoSQL, multi-region replication
-- **Redis Persistence** — RDB snapshots for cache durability
-
-## Getting Started
-
-### Prerequisites
-- Docker & Docker Compose
-- .NET 9 SDK (for local development)
-- Python 3.11+ (for agent services)
-- Go 1.22+ (for event processor)
-
-### Running Locally
-
-```bash
-# Clone the repository
-git clone https://github.com/briandenicola/online-banking-demo.git
-cd online-banking-demo
-
-# Start all services
-docker-compose up -d --build
-
-# Check services are running
-docker-compose ps
-```
-
-### Access Points
-
-- **React UI**: http://localhost:3000/
-- **API Gateway**: http://localhost/
-- **Health Check**: http://localhost/health
-
-### Demo Credentials
-- Email: `demo@banking-demo.com`
-- Password: `password123`
-
-## Documentation
-
-Comprehensive guides for deployment and architecture:
-
-- **[Local Development Deployment](docs/deployment-local.md)** — Quick start guide for Docker Compose setup, environment variables, service ports, and development workflows
-- **[Azure Cloud Deployment](docs/deployment-azure.md)** — Production deployment guide with Terraform, AKS, Flux GitOps, secrets management, and CI/CD pipeline
-- **[System Architecture](docs/architecture.md)** — Detailed architecture overview, service map, communication patterns, event pipeline, and scaling considerations
+- **Event-Driven**: Redis Streams (`banking-events`) for inter-service communication
+- **JWT Authentication**: Tokens issued by User Service, validated across services
+- **Agentic AI**: Chatbot, anomaly detection, budget analysis powered by Azure OpenAI
+- **Cloud-Ready**: Designed for Azure AKS with Flux GitOps and Terraform IaC
+- **Microservices**: Clear separation of concerns with independent deployment
 
 ## API Documentation
 
-Access Swagger documentation through the gateway:
+Access Swagger/OpenAPI documentation:
 
 - **User Service**: http://localhost/api/users/swagger/index.html
 - **Account Service**: http://localhost/api/accounts/swagger/index.html
 - **Transaction Service**: http://localhost/api/transactions/swagger/index.html
 - **Transfer Service**: http://localhost/api/transfers/swagger/index.html
-- **Chatbot Docs**: http://localhost/api/chat/docs
-- **Anomaly Detection Docs**: http://localhost/api/anomaly/docs
-- **Budget Analysis Docs**: http://localhost/api/budget/docs
+- **Chatbot Service**: http://localhost/api/chat/docs (FastAPI)
+- **Anomaly Service**: http://localhost/api/anomaly/docs (FastAPI)
+- **Budget Service**: http://localhost/api/budget/docs (FastAPI)
+
+### API Authentication
+
+All protected endpoints require a JWT token:
+
+```bash
+# Get token
+TOKEN=$(curl -s -X POST http://localhost/api/users/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"demo","password":"password123"}' | jq -r '.token')
+
+# Use token in requests
+curl http://localhost/api/accounts/ \
+  -H "Authorization: Bearer $TOKEN"
+```
 
 ## Project Structure
 
@@ -133,37 +140,36 @@ online-banking-demo/
 ├── docs/
 │   ├── deployment-local.md      # Local Docker Compose deployment guide
 │   ├── deployment-azure.md      # Azure AKS + Flux GitOps deployment guide
-│   └── architecture.md           # Detailed system architecture documentation
+│   └── architecture.md          # Detailed system architecture documentation
 ├── deploy/
-│   ├── flux/                     # GitOps configuration (Flux CD)
-│   │   ├── kustomization.yaml   # Kustomization reconciliation config
-│   │   └── repository.yaml      # Git source repository for Flux
-│   └── kustomize/               # Kubernetes manifests (base + overlays)
+│   ├── flux/                    # GitOps configuration (Flux CD)
+│   │   ├── kustomization.yaml  # Kustomization reconciliation config
+│   │   └── repository.yaml     # Git source repository for Flux
+│   └── kustomize/              # Kubernetes manifests (base + overlays)
 │       └── base/
-│           └── app.yaml         # Service deployments, ConfigMaps, Secrets
+│           └── app.yaml        # Service deployments, ConfigMaps, Secrets
 ├── infra/
-│   ├── cloud/                    # Azure infrastructure as code (Terraform)
-│   │   ├── main.tf              # Resource definitions (AKS, Cosmos DB, etc.)
-│   │   ├── variables.tf         # Input variables
-│   │   └── outputs.tf           # Output values
-│   └── local/                    # Local development infrastructure
+│   ├── cloud/                   # Azure infrastructure as code (Terraform)
+│   │   ├── main.tf             # Resource definitions (AKS, Cosmos DB, etc.)
+│   │   ├── variables.tf        # Input variables
+│   │   └── outputs.tf          # Output values
+│   └── local/                   # Local development infrastructure
 ├── src/
-│   ├── user-service/            # .NET 9 Authentication service
-│   ├── account-service/         # .NET 9 Account management
-│   ├── transaction-service/     # .NET 9 Transaction history
-│   ├── transfer-service/        # .NET 9 Money transfer service
-│   ├── chatbot-service/         # Python AI financial advisor
-│   ├── anomaly-service/         # Python fraud detection agent
-│   ├── budget-service/          # Python budget analysis agent
-│   ├── event-processor/         # Go event streaming processor
-│   └── ui-app/                  # React web frontend
+│   ├── user-service/           # .NET 9 Authentication service
+│   ├── account-service/        # .NET 9 Account management
+│   ├── transaction-service/    # .NET 9 Transaction history
+│   ├── transfer-service/       # .NET 9 Money transfer service
+│   ├── chatbot-service/        # Python AI financial advisor
+│   ├── anomaly-service/        # Python fraud detection agent
+│   ├── budget-service/         # Python budget analysis agent
+│   ├── event-processor/        # Go event streaming processor
+│   └── ui-app/                 # React web frontend
 ├── scripts/
-│   └── seed-data.sh             # Demo data population script
-├── nginx.conf                    # API Gateway configuration
-├── docker-compose.yml           # Local services orchestration
-├── .env.example                 # Environment variables template
-├── README.md                    # This file
-└── LICENSE                      # MIT License
+│   └── seed-data.sh            # Demo data population script
+├── nginx.conf                   # API Gateway configuration
+├── docker-compose.yml          # Local services orchestration
+├── .env.example                # Environment variables template
+└── README.md                   # This file
 ```
 
 ## Agentic Capabilities
@@ -179,7 +185,6 @@ The chatbot service provides:
 Real-time fraud detection:
 - Unusual transaction patterns
 - Velocity analysis
-- Geographic anomalies
 - Merchant behavior analysis
 
 ### Budget Analysis
@@ -189,50 +194,102 @@ Automated budget insights:
 - Savings recommendations
 - Financial health scoring
 
+## Development
+
+### Prerequisites for Local Development
+
+- **.NET 9 SDK**: For building/running .NET services locally
+- **Python 3.11+**: For running Python agent services
+- **Go 1.22+**: For event processor
+- **Node.js 18+**: For React UI development
+
+### Running Individual Services (Hot Reload)
+
+```bash
+# Terminal 1: Keep Docker services running
+docker-compose up -d
+
+# Terminal 2: .NET service with hot reload
+cd src/user-service
+dotnet watch run
+
+# Terminal 3: Python service with auto-reload
+cd src/chatbot-service
+pip install -r requirements.txt
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
+
+# Terminal 4: React UI development server
+cd src/ui-app
+npm install
+npm start
+```
+
 ## Azure Deployment
 
 Designed for deployment to Azure cloud services:
 - **AKS** - Container orchestration
-- **Cosmos DB** - Database (currently using in-memory)
-- **Event Hub** - Event streaming
-- **Redis** - Caching
+- **Cosmos DB** - Managed NoSQL database
+- **Redis Cache** - Managed distributed caching
 - **Azure OpenAI** - AI services
-- **Application Insights** - Monitoring
+- **Application Insights** - Monitoring and logging
+- **Key Vault** - Secrets management
+- **Flux CD** - GitOps continuous deployment
 
-## Development
+See `docs/deployment-azure.md` for complete Azure deployment instructions.
 
-### Running Individual Services
+## Environment Variables
 
-```bash
-# .NET services
-cd src/user-service && dotnet run
-
-# Python services  
-cd src/chatbot-service && python main.py
-
-# React UI (development mode)
-cd src/ui-app && npm start
-```
-
-### Environment Variables
-
-Services use these key environment variables:
+Key variables for local development (see `.env.example` for full list):
 
 ```bash
 # Authentication
 Jwt__Key=YourSuperSecretKeyForJWTTokenGeneration12345
 Jwt__Issuer=user-service
 
-# Database
+# Database (in-memory for local development)
 UseInMemoryDatabase=true
 
-# Azure (when deploying)
+# Azure Services (optional)
 AZURE_OPENAI_ENDPOINT=
-AZURE_OPENAI_KEY=
-EVENTHUB_CONNECTION_STRING=
-APPLICATIONINSIGHTS_CONNECTION_STRING=
+AZURE_OPENAI_MODEL=gpt-4o-mini
+AZURE_CLIENT_ID=
+AZURE_TENANT_ID=
+AZURE_CLIENT_SECRET=
+
+# Redis
+REDIS__CONNECTIONSTRING=redis:6379
+
+# Inter-service Communication
+Services__AccountService=http://account-service:8080
+Services__TransactionService=http://transaction-service:8080
 ```
+
+## Troubleshooting
+
+### Services won't start
+- Increase Docker Desktop memory to 8GB+
+- Check port conflicts: `sudo lsof -i :80`
+- View logs: `docker-compose logs -f`
+
+### Redis connection failed
+```bash
+docker-compose ps redis  # Should show "healthy"
+docker-compose down -v
+docker-compose up -d redis
+```
+
+### JWT authentication errors
+- Clear browser localStorage: DevTools → Application → Clear All
+- Re-login to get fresh token
+- Verify JWT key consistency across services
+
+See `docs/deployment-local.md` for more troubleshooting steps.
 
 ## License
 
 MIT License - see LICENSE file for details.
+
+---
+
+**Last Updated**: May 2024  
+**Repository**: https://github.com/briandenicola/online-banking-demo
