@@ -181,7 +181,7 @@ services:
       - account-service
       - transaction-service
       - transfer-service
-      - chatbot-service
+    restart: on-failure
 
   # Event Processor (audit/routing consumer)
   event-processor:
@@ -208,6 +208,7 @@ services:
       - "3000:80"
     depends_on:
       - gateway
+    restart: on-failure
 
   # --- Optional: Jaeger for local trace viewing ---
   # Uncomment to enable distributed tracing UI at http://localhost:16686

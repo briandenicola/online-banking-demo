@@ -6,7 +6,7 @@ COPY ./src/anomaly-service/app ./app
 COPY ./src/anomaly-service/pyproject.toml ./
 
 RUN pip install --no-cache-dir \
-    fastapi uvicorn httpx pydantic python-dotenv \
+    fastapi uvicorn httpx pydantic python-dotenv structlog redis \
     numpy scikit-learn \
     opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp \
     opentelemetry-instrumentation-fastapi opentelemetry-instrumentation-httpx

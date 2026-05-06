@@ -1,16 +1,17 @@
 FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
 WORKDIR /src
 
-# Copy shared Contracts project
+# Copy shared projects
 COPY src/shared/Contracts/*.csproj ./shared/Contracts/
-RUN dotnet restore "./shared/Contracts/Contracts.csproj"
+COPY src/shared/Observability/*.csproj ./shared/Observability/
 
-# Copy account-service project
+# Copy service project and restore
 COPY src/account-service/*.csproj ./account-service/
 RUN dotnet restore "./account-service/account-service.csproj"
 
 # Copy everything else
 COPY src/shared/Contracts/. ./shared/Contracts/
+COPY src/shared/Observability/. ./shared/Observability/
 COPY src/account-service/. ./account-service/
 
 WORKDIR /src/account-service

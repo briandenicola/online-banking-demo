@@ -71,6 +71,7 @@ const RegisterPage: React.FC = () => {
     setLoading(true);
     try {
       await apiClient.post('/users/register', {
+        username: email,
         firstName,
         lastName,
         email,
