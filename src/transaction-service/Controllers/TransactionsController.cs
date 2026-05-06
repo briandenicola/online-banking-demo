@@ -47,6 +47,19 @@ public class TransactionsController : ControllerBase
         return Ok(transactions);
     }
 
+    [HttpGet]
+    public async Task<IActionResult> GetTransactions()
+    {
+        var userId = User.FindFirst("userId")?.Value;
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized();
+        }
+
+        var transactions = await _transactionService.GetUserTransactionsAsync(userId);
+        return Ok(transactions);
+    }
+
     [HttpGet("my")]
     public async Task<IActionResult> GetUserTransactions()
     {

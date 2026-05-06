@@ -235,3 +235,17 @@ These bugs are end-to-end blockers: partition key mismatch means transaction ser
 - Env-var-driven OTLP export (empty = disabled) for zero-config local dev
 - Shared .NET library avoids duplication
 - structlog contextvars propagates correlation without function arg threading
+
+### 2026-05 — Transaction GET Endpoint & Seed Data
+
+**Task:** Add bare `GET /api/transactions` endpoint + seed demo data for accounts and transactions.
+
+**Changes:**
+1. **TransactionsController.cs** — Added `[HttpGet]` endpoint (routes to `GET /api/transactions`) returning authenticated user's transactions. Extracts userId from JWT `userId` claim.
+2. **InMemoryAccountService.cs** — Seeds checking + savings accounts for both testuser (ID:1) and demo user (ID:2) on construction.
+3. **InMemoryTransactionService.cs** — Seeds 9 sample transactions across demo and test accounts with realistic categories/amounts.
+
+**Key Details:**
+- Account IDs are deterministic (`acct-{userId}-{type}`) for cross-service references
+- Transaction seed uses relative timestamps (now minus N days) so data always looks recent
+- JWT claim key is `userId` (lowercase) per existing pattern in GetUserTransactions

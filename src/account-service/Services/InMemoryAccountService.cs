@@ -16,6 +16,52 @@ public class InMemoryAccountService : IAccountService
     public InMemoryAccountService(ILogger<InMemoryAccountService> logger)
     {
         _logger = logger;
+        SeedDemoAccounts();
+    }
+
+    private void SeedDemoAccounts()
+    {
+        // Seed accounts for testuser (ID: 1)
+        _accounts["acct-1-checking"] = new Account
+        {
+            Id = "acct-1-checking",
+            UserId = "1",
+            AccountNumber = "ACC10000001",
+            AccountType = "Checking",
+            Balance = 3250.75m,
+            Currency = "USD"
+        };
+        _accounts["acct-1-savings"] = new Account
+        {
+            Id = "acct-1-savings",
+            UserId = "1",
+            AccountNumber = "ACC10000002",
+            AccountType = "Savings",
+            Balance = 8500.00m,
+            Currency = "USD"
+        };
+
+        // Seed accounts for demo user (ID: 2)
+        _accounts["acct-2-checking"] = new Account
+        {
+            Id = "acct-2-checking",
+            UserId = "2",
+            AccountNumber = "ACC20000001",
+            AccountType = "Checking",
+            Balance = 5432.10m,
+            Currency = "USD"
+        };
+        _accounts["acct-2-savings"] = new Account
+        {
+            Id = "acct-2-savings",
+            UserId = "2",
+            AccountNumber = "ACC20000002",
+            AccountType = "Savings",
+            Balance = 12750.00m,
+            Currency = "USD"
+        };
+
+        _logger.LogInformation("Seeded demo accounts for users 1 and 2");
     }
 
     public Task<Account> CreateAccountAsync(string userId, CreateAccountRequest request)
