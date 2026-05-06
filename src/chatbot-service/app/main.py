@@ -155,7 +155,7 @@ async def lifespan(app: FastAPI):
     
     # Support both AZURE_AI_AGENTS_ENDPOINT and AZURE_OPENAI_ENDPOINT for flexibility
     endpoint = os.getenv("AZURE_AI_AGENTS_ENDPOINT") or os.getenv("AZURE_OPENAI_ENDPOINT")
-    model = os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4")
+    model = os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4-mini")
     
     logger.info(f"  AZURE_AI_AGENTS_ENDPOINT: {endpoint or '❌ NOT SET'}")
     logger.info(f"  AZURE_OPENAI_MODEL: {model}")

@@ -337,12 +337,12 @@ resource "azurerm_federated_identity_credential" "aks_chatbot_workload_identity"
   issuer                    = azurerm_kubernetes_cluster.main.oidc_issuer_url
 }
 
-resource "azurerm_cognitive_deployment" "gpt54" {
-  name                 = "gpt-5.4"
+resource "azurerm_cognitive_deployment" "gpt54_mini" {
+  name                 = "gpt-5.4-mini"
   cognitive_account_id = data.azurerm_cognitive_account.openai.id
   model {
     format  = "OpenAI"
-    name    = "gpt-5.4"
+    name    = "gpt-5.4-mini"
     version = "2026-03-05"
   }
 
@@ -352,12 +352,15 @@ resource "azurerm_cognitive_deployment" "gpt54" {
   }
 }
 
-resource "azurerm_cognitive_deployment" "text_embedding" {
-  name                 = "text-embedding-3-small"
+resource "azurerm_cognitive_deployment" "cohere_embedding" {
+  name                 = "Cohere-embed-v3-english"
   cognitive_account_id = data.azurerm_cognitive_account.openai.id
+
+  depends_on = [azurerm_cognitive_deployment.gpt54_mini]
+
   model {
     format  = "OpenAI"
-    name    = "text-embedding-3-small"
+    name    = "Cohere-embed-v3-english"
     version = "1"
   }
 

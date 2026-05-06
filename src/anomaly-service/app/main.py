@@ -120,7 +120,7 @@ async def explain_anomaly(transaction: dict, ml_reason: str) -> str:
     tracer = trace.get_tracer(__name__)
     
     with tracer.start_as_current_span("openai.generate-explanation") as span:
-        span.set_attribute("openai.model", os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4"))
+        span.set_attribute("openai.model", os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4-mini"))
         span.set_attribute("openai.max_tokens", 150)
         span.set_attribute("openai.temperature", 0.3)
         span.set_attribute("transaction.amount", transaction.get('amount', 0))
@@ -143,7 +143,7 @@ Provide a clear, concise explanation suitable for a bank customer alert (2-3 sen
 """
             response = ai_client.complete(
                 messages=[UserMessage(content=prompt)],
-                model=os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4"),
+                model=os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4-mini"),
                 temperature=0.3,
                 max_tokens=150
             )

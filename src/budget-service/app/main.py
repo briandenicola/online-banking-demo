@@ -145,13 +145,13 @@ async def categorize_transaction(description: str) -> str:
     tracer = trace.get_tracer(__name__)
     
     with tracer.start_as_current_span("openai.embedding-categorization") as span:
-        span.set_attribute("openai.model", os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"))
+        span.set_attribute("openai.model", os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "Cohere-embed-v3-english"))
         span.set_attribute("transaction.description", description[:100])
         
         try:
             # Get embedding for transaction description
             desc_response = embeddings_client.embed(
-                model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+                model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "Cohere-embed-v3-english"),
                 input=[description.lower()]
             )
             desc_embedding = desc_response.data[0].embedding
@@ -163,7 +163,7 @@ async def categorize_transaction(description: str) -> str:
             for category, keywords in CATEGORIES.items():
                 for keyword in keywords:
                     keyword_response = embeddings_client.embed(
-                        model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+                        model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "Cohere-embed-v3-english"),
                         input=[keyword]
                     )
                     keyword_embedding = keyword_response.data[0].embedding
@@ -302,7 +302,7 @@ async def startup_event():
             if embeddings_client:
                 try:
                     test_response = embeddings_client.embed(
-                        model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+                        model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "Cohere-embed-v3-english"),
                         input=["ping"]
                     )
                     logger.info(f"✅ Azure OpenAI Embeddings connectivity verified - {len(test_response.data[0].embedding)} dimensions")
