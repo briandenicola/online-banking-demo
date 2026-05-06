@@ -3,9 +3,12 @@ Anomaly Detection Agent for suspicious transaction detection
 """
 import asyncio
 import json
+from datetime import datetime
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
@@ -21,7 +24,7 @@ except ImportError:
     ChatCompletionsClient = None
     DefaultAzureCredential = None
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -30,7 +33,7 @@ from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sklearn.ensemble import IsolationForest
 
 # Configure logging
@@ -41,6 +44,11 @@ logger = logging.getLogger(__name__)
 STREAM_NAME = "banking-events"
 CONSUMER_GROUP = "anomaly-consumer-group"
 CONSUMER_NAME = "anomaly-1"
+FLAGGED_TRANSACTIONS_KEY = "flagged-transactions"
+FLAGGED_TRANSACTION_PREFIX = "flagged-tx:"
+
+# Module-level Redis client (set during lifespan)
+_redis_client: Optional[redis.Redis] = None
 
 # Initialize telemetry
 def init_telemetry():
@@ -137,6 +145,31 @@ class AnomalyResult(BaseModel):
     aiExplanation: Optional[str] = None
 
 
+class FlaggedTransaction(BaseModel):
+    id: str
+    accountId: str
+    amount: float
+    type: str
+    riskScore: float
+    reason: str
+    flaggedAt: str
+    status: str = "pending"
+    notes: Optional[str] = None
+
+
+class ReviewRequest(BaseModel):
+    status: str = Field(..., pattern=r"^(reviewed|cleared)$")
+    notes: str
+
+
+class AdminStats(BaseModel):
+    totalFlagged: int
+    pendingReview: int
+    reviewed: int
+    cleared: int
+    avgRiskScore: float
+
+
 def extract_features(transaction: dict) -> np.ndarray:
     """Extract ML features from transaction"""
     amount = transaction.get("amount", 0)
@@ -149,6 +182,39 @@ def extract_features(transaction: dict) -> np.ndarray:
         amount / 1000 if amount > 0 else 0,
     ]
     return np.array(features).reshape(1, -1)
+
+
+async def store_flagged_transaction(transaction: dict, risk_score: float, reason: str):
+    """Store a flagged transaction in Redis for admin review"""
+    if not _redis_client:
+        logger.warning("Redis client not available, cannot store flagged transaction")
+        return
+
+    flagged_id = str(uuid.uuid4())
+    flagged_tx = {
+        "id": flagged_id,
+        "accountId": transaction.get("accountId", ""),
+        "amount": transaction.get("amount", 0),
+        "type": transaction.get("type", ""),
+        "riskScore": risk_score,
+        "reason": reason,
+        "flaggedAt": datetime.now(timezone.utc).isoformat(),
+        "status": "pending",
+        "notes": None,
+    }
+
+    try:
+        # Store the full transaction detail
+        await _redis_client.set(
+            f"{FLAGGED_TRANSACTION_PREFIX}{flagged_id}",
+            json.dumps(flagged_tx),
+        )
+        # Add to sorted set (score = timestamp for ordering)
+        timestamp = datetime.now(timezone.utc).timestamp()
+        await _redis_client.zadd(FLAGGED_TRANSACTIONS_KEY, {flagged_id: timestamp})
+        logger.info(f"Stored flagged transaction {flagged_id}")
+    except Exception as e:
+        logger.error(f"Error storing flagged transaction: {e}")
 
 
 async def detect_anomaly(transaction: dict) -> AnomalyResult:
@@ -176,6 +242,7 @@ async def detect_anomaly(transaction: dict) -> AnomalyResult:
             ai_explanation = None
             if is_anomalous or len(reasons) > 0:
                 ai_explanation = await explain_anomaly(transaction, ml_reason or "Unusual transaction pattern")
+                await store_flagged_transaction(transaction, min(confidence, 1.0), ml_reason or "Unusual transaction pattern")
             
             return AnomalyResult(
                 transactionId=transaction.get("transactionId", ""),
@@ -284,6 +351,7 @@ async def consume_redis_stream(redis_client: redis.Redis):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: start Redis consumer on startup"""
+    global _redis_client
     init_ai_client()
 
     redis_url = os.getenv("REDIS__CONNECTIONSTRING", "redis:6379")
@@ -291,6 +359,7 @@ async def lifespan(app: FastAPI):
         redis_url = f"redis://{redis_url}"
 
     redis_client = redis.from_url(redis_url, decode_responses=True)
+    _redis_client = redis_client
 
     # Verify Redis connectivity
     try:
@@ -312,6 +381,7 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
     await redis_client.aclose()
+    _redis_client = None
 
 
 app = FastAPI(title="Anomaly Detection Agent", version="1.0.0", lifespan=lifespan)
@@ -333,10 +403,107 @@ async def health():
     return {"status": "healthy"}
 
 
+@app.get("/healthz")
+async def healthz():
+    return {"status": "healthy", "service": "anomaly-service", "timestamp": datetime.utcnow().isoformat()}
+
+
+@app.get("/readyz")
+async def ready():
+    return {"status": "ready"}
+
+
 @app.post("/detect", response_model=AnomalyResult)
 async def detect(request: TransactionEvent):
     """Detect anomaly in a single transaction"""
     return await detect_anomaly(request.model_dump())
+
+
+# --- Admin Endpoints ---
+
+
+@app.get("/api/admin/flagged-transactions", response_model=list[FlaggedTransaction])
+async def list_flagged_transactions():
+    """Return all flagged transactions, ordered by most recent"""
+    if not _redis_client:
+        raise HTTPException(status_code=503, detail="Redis not available")
+
+    # Get all IDs from sorted set (most recent first)
+    tx_ids = await _redis_client.zrevrange(FLAGGED_TRANSACTIONS_KEY, 0, -1)
+    results = []
+    for tx_id in tx_ids:
+        raw = await _redis_client.get(f"{FLAGGED_TRANSACTION_PREFIX}{tx_id}")
+        if raw:
+            results.append(FlaggedTransaction(**json.loads(raw)))
+    return results
+
+
+@app.get("/api/admin/flagged-transactions/{tx_id}", response_model=FlaggedTransaction)
+async def get_flagged_transaction(tx_id: str):
+    """Get details of a single flagged transaction"""
+    if not _redis_client:
+        raise HTTPException(status_code=503, detail="Redis not available")
+
+    raw = await _redis_client.get(f"{FLAGGED_TRANSACTION_PREFIX}{tx_id}")
+    if not raw:
+        raise HTTPException(status_code=404, detail="Flagged transaction not found")
+    return FlaggedTransaction(**json.loads(raw))
+
+
+@app.put("/api/admin/flagged-transactions/{tx_id}/review", response_model=FlaggedTransaction)
+async def review_flagged_transaction(tx_id: str, review: ReviewRequest):
+    """Mark a flagged transaction as reviewed or cleared"""
+    if not _redis_client:
+        raise HTTPException(status_code=503, detail="Redis not available")
+
+    key = f"{FLAGGED_TRANSACTION_PREFIX}{tx_id}"
+    raw = await _redis_client.get(key)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Flagged transaction not found")
+
+    tx_data = json.loads(raw)
+    tx_data["status"] = review.status
+    tx_data["notes"] = review.notes
+    await _redis_client.set(key, json.dumps(tx_data))
+    return FlaggedTransaction(**tx_data)
+
+
+@app.get("/api/admin/stats", response_model=AdminStats)
+async def get_admin_stats():
+    """Summary stats: total flagged, pending, reviewed, cleared, avg risk score"""
+    if not _redis_client:
+        raise HTTPException(status_code=503, detail="Redis not available")
+
+    tx_ids = await _redis_client.zrange(FLAGGED_TRANSACTIONS_KEY, 0, -1)
+    total = 0
+    pending = 0
+    reviewed = 0
+    cleared = 0
+    risk_scores = []
+
+    for tx_id in tx_ids:
+        raw = await _redis_client.get(f"{FLAGGED_TRANSACTION_PREFIX}{tx_id}")
+        if raw:
+            tx = json.loads(raw)
+            total += 1
+            status = tx.get("status", "pending")
+            if status == "pending":
+                pending += 1
+            elif status == "reviewed":
+                reviewed += 1
+            elif status == "cleared":
+                cleared += 1
+            risk_scores.append(tx.get("riskScore", 0))
+
+    avg_score = sum(risk_scores) / len(risk_scores) if risk_scores else 0.0
+
+    return AdminStats(
+        totalFlagged=total,
+        pendingReview=pending,
+        reviewed=reviewed,
+        cleared=cleared,
+        avgRiskScore=round(avg_score, 4),
+    )
 
 
 if __name__ == "__main__":
