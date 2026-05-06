@@ -9,6 +9,7 @@ import Typography from '@mui/material/Typography';
 import AppBar from '@mui/material/AppBar';
 import Toolbar from '@mui/material/Toolbar';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
+import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 
 // Pages
 import Dashboard from './pages/Dashboard';
@@ -16,7 +17,9 @@ import Accounts from './pages/Accounts';
 import Transactions from './pages/Transactions';
 import Transfers from './pages/Transfers';
 import Chat from './pages/Chat';
+import AdminPage from './pages/AdminPage';
 import Login from './pages/Login';
+import RegisterPage from './pages/RegisterPage';
 import { AuthProvider, useAuthContext } from './contexts/AuthContext';
 import { AccountProvider } from './contexts/AccountContext';
 
@@ -39,6 +42,7 @@ const AppContent: React.FC = () => {
     return (
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<RegisterPage />} />
         <Route path="*" element={<Navigate to="/login" />} />
       </Routes>
     );
@@ -58,6 +62,13 @@ const AppContent: React.FC = () => {
               Online Banking Demo
             </Typography>
           </ButtonBase>
+          <Button
+            color="inherit"
+            startIcon={<AdminPanelSettingsIcon />}
+            onClick={() => navigate('/admin')}
+          >
+            Admin
+          </Button>
           <Button color="inherit" onClick={logout}>
             Logout
           </Button>
@@ -70,6 +81,7 @@ const AppContent: React.FC = () => {
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/transfers" element={<Transfers />} />
           <Route path="/chat" element={<Chat />} />
+          <Route path="/admin" element={<AdminPage />} />
           <Route path="/login" element={<Login />} />
         </Routes>
       </Container>
