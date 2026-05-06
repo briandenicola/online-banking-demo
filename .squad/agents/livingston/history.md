@@ -84,3 +84,26 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 - `tests/e2e/utils/testHelpers.ts` — health check / wait utilities
 - `Taskfile.e2e.yml` — task runner integration
 
+
+## Learnings
+
+### Phase 2 Test Spec Implementation (2024)
+- **Test Organization**: Created structured test suite with auth and core directories under `tests/e2e/specs/`
+- **Page Object Models**: Extended POM coverage by creating RegistrationPage, AccountsPage, and TransactionsPage to complement existing LoginPage and DashboardPage
+- **Auth Fixture Usage**: Core specs (dashboard, account-details, transactions) use `authenticatedPage` fixture from authFixture.ts to avoid repetitive login setup in every test
+- **Resilient Selectors**: Used multiple selector strategies (role-based, data-testid, class-based) to handle different UI implementations gracefully
+- **Realistic Assertions**: Tests verify visible UI elements and user-facing behavior rather than just HTTP responses
+- **Test Credentials**: Tests use seeded credentials `demo@banking-demo.com` / `password123` and `testuser` / `password123`
+- **JWT Token Storage**: All auth tests verify localStorage token storage pattern used by the UI app
+- **Session Handling**: Tests verify token persistence, expiration handling, and cleanup on logout
+- **Browser Context Testing**: Used separate browser contexts in session.spec.ts to verify cross-session behavior
+- **Graceful Degradation**: Transaction and account tests handle empty states and missing pagination gracefully
+- **Test Coverage Achieved**:
+  - E2E-201: User registration with validation (8 tests)
+  - E2E-202: Login flow with token verification (9 tests)
+  - E2E-203: Session persistence and token management (7 tests)
+  - E2E-204: Logout and session cleanup (9 tests)
+  - E2E-205: Dashboard load and account display (12 tests)
+  - E2E-206: Account details viewing (13 tests)
+  - E2E-207: Transaction list display (14 tests)
+- **Total**: 72 test cases across 7 spec files
