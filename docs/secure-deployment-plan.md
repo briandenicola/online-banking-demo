@@ -1375,3 +1375,301 @@ All CIDRs derived from `local.vnet_cidr` using `cidrsubnet()` — no manual IP m
 | APIM internal VNet + APIs | [azure-multi-region-proof-of-concept/infrastructure/apim](https://github.com/briandenicola/azure-multi-region-proof-of-concept/tree/main/infrastructure/apim) | Layer 3 |
 | App Gateway WAF v2 + backend pool | [azure-multi-region-proof-of-concept/infrastructure/gateway](https://github.com/briandenicola/azure-multi-region-proof-of-concept/tree/main/infrastructure/gateway) | Layer 4 |
 | Convention over variables (`max_count = node_count * 2`) | Current repo `infra/cloud/main.tf:149` | All layers |
+
+---
+
+## Layer 5: Agentic Showcase & Documentation
+
+> **Derived from:** Deep analysis of [briandenicola/eShopOnAKS](https://github.com/briandenicola/eShopOnAKS) — a workshop-format AKS showcase that excels at guided documentation, observable deployments, and developer experience. See [docs/eshop-analysis.md](./eshop-analysis.md) for the full analysis.
+
+**Goal:** Evolve online-banking-demo from a working microservices app into a **showcase for agentic coding AND secure cloud-native applications** — something Brian can point to as a reference implementation.
+
+**Approach:** Same layer-cake — each backlog item is independently deliverable and testable.
+
+---
+
+### 5.1 Documentation Overhaul
+
+#### 5.1.1 Table of Contents (`toc.md`)
+Create a navigation hub at the repo root linking all documentation with section-level anchors. Follow eShopOnAKS's `toc.md` pattern with `<!--ts-->` markers.
+
+**Sections to include:**
+- Architecture (existing — enhance)
+- Prerequisites (new)
+- Infrastructure Setup (new)
+- Application Build (new)
+- Deployment — Local (existing — enhance)
+- Deployment — Azure (existing — enhance)
+- Monitoring & Observability (new)
+- Testing (existing — enhance)
+- Scaling (new)
+- Security (new — extract from secure-deployment-plan)
+- Agentic Development (new)
+
+#### 5.1.2 Prerequisites Guide (`docs/prerequisites.md`)
+Document all required tools and environment setup:
+- Required: .NET 9 SDK, Python 3.12+, Node.js LTS, Go 1.22+, Docker, Azure CLI, Terraform, kubectl, helm, Task
+- Optional: k9s, Trivy, Flux CLI, Hubble
+- Environment: Azure subscription, service principal, DNS domain
+- One-click: Codespaces badge + DevContainer link
+
+**Pattern from:** eShopOnAKS `docs/prerequisites.md` — tools table, Codespaces section, environment requirements, preview feature registration.
+
+#### 5.1.3 Workshop-Style Guided Steps
+Enhance all deployment docs to follow the eShopOnAKS pattern:
+1. Concept explanation
+2. Numbered task steps with `:heavy_check_mark:`
+3. Full manual command examples
+4. Example terminal output showing success
+5. Optional challenge questions (`:bulb:` / `:question:`)
+6. Navigation links (Previous / Home / Next)
+
+Apply this pattern to: `deployment-local.md`, `deployment-azure.md`, and all new docs.
+
+#### 5.1.4 Architecture Diagrams
+Create visual diagrams in `.assets/` directory:
+- System architecture (services, data flow, event streams)
+- Azure infrastructure (VNet, subnets, PaaS services)
+- Security architecture (Istio mesh, network policies, private endpoints)
+- OTEL pipeline (traces, metrics, logs flow)
+
+Embed in `README.md` and `docs/architecture.md`.
+
+#### 5.1.5 README Enhancement
+Update README.md to include:
+- Architecture diagram (embedded PNG)
+- Codespaces / DevContainer badges
+- Link to Table of Contents
+- Roadmap with layer-cake progress tracking
+- Copilot / agentic coding callout section
+- Quick-start (3 commands to running system)
+
+---
+
+### 5.2 Developer Experience
+
+#### 5.2.1 DevContainer / Codespaces Setup
+Create `.devcontainer/` with:
+- `devcontainer.json` — VS Code extensions (C#, Python, Docker, Terraform, Copilot, K8s tools)
+- `Dockerfile` — Based on .NET dev image with Node.js
+- `post-create.sh` — Install k9s, Task, Trivy, Flux, envsubst
+- `post-start.sh` — Source aliases, configure git
+
+**Pattern from:** eShopOnAKS `.devcontainer/` — features-based tool installation, post-create/post-start lifecycle scripts.
+
+#### 5.2.2 Enhanced Taskfile Commands
+Add to existing Taskfile:
+- `task status` — Show cluster status (nodes, pods, services, deployments across namespaces)
+- `task restart` — Rollout restart all deployments in banking-demo namespace
+- `task dns` — Display Istio gateway IP + required DNS record
+- `task logs` — Tail logs for a specific service
+- `task scan` — Run Trivy against built containers
+
+#### 5.2.3 Shell Aliases (`.aliases.rc`)
+Create developer convenience aliases:
+```bash
+alias k='kubectl'
+alias kn='kubectl -n banking-demo'
+alias kstatus='kubectl -n banking-demo get pods,svc,deploy'
+alias klogs='kubectl -n banking-demo logs -f'
+```
+
+#### 5.2.4 Developer Onboarding Guide (`docs/onboarding.md`)
+"From clone to running in 15 minutes":
+1. Clone repo
+2. Open in Codespaces (or install prerequisites)
+3. `task local:up` — full local environment
+4. Open http://localhost:3000
+5. Run tests: `task test`
+6. Deploy to Azure: `task cloud:up`
+
+---
+
+### 5.3 Build & Container Documentation
+
+#### 5.3.1 Build Guide (`docs/build.md`)
+Document the container build process:
+- How each service is containerized (Dockerfile patterns)
+- ACR push workflow
+- Git commit version tagging
+- Multi-architecture considerations
+- Example build output
+
+**Pattern from:** eShopOnAKS `docs/build.md` — step-by-step with `dotnet publish`, ACR login, Trivy scan, full terminal output.
+
+#### 5.3.2 Container Security Scanning
+Add Trivy to the build pipeline:
+- Scan after each container build
+- Block on CRITICAL/HIGH vulnerabilities
+- Report results in CI artifacts
+- Document in build guide
+
+---
+
+### 5.4 Observability Documentation
+
+#### 5.4.1 Monitoring Guide (`docs/monitoring.md`)
+Document the full observability stack:
+- OTEL Collector pipeline configuration (traces/metrics/logs)
+- Azure Monitor Workspace + Application Insights setup
+- Managed Grafana dashboards
+- Prometheus scrape configuration
+- Example queries and screenshots
+
+**Pattern from:** eShopOnAKS `docs/monitoring.md` — OTEL pipeline YAML, Grafana screenshots (threads/memory/network), App Insights screenshots (logging/app map/distributed traces).
+
+#### 5.4.2 Observability Infrastructure
+Add to Terraform:
+- Azure Monitor Workspace
+- Application Insights (connected to workspace)
+- Managed Grafana instance
+- Data collection rules for AKS
+
+Add to cluster-config:
+- OTEL Collector deployment
+- Prometheus ServiceMonitor configs
+- Grafana dashboard ConfigMaps
+
+#### 5.4.3 Hubble Network Observability
+Add Hubble setup as a Taskfile command:
+- `task hubble` — Install Hubble UI + relay
+- Document port-forward access
+- Screenshot of pod-to-pod traffic visualization
+
+---
+
+### 5.5 Testing & Resilience
+
+#### 5.5.1 E2E Testing with Playwright
+Create E2E test suite:
+- `tests/` directory with TypeScript specs
+- `playwright.config.ts` with auth setup pattern
+- Login setup fixture (reusable auth state)
+- Test scenarios: login, view accounts, create transfer, view transactions
+- GitHub Actions workflow with manual trigger + URL input
+
+**Pattern from:** eShopOnAKS `tests/` — login.setup.ts, AddItemTest/BrowseItemTest/RemoveItemTest specs, `playwright.yml` workflow.
+
+#### 5.5.2 Chaos Engineering
+Create chaos experiments:
+- `experiments/` directory
+- Azure Chaos Studio Terraform resources
+- Pod failure experiment
+- Network delay experiment
+- Taskfile: `task chaos:up`, `task chaos:run`
+- Document in `docs/testing.md` with expected behavior and recovery
+
+**Pattern from:** eShopOnAKS `experiments/` — Taskfile-driven setup, `azurechaos.experiment.json` + `azurechaos.targets.json`.
+
+---
+
+### 5.6 Infrastructure Maturity
+
+#### 5.6.1 Terraform Module Refactoring
+Break `infra/cloud/main.tf` into modules:
+```
+infra/cloud/
+├── main.tf           # Naming, locals
+├── modules.tf        # Module declarations + dependency chains
+├── variables.tf      # Minimal variables
+├── outputs.tf        # Values consumed by Taskfile/scripts
+├── identities.tf     # Workload identities + federated credentials
+├── roles.tf          # RBAC assignments
+├── core/             # VNet, subnets, NSGs
+├── aks/              # Cluster, node pools, Flux, ACR
+├── cosmos/           # Cosmos DB + private endpoint
+├── redis/            # Azure Managed Redis + private endpoint
+├── keyvault/         # Key Vault + private endpoint
+├── monitoring/       # Log Analytics, App Insights, Grafana
+├── openai/           # AI Foundry
+└── dns/              # Azure DNS zone (optional)
+```
+
+#### 5.6.2 AKS Hardening (Additional)
+Items from eShopOnAKS not yet in our plan:
+- `image_cleaner_enabled = true` + 48h interval
+- `microsoft_defender` block with log analytics
+- `api_server_access_profile.authorized_ip_ranges`
+- `maintenance_window_auto_upgrade` + `maintenance_window_node_os`
+- `auto_scaler_profile.max_unready_nodes`
+- `run_command_enabled = false`
+
+#### 5.6.3 Cluster Config Restructuring
+Reorganize deployment manifests:
+```
+deploy/
+├── cluster-config/          # Platform concerns (GitOps-managed)
+│   ├── kustomization.yaml
+│   ├── istio/
+│   ├── cert-manager/
+│   ├── prometheus/
+│   ├── keda/
+│   └── network-policies/
+└── app/                     # Application manifests
+    ├── kustomization.yaml
+    ├── namespace.yaml
+    └── services/
+```
+
+---
+
+### 5.7 Agentic Coding Showcase
+
+#### 5.7.1 Squad Documentation (`docs/agentic-development.md`)
+Document the agentic coding workflow:
+- What is the Squad system (Danny, Basher, Linus, Livingston)
+- How agents collaborate (decisions, inbox, history)
+- Architecture decision workflow
+- Code review process with agents
+- Example: "How a feature goes from idea to deployed"
+
+#### 5.7.2 Copilot Integration Guide
+Document Copilot setup:
+- `.github/copilot-setup-steps.yml` configuration
+- VS Code extensions for Copilot
+- How to use Copilot for code understanding (`/explain`)
+- MCP server configuration for GitHub tools
+
+#### 5.7.3 Architecture Decision Records (`docs/decisions/`)
+Create ADR directory:
+- Template for decision records
+- Existing decisions (Redis Streams migration, gateway security, Istio adoption)
+- Link to `.squad/decisions.md` for agent-generated decisions
+
+#### 5.7.4 Contributing Guide (`CONTRIBUTING.md`)
+- How to contribute (human or agent)
+- Code style guidelines
+- PR process (including agent review)
+- Local development setup reference
+
+---
+
+### 5.8 Backlog Priority Matrix
+
+| # | Item | Effort | Impact | Dependencies |
+|---|------|--------|--------|-------------|
+| 1 | Table of Contents (`toc.md`) | S | High | None |
+| 2 | Prerequisites guide | S | High | None |
+| 3 | README enhancement | S | High | Architecture diagrams |
+| 4 | Architecture diagrams | M | High | None |
+| 5 | DevContainer / Codespaces | M | High | None |
+| 6 | Workshop-style deployment docs | L | High | Prerequisites guide |
+| 7 | Monitoring guide + OTEL docs | M | High | Layer 2 infra |
+| 8 | E2E tests (Playwright) | M | High | Deployed environment |
+| 9 | Build guide | S | Medium | None |
+| 10 | Enhanced Taskfile commands | S | Medium | None |
+| 11 | Developer onboarding guide | S | Medium | DevContainer, prerequisites |
+| 12 | Trivy container scanning | S | Medium | CI pipeline |
+| 13 | Terraform module refactoring | L | Medium | None |
+| 14 | Cluster-config restructuring | M | Medium | Layer 1 |
+| 15 | Chaos Engineering setup | M | Medium | Deployed environment |
+| 16 | AKS hardening additions | S | Medium | Layer 1 |
+| 17 | Shell aliases | XS | Low | None |
+| 18 | Squad documentation | M | High (showcase) | None |
+| 19 | Copilot integration guide | S | High (showcase) | None |
+| 20 | ADR directory | S | Medium | None |
+| 21 | Contributing guide | S | Low | None |
+| 22 | Hubble setup | S | Low | Cilium enabled |
+| 23 | Cost management (Kubecost) | M | Low | Deployed environment |
+
+> **S** = Small (< 1 day), **M** = Medium (1-3 days), **L** = Large (3+ days), **XS** = Extra small (< 2 hours)
