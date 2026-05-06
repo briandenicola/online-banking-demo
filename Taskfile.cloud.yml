@@ -101,8 +101,15 @@ tasks:
   deploy:
     desc: Deploy application to Kubernetes cluster (updates image refs then applies)
     cmds:
+      - az aks get-credentials --resource-group {{.RG_NAME}} --name {{.AKS_NAME}} --overwrite-existing
+      - sed -i s/devicecode/azurecli/g ~/.kube/config
       - task: _images:update
       - kubectl apply -k deploy/kustomize/base/
+    vars:
+      RG_NAME:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw resource_group_name
+      AKS_NAME:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw aks_name
 
   # === Internal tasks ===
   _images:update:
