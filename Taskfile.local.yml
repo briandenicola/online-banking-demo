@@ -48,7 +48,7 @@ tasks:
         echo "JWT_KEY={{.JWT_KEY}}"
     vars:
       AZURE_OPENAI_MODEL: gpt-5.4
-      AZURE_OPENAI_EMBEDDING_MODEL: text-embedding-3-large
+      AZURE_OPENAI_EMBEDDING_MODEL: text-embedding-3-small
       AZURE_OPENAI_ENDPOINT:
         sh: terraform -chdir=./{{.LOCAL_INFRA_DIR}} output -raw openai_endpoint
       AZURE_TENANT_ID:
@@ -113,7 +113,7 @@ tasks:
           > .env
     vars:
       AZURE_OPENAI_MODEL: gpt-5.4
-      AZURE_OPENAI_EMBEDDING_MODEL: text-embedding-3-large
+      AZURE_OPENAI_EMBEDDING_MODEL: text-embedding-3-small
       AZURE_OPENAI_ENDPOINT:
         sh: terraform -chdir=./{{.LOCAL_INFRA_DIR}} output -raw openai_endpoint
       AZURE_TENANT_ID:

@@ -353,16 +353,16 @@ resource "azurerm_cognitive_deployment" "gpt54" {
 }
 
 resource "azurerm_cognitive_deployment" "text_embedding" {
-  name                 = "text-embedding-3-large"
+  name                 = "text-embedding-3-small"
   cognitive_account_id = data.azurerm_cognitive_account.openai.id
   model {
     format  = "OpenAI"
-    name    = "text-embedding-3-large"
+    name    = "text-embedding-3-small"
     version = "1"
   }
 
   sku {
-    name     = "GlobalStandard"
+    name     = "Standard"
     capacity = 10
   }
 }

@@ -53,7 +53,7 @@ tasks:
     silent: true
     vars:
       AZURE_OPENAI_MODEL: gpt-5.4
-      AZURE_OPENAI_EMBEDDING_MODEL: text-embedding-3-large
+      AZURE_OPENAI_EMBEDDING_MODEL: text-embedding-3-small
       AZURE_OPENAI_ENDPOINT:
         sh: terraform output -raw openai_endpoint
       AZURE_CLIENT_ID:
