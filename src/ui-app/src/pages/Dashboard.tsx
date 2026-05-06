@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -14,6 +14,7 @@ import {
   Chip,
   Divider,
   Avatar,
+  CircularProgress,
 } from '@mui/material';
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
@@ -22,25 +23,18 @@ import PaymentIcon from '@mui/icons-material/Payment';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import ShoppingCartIcon from '@mui/icons-material/ShoppingCart';
-import RestaurantIcon from '@mui/icons-material/Restaurant';
-import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
-import SubscriptionsIcon from '@mui/icons-material/Subscriptions';
 import { useNavigate } from 'react-router-dom';
 import { useAuthContext } from '../contexts/AuthContext';
+import { useAccountContext } from '../contexts/AccountContext';
+import apiClient from '../api/client';
 
-const mockAccounts = [
-  { name: 'Checking Account', number: '****4521', balance: 12847.93, type: 'checking' },
-  { name: 'Savings Account', number: '****8834', balance: 45230.17, type: 'savings' },
-  { name: 'Credit Card', number: '****2201', balance: -1543.22, type: 'credit' },
-];
-
-const mockTransactions = [
-  { id: 1, description: 'Amazon.com', amount: -89.99, date: 'Today', icon: <ShoppingCartIcon /> },
-  { id: 2, description: 'Direct Deposit - Payroll', amount: 3250.00, date: 'Yesterday', icon: <TrendingUpIcon /> },
-  { id: 3, description: 'Whole Foods Market', amount: -67.43, date: 'Dec 18', icon: <RestaurantIcon /> },
-  { id: 4, description: 'Shell Gas Station', amount: -45.20, date: 'Dec 17', icon: <LocalGasStationIcon /> },
-  { id: 5, description: 'Netflix Subscription', amount: -15.99, date: 'Dec 15', icon: <SubscriptionsIcon /> },
-];
+interface RecentTransaction {
+  id: string;
+  description: string;
+  amount: number;
+  timestamp: string;
+  category?: string;
+}
 
 const quickActions = [
   { label: 'Transfer Money', icon: <SwapHorizIcon />, path: '/transfers' },
@@ -51,7 +45,26 @@ const quickActions = [
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
-  const { user } = useAuthContext();
+  const { user, token } = useAuthContext();
+  const { accounts } = useAccountContext();
+  const [transactions, setTransactions] = useState<RecentTransaction[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!token) return;
+    const fetchRecentTransactions = async () => {
+      try {
+        const response = await apiClient.get('/transactions/my');
+        const data = Array.isArray(response.data) ? response.data : (response.data.transactions || []);
+        setTransactions(data.slice(0, 5));
+      } catch (e) {
+        console.error('Failed to fetch recent transactions:', e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchRecentTransactions();
+  }, [token]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -72,8 +85,12 @@ const Dashboard: React.FC = () => {
       </Box>
 
       <Grid container spacing={3} sx={{ mb: 4 }}>
-        {mockAccounts.map((account) => (
-          <Grid key={account.number} size={{ xs: 12, md: 4 }}>
+        {accounts.length === 0 && !loading ? (
+          <Grid size={{ xs: 12 }}>
+            <Typography color="text.secondary">No accounts found. Create one to get started.</Typography>
+          </Grid>
+        ) : accounts.map((account) => (
+          <Grid key={account.id} size={{ xs: 12, md: 4 }}>
             <ButtonBase
               onClick={() => navigate('/accounts')}
               sx={{ width: '100%', textAlign: 'left', display: 'block' }}
@@ -129,7 +146,15 @@ const Dashboard: React.FC = () => {
                 </Button>
               </Box>
               <List disablePadding>
-                {mockTransactions.map((tx, index) => (
+                {loading ? (
+                  <ListItem sx={{ justifyContent: 'center', py: 3 }}>
+                    <CircularProgress size={24} />
+                  </ListItem>
+                ) : transactions.length === 0 ? (
+                  <ListItem sx={{ px: 3, py: 2 }}>
+                    <ListItemText primary="No recent transactions" />
+                  </ListItem>
+                ) : transactions.map((tx, index) => (
                   <React.Fragment key={tx.id}>
                     {index > 0 && <Divider />}
                     <ListItem sx={{ px: 3, py: 1.5 }}>
@@ -142,12 +167,12 @@ const Dashboard: React.FC = () => {
                             color: tx.amount > 0 ? 'white' : 'text.secondary',
                           }}
                         >
-                          {tx.icon}
+                          {tx.amount > 0 ? <TrendingUpIcon /> : <ShoppingCartIcon />}
                         </Avatar>
                       </ListItemIcon>
                       <ListItemText
                         primary={tx.description}
-                        secondary={tx.date}
+                        secondary={new Date(tx.timestamp).toLocaleDateString()}
                         slotProps={{ primary: { sx: { fontWeight: 500, fontSize: '0.9rem' } }, secondary: { sx: { fontSize: '0.75rem' } } }}
                       />
                       <Typography

@@ -76,7 +76,16 @@ const Transactions: React.FC = () => {
     try {
       setLoading(true);
       const response = await apiClient.get('/transactions/my');
-      setTransactions(response.data.transactions || []);
+      const data = Array.isArray(response.data) ? response.data : (response.data.transactions || []);
+      setTransactions(data.map((t: Record<string, unknown>) => ({
+        id: t.id as string,
+        date: t.timestamp as string,
+        description: t.description as string,
+        amount: t.amount as number,
+        balance: 0,
+        category: t.category as string | undefined,
+        isAnomalous: false,
+      })));
     } catch (e) {
       setError('Failed to load transactions');
     } finally {

@@ -8,6 +8,7 @@ export interface Account {
   number: string;
   balance: number;
   type: string;
+  currency?: string;
 }
 
 interface AccountContextType {
@@ -34,9 +35,17 @@ export const AccountProvider: React.FC<{ children: ReactNode }> = ({ children })
     if (!user || !token) return;
     try {
       const response = await apiClient.get('/accounts');
-      setAccounts(response.data);
-      if (response.data.length > 0) {
-        setNextAccountId(Math.max(...response.data.map((a: Account) => parseInt(a.id) || 0)) + 1);
+      const mapped: Account[] = (response.data || []).map((a: Record<string, unknown>) => ({
+        id: a.id as string,
+        name: `${a.accountType} Account`,
+        number: a.accountNumber as string,
+        balance: a.balance as number,
+        type: (a.accountType as string || '').toLowerCase(),
+        currency: a.currency as string,
+      }));
+      setAccounts(mapped);
+      if (mapped.length > 0) {
+        setNextAccountId(Math.max(...mapped.map(a => parseInt(a.id) || 0)) + 1);
       }
     } catch (e) {
       console.error('Failed to fetch accounts:', e);
