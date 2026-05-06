@@ -119,3 +119,11 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 
 **Dependencies:** Complete; no backend dependencies. MUI theme update only.
 
+
+## Learnings
+
+### UI Theme Redesign (squad/ui-theme)
+- MUI v9 removed `fontWeight`, `display`, and similar shorthand props from Typography — must use `sx` prop instead
+- MUI v9 renamed `primaryTypographyProps`/`secondaryTypographyProps` on ListItemText to `slotProps.primary`/`slotProps.secondary`
+- When using mock routers in tests (that render all Route children), assertions should use `getAllBy*` instead of `getBy*` to handle multiple rendered pages
+- Professional banking aesthetic relies on: deep navy primary, gold accent, system font stack, subtle shadows (elevation 1-2), 12px border-radius on cards, and clear visual hierarchy through font-weight rather than color
