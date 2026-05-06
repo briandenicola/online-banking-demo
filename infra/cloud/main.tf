@@ -392,6 +392,9 @@ resource "azurerm_federated_identity_credential" "aks_openai_workload_identity" 
 resource "azurerm_cognitive_deployment" "gpt54_mini" {
   name                 = "gpt-5.4-mini"
   cognitive_account_id = data.azurerm_cognitive_account.openai.id
+
+  depends_on = [azapi_resource.this]
+
   model {
     format  = "OpenAI"
     name    = "gpt-5.4-mini"
@@ -401,6 +404,10 @@ resource "azurerm_cognitive_deployment" "gpt54_mini" {
   sku {
     name     = "GlobalStandard"
     capacity = 10
+  }
+
+  lifecycle {
+    ignore_changes = [sku[0].capacity]
   }
 }
 
