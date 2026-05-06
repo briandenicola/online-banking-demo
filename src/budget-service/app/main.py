@@ -12,15 +12,12 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 try:
-    from azure.eventhub import EventHubConsumerClient, EventHubProducerClient
     from azure.ai.inference import EmbeddingsClient
     from azure.identity import DefaultAzureCredential
     from opentelemetry.instrumentation.azure import AzureInstrumentor
     AZURE_AVAILABLE = True
 except ImportError:
     AZURE_AVAILABLE = False
-    EventHubConsumerClient = None
-    EventHubProducerClient = None
     EmbeddingsClient = None
     DefaultAzureCredential = None
     AzureInstrumentor = None
@@ -311,27 +308,6 @@ async def startup_event():
         except Exception as ex:
             logger.error(f"❌ Azure OpenAI token acquisition FAILED: {ex}")
             logger.error("Ensure AZURE_OPENAI_ENDPOINT is set and Managed Identity/Service Principal has Cognitive Services OpenAI User role")
-    
-    eventhub_conn = os.getenv("EVENTHUB_CONNECTION_STRING")
-    eventhub_name = os.getenv("EVENTHUB_NAME", "banking-events")
-    
-    if eventhub_conn and AZURE_AVAILABLE:
-        try:
-            client = EventHubConsumerClient.from_connection_string(
-                conn_str=eventhub_conn,
-                consumer_group="$Default",
-                eventhub_name=eventhub_name
-            )
-            logger.info(f"✅ EventHub client created for '{eventhub_name}' - connectivity verified")
-            
-            asyncio.create_task(client.receive(
-                on_event=process_events,
-                max_wait_time=5
-            ))
-            logger.info("Budget analysis agent started")
-        except Exception as eh_ex:
-            logger.error(f"❌ EventHub connection FAILED: {eh_ex}")
-            logger.error("Ensure EVENTHUB_CONNECTION_STRING is set and Managed Identity has Azure Event Hubs Data Receiver role")
 
 
 @app.get("/health")

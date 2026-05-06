@@ -27,11 +27,6 @@ spec:
         - containerPort: 8002
           protocol: TCP
         env:
-        - name: EVENTHUB_CONNECTION_STRING
-          valueFrom:
-            secretKeyRef:
-              name: banking-secrets
-              key: eventhub-connection-string
         - name: APPLICATIONINSIGHTS_CONNECTION_STRING
           valueFrom:
             secretKeyRef:

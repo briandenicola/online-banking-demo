@@ -1,7 +1,6 @@
 using System;
 using System.Text;
 using System.Threading.Tasks;
-using Azure.Messaging.EventHubs.Producer;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -16,20 +15,17 @@ namespace UserService.Services;
 public class UserService : IUserService
 {
     private readonly Container _container;
-    private readonly EventHubProducerClient _eventHubProducer;
     private readonly ILogger<UserService> _logger;
     private readonly IConfiguration _configuration;
 
     public UserService(
         CosmosClient cosmosClient,
-        EventHubProducerClient eventHubProducer,
         ILogger<UserService> logger,
         IConfiguration configuration)
     {
         var databaseName = configuration["CosmosDb:DatabaseName"];
         var containerName = configuration["CosmosDb:ContainerName"];
         _container = cosmosClient.GetContainer(databaseName, containerName);
-        _eventHubProducer = eventHubProducer;
         _logger = logger;
         _configuration = configuration;
     }
@@ -95,9 +91,7 @@ public class UserService : IUserService
         };
 
         var response = await _container.CreateItemAsync(user, new PartitionKey(user.Id));
-        
-        // Publish UserRegistered event
-        await PublishUserRegisteredEvent(user);
+        _logger.LogInformation("User registered: {UserId}", user.Id);
 
         return response;
     }
@@ -109,21 +103,5 @@ public class UserService : IUserService
             return false;
 
         return BC.Verify(password, user.PasswordHash);
-    }
-
-    private async Task PublishUserRegisteredEvent(UserModel user)
-    {
-        var evt = new UserRegisteredEvent
-        {
-            UserId = user.Id,
-            Username = user.Username,
-            Email = user.Email
-        };
-
-        var eventData = new Azure.Messaging.EventHubs.EventData(
-            Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(evt)));
-        
-        await _eventHubProducer.SendAsync(new[] { eventData });
-        _logger.LogInformation("Published UserRegistered event for user {UserId}", user.Id);
     }
 }

@@ -25,11 +25,6 @@ spec:
         - containerPort: 8080
           protocol: TCP
         env:
-        - name: EVENTHUB_CONNECTION_STRING
-          valueFrom:
-            secretKeyRef:
-              name: banking-secrets
-              key: eventhub-connection-string
         envFrom:
         - configMapRef:
             name: banking-demo-config

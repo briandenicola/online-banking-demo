@@ -50,7 +50,6 @@ tasks:
         echo "AZURE_OPENAI_MODEL={{.AZURE_OPENAI_MODEL}}"
         echo "AZURE_OPENAI_EMBEDDING_MODEL={{.AZURE_OPENAI_EMBEDDING_MODEL}}"
         echo "APPLICATIONINSIGHTS_CONNECTION_STRING={{.APPLICATIONINSIGHTS_CONNECTION_STRING}}"
-        echo "EVENTHUB_CONNECTION_STRING={{.EVENTHUB_CONNECTION_STRING}}"
     silent: true
     vars:
       AZURE_OPENAI_MODEL: gpt-5.4-mini
@@ -61,8 +60,6 @@ tasks:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw managed_identity_client_id
       APPLICATIONINSIGHTS_CONNECTION_STRING:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw application_insights_connection_string
-      EVENTHUB_CONNECTION_STRING:
-        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw eventhub_connection_string
 
   clean:
     desc: Clean build artifacts
@@ -124,7 +121,6 @@ tasks:
           --from-literal=cosmos-connection-string="{{.COSMOS_CONN}}" \
           --from-literal=appinsights-connection-string="{{.APPINSIGHTS_CONN}}" \
           --from-literal=jwt-key="{{.JWT_KEY}}" \
-          --from-literal=eventhub-connection-string="placeholder" \
           --from-literal=openai-endpoint="{{.OPENAI_ENDPOINT}}" \
           --dry-run=client -o yaml | kubectl apply -f -
       - |
