@@ -46,6 +46,7 @@ metadata:
   labels:
     app: ui-app
 spec:
+  type: LoadBalancer
   selector:
     app: ui-app
   ports:
