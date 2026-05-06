@@ -2,6 +2,7 @@ version: '3'
 
 env:
   INFRA_DIR: infra/cloud
+  DEPLOY_EMBEDDING_MODEL: false
 
 vars:
   ACR_NAME:
@@ -21,7 +22,6 @@ tasks:
     cmds:
       - task: _init
       - task: apply
-      - task: output-env
 
   apply:
     desc: Apply Terraform infrastructure
@@ -31,7 +31,6 @@ tasks:
         -var "deploy_embedding_model={{.DEPLOY_EMBEDDING_MODEL}}"
     vars:
       REGION: '{{default .DEFAULT_REGION .CLI_ARGS}}'
-      DEPLOY_EMBEDDING_MODEL: '{{default "false" .DEPLOY_EMBEDDING_MODEL}}'
 
   down:
     desc: Destroys all Azure resources and cleans up Terraform
@@ -57,13 +56,13 @@ tasks:
       AZURE_OPENAI_MODEL: gpt-5.4-mini
       AZURE_OPENAI_EMBEDDING_MODEL: text-embedding-ada-002
       AZURE_OPENAI_ENDPOINT:
-        sh: terraform output -raw openai_endpoint
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw openai_endpoint
       AZURE_CLIENT_ID:
-        sh: terraform output -raw managed_identity_client_id
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw managed_identity_client_id
       APPLICATIONINSIGHTS_CONNECTION_STRING:
-        sh: terraform output -raw application_insights_connection_string
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw application_insights_connection_string
       EVENTHUB_CONNECTION_STRING:
-        sh: terraform output -raw eventhub_connection_string
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw eventhub_connection_string
 
   clean:
     desc: Clean build artifacts
@@ -81,10 +80,10 @@ tasks:
   build:dotnet:
     desc: Build all .NET service images
     cmds:
-      - az acr build --registry {{.ACR_NAME}} --image user-service:{{.TAG}} ./src/user-service/
-      - az acr build --registry {{.ACR_NAME}} --image account-service:{{.TAG}} ./src/account-service/
-      - az acr build --registry {{.ACR_NAME}} --image transaction-service:{{.TAG}} ./src/transaction-service/
-      - az acr build --registry {{.ACR_NAME}} --image transfer-service:{{.TAG}} ./src/transfer-service/
+      - az acr build --registry {{.ACR_NAME}} --image user-service:{{.TAG}} -f ./src/user-service/Dockerfile .
+      - az acr build --registry {{.ACR_NAME}} --image account-service:{{.TAG}} -f ./src/account-service/Dockerfile .
+      - az acr build --registry {{.ACR_NAME}} --image transaction-service:{{.TAG}} -f ./src/transaction-service/Dockerfile .
+      - az acr build --registry {{.ACR_NAME}} --image transfer-service:{{.TAG}} -f ./src/transfer-service/Dockerfile .
 
   build:python:
     desc: Build all Python service images
