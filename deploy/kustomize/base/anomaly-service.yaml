@@ -20,6 +20,9 @@ spec:
       serviceAccountName: ai-workload-identity
       securityContext:
         runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
       - name: anomaly-service
         image: ghcr.io/banking-demo/anomaly-service:1.0.0

@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -26,6 +28,8 @@ const (
 	streamName    = "banking-events"
 	consumerGroup = "event-processor-group"
 	consumerName  = "event-processor-1"
+	// Azure Cache for Redis scope for Entra ID token requests
+	redisCacheScope = "acca5fbb-b7e4-4009-81f1-37e38fd66d78/.default"
 )
 
 // EventProcessor handles Redis Stream messages
@@ -58,14 +62,16 @@ func main() {
 	defer cancel()
 
 	// Get Redis connection from environment
-	// Format: host:port,ssl=True,abortConnect=False,password=KEY
+	// Format: host:port,ssl=True,abortConnect=False (no password — Entra ID auth)
 	redisConnStr := os.Getenv("REDIS__CONNECTIONSTRING")
 	if redisConnStr == "" {
 		redisConnStr = "redis:6379"
 	}
 
-	redisOpts := parseRedisConnectionString(redisConnStr)
-	rdb := redis.NewClient(redisOpts)
+	rdb, err := newRedisClient(ctx, redisConnStr)
+	if err != nil {
+		log.Fatalf("Failed to create Redis client: %v", err)
+	}
 
 	// Verify Redis connectivity with retry
 	for i := 0; i < 10; i++ {
@@ -121,6 +127,64 @@ func main() {
 	<-sigChan
 	log.Println("Shutting down event processor...")
 	cancel()
+}
+
+// newRedisClient creates a Redis client. If AZURE_CLIENT_ID is set (workload identity),
+// it uses Entra ID token-based auth. Otherwise falls back to connection string parsing
+// (for local dev with docker-compose).
+func newRedisClient(ctx context.Context, connStr string) (*redis.Client, error) {
+	opts := parseRedisConnectionString(connStr)
+
+	// If running with Azure workload identity, use Entra ID token auth
+	if os.Getenv("AZURE_CLIENT_ID") != "" {
+		cred, err := azidentity.NewDefaultAzureCredential(nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Azure credential: %w", err)
+		}
+
+		token, err := cred.GetToken(ctx, policy.TokenRequestOptions{
+			Scopes: []string{redisCacheScope},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get Redis token: %w", err)
+		}
+
+		opts.Password = token.Token
+		log.Println("Using Entra ID token for Redis authentication")
+
+		client := redis.NewClient(opts)
+
+		// Refresh token periodically (Azure tokens expire in ~1 hour)
+		go refreshRedisToken(ctx, client, cred)
+
+		return client, nil
+	}
+
+	log.Println("Using connection string for Redis authentication (local dev)")
+	return redis.NewClient(opts), nil
+}
+
+// refreshRedisToken periodically refreshes the Entra ID token on the Redis connection
+func refreshRedisToken(ctx context.Context, client *redis.Client, cred *azidentity.DefaultAzureCredential) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(45 * time.Minute):
+			token, err := cred.GetToken(ctx, policy.TokenRequestOptions{
+				Scopes: []string{redisCacheScope},
+			})
+			if err != nil {
+				log.Printf("⚠️ Failed to refresh Redis token: %v", err)
+				continue
+			}
+			if err := client.Do(ctx, "AUTH", "default", token.Token).Err(); err != nil {
+				log.Printf("⚠️ Failed to re-auth Redis with new token: %v", err)
+			} else {
+				log.Println("✅ Redis token refreshed")
+			}
+		}
+	}
 }
 
 // consumeEvents reads from the Redis Stream using consumer groups

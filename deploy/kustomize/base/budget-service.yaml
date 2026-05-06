@@ -20,6 +20,9 @@ spec:
       serviceAccountName: ai-workload-identity
       securityContext:
         runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
       - name: budget-service
         image: ghcr.io/banking-demo/budget-service:1.0.0

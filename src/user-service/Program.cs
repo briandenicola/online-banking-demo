@@ -8,6 +8,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Swashbuckle.AspNetCore;
 using System.Text;
+using Azure.Identity;
 using Banking.Observability;
 using StackExchange.Redis;
 using UserService.Services;
@@ -87,10 +88,18 @@ else
         return cosmosClient;
     });
 
-    // Redis for event streaming
+    // Redis for event streaming (Entra ID auth when running in Azure)
     var redisConnStr = builder.Configuration["Redis:ConnectionString"] ?? "redis:6379";
-    builder.Services.AddSingleton<IConnectionMultiplexer>(
-        ConnectionMultiplexer.Connect(redisConnStr));
+    builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+    {
+        var configOptions = ConfigurationOptions.Parse(redisConnStr);
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AZURE_CLIENT_ID")))
+        {
+            var credential = new DefaultAzureCredential();
+            configOptions.ConfigureForAzureWithTokenCredentialAsync(credential).GetAwaiter().GetResult();
+        }
+        return ConnectionMultiplexer.Connect(configOptions);
+    });
 
     // Services
     builder.Services.AddScoped<IUserService, UserService.Services.UserService>();

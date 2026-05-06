@@ -104,8 +104,8 @@ services:
   # Chatbot Service
   chatbot-service:
     build:
-      context: .
-      dockerfile: src/chatbot-service/Dockerfile
+      context: ./src/chatbot-service
+      dockerfile: Dockerfile
     container_name: banking-chatbot-service
     ports:
       - "8001:8001"
@@ -126,8 +126,8 @@ services:
   # Anomaly Service
   anomaly-service:
     build:
-      context: .
-      dockerfile: src/anomaly-service/Dockerfile
+      context: ./src/anomaly-service
+      dockerfile: Dockerfile
     container_name: banking-anomaly-service
     ports:
       - "8002:8002"
@@ -149,8 +149,8 @@ services:
   # Budget Service
   budget-service:
     build:
-      context: .
-      dockerfile: src/budget-service/Dockerfile
+      context: ./src/budget-service
+      dockerfile: Dockerfile
     container_name: banking-budget-service
     ports:
       - "8003:8003"

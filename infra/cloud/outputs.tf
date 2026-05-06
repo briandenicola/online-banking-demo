@@ -24,14 +24,12 @@ output "redis_host" {
   value = azurerm_managed_redis.main.hostname
 }
 
-output "redis_access_key" {
-  value     = azurerm_managed_redis.main.primary_access_key
-  sensitive = true
+output "redis_connection_string" {
+  value = "${azurerm_managed_redis.main.hostname}:10000,ssl=True,abortConnect=False"
 }
 
-output "redis_connection_string" {
-  value     = "${azurerm_managed_redis.main.hostname}:10000,ssl=True,abortConnect=False,password=${azurerm_managed_redis.main.primary_access_key}"
-  sensitive = true
+output "redis_managed_identity_client_id" {
+  value = azurerm_user_assigned_identity.redis_managed_identity.client_id
 }
 
 output "application_insights_key" {
