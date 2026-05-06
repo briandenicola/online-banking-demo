@@ -168,16 +168,16 @@ resource "azurerm_cognitive_deployment" "gpt54_mini" {
   }
 }
 
-resource "azurerm_cognitive_deployment" "cohere_embedding" {
-  name                 = "Cohere-embed-v3-english"
+resource "azurerm_cognitive_deployment" "text_embedding" {
+  name                 = "text-embedding-ada-002"
   cognitive_account_id = data.azurerm_cognitive_account.openai.id
 
   depends_on = [azurerm_cognitive_deployment.gpt54_mini]
 
   model {
     format  = "OpenAI"
-    name    = "Cohere-embed-v3-english"
-    version = "1"
+    name    = "text-embedding-ada-002"
+    version = "2"
   }
 
   sku {

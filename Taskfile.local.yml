@@ -48,7 +48,7 @@ tasks:
         echo "JWT_KEY={{.JWT_KEY}}"
     vars:
       AZURE_OPENAI_MODEL: gpt-5.4-mini
-      AZURE_OPENAI_EMBEDDING_MODEL: Cohere-embed-v3-english
+      AZURE_OPENAI_EMBEDDING_MODEL: text-embedding-ada-002
       AZURE_OPENAI_ENDPOINT:
         sh: terraform -chdir=./{{.LOCAL_INFRA_DIR}} output -raw openai_endpoint
       AZURE_TENANT_ID:
@@ -113,7 +113,7 @@ tasks:
           > .env
     vars:
       AZURE_OPENAI_MODEL: gpt-5.4-mini
-      AZURE_OPENAI_EMBEDDING_MODEL: Cohere-embed-v3-english
+      AZURE_OPENAI_EMBEDDING_MODEL: text-embedding-ada-002
       AZURE_OPENAI_ENDPOINT:
         sh: terraform -chdir=./{{.LOCAL_INFRA_DIR}} output -raw openai_endpoint
       AZURE_TENANT_ID:
