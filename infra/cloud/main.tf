@@ -31,7 +31,10 @@ locals {
   resource_name       = "${random_pet.this.id}-${random_id.this.dec}"
   resource_group_name = "${local.resource_name}-rg"
   aks_name            = "${local.resource_name}-aks"
+  aks_node_rg_name    = "${local.aks_name}_nodes_rg"
   vnet_name           = "${local.resource_name}-vnet"
+  vnet_cidr           = cidrsubnet("10.0.0.0/8", 8, random_integer.vnet_cidr.result)
+  nodes_subnet_cidr   = cidrsubnet(local.vnet_cidr, 8, 3)
   storage_name        = "${substr(replace(random_uuid.guid.result, "-", ""), 0, 22)}sa"
   cosmos_name         = "${local.resource_name}-cosmos"
   openai_name         = "${local.resource_name}-foundry"
@@ -52,6 +55,21 @@ resource "random_id" "this" {
 }
 
 resource "random_uuid" "guid" {}
+
+resource "random_integer" "vnet_cidr" {
+  min = 10
+  max = 250
+}
+
+resource "random_integer" "services_cidr" {
+  min = 64
+  max = 99
+}
+
+resource "random_integer" "pod_cidr" {
+  min = 100
+  max = 127
+}
 
 resource "azurerm_resource_group" "this" {
   name     = local.resource_group_name
@@ -74,7 +92,7 @@ resource "azurerm_storage_account" "main" {
 
 resource "azurerm_virtual_network" "main" {
   name                = local.vnet_name
-  address_space       = ["10.0.0.0/8"]
+  address_space       = [local.vnet_cidr]
   location            = azurerm_resource_group.this.location
   resource_group_name = azurerm_resource_group.this.name
   tags = {
@@ -86,7 +104,7 @@ resource "azurerm_subnet" "aks" {
   name                 = "aks-subnet"
   resource_group_name  = azurerm_resource_group.this.name
   virtual_network_name = azurerm_virtual_network.main.name
-  address_prefixes     = ["10.240.0.0/16"]
+  address_prefixes     = [local.nodes_subnet_cidr]
 }
 
 resource "azurerm_kubernetes_cluster" "main" {
@@ -97,24 +115,27 @@ resource "azurerm_kubernetes_cluster" "main" {
     ]
   }
 
-  name                = local.aks_name
-  location            = azurerm_resource_group.this.location
-  resource_group_name = azurerm_resource_group.this.name
-  kubernetes_version  = var.kubernetes_version
-  dns_prefix          = local.aks_name
-  sku_tier            = "Standard"
+  name                         = local.aks_name
+  location                     = azurerm_resource_group.this.location
+  resource_group_name          = azurerm_resource_group.this.name
+  node_resource_group          = local.aks_node_rg_name
+  kubernetes_version           = var.kubernetes_version
+  dns_prefix                   = local.aks_name
+  sku_tier                     = "Standard"
 
   automatic_upgrade_channel = "patch"
   node_os_upgrade_channel   = "SecurityPatch"
 
-  local_account_disabled = true
-  run_command_enabled    = false
-  azure_policy_enabled   = true
-
+  local_account_disabled       = true
+  run_command_enabled          = false
+  azure_policy_enabled         = true
+  open_service_mesh_enabled    = false
+  cost_analysis_enabled        = true
   image_cleaner_enabled        = true
   image_cleaner_interval_hours = 48
 
-  cost_analysis_enabled = true
+  oidc_issuer_enabled       = true
+  workload_identity_enabled = true
 
   default_node_pool {
     name                        = "system"
@@ -151,9 +172,9 @@ resource "azurerm_kubernetes_cluster" "main" {
     network_plugin_mode = "overlay"
     network_data_plane  = "cilium"
     network_policy      = "cilium"
-    service_cidr        = "100.64.0.0/16"
-    dns_service_ip      = "100.64.0.10"
-    pod_cidr            = "100.65.0.0/16"
+    service_cidr        = "10.${random_integer.services_cidr.result}.0.0/16"
+    dns_service_ip      = "10.${random_integer.services_cidr.result}.0.10"
+    pod_cidr            = "10.${random_integer.pod_cidr.result}.0.0/16"
   }
 
   workload_autoscaler_profile {
