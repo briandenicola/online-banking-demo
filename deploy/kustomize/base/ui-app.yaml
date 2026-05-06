@@ -18,17 +18,17 @@ spec:
       - name: ui-app
         image: ghcr.io/banking-demo/ui-app:1.0.0
         ports:
-        - containerPort: 80
+        - containerPort: 8080
         livenessProbe:
           httpGet:
             path: /
-            port: 80
+            port: 8080
           initialDelaySeconds: 10
           periodSeconds: 30
         readinessProbe:
           httpGet:
             path: /
-            port: 80
+            port: 8080
           initialDelaySeconds: 5
           periodSeconds: 10
         resources:
@@ -51,4 +51,4 @@ spec:
     app: ui-app
   ports:
   - port: 80
-    targetPort: 80
+    targetPort: 8080

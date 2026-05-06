@@ -15,8 +15,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /event-processor
 
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates
-WORKDIR /root/
+WORKDIR /app
 
 COPY --from=builder /event-processor .
+USER nobody
 
 CMD ["./event-processor"]
