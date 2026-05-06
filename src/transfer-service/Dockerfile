@@ -1,9 +1,9 @@
 FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
 WORKDIR /src
 
-# Copy shared Contracts project
+# Copy shared projects
 COPY src/shared/Contracts/*.csproj ./shared/Contracts/
-RUN dotnet restore "./shared/Contracts/Contracts.csproj"
+COPY src/shared/Observability/*.csproj ./shared/Observability/
 
 # Copy transfer-service project
 COPY src/transfer-service/*.csproj ./transfer-service/
@@ -11,6 +11,7 @@ RUN dotnet restore "./transfer-service/transfer-service.csproj"
 
 # Copy everything else
 COPY src/shared/Contracts/. ./shared/Contracts/
+COPY src/shared/Observability/. ./shared/Observability/
 COPY src/transfer-service/. ./transfer-service/
 
 WORKDIR /src/transfer-service
