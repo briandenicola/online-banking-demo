@@ -28,6 +28,8 @@ services:
       - Jwt__Key=YourSuperSecretKeyForJWTTokenGeneration12345
       - Jwt__Issuer=user-service
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_SERVICE_NAME=user-service
     depends_on:
       redis:
         condition: service_healthy
@@ -45,6 +47,8 @@ services:
       - UseInMemoryDatabase=true
       - Jwt__Key=YourSuperSecretKeyForJWTTokenGeneration12345
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_SERVICE_NAME=account-service
     depends_on:
       redis:
         condition: service_healthy
@@ -62,6 +66,8 @@ services:
       - UseInMemoryDatabase=true
       - Redis__ConnectionString=redis:6379
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_SERVICE_NAME=transaction-service
     depends_on:
       redis:
         condition: service_healthy
@@ -81,6 +87,8 @@ services:
       - Services__AccountService=http://account-service
       - Services__TransactionService=http://transaction-service
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_SERVICE_NAME=transfer-service
     depends_on:
       redis:
         condition: service_healthy
@@ -102,6 +110,8 @@ services:
       - AZURE_OPENAI_MODEL=${AZURE_OPENAI_MODEL:-gpt-4o-mini}
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
       - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_SERVICE_NAME=chatbot-service
     depends_on:
       - user-service
 
@@ -118,6 +128,8 @@ services:
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
       - REDIS__CONNECTIONSTRING=redis:6379
       - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_SERVICE_NAME=anomaly-service
     depends_on:
       redis:
         condition: service_healthy
@@ -134,6 +146,8 @@ services:
       - AZURE_OPENAI_ENDPOINT=
       - AZURE_CLIENT_ID=
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_SERVICE_NAME=budget-service
     depends_on:
       - transaction-service
 
@@ -161,6 +175,8 @@ services:
     environment:
       - REDIS__CONNECTIONSTRING=redis:6379
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_SERVICE_NAME=event-processor
     depends_on:
       redis:
         condition: service_healthy
@@ -175,6 +191,20 @@ services:
       - "3000:80"
     depends_on:
       - gateway
+
+  # --- Optional: Jaeger for local trace viewing ---
+  # Uncomment to enable distributed tracing UI at http://localhost:16686
+  # Then set OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317 in your .env file
+  #
+  # jaeger:
+  #   image: jaegertracing/all-in-one:1.54
+  #   container_name: banking-jaeger
+  #   ports:
+  #     - "16686:16686"  # Jaeger UI
+  #     - "4317:4317"    # OTLP gRPC receiver
+  #     - "4318:4318"    # OTLP HTTP receiver
+  #   environment:
+  #     - COLLECTOR_OTLP_ENABLED=true
 
 volumes:
   redis-data:

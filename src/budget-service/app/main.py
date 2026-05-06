@@ -5,6 +5,8 @@ import asyncio
 import json
 import logging
 import os
+import uuid
+import structlog
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
@@ -23,7 +25,7 @@ except ImportError:
     DefaultAzureCredential = None
     AzureInstrumentor = None
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -33,30 +35,58 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configure structured logging
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.JSONRenderer(),
+    ],
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=True,
+)
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = structlog.get_logger("budget-service")
 
 # Initialize telemetry
 def init_telemetry():
-    if os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING"):
-        exporter = OTLPSpanExporter(
-            endpoint="https://dc.services.visualstudio.com/v2/track",
-            headers={"Authorization": f"InstrumentationKey={os.getenv('APPINSIGHTS_INSTRUMENTATIONKEY')}"}
-        )
+    otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+    if otlp_endpoint:
+        exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
         provider = TracerProvider(
             resource=Resource.create({"service.name": "budget-service"})
         )
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
-        # Instrument Azure SDK for tracing OpenAI calls
         if AzureInstrumentor:
             AzureInstrumentor().instrument()
 
 init_telemetry()
 
+
+class CorrelationIdMiddleware(BaseHTTPMiddleware):
+    """Extract or generate X-Correlation-ID for each request."""
+    async def dispatch(self, request: Request, call_next):
+        correlation_id = request.headers.get("X-Correlation-ID") or uuid.uuid4().hex
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(correlation_id=correlation_id)
+        response = await call_next(request)
+        response.headers["X-Correlation-ID"] = correlation_id
+        return response
+
 app = FastAPI(title="Budget Analysis Agent", version="1.0.0")
+
+app.add_middleware(CorrelationIdMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

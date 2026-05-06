@@ -8,9 +8,16 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Swashbuckle.AspNetCore;
 using System.Text;
+using Banking.Observability;
 using UserService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Structured logging with Serilog
+builder.Host.UseBankingSerilog("user-service");
+
+// OpenTelemetry tracing
+builder.Services.AddBankingOpenTelemetry("user-service");
 
 // Add services to the container
 builder.Services.AddControllers();
@@ -94,6 +101,8 @@ if (app.Environment.IsDevelopment() || useInMemory)
 }
 
 app.UseHttpsRedirection();
+
+app.UseCorrelationId();
 
 app.UseCors();
 
