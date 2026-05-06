@@ -418,3 +418,36 @@ which is `local.openai_name` (suffix `-foundry`). The project name belongs in th
 
 **Key Learning:** Azure AI Foundry endpoint URLs use the parent account's `customSubDomainName` for
 the hostname, not the child project name. The project name only appears in the `/api/projects/` path.
+
+### 2025-07 — OTEL Collector Cleanup
+
+**Problem:** Services logged repeated OTEL export failures (`StatusCode.UNAVAILABLE encountered while exporting traces to otel-collector.observability.svc.cluster.local:4317`) because the configmap pointed to a non-existent OTEL collector. No collector deployment existed in deploy/ or infra/.
+
+**Analysis:**
+- .NET services (ObservabilityExtensions.cs:32-48): Check if `OTEL_EXPORTER_OTLP_ENDPOINT` exists before adding exporter — gracefully handle missing/empty
+- Python services (anomaly/budget/chatbot): Check `if otlp_endpoint:` before creating exporter — gracefully handle missing
+- Go event-processor: Uses Application Insights (APPLICATIONINSIGHTS_CONNECTION_STRING), not OTLP endpoint — unaffected by configmap
+
+**Root Cause:** ConfigMap set `OTEL_EXPORTER_OTLP_ENDPOINT` to non-existent endpoint. All services check if env var exists; if present, they try to use it and fail.
+
+**Fix:** Removed `OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4317"` from `deploy/kustomize/base/configmap.yaml`. All services now run without OTLP export (gracefully) until a collector is deployed.
+
+**Decision Rationale:** Brian's preference is convention and simplicity over complexity. Deploying an entire OTEL stack just to avoid errors is overkill. Services function perfectly without OTLP export — tracing still works locally, just without centralized aggregation.
+
+**Key Learning:** All backend services already had defensive env-var checks (empty = disabled). The correct fix was removal, not deployment.
+
+### 2026-05-06 — Orchestration Complete (Scribe)
+
+**Summary:** Scribe recorded this work session:
+- Orchestration log: `.squad/orchestration-log/2026-05-06T22-11-00Z-basher.md`
+- Session log: `.squad/log/2026-05-06T22-11-00Z-otel-fix.md`
+- Decision merged into `.squad/decisions.md` and inbox cleaned up
+- Team history updated with this entry
+
+**Basher's Contributions This Session:**
+- Fixed OTEL collector error spam (configmap cleanup)
+- Hardened K8s deployment security contexts
+- Fixed docker-compose build contexts
+- All changes staged for git commit
+
+**Status:** Ready for deployment. Services gracefully handle absent OTEL endpoint.

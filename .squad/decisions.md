@@ -1523,3 +1523,88 @@ Added Taskfile tasks for running Playwright E2E tests by phase and mode.
 
 ---
 
+# Decision: Remove OTEL Collector ConfigMap Entry
+
+**Date:** 2025-07  
+**Author:** Basher (Backend Dev)  
+**Priority:** P2  
+**Status:** Implemented
+
+## Context
+
+Services were logging repeated OTEL export failures:
+```
+Transient error StatusCode.UNAVAILABLE encountered while exporting traces to otel-collector.observability.svc.cluster.local:4317, retrying in 1.19s.
+Failed to export traces to otel-collector.observability.svc.cluster.local:4317, error code: StatusCode.UNAVAILABLE
+```
+
+The configmap at `deploy/kustomize/base/configmap.yaml` line 7 had:
+```yaml
+OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4317"
+```
+
+However:
+- No OTEL collector deployment exists in deploy/ or infra/
+- Services function correctly — health checks pass, requests work
+- The errors are pure noise
+
+## Analysis
+
+All backend services already have defensive checks for the OTEL endpoint:
+
+1. **.NET services** (`src/shared/Observability/ObservabilityExtensions.cs:32-48`):
+   ```csharp
+   if (!string.IsNullOrWhiteSpace(otlpEndpoint)) {
+       builder.AddOtlpExporter(options => { ... });
+   }
+   ```
+   ✅ Gracefully handles missing/empty endpoint
+
+2. **Python services** (anomaly/budget/chatbot):
+   ```python
+   otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+   if otlp_endpoint:
+       exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
+       ...
+   ```
+   ✅ Gracefully handles missing endpoint
+
+3. **Go event-processor** (`src/event-processor/main.go:208-234`):
+   - Uses Application Insights (`APPLICATIONINSIGHTS_CONNECTION_STRING`), not OTLP
+   ✅ Doesn't use the configmap OTEL endpoint at all
+
+## Decision
+
+**Remove the `OTEL_EXPORTER_OTLP_ENDPOINT` line from `deploy/kustomize/base/configmap.yaml`.**
+
+When the env var is missing/empty, all services gracefully skip OTLP export. Tracing still works locally (OpenTelemetry SDK continues to function), just without centralized aggregation.
+
+## Alternatives Considered
+
+1. **Deploy an OTEL collector** — Rejected: Overkill for fixing log noise. No observability requirements justify a full OTEL stack deployment at this stage.
+
+2. **Set endpoint to empty string** — Rejected: Redundant. Missing env var and empty string both achieve the same result (services skip OTLP export).
+
+3. **Make services conditional on env var presence** — Rejected: Services are already conditional! The defensive checks exist in all codebases.
+
+## Rationale
+
+Aligns with Brian's stated preference: **convention and simplicity over complexity**. The simplest fix is removal, not deployment.
+
+## Implementation
+
+- File: `deploy/kustomize/base/configmap.yaml`
+- Change: Removed line 7 (`OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4317"`)
+- Impact: No functional changes. Services continue to work. Log noise eliminated.
+
+## Future Work
+
+If centralized tracing aggregation is needed in the future:
+1. Deploy OTEL collector (e.g., via Helm chart or Kustomize overlay)
+2. Add `OTEL_EXPORTER_OTLP_ENDPOINT` back to configmap pointing to the deployed collector
+3. All services will automatically begin exporting traces (no code changes required)
+
+The architecture is ready — we just don't need it yet.
+
+---
+
