@@ -1,0 +1,43 @@
+# Dependencies
+**/node_modules
+**/bin
+**/obj
+
+# Git
+.git
+.gitignore
+
+# Infrastructure (not needed for builds)
+infra/
+
+# Tests
+tests/
+
+# IDE and tooling
+.vscode/
+.idea/
+**/.vs/
+
+# Squad / AI team state
+.squad/
+.copilot/
+
+# Documentation
+docs/
+
+# Terraform state
+**/.terraform
+**/*.tfstate*
+**/.terraform.lock.hcl
+
+# Python
+**/__pycache__
+**/.venv
+**/*.pyc
+
+# OS files
+**/.DS_Store
+**/Thumbs.db
+
+# Deploy manifests (not needed for container builds)
+deploy/
