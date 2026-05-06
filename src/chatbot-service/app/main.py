@@ -3,6 +3,7 @@ AI-powered financial advice chatbot service using Azure AI Foundry Agents
 """
 import asyncio
 import logging
+from datetime import datetime
 import os
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -291,6 +292,16 @@ async def health():
         "agent_id": agent_id,
         "agents_available": AZURE_AGENTS_AVAILABLE
     }
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"status": "healthy", "service": "chatbot-service", "timestamp": datetime.utcnow().isoformat()}
+
+
+@app.get("/readyz")
+async def ready():
+    return {"status": "ready"}
 
 
 if __name__ == "__main__":

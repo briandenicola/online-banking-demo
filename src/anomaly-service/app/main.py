@@ -3,6 +3,7 @@ Anomaly Detection Agent for suspicious transaction detection
 """
 import asyncio
 import json
+from datetime import datetime
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -331,6 +332,16 @@ HTTPXClientInstrumentor().instrument()
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"status": "healthy", "service": "anomaly-service", "timestamp": datetime.utcnow().isoformat()}
+
+
+@app.get("/readyz")
+async def ready():
+    return {"status": "ready"}
 
 
 @app.post("/detect", response_model=AnomalyResult)

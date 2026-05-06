@@ -309,6 +309,16 @@ async def health():
     return {"status": "healthy"}
 
 
+@app.get("/healthz")
+async def healthz():
+    return {"status": "healthy", "service": "budget-service", "timestamp": datetime.utcnow().isoformat()}
+
+
+@app.get("/readyz")
+async def ready():
+    return {"status": "ready"}
+
+
 @app.get("/insights/{userId}", response_model=BudgetInsight)
 async def get_insights(userId: str, period: str = "30d"):
     """Get spending insights for a user"""
