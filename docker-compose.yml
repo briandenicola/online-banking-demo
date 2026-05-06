@@ -6,6 +6,8 @@ services:
     ports:
       - "6380:6379"
     command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -173,3 +175,6 @@ services:
       - "3000:80"
     depends_on:
       - gateway
+
+volumes:
+  redis-data:

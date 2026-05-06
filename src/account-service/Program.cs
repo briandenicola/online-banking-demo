@@ -58,6 +58,18 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization();
 
+// CORS for local development
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.WithOrigins("http://localhost:3000", "http://localhost")
+              .AllowAnyMethod()
+              .AllowAnyHeader()
+              .AllowCredentials();
+    });
+});
+
 // Use in-memory database for development if configured
 var useInMemory = builder.Configuration.GetValue<bool>("UseInMemoryDatabase", false);
 
@@ -90,6 +102,8 @@ if (app.Environment.IsDevelopment() || useInMemory)
 }
 
 app.UseHttpsRedirection();
+
+app.UseCors();
 
 app.UseAuthentication();
 app.UseAuthorization();

@@ -24,6 +24,7 @@ except ImportError:
     AzureInstrumentor = None
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -56,6 +57,15 @@ def init_telemetry():
 init_telemetry()
 
 app = FastAPI(title="Budget Analysis Agent", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 FastAPIInstrumentor.instrument_app(app)
 HTTPXClientInstrumentor().instrument()
 

@@ -22,6 +22,7 @@ except ImportError:
     DefaultAzureCredential = None
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -314,6 +315,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Anomaly Detection Agent", version="1.0.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 FastAPIInstrumentor.instrument_app(app)
 HTTPXClientInstrumentor().instrument()
 
