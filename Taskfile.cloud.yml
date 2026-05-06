@@ -32,11 +32,11 @@ tasks:
       REGION: '{{default .DEFAULT_REGION .CLI_ARGS}}'
 
   down:
-    desc: Destroy all Azure resources and clean Terraform/build files
+    desc: Destroys all Azure resources and cleans up Terraform
+    dir: '{{.INFRA_DIR}}'
     cmds:
-      - terraform -chdir=./{{.INFRA_DIR}} destroy -auto-approve || true
-      - cmd: rm -rf .terraform .terraform.lock.hcl terraform.tfstate.d
-        dir: '{{.INFRA_DIR}}'
+      - az group list --tag Application="{{.TITLE}}" --query "[].name" -o tsv | xargs -ot -n 1 az group delete -y --no-wait -n || true
+      - rm -rf terraform.tfstate.d .terraform.lock.hcl .terraform terraform.tfstate terraform.tfstate.backup .terraform.tfstate.lock.info terraform.tfstate.* || true
 
   output-env:
     desc: Output environment variables for local AI development
