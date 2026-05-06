@@ -28,18 +28,21 @@ function jwt_validate(r) {
         return;
     }
 
+    // Check expiration
     var now = Math.floor(Date.now() / 1000);
     if (payload.exp && payload.exp < now) {
         r.return(401, JSON.stringify({ error: 'Token expired' }));
         return;
     }
 
+    // Check issuer
     var expected_issuer = process.env.JWT_ISSUER || 'user-service';
     if (payload.iss && payload.iss !== expected_issuer) {
         r.return(401, JSON.stringify({ error: 'Invalid token issuer' }));
         return;
     }
 
+    // Verify signature using HMAC-SHA256
     var secret = process.env.JWT_KEY;
     if (!secret) {
         r.return(500, JSON.stringify({ error: 'JWT secret not configured' }));
@@ -56,6 +59,7 @@ function jwt_validate(r) {
         return;
     }
 
+    // Token is valid — pass user info downstream
     r.headersOut['X-User-Id'] = payload.sub || payload.nameid || '';
     r.internalRedirect('@upstream');
 }

@@ -301,7 +301,21 @@ async def healthz():
 
 @app.get("/readyz")
 async def ready():
-    return {"status": "ready"}
+    checks = {"azure_credential": False, "agent_configured": agent_id is not None}
+
+    if AZURE_AGENTS_AVAILABLE and DefaultAzureCredential:
+        try:
+            credential = DefaultAzureCredential()
+            token = credential.get_token("https://cognitiveservices.azure.com/.default")
+            checks["azure_credential"] = token is not None
+        except Exception:
+            checks["azure_credential"] = False
+    else:
+        checks["azure_credential"] = None  # Not configured
+
+    all_ready = checks.get("azure_credential") is not False and checks["agent_configured"]
+    status = "ready" if all_ready else "degraded"
+    return {"status": status, "checks": checks}
 
 
 if __name__ == "__main__":

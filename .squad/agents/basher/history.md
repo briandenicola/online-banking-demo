@@ -210,3 +210,18 @@ These bugs are end-to-end blockers: partition key mismatch means transaction ser
 - Jaeger commented out by default — uncomment + set env var to enable
 
 **Outcome:** All services emit structured JSON logs with correlation IDs. Distributed tracing ready to activate by setting one env var.
+### 2026-05 — Azure Auth in Docker
+
+**Task:** Enable DefaultAzureCredential to work inside Docker containers for Python services.
+
+**Implementation:**
+1. Added `~/.azure:/home/appuser/.azure:ro` volume mounts in docker-compose.yml for anomaly, budget, chatbot services
+2. Added `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` env vars (from .env) as service principal fallback
+3. Updated `/readyz` endpoints to verify token acquisition — returns "ready" or "degraded" with check details
+4. Created `docs/azure-auth.md` with both auth methods documented
+
+**Key Learnings:**
+- DefaultAzureCredential checks EnvironmentCredential (service principal) before AzureCliCredential (volume mount)
+- Volume mount must target `/home/appuser/.azure` to match container user's home directory
+- Token acquisition check via `credential.get_token()` is the canonical way to verify credential availability
+- Read-only mount (`:ro`) is essential — containers must never write to host credential cache

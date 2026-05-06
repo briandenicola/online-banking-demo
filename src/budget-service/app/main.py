@@ -316,7 +316,20 @@ async def healthz():
 
 @app.get("/readyz")
 async def ready():
-    return {"status": "ready"}
+    checks = {"azure_credential": False}
+
+    if AZURE_AVAILABLE and DefaultAzureCredential:
+        try:
+            credential = DefaultAzureCredential()
+            token = credential.get_token("https://cognitiveservices.azure.com/.default")
+            checks["azure_credential"] = token is not None
+        except Exception:
+            checks["azure_credential"] = False
+    else:
+        checks["azure_credential"] = None  # Not configured
+
+    status = "ready" if checks.get("azure_credential") is not False else "degraded"
+    return {"status": status, "checks": checks}
 
 
 @app.get("/insights/{userId}", response_model=BudgetInsight)
