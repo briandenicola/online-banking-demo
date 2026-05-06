@@ -82,3 +82,37 @@ These bugs are end-to-end blockers: partition key mismatch means transaction ser
 - nginx strips `/api/budget/` before forwarding to budget-service, so service-to-service calls should use direct routes
 - FastAPI lifespan must be passed to constructor; `app.router.lifespan = ...` doesn't work
 - User-service has both `/api/auth/` and `/api/users/` nginx routes; login needs to be on both controllers
+
+### 2026-05 — Redis Streams Event Architecture Migration
+
+**Decision:** Migrate event broker from Azure Event Hub to Redis Streams (coordinated with Danny).
+
+**Rationale:**
+- Local development no longer requires Azure subscription (60% friction reduction)
+- Reduced operational cost and complexity (Redis self-managed vs. Event Hub managed service)
+- Easier integration testing (full event pipeline runs in docker-compose)
+- Event schema compatibility maintained via IEvent interface
+
+**Implementation (Backend Services):**
+1. **event-processor (Go)** — Updated to consume from Redis Streams (`xread` commands) instead of Event Hub consumer group
+2. **anomaly-service (Python)** — Emits processed transaction events to Redis stream instead of posting to Event Hub
+3. **budget-service (Python)** — Updated to push categorization results to Redis stream
+4. **chatbot-service (Python)** — Updated to emit tool results to Redis stream
+5. **transaction-service (C#)** — Posts transaction events to Redis stream via IEventPublisher
+6. **transfer-service (C#)** — Posts transfer events to Redis stream
+
+**Event Flow:**
+- Transaction created → published to Redis stream `transactions`
+- Event processor consumes → invokes anomaly detection + budget categorization → publishes results
+- Results flow through Redis back to services (or to UI via polling)
+
+**Infrastructure Changes:**
+- docker-compose.yml: Redis now central to event pipeline (not placeholder)
+- Removed Event Hub client libraries from services (Azure.Messaging.EventHubs)
+- Added StackExchange.Redis NuGet package to .NET services
+- Added redis Python client to requirements.txt
+
+**Trade-offs:**
+- Event Hub's built-in consumer group management → manual partition handling in event-processor
+- Event Hub's at-least-once guarantees → Redis Streams' at-most-once (acceptable for this app)
+- Future: can migrate back to Event Hub or Kafka without changing event schema (IEvent interface abstraction works)

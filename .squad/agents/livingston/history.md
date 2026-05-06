@@ -41,3 +41,20 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 3. Create .NET test projects (xUnit)
 4. Replace broken App.test.tsx with real component tests
 5. These 5 fixes unblock automated detection of all other issues
+
+## Phase 1 Implementation (2026-05-05)
+
+### Completed
+- Created xUnit test projects for user-service (22 tests), account-service (18 tests), transfer-service (10 tests)
+- Created pytest suites for anomaly-service (7 tests) and budget-service (8 tests)
+- Fixed React tests: 14 tests across App.test.tsx, Login.test.tsx, Accounts.test.tsx
+- Total: **79 passing tests** across all layers
+
+### Technical Notes
+- .NET tests use Moq for mocking, FluentAssertions for assertions
+- Python tests use FastAPI TestClient (httpx-based) - no infrastructure required
+- React tests required mocking react-router-dom v7 (incompatible with CRA's Jest setup)
+- react-router-dom v7.14.2 has broken `main` field (points to non-existent dist/main.js)
+- Created `src/__mocks__/react-router-dom.tsx` to provide Jest-compatible mock
+- BCrypt.Net-Next package added by another agent may need clean build (rm bin/obj) to resolve
+- user-service.Tests depends on user-service building; concurrent BCrypt changes may require coordination

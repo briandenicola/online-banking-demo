@@ -47,3 +47,36 @@ The project's microservice decomposition is sound, but execution gaps (code bugs
 - **Redis placeholder:** Added comment explaining it's reserved for future use
 - **Taskfile.local.yml:** Removed duplicate `stop` task
 - **`.env.example`:** Documented all required env vars for local dev
+
+### 2026-05 — Redis Streams Event Architecture Migration
+
+**Decision:** Migrate event broker from Azure Event Hub to Redis Streams (coordinated with Basher).
+
+**Strategic Rationale:**
+- **Cost:** Event Hub is managed service with per-throughput-unit billing; Redis is single container (~100MB)
+- **Friction:** Local development previously required Event Hub credentials + connection strings; now pure docker-compose
+- **Complexity:** Event Hub client library + consumer group management → simple Redis XREAD/XADD commands
+- **Testability:** Full event pipeline (create transaction → anomaly detection → budget categorization) runs in docker-compose without cloud
+
+**Architectural Changes:**
+- Event Hub → Redis Streams as primary event broker
+- IEvent interface abstraction maintained (event schema unchanged)
+- All services updated to use Redis publishing/subscription instead of Event Hub SDK
+- Taskfile targets updated (removed azure-event-hub, added redis-streams)
+
+**Infrastructure:**
+- docker-compose.yml: Redis now core service (not vestigial)
+- All .NET services: Removed Azure.Messaging.EventHubs NuGet dependency; added StackExchange.Redis
+- All Python services: Removed azure-eventhub pip dependency; added redis
+- Event processor (Go): Replaced ehubclient with go-redis
+
+**Trade-offs & Decisions:**
+- Event Hub's at-least-once delivery → Redis Streams' at-most-once (acceptable; anomaly detection is resilient)
+- Event Hub's built-in consumer groups → manual offset tracking in event-processor (simple Lua script)
+- Future: Can migrate to Kafka or RabbitMQ without changing service code (IEvent interface provides abstraction)
+
+**Impact:**
+- Developers can now run full system locally without Azure subscription
+- CI/CD no longer needs Event Hub credentials
+- Cloud deployment can use Event Hub (via cloud/main.tf) or continue with Redis (via managed Redis cache in Azure)
+- Event schema backward-compatible (no breaking changes to existing services)
