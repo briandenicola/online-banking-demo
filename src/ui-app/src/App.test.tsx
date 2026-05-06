@@ -2,13 +2,6 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import App from './App';
 
-// Mock react-router-dom to avoid BrowserRouter issues in tests
-jest.mock('react-router-dom', () => ({
-  ...jest.requireActual('react-router-dom'),
-  BrowserRouter: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  useNavigate: () => jest.fn(),
-}));
-
 test('renders login page when not authenticated', () => {
   render(<App />);
   const signInElement = screen.getByText(/Sign in to Online Banking/i);
