@@ -39,7 +39,7 @@ output "key_vault_uri" {
 }
 
 output "openai_endpoint" {
-  value     = "https://${local.project_name}.services.ai.azure.com/api/projects/${local.project_name}"
+  value     = "https://${local.openai_name}.services.ai.azure.com/api/projects/${local.project_name}"
   sensitive = false
 }
 

@@ -401,3 +401,20 @@ Danny analyzed the redundancy issue comprehensively:
 4. Port 10000, TLS required, no anonymous connections
 
 **Status:** Implementation complete per Danny's spec. Ready for testing with Managed Redis.
+
+### 2025-07 — Chatbot Endpoint DNS Fix
+
+**Problem:** Chatbot service failed at startup with DNS resolution error for the AI Foundry endpoint.
+WorkloadIdentity auth succeeded but `witty-bluejay-46780-project.services.ai.azure.com` wouldn't resolve.
+
+**Root Cause:** `infra/cloud/outputs.tf` used `local.project_name` (suffix `-project`) for the endpoint
+hostname, but Azure registers DNS under the parent AI Services account's `customSubDomainName`
+which is `local.openai_name` (suffix `-foundry`). The project name belongs in the URL path only.
+
+**Fix:** Changed `outputs.tf` line 42 hostname from `local.project_name` to `local.openai_name`:
+```
+"https://${local.openai_name}.services.ai.azure.com/api/projects/${local.project_name}"
+```
+
+**Key Learning:** Azure AI Foundry endpoint URLs use the parent account's `customSubDomainName` for
+the hostname, not the child project name. The project name only appears in the `/api/projects/` path.
