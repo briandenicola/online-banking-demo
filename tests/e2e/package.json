@@ -1,0 +1,19 @@
+{
+  "name": "online-banking-e2e",
+  "version": "1.0.0",
+  "description": "End-to-end tests for Online Banking Demo",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "test:chromium": "playwright test --project=chromium",
+    "test:firefox": "playwright test --project=firefox",
+    "test:debug": "playwright test --debug",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^25.6.0",
+    "typescript": "^5.7.0"
+  }
+}

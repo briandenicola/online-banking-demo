@@ -14,3 +14,7 @@ includes:
   cloud: 
     taskfile: ./Taskfile.cloud.yml
     internal: false
+
+  e2e:
+    taskfile: ./Taskfile.e2e.yml
+    internal: false

@@ -58,3 +58,29 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 - Created `src/__mocks__/react-router-dom.tsx` to provide Jest-compatible mock
 - BCrypt.Net-Next package added by another agent may need clean build (rm bin/obj) to resolve
 - user-service.Tests depends on user-service building; concurrent BCrypt changes may require coordination
+
+## Playwright E2E Phase 1 (2026-07-14)
+
+### Completed (E2E-101 through E2E-107)
+- **E2E-101:** Scaffolded `tests/e2e/` with package.json, tsconfig.json, playwright.config.ts
+- **E2E-102:** Configured baseURL=localhost, 30s timeout, retries on CI, screenshot on failure, video on retry
+- **E2E-103:** Created `utils/testHelpers.ts` with waitForService, waitForAllServices, waitForPageReady, retry utilities
+- **E2E-104:** Created `Taskfile.e2e.yml` with run/debug/report/install tasks, included from main Taskfile.yml
+- **E2E-106:** Created POM classes: BasePage, LoginPage, DashboardPage in `pages/`
+- **E2E-107:** Created `fixtures/authFixture.ts` with apiLogin helper and extended test fixture
+
+### Architecture Decisions
+- Playwright configured with chromium + firefox projects (no webkit — avoids CI flakiness)
+- Auth fixture uses API-level login (POST /api/users/login) for speed, injects JWT into localStorage
+- Page Objects use role-based locators (getByRole) as primary strategy for resilience
+- Health check utilities use native fetch for polling (no extra deps)
+- Taskfile.e2e.yml is self-contained and included via main Taskfile.yml `includes:`
+- Test specs go in `tests/e2e/specs/` directory (empty until Phase 2)
+
+### Key Paths
+- `tests/e2e/playwright.config.ts` — main config
+- `tests/e2e/fixtures/authFixture.ts` — auth helpers and extended test fixture
+- `tests/e2e/pages/` — Page Object Models
+- `tests/e2e/utils/testHelpers.ts` — health check / wait utilities
+- `Taskfile.e2e.yml` — task runner integration
+

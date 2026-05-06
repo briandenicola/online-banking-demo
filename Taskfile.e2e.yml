@@ -1,0 +1,42 @@
+version: '3'
+
+vars:
+  E2E_DIR: tests/e2e
+
+tasks:
+  install:
+    desc: Install Playwright dependencies and browsers
+    dir: '{{.E2E_DIR}}'
+    cmds:
+      - npm ci
+      - npx playwright install --with-deps chromium firefox
+
+  run:
+    desc: Run all E2E tests
+    dir: '{{.E2E_DIR}}'
+    cmds:
+      - npx playwright test
+
+  debug:
+    desc: Run E2E tests in debug mode (headed browser with inspector)
+    dir: '{{.E2E_DIR}}'
+    cmds:
+      - npx playwright test --debug
+
+  report:
+    desc: Open the Playwright HTML test report
+    dir: '{{.E2E_DIR}}'
+    cmds:
+      - npx playwright show-report
+
+  chromium:
+    desc: Run E2E tests in Chromium only
+    dir: '{{.E2E_DIR}}'
+    cmds:
+      - npx playwright test --project=chromium
+
+  firefox:
+    desc: Run E2E tests in Firefox only
+    dir: '{{.E2E_DIR}}'
+    cmds:
+      - npx playwright test --project=firefox
