@@ -117,16 +117,17 @@ resource "azurerm_kubernetes_cluster" "main" {
   cost_analysis_enabled = true
 
   default_node_pool {
-    name                 = "system"
-    node_count           = var.aks_node_count
-    vm_size              = var.aks_node_size
-    vnet_subnet_id       = azurerm_subnet.aks.id
-    type                 = "VirtualMachineScaleSets"
-    auto_scaling_enabled = true
-    min_count            = 1
-    max_count            = var.aks_node_count * 2
-    max_pods             = 250
-    os_sku               = "AzureLinux"
+    name                        = "system"
+    temporary_name_for_rotation = "temp"
+    node_count                  = var.aks_node_count
+    vm_size                     = var.aks_node_size
+    vnet_subnet_id              = azurerm_subnet.aks.id
+    type                        = "VirtualMachineScaleSets"
+    auto_scaling_enabled        = true
+    min_count                   = 1
+    max_count                   = var.aks_node_count * 2
+    max_pods                    = 250
+    os_sku                      = "AzureLinux"
 
     upgrade_settings {
       max_surge = "25%"
