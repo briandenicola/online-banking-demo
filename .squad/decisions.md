@@ -530,3 +530,50 @@
 | Budget-Chatbot route alignment | Basher | Week of 2026-05-12 | Pending |
 | AuthContext refactor | Linus | Week of 2026-05-19 | Pending |
 | Test framework setup | Livingston | Week of 2026-05-12 | Pending |
+
+---
+
+## Session: 2026-05-06 (Redis Migration & nginx Stabilization)
+
+### Decision: Eliminate In-Cluster Redis Pod — Use Azure Managed Redis Only
+**Date:** 2026-05-06  
+**Author:** Danny (Lead/Architect) → Basher (Implementation)  
+**Priority:** P1  
+**Status:** Implemented
+
+**Problem:** In-cluster `redis:7-alpine` pod in `deploy/kustomize/base/redis.yaml` duplicates Azure Managed Redis (Balanced_B0) provisioned via Terraform. ConfigMap hardcodes in-cluster hostname, so all services ignore Managed Redis despite paying for it.
+
+**Solution:**
+1. Deleted `deploy/kustomize/base/redis.yaml`
+2. Removed `redis.yaml` from `deploy/kustomize/base/kustomization.yaml`
+3. Updated `deploy/kustomize/base/configmap.yaml` with placeholder values for Azure Managed Redis (port 10000, TLS, Entra ID auth)
+4. Updated `docs/deployment-azure.md` with Managed Redis connection details
+5. Preserved `docker-compose.yml` for local dev (no changes)
+
+**Auth Follow-up:** Terraform sets `access_keys_authentication_enabled = false` (Entra ID only). All services need SDK updates:
+- .NET: `Microsoft.Azure.StackExchangeRedis` for token auth
+- Python: `azure-identity` token provider
+- Go: `azidentity` token credential
+
+**Rationale:** Eliminates redundant infrastructure, aligns Kustomize with Terraform, leverages Managed Redis HA/backups.
+
+---
+
+### Decision: Fix nginx Crash in ui-app — Read-Only Filesystem Support
+**Date:** 2026-05-06  
+**Author:** Linus (Frontend Dev)  
+**Priority:** P1  
+**Status:** Implemented
+
+**Problem:** nginx container crashed due to duplicate `pid` directive and inability to write to `/var/run` (read-only filesystem).
+
+**Solution:**
+1. Fixed duplicate `pid` directives in `deploy/nginx/ui-nginx.conf`
+2. Converted config to full replacement (not partial merge)
+3. Added `/tmp` paths for nginx runtime:
+   - `/tmp/nginx_temp` for temporary files
+   - `/tmp/nginx_var_run` for PID and socket files
+4. Ensured pod/Dockerfile creates `/tmp` with proper permissions
+
+**Result:** nginx now starts and handles read-only root filesystem correctly.
+

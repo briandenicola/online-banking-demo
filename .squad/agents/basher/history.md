@@ -385,3 +385,19 @@ Previous attempt passed only managed identity client ID without secret, which cr
 - .NET: add `Microsoft.Azure.StackExchangeRedis` NuGet package
 - Python: add `azure-identity` token provider to redis-py connection
 - Go: add `azidentity` credential to go-redis client
+
+**2026-05-06 — Redis Architecture Analysis by Danny (Lead)**
+
+Danny analyzed the redundancy issue comprehensively:
+- Terraform provisions Azure Managed Redis (Balanced_B0, Entra ID auth only)
+- Kustomize base had in-cluster redis:7-alpine pod on port 6379
+- ConfigMap hardcoded to in-cluster hostname, ignoring Managed Redis entirely
+- All 8 services would connect to in-cluster pod in cloud deployments (waste of managed instance)
+
+**Danny's Recommendations:**
+1. Remove in-cluster redis.yaml (completed)
+2. Use Kustomize overlay for Azure Managed Redis connection injection
+3. Initially enable access keys for simpler auth (defer Entra ID to follow-up)
+4. Port 10000, TLS required, no anonymous connections
+
+**Status:** Implementation complete per Danny's spec. Ready for testing with Managed Redis.

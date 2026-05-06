@@ -284,3 +284,37 @@ The project's microservice decomposition is sound, but execution gaps (code bugs
 - Kept SystemAssigned identity (simpler for demo, no extra managed identity needed)
 - Skipped NAT gateway, public IP prefix, SSH, Defender, Istio (not needed for demo)
 - Used 100.64.x.x (RFC 6598) for service/pod CIDRs to avoid overlap with VNet 10.0.0.0/8
+
+### 2026-07 — Redis Architecture: Eliminate In-Cluster Pod, Use Azure Managed Redis
+
+**Problem:** Terraform provisions `azurerm_managed_redis` (Balanced_B0) but Kustomize base also deploys a `redis:7-alpine` pod. ConfigMap hardcodes `redis.banking-demo.svc.cluster.local:6379`, ignoring the managed instance entirely.
+
+**Decision:** Remove in-cluster Redis pod; use Kustomize overlay to inject managed Redis host/port.
+
+**Key Findings:**
+- Azure Managed Redis (Enterprise/Balanced_B0) uses **port 10000** with mandatory TLS (not 6379)
+- `access_keys_authentication_enabled = false` means **Entra ID auth only** — no password/access key
+- 8 services consume Redis via ConfigMap envFrom (user, account, transaction, transfer, anomaly, budget, chatbot, event-processor)
+- 3 different connection patterns: .NET uses `Redis:ConnectionString` or `REDIS_HOST`+`REDIS_PORT`, Python/Go use `REDIS__CONNECTIONSTRING`
+- docker-compose.yml local Redis is correct and must stay
+
+**Recommendation:** Use access key auth initially (change TF to `access_keys_authentication_enabled = true`), migrate to Entra ID workload identity later.
+
+**Key Files:**
+- `deploy/kustomize/base/redis.yaml` — DELETE (in-cluster pod)
+- `deploy/kustomize/base/configmap.yaml` — Keep base as-is (local-friendly defaults)
+- `deploy/kustomize/overlays/azure/` — Add ConfigMap patch with managed Redis host/port/TLS
+- `infra/cloud/main.tf:310-322` — `azurerm_managed_redis.main`
+- `infra/cloud/outputs.tf:23-25` — `redis_host` output
+
+**Decision doc:** `.squad/decisions/inbox/danny-redis-managed-only.md`
+
+**2026-05-06 — Redis Migration Completed by Basher**
+
+Basher implemented the Redis architecture decision:
+- Deleted `deploy/kustomize/base/redis.yaml` (in-cluster pod)
+- Updated `deploy/kustomize/base/kustomization.yaml` to remove redis.yaml reference
+- Updated `deploy/kustomize/base/configmap.yaml` with Azure Managed Redis placeholders (port 10000, TLS, Entra ID auth)
+- Updated `docs/deployment-azure.md` with Managed Redis connection guidance
+
+**Status:** Implementation complete. Next step: Entra ID auth integration for all services (requires SDK changes in .NET, Python, Go).
