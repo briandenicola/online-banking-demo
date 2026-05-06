@@ -133,3 +133,12 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 - The `/transactions/my` endpoint returns the authenticated user's transactions
 - The POST to `/transactions` for creating new transactions was left unchanged (correct endpoint)
 - Admin pages use separate endpoints (e.g., `/transactions/flagged`) — not touched
+
+### 2026-05-06 — Nginx CrashLoopBackOff Fix
+- **Root cause:** Pod was in CrashLoopBackOff because `pid` directive was duplicated — once in the base nginx:alpine image's `/etc/nginx/nginx.conf` and again via Dockerfile CMD `-g "pid /tmp/nginx.pid;"`. Also, `user` directive warned because container runs as non-root.
+- **Fix:** Promoted `nginx.conf` from a server-block fragment (copied to `conf.d/default.conf`) to a full main config (copied to `/etc/nginx/nginx.conf`), replacing the base image's default entirely.
+- Removed `user` directive (not needed when running as non-root via `USER nginx`)
+- Set `pid /tmp/nginx.pid;` in the config file itself, removed it from CMD
+- Added `/tmp` temp paths (`client_body_temp_path`, `proxy_temp_path`, etc.) for read-only root filesystem compatibility in Kubernetes
+- Pre-created temp directories in Dockerfile RUN step with proper nginx ownership
+- **Lesson:** When customizing nginx in non-root containers, always replace the full main config to avoid directive conflicts with the base image defaults
