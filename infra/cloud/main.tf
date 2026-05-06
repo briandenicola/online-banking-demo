@@ -385,23 +385,7 @@ resource "azurerm_federated_identity_credential" "aks_openai_workload_identity" 
   name                      = "aks-openai-workload-identity"
   user_assigned_identity_id = azurerm_user_assigned_identity.openai_managed_identity.id
   audience                  = ["api://AzureADTokenExchange"]
-  subject                   = "system:serviceaccount:banking:anomaly-service"
-  issuer                    = azurerm_kubernetes_cluster.main.oidc_issuer_url
-}
-
-resource "azurerm_federated_identity_credential" "aks_budget_workload_identity" {
-  name                      = "aks-budget-workload-identity"
-  user_assigned_identity_id = azurerm_user_assigned_identity.openai_managed_identity.id
-  audience                  = ["api://AzureADTokenExchange"]
-  subject                   = "system:serviceaccount:banking:budget-service"
-  issuer                    = azurerm_kubernetes_cluster.main.oidc_issuer_url
-}
-
-resource "azurerm_federated_identity_credential" "aks_chatbot_workload_identity" {
-  name                      = "aks-chatbot-workload-identity"
-  audience                  = ["api://AzureADTokenExchange"]
-  user_assigned_identity_id = azurerm_user_assigned_identity.openai_managed_identity.id
-  subject                   = "system:serviceaccount:banking:chatbot-service"
+  subject                   = "system:serviceaccount:banking-demo:ai-workload-identity"
   issuer                    = azurerm_kubernetes_cluster.main.oidc_issuer_url
 }
 

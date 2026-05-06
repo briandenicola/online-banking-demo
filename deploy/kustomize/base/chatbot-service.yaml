@@ -15,7 +15,9 @@ spec:
     metadata:
       labels:
         app: chatbot-service
+        azure.workload.identity/use: "true"
     spec:
+      serviceAccountName: ai-workload-identity
       securityContext:
         runAsNonRoot: true
       containers:
@@ -30,11 +32,6 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: openai-endpoint
-        - name: AZURE_OPENAI_KEY
-          valueFrom:
-            secretKeyRef:
-              name: banking-secrets
-              key: openai-key
         envFrom:
         - configMapRef:
             name: banking-demo-config

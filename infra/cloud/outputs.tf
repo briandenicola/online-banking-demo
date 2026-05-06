@@ -74,3 +74,8 @@ output "acr_name" {
 output "acr_login_server" {
   value = azurerm_container_registry.main.login_server
 }
+
+output "cosmos_connection_string" {
+  value     = "AccountEndpoint=${azurerm_cosmosdb_account.main.endpoint};AccountKey=${azurerm_cosmosdb_account.main.primary_key};"
+  sensitive = true
+}

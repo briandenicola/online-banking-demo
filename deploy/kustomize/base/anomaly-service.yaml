@@ -15,7 +15,9 @@ spec:
     metadata:
       labels:
         app: anomaly-service
+        azure.workload.identity/use: "true"
     spec:
+      serviceAccountName: ai-workload-identity
       securityContext:
         runAsNonRoot: true
       containers:
