@@ -3,8 +3,6 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Azure.Messaging.EventHubs;
-using Azure.Messaging.EventHubs.Producer;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -13,6 +11,7 @@ using OnlineBankingDemo.Contracts.Dtos;
 using OnlineBankingDemo.Contracts.Events;
 using Polly;
 using Polly.Retry;
+using StackExchange.Redis;
 using TransferService.Models;
 
 namespace TransferService.Services;
@@ -20,15 +19,16 @@ namespace TransferService.Services;
 public class TransferService : ITransferService
 {
     private readonly Container _container;
-    private readonly EventHubProducerClient _eventHubProducer;
+    private readonly IConnectionMultiplexer _redis;
     private readonly ILogger<TransferService> _logger;
     private readonly IConfiguration _configuration;
     private readonly HttpClient _httpClient;
     private readonly AsyncRetryPolicy _retryPolicy;
+    private const string StreamName = "banking-events";
 
     public TransferService(
         CosmosClient cosmosClient,
-        EventHubProducerClient eventHubProducer,
+        IConnectionMultiplexer redis,
         ILogger<TransferService> logger,
         IConfiguration configuration,
         HttpClient httpClient)
@@ -36,7 +36,7 @@ public class TransferService : ITransferService
         var databaseName = configuration["CosmosDb:DatabaseName"];
         var containerName = configuration["CosmosDb:ContainerName"];
         _container = cosmosClient.GetContainer(databaseName, containerName);
-        _eventHubProducer = eventHubProducer;
+        _redis = redis;
         _logger = logger;
         _configuration = configuration;
         _httpClient = httpClient;
@@ -60,7 +60,6 @@ public class TransferService : ITransferService
 
         try
         {
-            // Get account info from account service
             var fromAccount = await GetAccountInfoAsync(request.FromAccountNumber);
             var toAccount = await GetAccountInfoAsync(request.ToAccountNumber);
 
@@ -83,7 +82,6 @@ public class TransferService : ITransferService
             transfer.FromAccountId = fromAccount.Value.Id;
             transfer.ToAccountId = toAccount.Value.Id;
 
-            // Check balance
             if (fromAccount.Value.Balance < request.Amount)
             {
                 transfer.Status = "Failed";
@@ -92,7 +90,6 @@ public class TransferService : ITransferService
                 return transfer;
             }
 
-            // Process the transfer via transaction service
             await CreateTransferTransactionsAsync(fromAccount.Value.Id, toAccount.Value.Id, request.Amount, transfer.Id, request.Description);
 
             transfer.Status = "Completed";
@@ -100,7 +97,7 @@ public class TransferService : ITransferService
 
             await _container.CreateItemAsync(transfer, new PartitionKey(transfer.Id));
 
-            // Publish TransferInitiated event
+            // Publish TransferInitiated event to Redis Stream
             await PublishTransferInitiatedEvent(transfer);
 
             return transfer;
@@ -155,7 +152,6 @@ public class TransferService : ITransferService
             RelatedTransactionId = transferId
         };
 
-        // Create debit transaction
         var debitResponse = await _httpClient.PostAsync(
             $"{_configuration["Services:TransactionService"]}/api/transactions",
             new StringContent(JsonConvert.SerializeObject(createTransactionRequest), Encoding.UTF8, "application/json"));
@@ -174,7 +170,6 @@ public class TransferService : ITransferService
             RelatedTransactionId = transferId
         };
 
-        // Create credit transaction
         var creditResponse = await _httpClient.PostAsync(
             $"{_configuration["Services:TransactionService"]}/api/transactions",
             new StringContent(JsonConvert.SerializeObject(createTransactionRequest), Encoding.UTF8, "application/json"));
@@ -183,7 +178,6 @@ public class TransferService : ITransferService
             throw new InvalidOperationException($"Failed to create credit transaction: {creditResponse.StatusCode}");
         }
 
-        // Update account balances via account-service
         var accountServiceUrl = _configuration["Services:AccountService"];
 
         var debitBalanceResponse = await _httpClient.PostAsync(
@@ -200,7 +194,6 @@ public class TransferService : ITransferService
             new StringContent(JsonConvert.SerializeObject(new { amount = amount }), Encoding.UTF8, "application/json"));
         if (!creditBalanceResponse.IsSuccessStatusCode)
         {
-            // Compensate: reverse the debit
             _logger.LogError("Failed to credit destination account {AccountId}. Reversing debit on {FromAccountId}.", toAccountId, fromAccountId);
             await _httpClient.PostAsync(
                 $"{accountServiceUrl}/api/accounts/{fromAccountId}/balance",
@@ -211,19 +204,33 @@ public class TransferService : ITransferService
 
     private async Task PublishTransferInitiatedEvent(Transfer transfer)
     {
-        var evt = new TransferInitiatedEvent
+        try
         {
-            TransferId = transfer.Id,
-            FromAccountId = transfer.FromAccountId,
-            ToAccountId = transfer.ToAccountId,
-            Amount = transfer.Amount
-        };
+            var eventPayload = new
+            {
+                eventType = "TransferInitiated",
+                timestamp = DateTime.UtcNow.ToString("o"),
+                data = new
+                {
+                    fromAccountId = transfer.FromAccountId,
+                    toAccountId = transfer.ToAccountId,
+                    amount = transfer.Amount,
+                    description = transfer.Description
+                }
+            };
 
-        var eventData = new EventData(
-            System.Text.Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(evt)));
-        
-        await _eventHubProducer.SendAsync(new[] { eventData });
-        _logger.LogInformation("Published TransferInitiated event for transfer {TransferId}", transfer.Id);
+            var db = _redis.GetDatabase();
+            await db.StreamAddAsync(StreamName, new NameValueEntry[]
+            {
+                new("payload", JsonConvert.SerializeObject(eventPayload))
+            });
+
+            _logger.LogInformation("Published TransferInitiated event to Redis for transfer {TransferId}", transfer.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to publish TransferInitiated event to Redis for transfer {TransferId}", transfer.Id);
+        }
     }
 
     private class AccountInfo

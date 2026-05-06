@@ -5,23 +5,21 @@ import asyncio
 import json
 import logging
 import os
+from contextlib import asynccontextmanager
 from typing import Optional
 
 import numpy as np
+import redis.asyncio as redis
 
 try:
-    from azure.eventhub import EventHubConsumerClient
     from azure.ai.inference import ChatCompletionsClient
     from azure.ai.inference.models import SystemMessage, UserMessage
     from azure.identity import DefaultAzureCredential
-    from opentelemetry.instrumentation.azure import AzureInstrumentor
     AZURE_AVAILABLE = True
 except ImportError:
     AZURE_AVAILABLE = False
-    EventHubConsumerClient = None
     ChatCompletionsClient = None
     DefaultAzureCredential = None
-    AzureInstrumentor = None
 
 from fastapi import FastAPI
 from opentelemetry import trace
@@ -38,6 +36,11 @@ from sklearn.ensemble import IsolationForest
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Constants
+STREAM_NAME = "banking-events"
+CONSUMER_GROUP = "anomaly-consumer-group"
+CONSUMER_NAME = "anomaly-1"
+
 # Initialize telemetry
 def init_telemetry():
     if os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING"):
@@ -50,15 +53,8 @@ def init_telemetry():
         )
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
-        # Instrument Azure SDK for tracing OpenAI calls
-        if AzureInstrumentor:
-            AzureInstrumentor().instrument()
 
 init_telemetry()
-
-app = FastAPI(title="Anomaly Detection Agent", version="1.0.0")
-FastAPIInstrumentor.instrument_app(app)
-HTTPXClientInstrumentor().instrument()
 
 # ML Model
 model = IsolationForest(contamination=0.1, random_state=42)
@@ -145,12 +141,11 @@ def extract_features(transaction: dict) -> np.ndarray:
     amount = transaction.get("amount", 0)
     trans_type = transaction.get("type", "")
     
-    # Simple feature engineering
     features = [
         amount,
         len(trans_type),
         1 if trans_type == "Transfer" else 0,
-        amount / 1000 if amount > 0 else 0,  # normalized amount
+        amount / 1000 if amount > 0 else 0,
     ]
     return np.array(features).reshape(1, -1)
 
@@ -162,7 +157,6 @@ async def detect_anomaly(transaction: dict) -> AnomalyResult:
     try:
         features = extract_features(transaction)
         
-        # If we have enough history, use the model
         if len(transaction_history) > 10:
             prediction = model.predict(features)[0]
             score = model.decision_function(features)[0]
@@ -170,7 +164,6 @@ async def detect_anomaly(transaction: dict) -> AnomalyResult:
             is_anomalous = prediction == -1
             confidence = abs(score)
             
-            # Additional heuristic checks
             reasons = []
             if transaction.get("amount", 0) > 10000:
                 reasons.append("High value transaction")
@@ -179,7 +172,6 @@ async def detect_anomaly(transaction: dict) -> AnomalyResult:
             
             ml_reason = "; ".join(reasons) if reasons else None
             
-            # Get AI explanation for anomalies
             ai_explanation = None
             if is_anomalous or len(reasons) > 0:
                 ai_explanation = await explain_anomaly(transaction, ml_reason or "Unusual transaction pattern")
@@ -209,86 +201,121 @@ async def detect_anomaly(transaction: dict) -> AnomalyResult:
         )
 
 
-async def process_events(partition_context, event):
-    """Process incoming events from Event Hub"""
+async def consume_redis_stream(redis_client: redis.Redis):
+    """Consume events from Redis Streams using consumer groups"""
+    # Create consumer group if it doesn't exist
     try:
-        event_data = event.body_as_str()
-        transaction = json.loads(event_data)
-        
-        logger.info(f"Processing transaction: {transaction.get('transactionId')}")
-        
-        result = await detect_anomaly(transaction)
-        
-        if result.isAnomalous:
-            logger.warning(f"Anomaly detected: {result.transactionId}")
-            # In production, publish to alert topic or notification service
-        
-        # Update model with new transaction
-        global transaction_history
-        transaction_history.append(extract_features(transaction).flatten())
-        
-        # Retrain model periodically
-        if len(transaction_history) >= 20:
-            X = np.array(transaction_history[-100:])  # Use last 100 transactions
-            model.fit(X)
-        
-        await partition_context.update_checkpoint(event)
-    
-    except Exception as e:
-        logger.error(f"Error processing event: {e}")
+        await redis_client.xgroup_create(
+            STREAM_NAME, CONSUMER_GROUP, id="0", mkstream=True
+        )
+        logger.info(f"Created consumer group '{CONSUMER_GROUP}' on stream '{STREAM_NAME}'")
+    except redis.ResponseError as e:
+        if "BUSYGROUP" in str(e):
+            logger.info(f"Consumer group '{CONSUMER_GROUP}' already exists")
+        else:
+            raise
 
+    logger.info(f"Starting Redis Stream consumer: {CONSUMER_NAME}")
+    backoff = 1
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize event processor and AI client with validation"""
-    init_ai_client()
-    
-    # Validate Entra ID token acquisition for Azure OpenAI (Foundry)
-    if DefaultAzureCredential and os.getenv("AZURE_OPENAI_ENDPOINT"):
-        logger.info("=" * 50)
-        logger.info("Validating Azure OpenAI (Foundry) connectivity...")
+    while True:
         try:
-            credential = DefaultAzureCredential()
-            token = await credential.get_token("https://cognitiveservices.azure.com/.default")
-            logger.info(f"✅ Azure OpenAI token acquired (expires {token.expires_on})")
-            
-            # Test AI connectivity with a simple ping
-            if ai_client:
-                try:
-                    test_response = ai_client.complete(
-                        messages=[UserMessage(content="Ping")],
-                        model=os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4"),
-                        max_tokens=5
-                    )
-                    logger.info(f"✅ Azure OpenAI connectivity verified - Response received")
-                except Exception as ping_ex:
-                    logger.warning(f"⚠️ OpenAI ping failed: {ping_ex}")
-        except Exception as ex:
-            logger.error(f"❌ Azure OpenAI token acquisition FAILED: {ex}")
-            logger.error("Ensure AZURE_OPENAI_ENDPOINT is set and Managed Identity/Service Principal has Cognitive Services OpenAI User role")
-    
-    # Validate EventHub connectivity
-    eventhub_conn = os.getenv("EVENTHUB_CONNECTION_STRING")
-    eventhub_name = os.getenv("EVENTHUB_NAME", "banking-events")
-    
-    if eventhub_conn and AZURE_AVAILABLE:
-        try:
-            client = EventHubConsumerClient.from_connection_string(
-                conn_str=eventhub_conn,
-                consumer_group="$Default",
-                eventhub_name=eventhub_name
+            messages = await redis_client.xreadgroup(
+                groupname=CONSUMER_GROUP,
+                consumername=CONSUMER_NAME,
+                streams={STREAM_NAME: ">"},
+                count=10,
+                block=5000,
             )
-            logger.info(f"✅ EventHub client created for '{eventhub_name}' - connectivity verified")
-            
-            # Start receiving messages
-            asyncio.create_task(client.receive(
-                on_event=process_events,
-                max_wait_time=5
-            ))
-            logger.info("Anomaly detection agent started")
-        except Exception as eh_ex:
-            logger.error(f"❌ EventHub connection FAILED: {eh_ex}")
-            logger.error("Ensure EVENTHUB_CONNECTION_STRING is set and Managed Identity has Azure Event Hubs Data Receiver role")
+
+            if not messages:
+                backoff = 1
+                continue
+
+            backoff = 1
+
+            for stream_name, stream_messages in messages:
+                for message_id, fields in stream_messages:
+                    try:
+                        payload_raw = fields.get("payload") or fields.get(b"payload")
+                        if payload_raw:
+                            if isinstance(payload_raw, bytes):
+                                payload_raw = payload_raw.decode("utf-8")
+                            event_data = json.loads(payload_raw)
+
+                            event_type = event_data.get("eventType", "")
+                            data = event_data.get("data", {})
+
+                            logger.info(f"Processing event: {event_type}")
+
+                            # Run anomaly detection on the event data
+                            result = await detect_anomaly(data)
+
+                            if result.isAnomalous:
+                                logger.warning(
+                                    f"Anomaly detected in {event_type}: {result.reason}"
+                                )
+
+                            # Update ML model training data
+                            transaction_history.append(extract_features(data).flatten())
+                            if len(transaction_history) >= 20:
+                                X = np.array(transaction_history[-100:])
+                                model.fit(X)
+
+                        # Acknowledge the message
+                        await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+
+                    except Exception as e:
+                        logger.error(f"Error processing message {message_id}: {e}")
+                        # Still ack to avoid infinite reprocessing of bad messages
+                        await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+
+        except redis.ConnectionError as e:
+            logger.error(f"Redis connection error: {e}. Retrying in {backoff}s...")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
+        except Exception as e:
+            logger.error(f"Unexpected error in consumer loop: {e}. Retrying in {backoff}s...")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan: start Redis consumer on startup"""
+    init_ai_client()
+
+    redis_url = os.getenv("REDIS__CONNECTIONSTRING", "redis:6379")
+    if not redis_url.startswith("redis://"):
+        redis_url = f"redis://{redis_url}"
+
+    redis_client = redis.from_url(redis_url, decode_responses=True)
+
+    # Verify Redis connectivity
+    try:
+        await redis_client.ping()
+        logger.info("✅ Redis connectivity verified")
+    except Exception as e:
+        logger.error(f"❌ Redis connection failed: {e}")
+
+    # Start the consumer as a background task
+    consumer_task = asyncio.create_task(consume_redis_stream(redis_client))
+    logger.info("Anomaly detection agent started — consuming from Redis Stream")
+
+    yield
+
+    # Shutdown
+    consumer_task.cancel()
+    try:
+        await consumer_task
+    except asyncio.CancelledError:
+        pass
+    await redis_client.aclose()
+
+
+app = FastAPI(title="Anomaly Detection Agent", version="1.0.0", lifespan=lifespan)
+FastAPIInstrumentor.instrument_app(app)
+HTTPXClientInstrumentor().instrument()
 
 
 @app.get("/health")
@@ -303,6 +330,5 @@ async def detect(request: TransactionEvent):
 
 
 if __name__ == "__main__":
-    import asyncio
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8002)

@@ -1,15 +1,13 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Azure.Cosmos;
-using Azure.Messaging.EventHubs.Producer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using Swashbuckle.AspNetCore;
+using StackExchange.Redis;
 using System.Text;
-using System.Text.Json;
 using TransactionService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -47,7 +45,7 @@ builder.Services.AddAuthentication(options =>
 {
     options.TokenValidationParameters = new TokenValidationParameters
     {
-        ValidateIssuer = false, // Accept tokens from any issuer (user-service in this case)
+        ValidateIssuer = false,
         ValidateAudience = true,
         ValidateLifetime = true,
         ValidateIssuerSigningKey = true,
@@ -60,12 +58,11 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization();
 
-// Configure Event Hub Producer
-builder.Services.AddSingleton<EventHubProducerClient>(sp =>
+// Configure Redis
+builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
 {
-    var connectionString = sp.GetRequiredService<IConfiguration>()["EventHub:ConnectionString"];
-    var eventHubName = sp.GetRequiredService<IConfiguration>()["EventHub:Name"] ?? "banking-events";
-    return new EventHubProducerClient(connectionString, eventHubName);
+    var connectionString = sp.GetRequiredService<IConfiguration>()["Redis:ConnectionString"] ?? "redis:6379";
+    return ConnectionMultiplexer.Connect(connectionString);
 });
 
 // Use in-memory database for development if configured
@@ -92,15 +89,14 @@ else
 
 var app = builder.Build();
 
-// Validate Azure connectivity on startup
+// Validate connectivity on startup
 using (var scope = app.Services.CreateScope())
 {
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
     
     logger.LogInformation("=" + new string('=', 49));
-    logger.LogInformation("Validating Azure connectivity...");
+    logger.LogInformation("Validating connectivity...");
     
-    // Validate Cosmos DB connectivity
     if (!useInMemory)
     {
         try
@@ -119,7 +115,6 @@ using (var scope = app.Services.CreateScope())
         catch (Exception ex)
         {
             logger.LogError($"❌ Cosmos DB connection FAILED: {ex.Message}");
-            logger.LogError("Ensure CosmosDb:ConnectionString, CosmosDb:DatabaseName, and CosmosDb:ContainerName are set");
         }
     }
     else
@@ -127,20 +122,17 @@ using (var scope = app.Services.CreateScope())
         logger.LogInformation("ℹ️ Using in-memory database (skip Cosmos DB validation)");
     }
     
-    // Validate Event Hub connectivity (read-only check, no messages published)
+    // Validate Redis connectivity
     try
     {
-        var eventHubProducer = scope.ServiceProvider.GetRequiredService<EventHubProducerClient>();
-        var eventHubName = builder.Configuration["EventHub:Name"] ?? "banking-events";
-        
-        // Only verify that the producer client was created successfully
-        // Do NOT send test events — they pollute the real event stream
-        logger.LogInformation($"✅ Event Hub producer configured for '{eventHubName}'");
+        var redis = scope.ServiceProvider.GetRequiredService<IConnectionMultiplexer>();
+        var db = redis.GetDatabase();
+        await db.PingAsync();
+        logger.LogInformation("✅ Redis connectivity verified");
     }
     catch (Exception ex)
     {
-        logger.LogError($"❌ Event Hub configuration FAILED: {ex.Message}");
-        logger.LogError("Ensure EventHub:ConnectionString and EventHub:Name are set and Managed Identity has Azure Event Hubs Data Sender role");
+        logger.LogWarning($"⚠️ Redis connection not available: {ex.Message}");
     }
 }
 

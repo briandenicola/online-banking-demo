@@ -2,12 +2,10 @@ FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
 
-# Install git for go modules
 RUN apk add --no-cache git
 
-# Copy go.mod and main.go for go mod tidy to work
-COPY ./src/event-processor/go.mod ./
-COPY ./src/event-processor/main.go ./
+COPY go.mod ./
+COPY main.go ./
 
 # Download dependencies
 RUN go mod tidy
@@ -20,7 +18,5 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 
 COPY --from=builder /event-processor .
-
-EXPOSE 9001
 
 CMD ["./event-processor"]

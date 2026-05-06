@@ -1,11 +1,11 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using Azure.Messaging.EventHubs.Producer;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
+using StackExchange.Redis;
 using TransactionService.Models;
 
 namespace TransactionService.Services;
@@ -13,20 +13,21 @@ namespace TransactionService.Services;
 public class TransactionService : ITransactionService
 {
     private readonly Container _container;
-    private readonly EventHubProducerClient _eventHubProducer;
+    private readonly IConnectionMultiplexer _redis;
     private readonly ILogger<TransactionService> _logger;
     private readonly IConfiguration _configuration;
+    private const string StreamName = "banking-events";
 
     public TransactionService(
         CosmosClient cosmosClient,
-        EventHubProducerClient eventHubProducer,
+        IConnectionMultiplexer redis,
         ILogger<TransactionService> logger,
         IConfiguration configuration)
     {
         var databaseName = configuration["CosmosDb:DatabaseName"];
         var containerName = configuration["CosmosDb:ContainerName"];
         _container = cosmosClient.GetContainer(databaseName, containerName);
-        _eventHubProducer = eventHubProducer;
+        _redis = redis;
         _logger = logger;
         _configuration = configuration;
     }
@@ -47,8 +48,8 @@ public class TransactionService : ITransactionService
 
         await _container.CreateItemAsync(transaction, new PartitionKey(transaction.AccountId));
         
-        // Publish TransactionCreated event (with categorization flag)
-        await PublishTransactionCreatedEvent(transaction, request.AutoCategorize);
+        // Publish TransactionCreated event to Redis Stream
+        await PublishTransactionCreatedEvent(transaction);
 
         return transaction;
     }
@@ -88,7 +89,6 @@ public class TransactionService : ITransactionService
 
     public async Task<IEnumerable<Transaction>> GetUserTransactionsAsync(string userId, int limit = 50)
     {
-        // Filter by userId to return only this user's transactions
         var query = new QueryDefinition("SELECT * FROM c WHERE c.UserId = @userId ORDER BY c.Timestamp DESC")
             .WithParameter("@userId", userId);
         
@@ -97,24 +97,34 @@ public class TransactionService : ITransactionService
         return results.Take(limit);
     }
 
-    private async Task PublishTransactionCreatedEvent(Transaction transaction, bool needsCategorization = false)
+    private async Task PublishTransactionCreatedEvent(Transaction transaction)
     {
-        var evt = new OnlineBankingDemo.Contracts.Events.TransactionCreatedEvent
+        try
         {
-            TransactionId = transaction.Id,
-            AccountId = transaction.AccountId,
-            Amount = transaction.Amount,
-            Type = transaction.Type,
-            Description = transaction.Description,
-            Category = transaction.Category,
-            NeedsCategorization = needsCategorization
-        };
+            var eventPayload = new
+            {
+                eventType = "TransactionCreated",
+                timestamp = DateTime.UtcNow.ToString("o"),
+                data = new
+                {
+                    accountId = transaction.AccountId,
+                    amount = transaction.Amount,
+                    type = transaction.Type,
+                    description = transaction.Description
+                }
+            };
 
-        var eventData = new Azure.Messaging.EventHubs.EventData(
-            System.Text.Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(evt)));
-        
-        await _eventHubProducer.SendAsync(new[] { eventData });
-        _logger.LogInformation("Published TransactionCreated event for transaction {TransactionId} (needs_categorization: {NeedsCategorization})", 
-            transaction.Id, needsCategorization);
+            var db = _redis.GetDatabase();
+            await db.StreamAddAsync(StreamName, new NameValueEntry[]
+            {
+                new("payload", JsonConvert.SerializeObject(eventPayload))
+            });
+
+            _logger.LogInformation("Published TransactionCreated event to Redis for transaction {TransactionId}", transaction.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to publish TransactionCreated event to Redis for transaction {TransactionId}", transaction.Id);
+        }
     }
 }

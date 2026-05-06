@@ -6,7 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using Swashbuckle.AspNetCore;
+using StackExchange.Redis;
 using System.Text;
 using TransferService.Services;
 
@@ -57,6 +57,13 @@ builder.Services.AddAuthentication(options =>
 });
 
 builder.Services.AddAuthorization();
+
+// Configure Redis
+builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+{
+    var connectionString = sp.GetRequiredService<IConfiguration>()["Redis:ConnectionString"] ?? "redis:6379";
+    return ConnectionMultiplexer.Connect(connectionString);
+});
 
 // Use in-memory database for development if configured
 var useInMemory = builder.Configuration.GetValue<bool>("UseInMemoryDatabase", false);
