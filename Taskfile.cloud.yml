@@ -97,7 +97,15 @@ tasks:
     cmds:
       - az acr build --registry {{.ACR_NAME}} --image ui-app:{{.TAG}} ./src/ui-app/
 
-  images:update:
+  deploy:
+    desc: Deploy application to Kubernetes cluster (updates image refs then applies)
+    cmds:
+      - task: _images:update
+      - kubectl apply -k deploy/kustomize/base/
+
+  # === Internal tasks ===
+  _images:update:
+    internal: true
     desc: Update Kustomize image references to ACR
     dir: deploy/kustomize/base
     cmds:
@@ -111,12 +119,6 @@ tasks:
       - kustomize edit set image ghcr.io/banking-demo/event-processor={{.ACR_LOGIN_SERVER}}/event-processor:{{.TAG}}
       - kustomize edit set image ghcr.io/banking-demo/ui-app={{.ACR_LOGIN_SERVER}}/ui-app:{{.TAG}}
 
-  deploy:
-    desc: Deploy application to Kubernetes cluster
-    cmds:
-      - kubectl apply -k deploy/kustomize/base/
-
-  # === Internal tasks ===
   _init:
     internal: true
     cmds:
