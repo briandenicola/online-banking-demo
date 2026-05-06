@@ -318,3 +318,79 @@ Basher implemented the Redis architecture decision:
 - Updated `docs/deployment-azure.md` with Managed Redis connection guidance
 
 **Status:** Implementation complete. Next step: Entra ID auth integration for all services (requires SDK changes in .NET, Python, Go).
+
+### 2026-07-15 — KeyVault CSI Driver Backlog Planning
+
+**Task:** Add backlog item to `docs/secure-deployment-plan.md` for replacing `kubectl create secret` with AKS KeyVault CSI driver.
+
+**Strategic Rationale:**
+- **Security:** Key Vault audit logs > K8s Secrets etcd; CSI driver rotates secrets automatically every 2m
+- **Already provisioned:** Key Vault exists (line 360); CSI addon enabled on AKS with `secret_rotation_enabled = true`
+- **Zero breaking changes:** Applications read from mounted files instead of env vars (backward-compatible, code-only)
+- **Layer 1b fit:** Natural extension of Kubernetes Hardening (Layer 1) — consolidates all secret management
+
+**Current State:**
+- 6 secrets (cosmos, redis, appinsights, jwt-key, openai-endpoint, openai-api-key) created via `kubectl create secret` in Taskfile.cloud.yml
+- No services use CSI driver despite addon being enabled
+
+**Solution (Layer 1b: KeyVault CSI Driver — Replace K8s Secrets):**
+
+1. **Terraform Phase:**
+   - Store 6 secrets in Key Vault via `azurerm_key_vault_secret` resources
+   - Grant AKS managed identity `Key Vault Secrets User` RBAC
+   - Add variables `jwt_key_secret` and `openai_api_key` (supplied by CI/CD)
+
+2. **Kustomize Phase:**
+   - Create `deploy/kustomize/base/secretproviderclass.yaml` (maps KV secrets → pod volume mounts)
+   - Update all pod specs to mount `/mnt/secrets/` volumes
+   - Leverage SecretProviderClass `secretObjects` sync feature for optional K8s Secret backup
+
+3. **Application Code Phase:**
+   - Update .NET services: Read from `/mnt/secrets/cosmos-connection-string` instead of env var
+   - Update Python services: Same pattern (open file at startup)
+   - Update Go event-processor: Same
+   - No binary changes, config-only updates
+
+4. **Taskfile Phase:**
+   - Add `deploy:secrets` task to populate Key Vault via Terraform
+   - Remove old `kubectl create secret` commands
+   - Ensure CSI driver syncs before pod restart
+
+5. **CI/CD Phase:**
+   - GitHub Actions supplies `TF_VAR_jwt_key_secret` and `TF_VAR_openai_api_key` from secrets
+   - Terraform applies to populate Key Vault (no secrets in Git)
+
+**Key Decisions:**
+- **Files, not env vars:** Prevents secrets in `ps`, process memory dumps; automatic rotation works naturally
+- **2m rotation interval:** Already configured on AKS; applications must handle cache invalidation (TTL < 2m or lazy-load)
+- **K8s Secret sync (optional):** If code migration is phased, SecretProviderClass sync provides hybrid model
+- **No code breaking changes:** Fallback code path can read from K8s Secret if file mount fails (graceful degradation)
+
+**Dependencies:**
+- Layer 1 (Istio hardening) for cluster-level control plane
+- AKS CSI driver addon (already enabled)
+- Application code updates (non-blocking; can be phased per service)
+
+**Phased Implementation (5 phases, ~15 story points):**
+- Phase 1: Terraform + RBAC (Basher) — 3pts
+- Phase 2: Kustomize manifests (Linus) — 3pts
+- Phase 3: Application code updates (.NET, Python, Go) — 5pts
+- Phase 4: Taskfile + CI/CD (Basher) — 2pts
+- Phase 5: Verification + docs (Danny) — 2pts
+
+**Testing Strategy:**
+- Local dev: docker-compose unchanged (plaintext secrets in .env)
+- CI: No local secrets; Terraform stores in KV; mock SecretProviderClass for tests
+- E2E: Live KV integration; verify CSI rotation every 2m
+- Rollback: K8s Secret sync provides fallback path (no downtime)
+
+**Related Findings:**
+- Current secrets NOT rotated; Key Vault rotation eliminates manual updates
+- CSI driver is enabled but unutilized — pure infrastructure waste
+- No Azure audit trail for secret access; KV audit logs all reads
+- GitOps friendly: secrets stored in KV, never in Flux manifests
+
+**Artifacts Created:**
+- `docs/secure-deployment-plan.md:Layer 1b` — New backlog section with Terraform HCL snippets, K8s manifests, Taskfile tasks, verification criteria
+- `.squad/decisions/inbox/danny-kv-csi-backlog.md` — Comprehensive decision doc with architecture, phases, risks, rollback plan, success criteria
+

@@ -311,6 +311,315 @@ task -t Taskfile.cloud.yml deploy
 
 ---
 
+## Layer 1b: KeyVault CSI Driver — Replace K8s Secrets
+
+**Dependencies:** Layer 1 (AKS cluster with key_vault_secrets_provider addon enabled).
+
+**Current State:** Key Vault is provisioned (`infra/cloud/main.tf:360`) with `sku_name = "standard"`. AKS has the CSI driver addon enabled (`key_vault_secrets_provider` block with `secret_rotation_enabled = true`, 2m interval). All secrets (Cosmos connection strings, Redis, AppInsights key, JWT key, OpenAI endpoint) are currently created via `kubectl create secret` in `Taskfile.cloud.yml`.
+
+**Problem:** K8s Secrets backed by etcd are less secure than Azure Key Vault. Credentials leak if etcd is compromised. The CSI driver is already running but unused.
+
+**Solution:** Store secrets in Key Vault via Terraform, create SecretProviderClass manifests to mount secrets as pod volumes, update pod specs to use volume mounts instead of `envFrom` on Secrets.
+
+### What Changes
+
+#### Terraform (`infra/cloud/main.tf`)
+
+1. **Store secrets in Key Vault:**
+
+   ```hcl
+   # Cosmos DB connection string
+   resource "azurerm_key_vault_secret" "cosmos_connection" {
+     name         = "cosmos-connection-string"
+     value        = azurerm_cosmosdb_account.main.connection_strings[0]
+     key_vault_id = azurerm_key_vault.main.id
+   }
+
+   # Redis connection (using managed Redis host:port)
+   resource "azurerm_key_vault_secret" "redis_connection" {
+     name         = "redis-connection-string"
+     value        = "rediss://:${azurerm_managed_redis.main.primary_access_key}@${azurerm_managed_redis.main.hostname}:10000"
+     key_vault_id = azurerm_key_vault.main.id
+   }
+
+   # Application Insights connection
+   resource "azurerm_key_vault_secret" "appinsights_connection" {
+     name         = "appinsights-connection-string"
+     value        = azurerm_application_insights.main.connection_string
+     key_vault_id = azurerm_key_vault.main.id
+   }
+
+   # JWT key (read from env var or Terraform var)
+   resource "azurerm_key_vault_secret" "jwt_key" {
+     name         = "jwt-key"
+     value        = var.jwt_key_secret
+     key_vault_id = azurerm_key_vault.main.id
+   }
+
+   # OpenAI endpoint
+   resource "azurerm_key_vault_secret" "openai_endpoint" {
+     name         = "openai-endpoint"
+     value        = azapi_resource.this.endpoint
+     key_vault_id = azurerm_key_vault.main.id
+   }
+
+   # OpenAI API key (read from var)
+   resource "azurerm_key_vault_secret" "openai_api_key" {
+     name         = "openai-api-key"
+     value        = var.openai_api_key
+     key_vault_id = azurerm_key_vault.main.id
+   }
+   ```
+
+2. **Grant AKS managed identity read access to Key Vault secrets:**
+
+   ```hcl
+   resource "azurerm_role_assignment" "aks_keyvault_access" {
+     scope              = azurerm_key_vault.main.id
+     role_definition_name = "Key Vault Secrets User"
+     principal_id       = azurerm_kubernetes_cluster.main.identity[0].principal_id
+   }
+   ```
+
+3. **Add Terraform variable for secrets:**
+
+   ```hcl
+   variable "jwt_key_secret" {
+     description = "JWT signing key (read from env: TF_VAR_jwt_key_secret)"
+     type        = string
+     sensitive   = true
+   }
+
+   variable "openai_api_key" {
+     description = "OpenAI API key (read from env: TF_VAR_openai_api_key)"
+     type        = string
+     sensitive   = true
+   }
+   ```
+
+#### Kustomize Manifests
+
+4. **Create SecretProviderClass** (`deploy/kustomize/base/secretproviderclass.yaml`):
+
+   Maps Key Vault secrets to pod volume mount paths. Following [AKS documentation](https://learn.microsoft.com/en-us/azure/aks/csi-secrets-store-driver-best-practices):
+
+   ```yaml
+   apiVersion: secrets-store.csi.x-k8s.io/v1
+   kind: SecretProviderClass
+   metadata:
+     name: banking-demo-secrets
+     namespace: banking-demo
+   spec:
+     provider: azure
+     parameters:
+       usePodIdentity: "true"           # Use AKS managed identity
+       keyvaultName: ${KEYVAULT_NAME}
+       tenantId: ${TENANT_ID}
+       objects: |
+         array:
+           - objectName: cosmos-connection-string
+             objectType: secret
+             objectVersion: ""
+           - objectName: redis-connection-string
+             objectType: secret
+             objectVersion: ""
+           - objectName: appinsights-connection-string
+             objectType: secret
+             objectVersion: ""
+           - objectName: jwt-key
+             objectType: secret
+             objectVersion: ""
+           - objectName: openai-endpoint
+             objectType: secret
+             objectVersion: ""
+           - objectName: openai-api-key
+             objectType: secret
+             objectVersion: ""
+     secretObjects:
+     - data:
+       - objectName: cosmos-connection-string
+         key: cosmos-connection-string
+       secretKey: cosmos-connection-string
+       type: Opaque
+       name: banking-secrets
+     - data:
+       - objectName: jwt-key
+         key: jwt-key
+       secretKey: jwt-key
+       type: Opaque
+       name: banking-jwt
+   ```
+
+5. **Update pod spec** (example: `deploy/kustomize/base/user-service.yaml`):
+
+   Add volume mount and remove `envFrom` on old K8s Secret:
+
+   ```yaml
+   apiVersion: apps/v1
+   kind: Deployment
+   metadata:
+     name: user-service
+     namespace: banking-demo
+   spec:
+     template:
+       spec:
+         serviceAccountName: banking-demo  # Required for pod identity
+         containers:
+         - name: user-service
+           image: ghcr.io/briandenicola/online-banking-demo/user-service:1.0.0
+           ports:
+           - containerPort: 8080
+           
+           # Mount secrets from CSI driver as files (not env vars)
+           volumeMounts:
+           - name: secrets-store
+             mountPath: /mnt/secrets
+             readOnly: true
+           
+           # REMOVE: envFrom with old K8s Secret
+           # envFrom:
+           # - secretRef:
+           #     name: banking-secrets
+           
+           # NEW: Read secrets from mounted files
+           env:
+           - name: ConnectionStrings__Cosmos
+             valueFrom:
+               fieldRef:
+                 fieldPath: /mnt/secrets/cosmos-connection-string
+           - name: Jwt__Key
+             valueFrom:
+               fieldRef:
+                 fieldPath: /mnt/secrets/jwt-key
+         
+         volumes:
+         - name: secrets-store
+           csi:
+             driver: secrets-store.csi.k8s.io
+             readOnly: true
+             volumeAttributes:
+               secretProviderClass: banking-demo-secrets
+   ```
+
+   > **Note:** Reading secrets from mounted files requires application code changes (e.g., read file at startup instead of env var). See step 6 below.
+
+6. **Application code update** — Example for .NET `Program.cs`:
+
+   Instead of reading secrets from environment variables:
+   ```csharp
+   var cosmosConnStr = Environment.GetEnvironmentVariable("ConnectionStrings__Cosmos");
+   ```
+
+   Read from mounted files:
+   ```csharp
+   var cosmosConnStr = System.IO.File.ReadAllText("/mnt/secrets/cosmos-connection-string").Trim();
+   ```
+
+   Or use a helper function:
+   ```csharp
+   private static string GetSecret(string secretName) {
+       string path = $"/mnt/secrets/{secretName}";
+       return System.IO.File.ReadAllText(path).Trim();
+   }
+
+   var cosmosConnStr = GetSecret("cosmos-connection-string");
+   ```
+
+   For Python (FastAPI):
+   ```python
+   import os
+   
+   def get_secret(secret_name: str) -> str:
+       with open(f"/mnt/secrets/{secret_name}", "r") as f:
+           return f.read().strip()
+   
+   COSMOS_CONN = get_secret("cosmos-connection-string")
+   JWT_KEY = get_secret("jwt-key")
+   ```
+
+#### Taskfile (`Taskfile.cloud.yml`)
+
+7. **Remove `kubectl create secret` commands** and replace with CSI driver initialization:
+
+   **Before (current `deploy` task):**
+   ```yaml
+   - |
+     kubectl create secret generic banking-secrets \
+       --namespace banking-demo \
+       --from-literal=cosmos-connection-string="{{.COSMOS_CONN}}" \
+       --from-literal=appinsights-connection-string="{{.APPINSIGHTS_CONN}}" \
+       --dry-run=client -o yaml | kubectl apply -f -
+   ```
+
+   **After (new `deploy:secrets` task):**
+   ```yaml
+   deploy:secrets:
+     desc: Store secrets in Key Vault via Terraform (CSI driver picks up automatically)
+     cmds:
+       - echo "Storing secrets in Key Vault..."
+       - |
+         export TF_VAR_jwt_key_secret="{{.JWT_KEY}}"
+         export TF_VAR_openai_api_key="{{.OPENAI_API_KEY}}"
+         terraform -chdir=infra/cloud apply -auto-approve \
+           -target=azurerm_key_vault_secret.cosmos_connection \
+           -target=azurerm_key_vault_secret.redis_connection \
+           -target=azurerm_key_vault_secret.appinsights_connection \
+           -target=azurerm_key_vault_secret.jwt_key \
+           -target=azurerm_key_vault_secret.openai_endpoint \
+           -target=azurerm_key_vault_secret.openai_api_key
+       - echo "Waiting 30s for CSI driver to sync secrets..."
+       - sleep 30
+       - echo "Restarting pods to mount secrets from CSI driver..."
+       - kubectl rollout restart deployment -n banking-demo
+   ```
+
+8. **Update `deploy` task** to call `deploy:secrets` before deploying application:
+
+   ```yaml
+   deploy:
+     desc: Deploy application to AKS
+     deps:
+       - deploy:cluster-config
+       - deploy:secrets  # NEW
+     cmds:
+       - kubectl apply -k deploy/kustomize/base/
+   ```
+
+### Deploy Steps
+
+```bash
+# 1. Apply Terraform to store secrets in Key Vault
+export TF_VAR_jwt_key_secret="$(cat ~/.banking-demo-jwt-key)"
+export TF_VAR_openai_api_key="$(cat ~/.openai-api-key)"
+task -t Taskfile.cloud.yml deploy:secrets
+
+# 2. Verify secrets are in Key Vault
+az keyvault secret list --vault-name $(terraform -chdir=infra/cloud output -raw keyvault_name)
+
+# 3. Verify SecretProviderClass is created
+kubectl get secretproviderclass -n banking-demo
+
+# 4. Check mounted secrets in pod
+kubectl exec -n banking-demo <pod-name> -- cat /mnt/secrets/cosmos-connection-string
+
+# 5. Verify application is reading secrets correctly
+kubectl logs -n banking-demo <pod-name> | grep -i "cosmos\|connected"
+```
+
+### Verification Criteria
+
+- [ ] `az keyvault secret list --vault-name <KV_NAME>` — shows 6 secrets (cosmos, redis, appinsights, jwt-key, openai-endpoint, openai-api-key)
+- [ ] `kubectl get secretproviderclass -n banking-demo` — `banking-demo-secrets` exists
+- [ ] `kubectl get secret banking-secrets -n banking-demo` — K8s Secret `banking-secrets` still exists (created by SecretProviderClass sync feature)
+- [ ] `kubectl exec <pod> -- cat /mnt/secrets/cosmos-connection-string` — returns actual connection string (not empty)
+- [ ] Application pods are `Running` without restart loops
+- [ ] `kubectl logs <pod>` — no errors about missing secrets or permission denied
+- [ ] All services connect to backing stores (Cosmos, Redis, OpenAI) — verify in Application Insights or logs
+- [ ] Old `kubectl create secret` commands removed from `Taskfile.cloud.yml`
+- [ ] CSI driver rotates secrets every 2m — check Key Vault secret versions increase over time: `az keyvault secret list-versions --vault-name <KV_NAME> --name cosmos-connection-string`
+
+---
+
 ## Layer 2: Private Endpoints & DNS
 
 **Dependencies:** Layer 1 complete (VNet and subnets in place).
