@@ -51,38 +51,94 @@ chmod +x scripts/seed-data.sh
 | **Redis** | 6380 | Cache, session store, event streaming |
 | **UI Application** | 3000 | React frontend |
 
-## Environment Variables (.env)
+## Environment Variables (.env) Setup
 
-Copy the example and configure:
+### Quick Start (Defaults for Local Dev)
+
+For local development, most variables have sensible defaults. You can run immediately with:
 
 ```bash
 cp .env.example .env
+# File is ready to use; no edits needed for basic local development
 ```
 
-Key variables (defaults suitable for local dev):
+### Complete Configuration for Local Development
+
+If you want to enable AI features or customize settings:
 
 ```bash
-# Authentication
-Jwt__Key=YourSuperSecretKeyForJWTTokenGeneration12345
-Jwt__Issuer=user-service
+cp .env.example .env
 
-# Database (use in-memory for local dev)
+# Edit .env with your values:
+```
+
+#### Authentication & Security
+
+```bash
+# JWT Secret - Change from default for production, but default works for local dev
+Jwt__Key=YourSuperSecretKeyForJWTTokenGeneration12345
+
+# JWT Token Issuer
+Jwt__Issuer=user-service
+```
+
+#### Database
+
+```bash
+# Use in-memory database (recommended for local dev - no setup needed)
 UseInMemoryDatabase=true
 
-# Azure Services (optional)
-AZURE_OPENAI_ENDPOINT=https://your-openai-instance.openai.azure.com/
-AZURE_OPENAI_MODEL=gpt-4o-mini
-AZURE_CLIENT_ID=
-AZURE_TENANT_ID=
-AZURE_CLIENT_SECRET=
-APPLICATIONINSIGHTS_CONNECTION_STRING=
+# To use a real database instead, set to false and configure connection:
+# UseInMemoryDatabase=false
+# COSMOS_CONNECTION_STRING=DefaultEndpoint=https://...;AccountKey=...;
+```
 
-# Redis
+#### Redis (Event Bus & Caching)
+
+```bash
+# Local Redis - docker-compose runs Redis internally on port 6379
+# Accessible from other containers as 'redis:6379'
+# Externally exposed on 'localhost:6380'
 REDIS__CONNECTIONSTRING=redis:6379
+```
 
-# Service URLs (inter-service communication)
+#### Service-to-Service URLs
+
+```bash
+# Inter-service communication within Docker network
 Services__AccountService=http://account-service:8080
 Services__TransactionService=http://transaction-service:8080
+```
+
+#### Azure Services (Optional for Local Dev)
+
+If you want to test AI features locally using Azure services:
+
+```bash
+# Azure Identity - Required if using Azure AI services
+AZURE_TENANT_ID=<your-tenant-id>
+AZURE_CLIENT_ID=<your-client-id>
+AZURE_CLIENT_SECRET=<your-client-secret>  # Only for service principal; use managed identity in production
+
+# Azure OpenAI - For anomaly detection and budget analysis AI features
+AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com/
+AZURE_OPENAI_MODEL=gpt-4o-mini
+
+# Azure AI Agents - For advanced chatbot features (optional)
+AZURE_AI_AGENTS_ENDPOINT=https://<your-resource>.cognitiveservices.azure.com/
+
+# Application Insights - Optional telemetry (leave blank for local dev)
+APPLICATIONINSIGHTS_CONNECTION_STRING=
+```
+
+### Minimal `.env` for Local Development
+
+If you just want to run the app without AI features:
+
+```bash
+# Only JWT secret is truly required; docker-compose provides defaults for everything else
+Jwt__Key=YourSuperSecretKeyForJWTTokenGeneration12345
+UseInMemoryDatabase=true
 ```
 
 ## Using Seed Script
