@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+images:
+  - name: ghcr.io/banking-demo/user-service
+    newName: ${ACR_LOGIN_SERVER}/user-service
+    newTag: latest
+  - name: ghcr.io/banking-demo/account-service
+    newName: ${ACR_LOGIN_SERVER}/account-service
+    newTag: latest
+  - name: ghcr.io/banking-demo/transaction-service
+    newName: ${ACR_LOGIN_SERVER}/transaction-service
+    newTag: latest
+  - name: ghcr.io/banking-demo/transfer-service
+    newName: ${ACR_LOGIN_SERVER}/transfer-service
+    newTag: latest
+  - name: ghcr.io/banking-demo/chatbot-service
+    newName: ${ACR_LOGIN_SERVER}/chatbot-service
+    newTag: latest
+  - name: ghcr.io/banking-demo/budget-service
+    newName: ${ACR_LOGIN_SERVER}/budget-service
+    newTag: latest
+  - name: ghcr.io/banking-demo/anomaly-service
+    newName: ${ACR_LOGIN_SERVER}/anomaly-service
+    newTag: latest
+  - name: ghcr.io/banking-demo/event-processor
+    newName: ${ACR_LOGIN_SERVER}/event-processor
+    newTag: latest
+  - name: ghcr.io/banking-demo/ui-app
+    newName: ${ACR_LOGIN_SERVER}/ui-app
+    newTag: latest
