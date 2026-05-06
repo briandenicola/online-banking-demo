@@ -116,3 +116,31 @@ These bugs are end-to-end blockers: partition key mismatch means transaction ser
 - Event Hub's built-in consumer group management → manual partition handling in event-processor
 - Event Hub's at-least-once guarantees → Redis Streams' at-most-once (acceptable for this app)
 - Future: can migrate back to Event Hub or Kafka without changing event schema (IEvent interface abstraction works)
+
+### 2026-05 — Structured Logging & OpenTelemetry Observability
+
+**Scope:** Added structured logging (Serilog/.NET, structlog/Python) and OpenTelemetry tracing to all services with correlation ID propagation.
+
+**Implementation:**
+
+1. **Shared Observability Library (.NET)** — Created `src/shared/Observability/` with:
+   - `CorrelationIdMiddleware`: Reads `X-Correlation-ID` header or generates one, enriches Serilog LogContext
+   - `ObservabilityExtensions`: `UseBankingSerilog()` (compact JSON output) + `AddBankingOpenTelemetry()` (OTLP export) + `UseCorrelationId()` middleware registration
+   - All 4 .NET services reference this shared project
+
+2. **Python Services (structlog)** — anomaly, budget, chatbot services now use:
+   - `structlog` with JSON renderer and contextvars for correlation ID
+   - `CorrelationIdMiddleware` (Starlette BaseHTTPMiddleware) that binds correlation_id to structlog context
+   - OTLP exporter configured via `OTEL_EXPORTER_OTLP_ENDPOINT` env var (empty = disabled)
+
+3. **nginx Gateway** — Generates `X-Correlation-ID` using `$request_id` if not provided by client; propagates to all upstreams
+
+4. **docker-compose.yml** — Added `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME` to all services; commented-out Jaeger service
+
+**Key Decisions:**
+- Used env-var-driven OTLP export (empty endpoint = no export) for zero-config local dev
+- Shared .NET library avoids duplication across 4 services
+- structlog contextvars pattern propagates correlation ID without passing through function args
+- Jaeger commented out by default — uncomment + set env var to enable
+
+**Outcome:** All services emit structured JSON logs with correlation IDs. Distributed tracing ready to activate by setting one env var.
