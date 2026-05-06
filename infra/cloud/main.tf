@@ -307,18 +307,50 @@ resource "azurerm_cosmosdb_sql_container" "transfers" {
   partition_key_paths = ["/id"]
 }
 
-# Azure Managed Redis (newer API)
+# Azure Managed Redis (Entra ID auth only — no access keys)
 resource "azurerm_managed_redis" "main" {
   name                = local.redis_name
   location            = azurerm_resource_group.this.location
   resource_group_name = azurerm_resource_group.this.name
   sku_name            = "Balanced_B0"
   default_database {
-    access_keys_authentication_enabled = true
+    access_keys_authentication_enabled = false
   }
   tags = {
     AppName = local.resource_name
   }
+}
+
+# Managed identity for banking services that need Redis access
+resource "azurerm_user_assigned_identity" "redis_managed_identity" {
+  name                = "${local.resource_name}-redis-mi"
+  location            = azurerm_resource_group.this.location
+  resource_group_name = azurerm_resource_group.this.name
+}
+
+# Grant the Redis managed identity "Data Owner" on Managed Redis
+# azurerm doesn't support this resource type yet — using azapi provider
+resource "azapi_resource" "redis_access_policy_assignment" {
+  type      = "Microsoft.Cache/redis/accessPolicyAssignments@2024-11-01"
+  name      = "banking-services-redis-access"
+  parent_id = azurerm_managed_redis.main.id
+
+  body = {
+    properties = {
+      accessPolicyName = "Data Owner"
+      objectId         = azurerm_user_assigned_identity.redis_managed_identity.principal_id
+      objectIdAlias    = azurerm_user_assigned_identity.redis_managed_identity.name
+    }
+  }
+}
+
+# Workload identity federation for banking services using Redis
+resource "azurerm_federated_identity_credential" "aks_redis_workload_identity" {
+  name                      = "aks-redis-workload-identity"
+  user_assigned_identity_id = azurerm_user_assigned_identity.redis_managed_identity.id
+  audience                  = ["api://AzureADTokenExchange"]
+  subject                   = "system:serviceaccount:banking-demo:redis-workload-identity"
+  issuer                    = azurerm_kubernetes_cluster.main.oidc_issuer_url
 }
 
 resource "azurerm_application_insights" "main" {
