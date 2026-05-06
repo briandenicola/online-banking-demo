@@ -389,44 +389,48 @@ resource "azurerm_federated_identity_credential" "aks_openai_workload_identity" 
   issuer                    = azurerm_kubernetes_cluster.main.oidc_issuer_url
 }
 
-resource "azurerm_cognitive_deployment" "gpt54_mini" {
-  name                 = "gpt-5.4-mini"
-  cognitive_account_id = data.azurerm_cognitive_account.openai.id
+resource "azapi_resource" "gpt54_mini" {
+  type      = "Microsoft.CognitiveServices/accounts/deployments@2026-03-01"
+  name      = "gpt-5.4-mini"
+  parent_id = data.azurerm_cognitive_account.openai.id
 
   depends_on = [azapi_resource.this]
 
-  model {
-    format  = "OpenAI"
-    name    = "gpt-5.4-mini"
-    version = "2026-03-17"
-  }
-
-  sku {
-    name     = "GlobalStandard"
-    capacity = 10
-  }
-
-  lifecycle {
-    ignore_changes = [sku[0].capacity]
+  body = {
+    sku = {
+      name     = "GlobalStandard"
+      capacity = 10
+    }
+    properties = {
+      model = {
+        format  = "OpenAI"
+        name    = "gpt-5.4-mini"
+        version = "2026-03-17"
+      }
+    }
   }
 }
 
-resource "azurerm_cognitive_deployment" "text_embedding" {
-  count                = var.deploy_embedding_model ? 1 : 0
-  name                 = "text-embedding-ada-002"
-  cognitive_account_id = data.azurerm_cognitive_account.openai.id
+resource "azapi_resource" "text_embedding" {
+  count     = var.deploy_embedding_model ? 1 : 0
+  type      = "Microsoft.CognitiveServices/accounts/deployments@2026-03-01"
+  name      = "text-embedding-ada-002"
+  parent_id = data.azurerm_cognitive_account.openai.id
 
-  depends_on = [azurerm_cognitive_deployment.gpt54_mini]
+  depends_on = [azapi_resource.gpt54_mini]
 
-  model {
-    format  = "OpenAI"
-    name    = "text-embedding-ada-002"
-    version = "2"
-  }
-
-  sku {
-    name     = "GlobalStandard"
-    capacity = 10
+  body = {
+    sku = {
+      name     = "GlobalStandard"
+      capacity = 10
+    }
+    properties = {
+      model = {
+        format  = "OpenAI"
+        name    = "text-embedding-ada-002"
+        version = "2"
+      }
+    }
   }
 }
 
