@@ -8,6 +8,24 @@
 
 ## Learnings
 
+### 2026-05 — Redis Connectivity Fix
+
+**Problem:** event-processor (Go) and user-service (.NET) crashed on Redis connect. Azure Managed Redis was deployed with `access_keys_authentication_enabled = false` (Entra-only) and the configmap had unresolved placeholders.
+
+**Fix:**
+- Enabled access keys on Azure Managed Redis (`infra/cloud/main.tf`)
+- Added `redis_access_key` and `redis_connection_string` outputs (`infra/cloud/outputs.tf`)
+- Moved Redis connection string from configmap to `banking-secrets` (`Taskfile.cloud.yml` `_secrets:create`)
+- Removed placeholder values from `deploy/kustomize/base/configmap.yaml`
+- Added `REDIS__CONNECTIONSTRING` secretKeyRef to K8s deployments for user-service, transaction-service, transfer-service, event-processor
+- Go event-processor: added `parseRedisConnectionString()` to handle TLS + password from StackExchange.Redis-style connection string (`src/event-processor/main.go`)
+- .NET user-service: switched to `Redis:ConnectionString` config key matching other services (`src/user-service/Program.cs`)
+
+**Patterns:**
+- All services use `REDIS__CONNECTIONSTRING` env var (convention); .NET maps `__` to `:` in config hierarchy
+- Secrets flow: Terraform output → Taskfile `_secrets:create` → K8s secret → pod env var via `secretKeyRef`
+- Azure Managed Redis Balanced B0: port 10000, TLS required
+
 ### 2025-01 — Full Backend Audit
 
 **Architecture:**
@@ -451,3 +469,39 @@ the hostname, not the child project name. The project name only appears in the `
 - All changes staged for git commit
 
 **Status:** Ready for deployment. Services gracefully handle absent OTEL endpoint.
+
+### 2025-07 — OTEL Collector Deployment (Kustomize)
+
+**Summary:** Deployed OpenTelemetry Collector with Azure Application Insights exporter as Kustomize manifests.
+
+**Key Details:**
+- Created `deploy/kustomize/observability/otel-collector.yaml` with Namespace, Service, Deployment, and ConfigMap
+- Separate kustomization at `deploy/kustomize/observability/` (can't nest under base due to namespace conflicts)
+- Collector image: `otel/opentelemetry-collector-contrib:0.151.0`
+- App Insights connection string injected via K8s Secret (`appinsights-secret`) → env var `APPINSIGHTS_CONNECTION_STRING` → `${env:APPINSIGHTS_CONNECTION_STRING}` in OTEL config
+- Terraform already outputs `application_insights_connection_string` — operator creates the K8s secret from that output
+- Re-added `OTEL_EXPORTER_OTLP_ENDPOINT` to configmap pointing at `otel-collector.observability.svc.cluster.local:4317`
+- Registered in kustomization.yaml
+
+**Learning:** OTEL collector-contrib supports `${env:VAR}` syntax natively for env var substitution in config files — no sidecar or init container needed.
+
+### 2026-07 — Redis Entra ID Dual-Mode Auth (Cloud + Local)
+
+**Task:** Enable Entra ID (RBAC) for Azure Managed Redis in cloud while keeping access-key auth for local docker-compose.
+
+**Current State Found:**
+- Terraform already configured: `access_keys_authentication_enabled = false`, Redis managed identity, RBAC assignment (`Data Owner`), workload identity federation
+- TF outputs already correct: connection string has no password, `redis_managed_identity_client_id` output exists
+- Go event-processor already had dual-mode: detects `AZURE_CLIENT_ID` → Entra token auth with 45-min refresh; else → connection string parsing
+- All 3 C# services (user, transaction, transfer) already had `ConfigureForAzureWithTokenCredentialAsync` gated on `AZURE_CLIENT_ID`
+- NuGet packages (`Azure.Identity`, `Microsoft.Azure.StackExchangeRedis`) already in all .csproj files
+
+**Changes Made:**
+1. **Go module** (`src/event-processor/go.mod`) — Ran `go get azidentity azcore` + `go mod tidy`; code imported them but they weren't in go.mod (build was broken)
+2. **K8s manifests** — Added `azure.workload.identity/use: "true"` label + `serviceAccountName: redis-workload-identity` to user-service, event-processor, transaction-service, transfer-service deployments
+3. **Taskfile.cloud.yml** — Added `redis-workload-identity` service account creation (alongside existing `ai-workload-identity`), using `redis_managed_identity_client_id` TF output
+
+**Dual-Mode Pattern:**
+- Cloud: `AZURE_CLIENT_ID` injected by AKS workload identity webhook → services detect and use `DefaultAzureCredential` → Entra token auth to Redis
+- Local: No `AZURE_CLIENT_ID` → services fall back to connection string password (docker-compose Redis on port 6379, no TLS)
+- No extra env var needed — `AZURE_CLIENT_ID` presence is the signal (set automatically by workload identity)

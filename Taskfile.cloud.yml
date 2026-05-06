@@ -143,6 +143,18 @@ tasks:
           labels:
             azure.workload.identity/use: "true"
         EOF
+      - |
+        cat <<EOF | kubectl apply -f -
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: redis-workload-identity
+          namespace: banking-demo
+          annotations:
+            azure.workload.identity/client-id: "{{.REDIS_MI_CLIENT_ID}}"
+          labels:
+            azure.workload.identity/use: "true"
+        EOF
     vars:
       COSMOS_CONN:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw cosmos_connection_string
@@ -156,6 +168,8 @@ tasks:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw redis_connection_string
       AZURE_CLIENT_ID:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw managed_identity_client_id
+      REDIS_MI_CLIENT_ID:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw redis_managed_identity_client_id
 
   _images:update:
     internal: true

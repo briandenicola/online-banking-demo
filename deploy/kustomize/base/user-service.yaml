@@ -15,7 +15,9 @@ spec:
     metadata:
       labels:
         app: user-service
+        azure.workload.identity/use: "true"
     spec:
+      serviceAccountName: redis-workload-identity
       securityContext:
         runAsNonRoot: true
         runAsUser: 64198
