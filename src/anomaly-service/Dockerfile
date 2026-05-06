@@ -2,8 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY ./src/anomaly-service/app ./app
-COPY ./src/anomaly-service/pyproject.toml ./
+COPY ./app ./app
+COPY ./pyproject.toml ./
 
 RUN pip install --no-cache-dir \
     fastapi uvicorn httpx pydantic python-dotenv structlog redis \
