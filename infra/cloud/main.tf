@@ -33,7 +33,6 @@ locals {
   openai_name           = "${local.resource_name}-foundry"
   project_name          = "${local.resource_name}-project"
   redis_name            = "${local.resource_name}-redis"
-  eventhub_name         = "${local.resource_name}-eh"
   loganalytics_name     = "${local.resource_name}-logs"
   appinsights_name      = "${local.resource_name}-ai"
   keyvault_name         = "${local.resource_name}-kv"
@@ -195,25 +194,6 @@ resource "azurerm_cosmosdb_sql_container" "transfers" {
   account_name        = azurerm_cosmosdb_account.main.name
   database_name       = azurerm_cosmosdb_sql_database.banking.name
   partition_key_paths = ["/id"]
-}
-
-resource "azurerm_eventhub_namespace" "main" {
-  name                = local.eventhub_name
-  location            = azurerm_resource_group.this.location
-  resource_group_name = azurerm_resource_group.this.name
-  sku                 = "Standard"
-  capacity            = 1
-  tags = {
-    AppName = local.resource_name
-  }
-}
-
-resource "azurerm_eventhub" "banking" {
-  name                = "banking-events"
-  namespace_name      = azurerm_eventhub_namespace.main.name
-  resource_group_name = azurerm_resource_group.this.name
-  partition_count     = 4
-  message_retention   = 7
 }
 
 # Azure Managed Redis (newer API)

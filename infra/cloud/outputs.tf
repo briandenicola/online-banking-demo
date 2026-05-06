@@ -30,15 +30,6 @@ output "cosmos_db_key" {
   sensitive = true
 }
 
-output "eventhub_namespace" {
-  value = azurerm_eventhub_namespace.main.name
-}
-
-output "eventhub_connection_string" {
-  value     = azurerm_eventhub_namespace.main.default_primary_connection_string
-  sensitive = true
-}
-
 output "redis_host" {
   value = azurerm_managed_redis.main.hostname
 }
