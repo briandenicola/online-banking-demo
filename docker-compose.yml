@@ -100,8 +100,12 @@ services:
     environment:
       - AZURE_AI_AGENTS_ENDPOINT=${AZURE_AI_AGENTS_ENDPOINT}
       - AZURE_OPENAI_MODEL=${AZURE_OPENAI_MODEL:-gpt-4o-mini}
-      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
+      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
       - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING}
+    volumes:
+      - ${HOME}/.azure:/home/appuser/.azure:ro
     depends_on:
       - user-service
 
@@ -115,9 +119,13 @@ services:
       - "8002:8002"
     environment:
       - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
-      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
+      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
       - REDIS__CONNECTIONSTRING=redis:6379
       - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING}
+    volumes:
+      - ${HOME}/.azure:/home/appuser/.azure:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -131,9 +139,13 @@ services:
     ports:
       - "8003:8003"
     environment:
-      - AZURE_OPENAI_ENDPOINT=
-      - AZURE_CLIENT_ID=
-      - APPLICATIONINSIGHTS_CONNECTION_STRING=
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
+      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
+      - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
+    volumes:
+      - ${HOME}/.azure:/home/appuser/.azure:ro
     depends_on:
       - transaction-service
 

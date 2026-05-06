@@ -410,7 +410,30 @@ async def healthz():
 
 @app.get("/readyz")
 async def ready():
-    return {"status": "ready"}
+    checks = {"redis": False, "azure_credential": False}
+
+    # Check Redis
+    if _redis_client:
+        try:
+            await _redis_client.ping()
+            checks["redis"] = True
+        except Exception:
+            pass
+
+    # Check Azure credential availability
+    if AZURE_AVAILABLE and DefaultAzureCredential:
+        try:
+            credential = DefaultAzureCredential()
+            token = credential.get_token("https://cognitiveservices.azure.com/.default")
+            checks["azure_credential"] = token is not None
+        except Exception:
+            checks["azure_credential"] = False
+    else:
+        checks["azure_credential"] = None  # Not configured
+
+    all_ready = checks["redis"] and checks.get("azure_credential") is not False
+    status = "ready" if all_ready else "degraded"
+    return {"status": status, "checks": checks}
 
 
 @app.post("/detect", response_model=AnomalyResult)
