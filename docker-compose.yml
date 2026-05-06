@@ -28,6 +28,8 @@ services:
       - Jwt__Key=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
       - Jwt__Issuer=${JWT_ISSUER:-user-service}
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_SERVICE_NAME=user-service
     depends_on:
       redis:
         condition: service_healthy

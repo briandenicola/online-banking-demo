@@ -1,12 +1,7 @@
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Logging;
 
 namespace Banking.Observability;
 
-/// <summary>
-/// Reads X-Correlation-ID from incoming request or generates a new one,
-/// then stores it in HttpContext.Items and adds it to the response headers.
-/// </summary>
 public class CorrelationIdMiddleware
 {
     private const string HeaderName = "X-Correlation-ID";

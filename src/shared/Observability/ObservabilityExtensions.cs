@@ -11,10 +11,6 @@ namespace Banking.Observability;
 
 public static class ObservabilityExtensions
 {
-    /// <summary>
-    /// Configures Serilog with structured JSON logging and enrichers.
-    /// Call on the HostBuilder (builder.Host.UseBankingSerilog("service-name")).
-    /// </summary>
     public static IHostBuilder UseBankingSerilog(this IHostBuilder hostBuilder, string serviceName)
     {
         return hostBuilder.UseSerilog((context, configuration) =>
@@ -31,9 +27,6 @@ public static class ObservabilityExtensions
         });
     }
 
-    /// <summary>
-    /// Adds OpenTelemetry tracing with OTLP export (disabled if OTEL_EXPORTER_OTLP_ENDPOINT is empty).
-    /// </summary>
     public static IServiceCollection AddBankingOpenTelemetry(this IServiceCollection services, string serviceName)
     {
         var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
@@ -58,10 +51,6 @@ public static class ObservabilityExtensions
         return services;
     }
 
-    /// <summary>
-    /// Registers the CorrelationIdMiddleware in the pipeline.
-    /// Should be called early (before UseAuthentication).
-    /// </summary>
     public static IApplicationBuilder UseCorrelationId(this IApplicationBuilder app)
     {
         return app.UseMiddleware<CorrelationIdMiddleware>();

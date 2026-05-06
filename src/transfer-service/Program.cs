@@ -8,9 +8,16 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using StackExchange.Redis;
 using System.Text;
+using Banking.Observability;
 using TransferService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Structured logging with Serilog
+builder.Host.UseBankingSerilog("transfer-service");
+
+// OpenTelemetry tracing
+builder.Services.AddBankingOpenTelemetry("transfer-service");
 
 // Add services to the container
 builder.Services.AddControllers();
@@ -112,6 +119,8 @@ if (app.Environment.IsDevelopment() || useInMemory)
 }
 
 app.UseHttpsRedirection();
+
+app.UseCorrelationId();
 
 app.UseCors();
 
