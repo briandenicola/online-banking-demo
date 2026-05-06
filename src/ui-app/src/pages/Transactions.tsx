@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Box, 
   Typography, 
@@ -21,7 +21,10 @@ import {
   MenuItem
 } from '@mui/material';
 import { Warning as WarningIcon, CheckCircle as CheckCircleIcon, Add as AddIcon } from '@mui/icons-material';
-import { useAuth } from '../context/AuthContext';
+import { useAuthContext } from '../contexts/AuthContext';
+import { useAccountContext } from '../contexts/AccountContext';
+import AddAccountDialog from '../components/AddAccountDialog';
+import apiClient from '../api/client';
 
 interface Transaction {
   id: string;
@@ -44,7 +47,8 @@ interface NewTransaction {
 }
 
 const Transactions: React.FC = () => {
-  const { accounts, addAccount, token } = useAuth();
+  const { token } = useAuthContext();
+  const { accounts, addAccount } = useAccountContext();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -59,12 +63,6 @@ const Transactions: React.FC = () => {
     category: '',
     autoCategorize: true
   });
-  const [newAccount, setNewAccount] = useState({
-    name: '',
-    number: '',
-    balance: '',
-    type: 'Checking'
-  });
   const [success, setSuccess] = useState<string | null>(null);
 
   // Update default accountId when accounts load
@@ -74,31 +72,23 @@ const Transactions: React.FC = () => {
     }
   }, [accounts, newTransaction.accountId]);
 
-  // Fetch transactions from the transaction service
-  const fetchTransactions = async () => {
+  const fetchTransactions = useCallback(async () => {
     try {
       setLoading(true);
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-      const response = await fetch('/api/transactions', { headers });
-      if (response.ok) {
-        const data = await response.json();
-        setTransactions(data.transactions || []);
-      } else {
-        throw new Error('Failed to fetch transactions');
-      }
+      const response = await apiClient.get('/transactions');
+      setTransactions(response.data.transactions || []);
     } catch (e) {
       setError('Failed to load transactions');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchTransactions();
-  }, []);
+    if (token) {
+      fetchTransactions();
+    }
+  }, [token, fetchTransactions]);
 
   const handleSubmitTransaction = async () => {
     setSubmitting(true);
@@ -106,24 +96,16 @@ const Transactions: React.FC = () => {
     setSuccess(null);
 
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-      const response = await fetch('/api/transactions', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          accountId: newTransaction.accountId,
-          amount: parseFloat(newTransaction.amount),
-          type: newTransaction.type,
-          description: newTransaction.description,
-          category: newTransaction.category || undefined,
-          autoCategorize: newTransaction.autoCategorize
-        })
+      const response = await apiClient.post('/transactions', {
+        accountId: newTransaction.accountId,
+        amount: parseFloat(newTransaction.amount),
+        type: newTransaction.type,
+        description: newTransaction.description,
+        category: newTransaction.category || undefined,
+        autoCategorize: newTransaction.autoCategorize
       });
 
-      if (response.ok) {
+      if (response.status === 200 || response.status === 201) {
         const selectedAccount = accounts.find(a => a.id === newTransaction.accountId);
         setSuccess(`Transaction added to ${selectedAccount?.name || 'account'}! AI categorization will run automatically.`);
         setDialogOpen(false);
@@ -135,11 +117,7 @@ const Transactions: React.FC = () => {
           category: '',
           autoCategorize: true
         });
-        // Refresh transactions
         await fetchTransactions();
-      } else {
-        const error = await response.text();
-        setError(error || 'Failed to add transaction');
       }
     } catch (e) {
       setError('Failed to connect to transaction service');
@@ -148,17 +126,9 @@ const Transactions: React.FC = () => {
     }
   };
 
-  const handleAddAccount = () => {
-    if (newAccount.name && newAccount.number && newAccount.balance) {
-      addAccount({
-        name: newAccount.name,
-        number: newAccount.number,
-        balance: parseFloat(newAccount.balance),
-        type: newAccount.type
-      });
-      setAccountDialogOpen(false);
-      setNewAccount({ name: '', number: '', balance: '', type: 'Checking' });
-    }
+  const handleAddAccount = (account: { name: string; number: string; balance: number; type: string }) => {
+    addAccount(account);
+    setAccountDialogOpen(false);
   };
 
   if (loading) {
@@ -325,62 +295,12 @@ const Transactions: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Add Account Dialog (from Transactions page) */}
-      <Dialog open={accountDialogOpen} onClose={() => setAccountDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Add New Account</DialogTitle>
-        <DialogContent>
-          <Box sx={{ pt: 1 }}>
-            <TextField
-              fullWidth
-              label="Account Name"
-              value={newAccount.name}
-              onChange={(e) => setNewAccount({...newAccount, name: e.target.value})}
-              margin="dense"
-              placeholder="e.g., My Savings Account"
-            />
-            <TextField
-              fullWidth
-              label="Account Number"
-              value={newAccount.number}
-              onChange={(e) => setNewAccount({...newAccount, number: e.target.value})}
-              margin="dense"
-              placeholder="e.g., ****-5678"
-            />
-            <TextField
-              fullWidth
-              label="Initial Balance"
-              type="number"
-              value={newAccount.balance}
-              onChange={(e) => setNewAccount({...newAccount, balance: e.target.value})}
-              margin="dense"
-            />
-            <TextField
-              fullWidth
-              select
-              label="Account Type"
-              value={newAccount.type}
-              onChange={(e) => setNewAccount({...newAccount, type: e.target.value})}
-              margin="dense"
-            >
-              <MenuItem value="Checking">Checking</MenuItem>
-              <MenuItem value="Savings">Savings</MenuItem>
-              <MenuItem value="Credit">Credit Card</MenuItem>
-            </TextField>
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setAccountDialogOpen(false)}>
-            Cancel
-          </Button>
-          <Button 
-            onClick={handleAddAccount} 
-            variant="contained"
-            disabled={!newAccount.name || !newAccount.number || !newAccount.balance}
-          >
-            Add Account
-          </Button>
-        </DialogActions>
-      </Dialog>
+      {/* Shared Add Account Dialog */}
+      <AddAccountDialog
+        open={accountDialogOpen}
+        onClose={() => setAccountDialogOpen(false)}
+        onAdd={handleAddAccount}
+      />
     </Box>
   );
 };

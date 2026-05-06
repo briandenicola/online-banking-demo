@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useAuthContext } from '../contexts/AuthContext';
 import {
   Container,
   Box,
@@ -16,7 +16,7 @@ const Login: React.FC = () => {
   const [email, setEmail] = useState('demo@banking-demo.com');
   const [password, setPassword] = useState('password123');
   const [error, setError] = useState('');
-  const { login } = useAuth();
+  const { login } = useAuthContext();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {

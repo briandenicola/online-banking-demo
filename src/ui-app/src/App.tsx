@@ -3,8 +3,9 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'r
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import Container from '@mui/material/Container';
-import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
+import ButtonBase from '@mui/material/ButtonBase';
+import Typography from '@mui/material/Typography';
 import AppBar from '@mui/material/AppBar';
 import Toolbar from '@mui/material/Toolbar';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
@@ -16,7 +17,8 @@ import Transactions from './pages/Transactions';
 import Transfers from './pages/Transfers';
 import Chat from './pages/Chat';
 import Login from './pages/Login';
-import { AuthProvider, useAuth } from './context/AuthContext';
+import { AuthProvider, useAuthContext } from './contexts/AuthContext';
+import { AccountProvider } from './contexts/AccountContext';
 
 const theme = createTheme({
   palette: {
@@ -30,7 +32,7 @@ const theme = createTheme({
 });
 
 const AppContent: React.FC = () => {
-  const { user, logout } = useAuth();
+  const { user, logout } = useAuthContext();
   const navigate = useNavigate();
 
   if (!user) {
@@ -47,14 +49,15 @@ const AppContent: React.FC = () => {
       <AppBar position="static">
         <Toolbar>
           <AccountBalanceIcon sx={{ mr: 2 }} />
-          <Typography 
-            variant="h6" 
-            component="div" 
-            sx={{ flexGrow: 1, cursor: 'pointer' }}
+          <ButtonBase
             onClick={() => navigate('/')}
+            sx={{ flexGrow: 1, justifyContent: 'flex-start' }}
+            aria-label="Go to dashboard"
           >
-            Online Banking Demo
-          </Typography>
+            <Typography variant="h6" component="span" sx={{ color: 'inherit' }}>
+              Online Banking Demo
+            </Typography>
+          </ButtonBase>
           <Button color="inherit" onClick={logout}>
             Logout
           </Button>
@@ -79,9 +82,11 @@ function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        <Router>
-          <AppContent />
-        </Router>
+        <AccountProvider>
+          <Router>
+            <AppContent />
+          </Router>
+        </AccountProvider>
       </AuthProvider>
     </ThemeProvider>
   );

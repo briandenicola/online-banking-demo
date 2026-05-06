@@ -9,6 +9,7 @@ using Newtonsoft.Json;
 using OnlineBankingDemo.Contracts.Dtos;
 using OnlineBankingDemo.Contracts.Events;
 using UserModel = UserService.Models.User;
+using BC = global::BCrypt.Net.BCrypt;
 
 namespace UserService.Services;
 
@@ -64,7 +65,7 @@ public class UserService : IUserService
             throw new InvalidOperationException("Username already exists");
         }
 
-        var passwordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
+        var passwordHash = BC.HashPassword(request.Password);
 
         var user = new UserModel
         {
@@ -91,7 +92,7 @@ public class UserService : IUserService
         if (user == null)
             return false;
 
-        return BCrypt.Net.BCrypt.Verify(password, user.PasswordHash);
+        return BC.Verify(password, user.PasswordHash);
     }
 
     private async Task PublishUserRegisteredEvent(UserModel user)

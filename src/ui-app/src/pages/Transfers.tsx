@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Box, Typography, Paper, TextField, Button, MenuItem, Alert } from '@mui/material';
-import { useAuth } from '../context/AuthContext';
+import { useAccountContext } from '../contexts/AccountContext';
 
 const Transfers: React.FC = () => {
   const [fromAccount, setFromAccount] = useState('');
@@ -8,11 +8,12 @@ const Transfers: React.FC = () => {
   const [amount, setAmount] = useState('');
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
-  const { accounts, transfer } = useAuth();
+  const [submitting, setSubmitting] = useState(false);
+  const { accounts, transfer } = useAccountContext();
 
   const eligibleAccounts = accounts.filter(acc => acc.type !== 'Credit');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     
@@ -33,10 +34,17 @@ const Transfers: React.FC = () => {
       return;
     }
 
-    transfer(fromAccount, toAccount, amt);
-    setSuccess(true);
-    setAmount('');
-    setTimeout(() => setSuccess(false), 3000);
+    setSubmitting(true);
+    const ok = await transfer(fromAccount, toAccount, amt);
+    setSubmitting(false);
+
+    if (ok) {
+      setSuccess(true);
+      setAmount('');
+      setTimeout(() => setSuccess(false), 3000);
+    } else {
+      setError('Transfer failed. Please try again.');
+    }
   };
 
   return (
@@ -94,8 +102,8 @@ const Transfers: React.FC = () => {
             required
           />
 
-          <Button type="submit" variant="contained" fullWidth sx={{ mt: 2 }}>
-            Send Transfer
+          <Button type="submit" variant="contained" fullWidth sx={{ mt: 2 }} disabled={submitting}>
+            {submitting ? 'Processing...' : 'Send Transfer'}
           </Button>
         </Box>
       </Paper>

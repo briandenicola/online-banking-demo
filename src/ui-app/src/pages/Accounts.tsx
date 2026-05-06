@@ -1,37 +1,19 @@
 import React, { useState } from 'react';
-import { Box, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, Alert } from '@mui/material';
+import { Box, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Button, Alert } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
-import { useAuth } from '../context/AuthContext';
+import { useAccountContext } from '../contexts/AccountContext';
+import AddAccountDialog from '../components/AddAccountDialog';
 
 const Accounts: React.FC = () => {
-  const { accounts, addAccount } = useAuth();
+  const { accounts, addAccount } = useAccountContext();
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [newAccount, setNewAccount] = useState({
-    name: '',
-    number: '',
-    balance: '',
-    type: 'Checking'
-  });
   const [success, setSuccess] = useState(false);
 
-  const handleAddAccount = () => {
-    if (newAccount.name && newAccount.number && newAccount.balance) {
-      addAccount({
-        name: newAccount.name,
-        number: newAccount.number,
-        balance: parseFloat(newAccount.balance),
-        type: newAccount.type
-      });
-      setSuccess(true);
-      setDialogOpen(false);
-      setNewAccount({
-        name: '',
-        number: '',
-        balance: '',
-        type: 'Checking'
-      });
-      setTimeout(() => setSuccess(false), 3000);
-    }
+  const handleAddAccount = (account: { name: string; number: string; balance: number; type: string }) => {
+    addAccount(account);
+    setSuccess(true);
+    setDialogOpen(false);
+    setTimeout(() => setSuccess(false), 3000);
   };
 
   return (
@@ -78,63 +60,11 @@ const Accounts: React.FC = () => {
         </Table>
       </TableContainer>
 
-      {/* Add Account Dialog */}
-      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Add New Account</DialogTitle>
-        <DialogContent>
-          <Box sx={{ pt: 1 }}>
-            <TextField
-              fullWidth
-              label="Account Name"
-              value={newAccount.name}
-              onChange={(e) => setNewAccount({...newAccount, name: e.target.value})}
-              margin="dense"
-              placeholder="e.g., My Savings Account"
-            />
-            <TextField
-              fullWidth
-              label="Account Number"
-              value={newAccount.number}
-              onChange={(e) => setNewAccount({...newAccount, number: e.target.value})}
-              margin="dense"
-              placeholder="e.g., ****-5678"
-            />
-            <TextField
-              fullWidth
-              label="Initial Balance"
-              type="number"
-              value={newAccount.balance}
-              onChange={(e) => setNewAccount({...newAccount, balance: e.target.value})}
-              margin="dense"
-            />
-            <TextField
-              fullWidth
-              select
-              label="Account Type"
-              value={newAccount.type}
-              onChange={(e) => setNewAccount({...newAccount, type: e.target.value})}
-              margin="dense"
-            >
-              <MenuItem value="Checking">Checking</MenuItem>
-              <MenuItem value="Savings">Savings</MenuItem>
-              <MenuItem value="Credit">Credit Card</MenuItem>
-              <MenuItem value="Investment">Investment</MenuItem>
-            </TextField>
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDialogOpen(false)}>
-            Cancel
-          </Button>
-          <Button 
-            onClick={handleAddAccount} 
-            variant="contained"
-            disabled={!newAccount.name || !newAccount.number || !newAccount.balance}
-          >
-            Add Account
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <AddAccountDialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        onAdd={handleAddAccount}
+      />
     </Box>
   );
 };

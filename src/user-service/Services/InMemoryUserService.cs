@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using OnlineBankingDemo.Contracts.Dtos;
 using UserService.Models;
+using BC = global::BCrypt.Net.BCrypt;
 
 namespace UserService.Services;
 
@@ -17,7 +18,7 @@ public class InMemoryUserService : IUserService
     {
         _logger = logger;
         // Seed a default test user for demo purposes
-        var passwordHash = BCrypt.Net.BCrypt.HashPassword("password123");
+        var passwordHash = BC.HashPassword("password123");
         var defaultUser = new User
         {
             Id = "1",
@@ -31,7 +32,7 @@ public class InMemoryUserService : IUserService
         _users[defaultUser.Id] = defaultUser;
 
         // Seed a demo user
-        var demoPasswordHash = BCrypt.Net.BCrypt.HashPassword("password123");
+        var demoPasswordHash = BC.HashPassword("password123");
         var demoUser = new User
         {
             Id = "2",
@@ -65,7 +66,7 @@ public class InMemoryUserService : IUserService
             throw new InvalidOperationException("Username already exists");
         }
 
-        var passwordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
+        var passwordHash = BC.HashPassword(request.Password);
 
         var user = new User
         {
@@ -90,6 +91,6 @@ public class InMemoryUserService : IUserService
         if (user == null)
             return false;
 
-        return BCrypt.Net.BCrypt.Verify(password, user.PasswordHash);
+        return BC.Verify(password, user.PasswordHash);
     }
 }

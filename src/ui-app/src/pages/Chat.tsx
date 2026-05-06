@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Box, Typography, Paper, TextField, Button, List, ListItem, ListItemText, CircularProgress } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
+import apiClient from '../api/client';
 
 interface Message {
   id: number;
@@ -24,32 +25,23 @@ const Chat: React.FC = () => {
       sender: 'user',
     };
     
-    setMessages([...messages, userMessage]);
+    setMessages(prev => [...prev, userMessage]);
     setInput('');
     setLoading(true);
 
     try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: 'user-demo',
-          message: input,
-          context: {}
-        })
+      const response = await apiClient.post('/chat', {
+        user_id: 'user-demo',
+        message: input,
+        context: {}
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        const botResponse: Message = {
-          id: Date.now() + 1,
-          text: data.response,
-          sender: 'bot',
-        };
-        setMessages(prev => [...prev, botResponse]);
-      } else {
-        throw new Error('API error');
-      }
+      const botResponse: Message = {
+        id: Date.now() + 1,
+        text: response.data.response,
+        sender: 'bot',
+      };
+      setMessages(prev => [...prev, botResponse]);
     } catch (error) {
       const botResponse: Message = {
         id: Date.now() + 1,
@@ -92,7 +84,7 @@ const Chat: React.FC = () => {
           placeholder="Ask about your finances..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyPress={(e) => e.key === 'Enter' && !loading && handleSend()}
+          onKeyDown={(e) => e.key === 'Enter' && !loading && handleSend()}
           disabled={loading}
         />
         <Button 

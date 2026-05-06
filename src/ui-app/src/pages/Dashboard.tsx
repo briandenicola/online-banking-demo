@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Typography, Grid, Paper, Button } from '@mui/material';
+import { Box, Typography, Grid, Paper, Button, ButtonBase } from '@mui/material';
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import ChatIcon from '@mui/icons-material/Chat';
@@ -44,25 +44,29 @@ const Dashboard: React.FC = () => {
       <Grid container spacing={3} sx={{ mt: 2 }}>
         {features.map((feature) => (
           <Grid key={feature.title} size={{ xs: 12, md: 4 }}>
-            <Paper
-              elevation={3}
-              sx={{
-                p: 3,
-                textAlign: 'center',
-                cursor: 'pointer',
-                transition: 'transform 0.2s',
-                '&:hover': { transform: 'scale(1.03)' },
-              }}
+            <ButtonBase
               onClick={() => navigate(feature.path)}
+              aria-label={`Navigate to ${feature.title}`}
+              sx={{ width: '100%', textAlign: 'left', display: 'block' }}
             >
-              <Box sx={{ color: `${feature.color}.main`, mb: 2 }}>{feature.icon}</Box>
-              <Typography variant="h6" gutterBottom>
-                {feature.title}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                {feature.description}
-              </Typography>
-            </Paper>
+              <Paper
+                elevation={3}
+                sx={{
+                  p: 3,
+                  textAlign: 'center',
+                  transition: 'transform 0.2s',
+                  '&:hover': { transform: 'scale(1.03)' },
+                }}
+              >
+                <Box sx={{ color: `${feature.color}.main`, mb: 2 }}>{feature.icon}</Box>
+                <Typography variant="h6" gutterBottom>
+                  {feature.title}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {feature.description}
+                </Typography>
+              </Paper>
+            </ButtonBase>
           </Grid>
         ))}
       </Grid>
