@@ -102,6 +102,7 @@ tasks:
       - sed -i s/devicecode/azurecli/g ~/.kube/config
       - task: _secrets:create
       - task: _images:update
+      - kubectl apply -k deploy/kustomize/observability/
       - kubectl apply -k deploy/kustomize/base/
     vars:
       RG_NAME:
@@ -115,6 +116,7 @@ tasks:
     desc: Create banking-secrets and workload identity service account
     cmds:
       - kubectl create namespace banking-demo --dry-run=client -o yaml | kubectl apply -f -
+      - kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
       - |
         kubectl create secret generic banking-secrets \
           --namespace banking-demo \
@@ -122,6 +124,12 @@ tasks:
           --from-literal=appinsights-connection-string="{{.APPINSIGHTS_CONN}}" \
           --from-literal=jwt-key="{{.JWT_KEY}}" \
           --from-literal=openai-endpoint="{{.OPENAI_ENDPOINT}}" \
+          --from-literal=redis-connection-string="{{.REDIS_CONN}}" \
+          --dry-run=client -o yaml | kubectl apply -f -
+      - |
+        kubectl create secret generic banking-secrets \
+          --namespace observability \
+          --from-literal=appinsights-connection-string="{{.APPINSIGHTS_CONN}}" \
           --dry-run=client -o yaml | kubectl apply -f -
       - |
         cat <<EOF | kubectl apply -f -
@@ -144,6 +152,8 @@ tasks:
         sh: openssl rand -base64 32
       OPENAI_ENDPOINT:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw openai_endpoint
+      REDIS_CONN:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw redis_connection_string
       AZURE_CLIENT_ID:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw managed_identity_client_id
 

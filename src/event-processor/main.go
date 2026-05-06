@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -56,14 +58,14 @@ func main() {
 	defer cancel()
 
 	// Get Redis connection from environment
-	redisAddr := os.Getenv("REDIS__CONNECTIONSTRING")
-	if redisAddr == "" {
-		redisAddr = "redis:6379"
+	// Format: host:port,ssl=True,abortConnect=False,password=KEY
+	redisConnStr := os.Getenv("REDIS__CONNECTIONSTRING")
+	if redisConnStr == "" {
+		redisConnStr = "redis:6379"
 	}
 
-	rdb := redis.NewClient(&redis.Options{
-		Addr: redisAddr,
-	})
+	redisOpts := parseRedisConnectionString(redisConnStr)
+	rdb := redis.NewClient(redisOpts)
 
 	// Verify Redis connectivity with retry
 	for i := 0; i < 10; i++ {
@@ -203,6 +205,41 @@ func (p *EventProcessor) processMessage(ctx context.Context, message redis.XMess
 	default:
 		log.Printf("[AUDIT] Unknown event type: %s — data: %+v", evt.EventType, evt.Data)
 	}
+}
+
+// parseRedisConnectionString parses a StackExchange.Redis-style connection string
+// Format: host:port,ssl=True,abortConnect=False,password=KEY
+func parseRedisConnectionString(connStr string) *redis.Options {
+	opts := &redis.Options{
+		Addr: "redis:6379",
+	}
+
+	parts := strings.Split(connStr, ",")
+	for i, part := range parts {
+		part = strings.TrimSpace(part)
+		if i == 0 {
+			// First segment is host:port
+			opts.Addr = part
+			continue
+		}
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(kv[0]))
+		value := strings.TrimSpace(kv[1])
+		switch key {
+		case "password":
+			opts.Password = value
+		case "ssl":
+			if strings.EqualFold(value, "true") {
+				opts.TLSConfig = &tls.Config{
+					MinVersion: tls.VersionTLS12,
+				}
+			}
+		}
+	}
+	return opts
 }
 
 func initTracer() (*sdktrace.TracerProvider, error) {

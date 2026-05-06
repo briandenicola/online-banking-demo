@@ -18,6 +18,9 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
       containers:
       - name: event-processor
         image: ghcr.io/banking-demo/event-processor:1.0.0
@@ -25,6 +28,11 @@ spec:
         - containerPort: 8080
           protocol: TCP
         env:
+        - name: REDIS__CONNECTIONSTRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: redis-connection-string
         envFrom:
         - configMapRef:
             name: banking-demo-config

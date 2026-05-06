@@ -314,7 +314,7 @@ resource "azurerm_managed_redis" "main" {
   resource_group_name = azurerm_resource_group.this.name
   sku_name            = "Balanced_B0"
   default_database {
-    access_keys_authentication_enabled = false
+    access_keys_authentication_enabled = true
   }
   tags = {
     AppName = local.resource_name

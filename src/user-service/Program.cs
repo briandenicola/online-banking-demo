@@ -88,10 +88,9 @@ else
     });
 
     // Redis for event streaming
-    var redisHost = builder.Configuration["REDIS_HOST"] ?? "redis";
-    var redisPort = builder.Configuration["REDIS_PORT"] ?? "6379";
+    var redisConnStr = builder.Configuration["Redis:ConnectionString"] ?? "redis:6379";
     builder.Services.AddSingleton<IConnectionMultiplexer>(
-        ConnectionMultiplexer.Connect($"{redisHost}:{redisPort}"));
+        ConnectionMultiplexer.Connect(redisConnStr));
 
     // Services
     builder.Services.AddScoped<IUserService, UserService.Services.UserService>();
