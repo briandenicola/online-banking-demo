@@ -135,9 +135,13 @@ const Transactions: React.FC = () => {
     }
   };
 
-  const handleAddAccount = (account: { name: string; number: string; balance: number; type: string }) => {
-    addAccount(account);
-    setAccountDialogOpen(false);
+  const handleAddAccount = async (account: { name: string; number: string; balance: number; type: string }) => {
+    try {
+      await addAccount(account);
+      setAccountDialogOpen(false);
+    } catch (e) {
+      console.error('Failed to add account:', e);
+    }
   };
 
   if (loading) {
