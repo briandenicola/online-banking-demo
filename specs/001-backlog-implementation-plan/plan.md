@@ -114,12 +114,14 @@ docs/                         # Workshop-style documentation
 
 | # | Task | Detail | Squad Member |
 |---|------|--------|--------------|
-| 0a-1 | Split main.tf into logical files | `providers.tf`, `locals.tf`, `networking.tf`, `aks.tf`, `cosmos.tf`, `redis.tf`, `ai.tf`, `keyvault.tf`, `monitoring.tf`, `acr.tf` | Basher |
-| 0a-2 | Fix naming inconsistencies | Standardize `this` vs `main` resource naming; use `main` consistently | Basher |
-| 0a-3 | Remove dead/unused outputs | Clean `outputs.tf` — remove references to non-existent attributes (e.g. `primary_access_key`) | Basher |
-| 0a-4 | Organize variables with validation | Group variables in `variables.tf`, add descriptions and validation blocks | Basher |
-| 0a-5 | Run `terraform plan` — confirm zero changes | Must show "No changes. Your infrastructure matches the configuration." | Basher |
-| 0a-6 | Run `terraform validate` — confirm clean | No warnings or errors | Basher |
+| 0a-1 | Split main.tf into logical files | `providers.tf`, `locals.tf`, `networking.tf`, `aks.tf`, `cosmos.tf`, `redis.tf`, `ai.tf`, `keyvault.tf`, `monitoring.tf`, `acr.tf`, `identity.tf` | Basher |
+| 0a-2 | Consolidate to ONE managed identity | Replace `redis_managed_identity` + `openai_managed_identity` with single `banking_services_identity`. Grant it: Redis Data Contributor, Cosmos DB Data Contributor, Cognitive Services OpenAI User, Key Vault Secrets User. Single federated credential + single K8s service account (`banking-workload-identity`) | Basher |
+| 0a-3 | Fix naming inconsistencies | Standardize `this` vs `main` resource naming; use `main` consistently | Basher |
+| 0a-4 | Remove dead/unused outputs | Clean `outputs.tf` — remove references to non-existent attributes (e.g. `primary_access_key`) | Basher |
+| 0a-5 | Organize variables with validation | Group variables in `variables.tf`, add descriptions and validation blocks | Basher |
+| 0a-6 | Update Kustomize service accounts | Replace `redis-workload-identity` and `ai-workload-identity` SAs with single `banking-workload-identity` SA annotated with the consolidated identity client ID | Basher |
+| 0a-7 | Run `terraform plan` — confirm expected changes only | Identity consolidation WILL change resources (destroy 2 identities, create 1). Verify only identity-related changes, no unintended drift | Basher |
+| 0a-8 | Run `terraform validate` — confirm clean | No warnings or errors | Basher |
 
 **Key Constraint**: This is a PURE reorganization. `terraform plan` MUST show zero infrastructure changes after the split. No resource renames that would trigger destroy/recreate.
 
