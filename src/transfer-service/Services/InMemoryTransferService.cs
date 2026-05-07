@@ -48,6 +48,8 @@ public class InMemoryTransferService : ITransferService
     {
         var transfer = new Transfer
         {
+            FromAccountId = request.FromAccountId,
+            ToAccountId = request.ToAccountId,
             FromAccountNumber = request.FromAccountNumber,
             ToAccountNumber = request.ToAccountNumber,
             Amount = request.Amount,
@@ -57,39 +59,9 @@ public class InMemoryTransferService : ITransferService
 
         try
         {
-            var fromAccount = await GetAccountInfoAsync(request.FromAccountNumber);
-            var toAccount = await GetAccountInfoAsync(request.ToAccountNumber);
-
-            if (fromAccount == null)
-            {
-                transfer.Status = "Failed";
-                transfer.FailureReason = "From account not found";
-                _transfers[transfer.Id] = transfer;
-                return transfer;
-            }
-
-            if (toAccount == null)
-            {
-                transfer.Status = "Failed";
-                transfer.FailureReason = "To account not found";
-                _transfers[transfer.Id] = transfer;
-                return transfer;
-            }
-
-            transfer.FromAccountId = fromAccount.Value.Id;
-            transfer.ToAccountId = toAccount.Value.Id;
-
-            if (fromAccount.Value.Balance < request.Amount)
-            {
-                transfer.Status = "Failed";
-                transfer.FailureReason = "Insufficient funds";
-                _transfers[transfer.Id] = transfer;
-                return transfer;
-            }
-
             // Create debit and credit transactions (balance updates handled by transaction-service)
             await CreateTransferTransactionsAsync(
-                fromAccount.Value.Id, toAccount.Value.Id,
+                request.FromAccountId, request.ToAccountId,
                 request.Amount, transfer.Id, request.Description);
 
             transfer.Status = "Completed";
@@ -117,22 +89,7 @@ public class InMemoryTransferService : ITransferService
         return Task.FromResult(transfer);
     }
 
-    private async Task<(string Id, string AccountNumber, decimal Balance)?> GetAccountInfoAsync(string accountNumber)
-    {
-        var accountServiceUrl = _configuration["Services:AccountService"];
-        var client = CreateAuthenticatedClient();
-        var response = await client.GetAsync($"{accountServiceUrl}/api/accounts/number/{accountNumber}");
-        if (!response.IsSuccessStatusCode)
-            return null;
 
-        var json = await response.Content.ReadAsStringAsync();
-        var account = System.Text.Json.JsonSerializer.Deserialize<AccountInfo>(json, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        });
-
-        return (account!.Id, account.AccountNumber, account.Balance);
-    }
 
     private async Task CreateTransferTransactionsAsync(
         string fromAccountId, string toAccountId, decimal amount, string transferId, string? description)
@@ -204,10 +161,4 @@ public class InMemoryTransferService : ITransferService
         }
     }
 
-    private class AccountInfo
-    {
-        public string Id { get; set; } = null!;
-        public string AccountNumber { get; set; } = null!;
-        public decimal Balance { get; set; }
-    }
 }

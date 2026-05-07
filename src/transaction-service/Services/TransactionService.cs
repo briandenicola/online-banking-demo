@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -20,6 +22,7 @@ public class TransactionService : ITransactionService
     private readonly ILogger<TransactionService> _logger;
     private readonly IConfiguration _configuration;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IHttpContextAccessor _httpContextAccessor;
     private const string StreamName = "banking-events";
 
     public TransactionService(
@@ -27,7 +30,8 @@ public class TransactionService : ITransactionService
         IConnectionMultiplexer redis,
         ILogger<TransactionService> logger,
         IConfiguration configuration,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        IHttpContextAccessor httpContextAccessor)
     {
         var databaseName = configuration["CosmosDb:DatabaseName"];
         var containerName = configuration["CosmosDb:ContainerName"];
@@ -36,6 +40,7 @@ public class TransactionService : ITransactionService
         _logger = logger;
         _configuration = configuration;
         _httpClientFactory = httpClientFactory;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     public async Task<Transaction> CreateTransactionAsync(OnlineBankingDemo.Contracts.Dtos.CreateTransactionRequest request, string userId)
@@ -60,6 +65,9 @@ public class TransactionService : ITransactionService
         };
 
         await _container.CreateItemAsync(transaction, new PartitionKey(transaction.AccountId));
+        
+        // Update account balance (transaction-service owns balance side effects)
+        await UpdateAccountBalanceAsync(transaction.AccountId, transaction.Amount);
         
         // Publish TransactionCreated event to Redis Stream
         await PublishTransactionCreatedEvent(transaction);
@@ -221,6 +229,47 @@ public class TransactionService : ITransactionService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to publish InsufficientFundsAttempt event for account {AccountId}", accountId);
+        }
+    }
+
+    private async Task UpdateAccountBalanceAsync(string accountId, decimal amount)
+    {
+        var accountServiceUrl = _configuration["Services:AccountService"];
+        if (string.IsNullOrEmpty(accountServiceUrl))
+        {
+            _logger.LogWarning("AccountService URL not configured; skipping balance update");
+            return;
+        }
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            
+            // Forward JWT token for service-to-service authentication
+            var authHeader = _httpContextAccessor.HttpContext?.Request.Headers["Authorization"].FirstOrDefault();
+            if (!string.IsNullOrEmpty(authHeader))
+            {
+                client.DefaultRequestHeaders.Authorization = AuthenticationHeaderValue.Parse(authHeader);
+            }
+            
+            var requestBody = Newtonsoft.Json.JsonConvert.SerializeObject(new { Amount = amount });
+            var content = new StringContent(requestBody, System.Text.Encoding.UTF8, "application/json");
+            
+            var response = await client.PostAsync($"{accountServiceUrl}/api/accounts/{accountId}/balance", content);
+            if (!response.IsSuccessStatusCode)
+            {
+                var responseContent = await response.Content.ReadAsStringAsync();
+                _logger.LogError("Failed to update account balance for {AccountId} (HTTP {StatusCode}): {Response}", 
+                    accountId, response.StatusCode, responseContent);
+            }
+            else
+            {
+                _logger.LogInformation("Updated account {AccountId} balance by {Amount}", accountId, amount);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to call account-service to update balance for account {AccountId}", accountId);
         }
     }
 

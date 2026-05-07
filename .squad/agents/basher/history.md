@@ -639,3 +639,18 @@ the hostname, not the child project name. The project name only appears in the `
 **Pattern:** Transaction-service is the single owner of balance side effects. Any code that creates a transaction (direct or via transfer) gets automatic balance updates. Transfer-service only orchestrates creating debit/credit transaction pairs.
 
 **Pattern:** Service-to-service calls must forward the incoming JWT via `IHttpContextAccessor` to satisfy `[Authorize]` on downstream services.
+
+### 2026-05-07 — Transfer Service Account Lookup Fix
+
+**Problem:** Transfers failed with "From account not found" — both `fromAccountId` and `toAccountId` were null.
+
+**Root causes (two bugs):**
+1. **Missing port in docker-compose inter-service URLs:** .NET 9 containers default to port 8080. `Services__AccountService=http://account-service` (no port = port 80) caused connection refused. Fixed by adding `:8080` to all service URLs in docker-compose.yml.
+2. **Ownership check on `GetAccountByNumber` blocked cross-user transfers:** The account-service endpoint returned 403 for the destination account since it belongs to a different user. Removed ownership check — account-by-number lookups are needed for service-to-service calls (transfers).
+
+**Files changed:**
+- `docker-compose.yml` — added `:8080` to `Services__AccountService` and `Services__TransactionService` URLs
+- `src/account-service/Controllers/AccountsController.cs` — removed ownership check from `GetAccountByNumber`
+
+**Pattern:** .NET 9 containers listen on 8080 by default (not 80). All inter-service URLs in docker-compose must include `:8080`.
+**Pattern:** Account-by-number lookup must not enforce ownership — it's used for cross-user transfers.

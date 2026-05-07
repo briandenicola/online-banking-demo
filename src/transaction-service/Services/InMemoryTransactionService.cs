@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Newtonsoft.Json;
 using OnlineBankingDemo.Contracts.Dtos;
 using StackExchange.Redis;
@@ -16,18 +18,21 @@ public class InMemoryTransactionService : ITransactionService
     private readonly ILogger<InMemoryTransactionService> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
+    private readonly IHttpContextAccessor _httpContextAccessor;
     private const string StreamName = "banking-events";
 
     public InMemoryTransactionService(
         IConnectionMultiplexer redis,
         ILogger<InMemoryTransactionService> logger,
         IHttpClientFactory httpClientFactory,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IHttpContextAccessor httpContextAccessor)
     {
         _redis = redis;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
+        _httpContextAccessor = httpContextAccessor;
         SeedDemoTransactions();
     }
 
@@ -87,6 +92,9 @@ public class InMemoryTransactionService : ITransactionService
             Category = request.Category ?? "Uncategorized"
         };
         _transactions[transaction.Id] = transaction;
+
+        // Update account balance (transaction-service owns balance side effects)
+        await UpdateAccountBalanceAsync(transaction.AccountId, transaction.Amount);
 
         // Publish TransactionCreated event to Redis Stream
         try
@@ -223,6 +231,45 @@ public class InMemoryTransactionService : ITransactionService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to publish InsufficientFundsAttempt event for account {AccountId}", accountId);
+        }
+    }
+
+    private async Task UpdateAccountBalanceAsync(string accountId, decimal amount)
+    {
+        var accountServiceUrl = _configuration["Services:AccountService"];
+        if (string.IsNullOrEmpty(accountServiceUrl))
+        {
+            _logger.LogWarning("AccountService URL not configured; skipping balance update");
+            return;
+        }
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            
+            // Forward JWT token for service-to-service authentication
+            var authHeader = _httpContextAccessor.HttpContext?.Request.Headers["Authorization"].FirstOrDefault();
+            if (!string.IsNullOrEmpty(authHeader))
+            {
+                client.DefaultRequestHeaders.Authorization = AuthenticationHeaderValue.Parse(authHeader);
+            }
+            
+            var requestBody = JsonConvert.SerializeObject(new { Amount = amount });
+            var content = new StringContent(requestBody, System.Text.Encoding.UTF8, "application/json");
+            
+            var response = await client.PostAsync($"{accountServiceUrl}/api/accounts/{accountId}/balance", content);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError("Failed to update account balance for {AccountId} (HTTP {StatusCode})", accountId, response.StatusCode);
+            }
+            else
+            {
+                _logger.LogInformation("Updated account {AccountId} balance by {Amount}", accountId, amount);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to call account-service to update balance for account {AccountId}", accountId);
         }
     }
 

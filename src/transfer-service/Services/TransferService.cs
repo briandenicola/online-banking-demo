@@ -59,6 +59,8 @@ public class TransferService : ITransferService
         var transfer = new Transfer
         {
             Id = Guid.NewGuid().ToString(),
+            FromAccountId = request.FromAccountId,
+            ToAccountId = request.ToAccountId,
             FromAccountNumber = request.FromAccountNumber,
             ToAccountNumber = request.ToAccountNumber,
             Amount = request.Amount,
@@ -68,37 +70,7 @@ public class TransferService : ITransferService
 
         try
         {
-            var fromAccount = await GetAccountInfoAsync(request.FromAccountNumber);
-            var toAccount = await GetAccountInfoAsync(request.ToAccountNumber);
-
-            if (fromAccount == null || fromAccount.Value.Id == null)
-            {
-                transfer.Status = "Failed";
-                transfer.FailureReason = "From account not found";
-                await _container.CreateItemAsync(transfer, new PartitionKey(transfer.Id));
-                return transfer;
-            }
-
-            if (toAccount == null || toAccount.Value.Id == null)
-            {
-                transfer.Status = "Failed";
-                transfer.FailureReason = "To account not found";
-                await _container.CreateItemAsync(transfer, new PartitionKey(transfer.Id));
-                return transfer;
-            }
-
-            transfer.FromAccountId = fromAccount.Value.Id;
-            transfer.ToAccountId = toAccount.Value.Id;
-
-            if (fromAccount.Value.Balance < request.Amount)
-            {
-                transfer.Status = "Failed";
-                transfer.FailureReason = "Insufficient funds";
-                await _container.CreateItemAsync(transfer, new PartitionKey(transfer.Id));
-                return transfer;
-            }
-
-            await CreateTransferTransactionsAsync(fromAccount.Value.Id, toAccount.Value.Id, request.Amount, transfer.Id, request.Description);
+            await CreateTransferTransactionsAsync(request.FromAccountId, request.ToAccountId, request.Amount, transfer.Id, request.Description);
 
             transfer.Status = "Completed";
             transfer.CompletedAt = DateTime.UtcNow;
@@ -140,21 +112,7 @@ public class TransferService : ITransferService
         }
     }
 
-    private async Task<(string Id, string AccountNumber, decimal Balance)?> GetAccountInfoAsync(string accountNumber)
-    {
-        var client = CreateAuthenticatedClient();
-        var response = await client.GetAsync($"{_configuration["Services:AccountService"]}/api/accounts/number/{accountNumber}");
-        if (!response.IsSuccessStatusCode)
-            return null;
 
-        var json = await response.Content.ReadAsStringAsync();
-        var account = System.Text.Json.JsonSerializer.Deserialize<AccountInfo>(json, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        });
-
-        return (account!.Id, account.AccountNumber, account.Balance);
-    }
 
     private async Task CreateTransferTransactionsAsync(string fromAccountId, string toAccountId, decimal amount, string transferId, string? description)
     {
@@ -228,10 +186,4 @@ public class TransferService : ITransferService
         }
     }
 
-    private class AccountInfo
-    {
-        public string Id { get; set; } = null!;
-        public string AccountNumber { get; set; } = null!;
-        public decimal Balance { get; set; }
-    }
 }

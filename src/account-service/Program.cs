@@ -100,9 +100,13 @@ else
     {
         var configuration = sp.GetRequiredService<IConfiguration>();
         var endpoint = configuration["CosmosDb:Endpoint"];
-        if (!string.IsNullOrEmpty(endpoint))
+        if (!string.IsNullOrEmpty(endpoint) && Uri.IsWellFormedUriString(endpoint, UriKind.Absolute))
         {
             return new CosmosClient(endpoint, new DefaultAzureCredential());
+        }
+        else if (!string.IsNullOrEmpty(endpoint))
+        {
+            throw new InvalidOperationException($"CosmosDb:Endpoint is set but is not a valid URI: '{endpoint}'. Check your ConfigMap or environment variables.");
         }
         return new CosmosClient(configuration["CosmosDb:ConnectionString"]);
     });

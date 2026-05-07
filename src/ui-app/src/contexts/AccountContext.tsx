@@ -77,6 +77,8 @@ export const AccountProvider: React.FC<{ children: ReactNode }> = ({ children })
       const toAcc = accounts.find(a => a.id === toId);
       if (!fromAcc || !toAcc) return false;
       await apiClient.post('/transfers', {
+        fromAccountId: fromAcc.id,
+        toAccountId: toAcc.id,
         fromAccountNumber: fromAcc.number,
         toAccountNumber: toAcc.number,
         amount,
