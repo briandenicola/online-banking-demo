@@ -9,8 +9,6 @@ using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using OnlineBankingDemo.Contracts.Dtos;
 using OnlineBankingDemo.Contracts.Events;
-using Polly;
-using Polly.Retry;
 using StackExchange.Redis;
 using TransferService.Models;
 
@@ -23,7 +21,6 @@ public class TransferService : ITransferService
     private readonly ILogger<TransferService> _logger;
     private readonly IConfiguration _configuration;
     private readonly HttpClient _httpClient;
-    private readonly AsyncRetryPolicy _retryPolicy;
     private const string StreamName = "banking-events";
 
     public TransferService(
@@ -40,10 +37,6 @@ public class TransferService : ITransferService
         _logger = logger;
         _configuration = configuration;
         _httpClient = httpClient;
-        
-        _retryPolicy = Policy
-            .Handle<Exception>()
-            .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
     }
 
     public async Task<Transfer> InitiateTransferAsync(string userId, CreateTransferRequest request)
@@ -104,11 +97,18 @@ public class TransferService : ITransferService
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Transfer failed: {TransferId}", transfer.Id);
             transfer.Status = "Failed";
             transfer.FailureReason = ex.Message;
-            await _container.CreateItemAsync(transfer, new PartitionKey(transfer.Id));
-            _logger.LogError(ex, "Transfer failed: {TransferId}", transfer.Id);
-            throw;
+            try
+            {
+                await _container.CreateItemAsync(transfer, new PartitionKey(transfer.Id));
+            }
+            catch (Exception persistEx)
+            {
+                _logger.LogError(persistEx, "Failed to persist failed transfer record: {TransferId}", transfer.Id);
+            }
+            return transfer;
         }
     }
 

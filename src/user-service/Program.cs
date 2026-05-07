@@ -65,7 +65,7 @@ builder.Services.AddCors(options =>
 // HttpClient for account-service communication
 builder.Services.AddHttpClient("AccountService", client =>
 {
-    var accountServiceUrl = builder.Configuration["Services:AccountServiceUrl"] ?? "http://account-service:8080";
+    var accountServiceUrl = builder.Configuration["ACCOUNT_SERVICE_URL"] ?? "http://account-service:8080";
     client.BaseAddress = new Uri(accountServiceUrl);
     client.Timeout = TimeSpan.FromSeconds(10);
 });

@@ -40,6 +40,13 @@ resource "azurerm_role_assignment" "banking_cognitive_services_openai_user" {
   principal_id         = azurerm_user_assigned_identity.banking_services.principal_id
 }
 
+# RBAC: Azure AI Developer (required for AI Foundry Agents API)
+resource "azurerm_role_assignment" "banking_ai_developer" {
+  scope                = data.azurerm_cognitive_account.openai.id
+  role_definition_name = "Azure AI Developer"
+  principal_id         = azurerm_user_assigned_identity.banking_services.principal_id
+}
+
 # RBAC: Cosmos DB Built-in Data Contributor
 resource "azurerm_cosmosdb_sql_role_assignment" "banking_cosmos_contributor" {
   resource_group_name = azurerm_resource_group.this.name

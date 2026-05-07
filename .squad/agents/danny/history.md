@@ -15,7 +15,7 @@
 - **IaC bug:** `infra/cloud/main.tf` has duplicate `azurerm_user_assigned_identity.openai_managed_identity` resource and a federated identity credential missing `user_assigned_identity_id`
 - **CI bug:** CI workflow uses `context: ./src/${{ matrix.service }}` but .NET Dockerfiles expect repo root context (they COPY src/shared/)
 - **Security pattern:** Azure side uses RBAC + Managed Identity (good). Local dev has JWT key hardcoded in docker-compose.yml and appsettings.json.
-- **Gateway:** nginx.conf provides API routing but no auth, CORS, rate limiting, or TLS
+- **Gateway (REMOVED):** Legacy nginx+njs gateway directory deleted. Istio ingress now handles routing/auth. Root nginx.conf retained for docker-compose local routing.
 - **Redis:** Declared in docker-compose but no service references it
 - **Deploy path:** Flux GitOps → deploy/kustomize/base/app.yaml (full K8s manifests)
 - **Taskfile:** Root includes local + cloud sub-taskfiles; `local:run` wires Terraform outputs to Docker Compose env vars

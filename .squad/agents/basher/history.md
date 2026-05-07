@@ -505,3 +505,27 @@ the hostname, not the child project name. The project name only appears in the `
 - Cloud: `AZURE_CLIENT_ID` injected by AKS workload identity webhook → services detect and use `DefaultAzureCredential` → Entra token auth to Redis
 - Local: No `AZURE_CLIENT_ID` → services fall back to connection string password (docker-compose Redis on port 6379, no TLS)
 - No extra env var needed — `AZURE_CLIENT_ID` presence is the signal (set automatically by workload identity)
+
+### Transfer Service 500 Fix (Bug 3) — 2026-05-07
+
+**Root Cause:** `TransferService.cs` catch block saved the failed transfer to Cosmos but then re-threw the exception (`throw;`). Since `TransfersController` had no try/catch, every error became an unhandled 500.
+
+**Secondary Issue:** Unused Polly v8 dependency with v7-style API (`Policy.Handle<>()`, `AsyncRetryPolicy`). While Polly 8.x includes backward compat, the retry policy was never actually invoked — dead code with a wrong-version dependency.
+
+**Fixes Applied:**
+- `src/transfer-service/Services/TransferService.cs`: Removed `throw;` from catch block. Now returns failed transfer with status/reason. Added inner try/catch around failure persistence so a Cosmos error during error-handling doesn't mask the original failure.
+- `src/transfer-service/Controllers/TransfersController.cs`: Added status check — returns `400 BadRequest` with error details when transfer fails instead of `201 Created`.
+- `src/transfer-service/transfer-service.csproj`: Removed unused `Polly 8.2.0` package reference.
+- Removed `using Polly; using Polly.Retry;` and `AsyncRetryPolicy` field from TransferService.
+
+**Key File Paths:**
+- Service: `src/transfer-service/Services/TransferService.cs`
+- Controller: `src/transfer-service/Controllers/TransfersController.cs`
+- Program: `src/transfer-service/Program.cs`
+- Model: `src/transfer-service/Models/Transfer.cs`
+- Kustomize: `deploy/kustomize/base/transfer-service.yaml`
+- Azure overlay: `deploy/kustomize/overlays/azure/kustomization.yaml`
+
+**ACR:** Correct ACR is `bjdcsa` (not `burstingmastiff55181acr` from project notes). Images at `bjdcsa.azurecr.io/transfer-service:latest`.
+
+**Deployment:** Image built and pushed to ACR. AKS cluster was unreachable (network timeout) — rollout restart pending.
