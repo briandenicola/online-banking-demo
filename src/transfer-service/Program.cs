@@ -105,8 +105,12 @@ else
     builder.Services.AddSingleton<CosmosClient>(sp =>
     {
         var configuration = sp.GetRequiredService<IConfiguration>();
-        var cosmosClient = new CosmosClient(configuration["CosmosDb:ConnectionString"]);
-        return cosmosClient;
+        var endpoint = configuration["CosmosDb:Endpoint"];
+        if (!string.IsNullOrEmpty(endpoint))
+        {
+            return new CosmosClient(endpoint, new DefaultAzureCredential());
+        }
+        return new CosmosClient(configuration["CosmosDb:ConnectionString"]);
     });
 
     // HTTP Client for service-to-service calls

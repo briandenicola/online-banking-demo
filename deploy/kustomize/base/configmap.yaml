@@ -13,3 +13,4 @@ data:
   CHATBOT_SERVICE_URL: "http://chatbot-service.banking-demo.svc.cluster.local"
   EVENT_PROCESSOR_URL: "http://event-processor.banking-demo.svc.cluster.local"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4317"
+  CosmosDb__Endpoint: "REPLACE_WITH_COSMOS_ENDPOINT"

@@ -102,13 +102,17 @@ tasks:
       - sed -i s/devicecode/azurecli/g ~/.kube/config
       - task: _secrets:create
       - task: _images:update
+      - sed -i "s|REPLACE_WITH_COSMOS_ENDPOINT|{{.COSMOS_ENDPOINT}}|g" deploy/kustomize/base/configmap.yaml
       - kubectl apply -k deploy/kustomize/observability/
       - kubectl apply -k deploy/kustomize/base/
+      - git checkout deploy/kustomize/base/configmap.yaml
     vars:
       RG_NAME:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw resource_group_name
       AKS_NAME:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw aks_name
+      COSMOS_ENDPOINT:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw cosmos_db_endpoint
 
   # === Internal tasks ===
   _secrets:create:
