@@ -36,6 +36,11 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: appinsights-connection-string
+        - name: REDIS__CONNECTIONSTRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: redis-connection-string
         envFrom:
         - configMapRef:
             name: banking-demo-config

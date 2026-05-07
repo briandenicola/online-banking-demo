@@ -609,3 +609,26 @@ the hostname, not the child project name. The project name only appears in the `
 **Files:** `src/anomaly-service/app/main.py`
 
 **Pattern:** All services connecting to Azure Managed Redis must parse .NET connection strings and support Entra ID auth. Go event-processor (`src/event-processor/main.go:305-336`) is the reference implementation.
+
+### 2026-05 — Balance Update Fix: Transaction-Service Owns Balance Side Effects
+
+**Problem:** When transactions were created (direct or via transfer), account balances were NOT updated. The transaction-service only recorded transactions without adjusting balances. The InMemoryTransferService was a stub with no real transfer logic.
+
+**Fix:**
+- Transaction-service now calls `POST /api/accounts/{id}/balance` on account-service after every transaction creation, using JWT forwarded from the incoming request
+- Transfer-service no longer duplicates balance updates — removed direct balance calls from Cosmos TransferService
+- InMemoryTransferService rebuilt with full transfer logic: account lookup, balance validation, transaction creation via HTTP calls (mirroring Cosmos version)
+- Both TransferService implementations now use `IHttpClientFactory` + `IHttpContextAccessor` for authenticated service-to-service calls
+- Added `HttpClient`, `IHttpClientFactory`, and `IHttpContextAccessor` DI registrations in both transaction-service and transfer-service `Program.cs`
+
+**Key files:**
+- `src/transaction-service/Controllers/TransactionsController.cs` — balance update call after CreateTransaction
+- `src/transaction-service/Program.cs` — HttpClient + HttpContextAccessor DI
+- `src/transfer-service/Services/TransferService.cs` — removed balance calls, added auth forwarding
+- `src/transfer-service/Services/InMemoryTransferService.cs` — full transfer logic with HTTP calls
+- `src/transfer-service/Program.cs` — HttpClient + HttpContextAccessor for both InMemory and Cosmos branches
+- `src/account-service/Controllers/AccountsController.cs` — existing `POST {id}/balance` endpoint (unchanged)
+
+**Pattern:** Transaction-service is the single owner of balance side effects. Any code that creates a transaction (direct or via transfer) gets automatic balance updates. Transfer-service only orchestrates creating debit/credit transaction pairs.
+
+**Pattern:** Service-to-service calls must forward the incoming JWT via `IHttpContextAccessor` to satisfy `[Authorize]` on downstream services.
