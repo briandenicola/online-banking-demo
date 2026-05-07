@@ -8,6 +8,21 @@
 
 ## Learnings
 
+### 2026-05 — Chatbot SDK Migration: azure-ai-agents → azure-ai-projects
+
+**Problem:** chatbot-service used `azure-ai-agents` 1.0.0 which creates agents via the classic Foundry Agent Service. Classic agents aren't supported in Canada Central. The threads/runs pattern also added complexity.
+
+**Fix:** Migrated to `azure-ai-projects >= 2.1.0` with the OpenAI Responses API:
+- Replaced `AgentsClient` + threads/runs with `AIProjectClient.get_openai_client()` + `responses.create()`
+- Agent is now pre-created in Azure AI Foundry and referenced via `agent_reference` (name + version) — no runtime creation/deletion
+- Conversation history managed client-side (in-memory per user, capped at 20 messages)
+- Agent name/version configurable via `AZURE_AGENT_NAME` / `AZURE_AGENT_VERSION` env vars
+- Tool functions (get_budget_insights, etc.) kept defined but no longer registered programmatically — tool handling delegated to the Foundry agent
+
+**Files:** `src/chatbot-service/app/main.py`, `src/chatbot-service/pyproject.toml`, `src/chatbot-service/Dockerfile`
+
+**Pattern:** For Azure AI Foundry agents in regions that only support the new Agent Service, use `azure-ai-projects` SDK with `agent_reference` in the Responses API instead of `azure-ai-agents` with threads/runs.
+
 ### 2026-05 — AI Foundry Agents RBAC Scope Fix
 
 **Problem:** chatbot-service returned 503 because `create_agent()` failed with PermissionDenied. The `Azure AI Developer` role was scoped to the AI Services account (`data.azurerm_cognitive_account.openai.id`), but the Agents API requires permissions at the AI Foundry **project** scope.

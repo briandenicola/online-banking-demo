@@ -40,10 +40,10 @@ resource "azurerm_role_assignment" "banking_cognitive_services_openai_user" {
   principal_id         = azurerm_user_assigned_identity.banking_services.principal_id
 }
 
-# RBAC: Azure AI Developer (required for AI Foundry Agents API)
-resource "azurerm_role_assignment" "banking_ai_developer" {
-  scope                = data.azurerm_cognitive_account.openai.id
-  role_definition_name = "Azure AI Developer"
+# RBAC: Azure AI Project Manager (required for AI Foundry Agents API)
+resource "azurerm_role_assignment" "banking_ai_project_manager" {
+  scope                = azapi_resource.ai_foundry_project.id
+  role_definition_name = "Azure AI Project Manager"
   principal_id         = azurerm_user_assigned_identity.banking_services.principal_id
 }
 

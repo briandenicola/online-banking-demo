@@ -7,7 +7,7 @@ metadata:
     app: transaction-service
     app.kubernetes.io/part-of: banking-demo
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: transaction-service
@@ -26,6 +26,7 @@ spec:
       containers:
       - name: transaction-service
         image: ghcr.io/banking-demo/transaction-service:1.0.0
+        imagePullPolicy: Always
         ports:
         - containerPort: 8080
           protocol: TCP

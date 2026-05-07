@@ -1,26 +1,23 @@
-# Implementation Plan: Add Private Endpoints & Agent Service Subnets
+# Implementation Plan: Backlog Implementation Plan
 
 **Branch**: `001-backlog-implementation-plan` | **Date**: 2026-05-07 | **Spec**: [spec.md](./spec.md)
-**Input**: User request to add two subnets (private endpoints + Agent Service) following the pattern from `briandenicola/ai-application-architectures`
+**Input**: Feature specification from `/specs/001-backlog-implementation-plan/spec.md`
 
 ## Summary
 
-Add two new subnets to the VNet in `infra/cloud/networking.tf`:
-1. **private-endpoints** — for Azure Private Link connections (Redis, Cosmos, KV, ACR, OpenAI)
-2. **agents** — delegated to `Microsoft.App/environments` for Azure AI Agent Service
-
-Both subnets get an NSG. This aligns with Constitution Principle II (Private Networking Always) by enabling future private endpoint migration and Agent Service integration.
+Implement the prioritized backlog (22 items, P0–P5) to evolve the online-banking-demo from a working demo into a production-grade showcase. The work spans 6 parallel tracks: operational readiness (rebuild/deploy), security hardening (Istio mTLS, KeyVault CSI, network policies), user roles/RBAC, observability & testing, AI admin portal, and developer experience. Research (R1–R11) has resolved all technical decisions. Infrastructure is currently being reprovisioned after an environment deletion.
 
 ## Technical Context
 
-**Language/Version**: Terraform (HCL) with AzureRM + AzAPI providers  
-**Primary Dependencies**: `azurerm_subnet`, `azurerm_network_security_group`, `azurerm_subnet_network_security_group_association`  
-**Storage**: N/A  
-**Testing**: `terraform validate` + `terraform plan`  
-**Target Platform**: Azure (eastus)  
-**Project Type**: Infrastructure-as-Code  
-**Constraints**: Must fit within existing VNet CIDR (`cidrsubnet("10.0.0.0/8", 8, random)` = a /16 block). Current AKS subnet uses index 3.  
-**Scale/Scope**: 2 new subnets, 1 NSG, 2 NSG associations, 2 new locals
+**Language/Version**: .NET 8 (C#), Go 1.22+, Python 3.11+ (FastAPI), React 18 (TypeScript), Terraform 1.5+
+**Primary Dependencies**: ASP.NET Core, Cosmos DB SDK 3.x (Newtonsoft), StackExchange.Redis, Azure.Identity, FastAPI, MUI v9, Playwright, OTEL SDK, azure-ai-evaluation
+**Storage**: Azure Cosmos DB (Entra RBAC auth, Newtonsoft serialization), Azure Managed Redis (Balanced B0, port 10000/TLS, Entra auth)
+**Testing**: `dotnet test` (.NET), `pytest` (Python), `CI=true npx react-scripts test` (React), Playwright (E2E)
+**Target Platform**: AKS with Istio service mesh (AKS addon), Workload Identity, KeyVault CSI Driver
+**Project Type**: Cloud-native microservices web application
+**Performance Goals**: All services respond <500ms p95, E2E deploy <10 minutes from clean state
+**Constraints**: Zero secrets in K8s Secrets (KeyVault CSI only), no public endpoints except Istio ingress, mTLS between all pods
+**Scale/Scope**: 9 services, 1 frontend, ~15k LOC, workshop documentation target
 
 ## Constitution Check
 
@@ -28,12 +25,25 @@ Both subnets get an NSG. This aligns with Constitution Principle II (Private Net
 
 | Principle | Status | Notes |
 |-----------|--------|-------|
-| I. Security by Design | ✅ PASS | NSG attached to both subnets |
-| II. Private Networking Always | ✅ PASS | Enables PE migration for all Azure services |
-| III. Entra ID for Auth | N/A | No auth changes |
-| IV. Coding Best Practices | ✅ PASS | Follows reference pattern from ai-application-architectures |
-| V. Convention over Config | ✅ PASS | CIDR derived from `local.vnet_cidr` using `cidrsubnet` |
-| VI. Observability First | N/A | No telemetry changes |
+| I. Security by Design | ✅ PASS | JWT auth on all endpoints, KeyVault CSI for secrets, Trivy scanning planned, input validation present |
+| II. Private Networking | ✅ PASS | Private endpoints for Azure resources, Istio mTLS, only ingress gateway exposed. NSG on subnets. |
+| III. Entra ID Auth | ✅ PASS | Workload Identity for all services, dual-mode (AZURE_CLIENT_ID presence), RBAC role assignments in Terraform |
+| IV. Coding Best Practices | ✅ PASS | DI, async/await, structured logging, proper error handling (transfer-service fix committed) |
+| V. Convention over Config | ✅ PASS | resource_name derives all names, AZURE_CLIENT_ID triggers auth mode, Kustomize overlays for env |
+| VI. Observability First | ⚠️ PARTIAL | OTEL Collector deployed but restarting (R7 fix pending). Health endpoints exist. App Insights connected. |
+
+**Gate Result**: PASS (Observability fix is tracked in backlog, not a blocker)
+
+### Post-Design Re-evaluation
+
+| Principle | Status | Design Impact |
+|-----------|--------|---------------|
+| I. Security by Design | ✅ PASS | Admin role enforcement via JWT claims. Prompt eval API requires Admin role. |
+| II. Private Networking | ✅ PASS | No new public endpoints. Prompt eval runs in-cluster. |
+| III. Entra ID Auth | ✅ PASS | AI Foundry uses Azure AI Developer role (R4). No new key-based auth. |
+| IV. Coding Best Practices | ✅ PASS | Data model follows existing patterns. New service uses FastAPI (existing pattern). |
+| V. Convention over Config | ✅ PASS | Role field added to existing User entity (no new collection). |
+| VI. Observability First | ✅ PASS | New services include OTEL instrumentation. OTEL Collector fix in backlog (R7). |
 
 ## Project Structure
 
@@ -42,71 +52,57 @@ Both subnets get an NSG. This aligns with Constitution Principle II (Private Net
 ```text
 specs/001-backlog-implementation-plan/
 ├── plan.md              # This file
-├── research.md          # Phase 0 output
-├── data-model.md        # Phase 1 output (N/A for infra-only)
-├── quickstart.md        # Phase 1 output
-└── contracts/           # Phase 1 output (N/A for infra-only)
+├── research.md          # Phase 0 output (complete — R1 through R11)
+├── data-model.md        # Phase 1 output (UserRole, PromptEvaluation entities)
+├── quickstart.md        # Phase 1 output (local + cloud quickstart)
+├── contracts/           # Phase 1 output (prompt-eval-api.md, user roles API)
+└── tasks.md             # Phase 2 output (generated by /speckit.tasks)
 ```
 
 ### Source Code (repository root)
+
 ```text
-infra/cloud/
-├── networking.tf        # VNet + all subnets + NSG + associations (modified)
-├── locals.tf            # Add pe_subnet_cidr, agent_subnet_cidr locals (modified)
-└── ...                  # No other files affected
+src/
+├── user-service/           # .NET 8 — Auth, user CRUD, roles (existing)
+├── account-service/        # .NET 8 — Account CRUD (existing)
+├── transaction-service/    # .NET 8 — Transaction history (existing)
+├── transfer-service/       # .NET 8 — Fund transfers (existing)
+├── event-processor/        # Go 1.22 — Redis Streams consumer (existing)
+├── chatbot-service/        # Python/FastAPI — AI chatbot (existing)
+├── anomaly-service/        # Python/FastAPI — Anomaly detection (existing)
+├── budget-service/         # Python/FastAPI — Budget analysis (existing)
+├── ui-app/                 # React/TypeScript/MUI — Frontend SPA (existing)
+└── shared/                 # .NET shared models/DTOs (existing)
+
+infra/
+├── cloud/                  # Terraform (to be modularized per R6)
+│   ├── main.tf
+│   ├── identity.tf
+│   ├── networking.tf
+│   └── modules/            # NEW: aks, redis, cosmos, keyvault, ai-foundry
+└── local/                  # docker-compose support
+
+deploy/
+├── kustomize/
+│   ├── base/               # Service manifests, configmap, secrets
+│   └── overlays/
+│       └── azure/          # Azure-specific overrides
+└── otel/                   # OTEL Collector config
+
+cluster-config/
+├── istio/                  # Gateway, VirtualService, PeerAuthentication
+└── network-policies/       # NEW: Cilium network policies
+
+tests/
+└── e2e/                    # Playwright E2E tests (existing scaffold)
+
+docs/                       # NEW: Workshop-style documentation (R8 pattern)
 ```
 
-**Structure Decision**: All networking resources live in `networking.tf`. CIDR calculations live in `locals.tf`.
-
-## Implementation Details
-
-### Changes to `infra/cloud/locals.tf`
-
-Add two new CIDR locals derived from `local.vnet_cidr`:
-
-```hcl
-pe_subnet_cidr    = cidrsubnet(local.vnet_cidr, 8, 4)   # /24 for private endpoints
-agent_subnet_cidr = cidrsubnet(local.vnet_cidr, 8, 5)   # /24 for agent service
-```
-
-Index 3 is taken by AKS. Use 4 and 5.
-
-### Changes to `infra/cloud/networking.tf`
-
-Add (following the reference pattern from `ai-application-architectures`):
-
-1. **`azurerm_subnet.private_endpoints`** — subnet for Private Link endpoints
-2. **`azurerm_subnet.agents`** — subnet delegated to `Microsoft.App/environments`
-3. **`azurerm_network_security_group.this`** — shared NSG for both new subnets
-4. **`azurerm_subnet_network_security_group_association.pe`** — attach NSG to PE subnet
-5. **`azurerm_subnet_network_security_group_association.agents`** — attach NSG to agents subnet
-
-### Reference Pattern (from `briandenicola/ai-application-architectures`)
-
-```hcl
-resource "azurerm_subnet" "private-endpoints" {
-  name                 = "private-endpoints"
-  address_prefixes     = [local.pe_subnet_cidr]
-}
-
-resource "azurerm_subnet" "agents" {
-  name             = "agents"
-  address_prefixes = [local.agent_subnet_cidr]
-  delegation {
-    name = "agent-delegation"
-    service_delegation {
-      name = "Microsoft.App/environments"
-    }
-  }
-}
-```
-
-### Outputs (optional)
-
-Consider adding to `outputs.tf`:
-- `pe_subnet_id` — needed when creating private endpoints in later phases
-- `agent_subnet_id` — needed for Agent Service environment deployment
+**Structure Decision**: Multi-service microservices layout with per-service directories under `src/`. Infrastructure in `infra/cloud/` (Terraform modules per R6). Kustomize for K8s manifests. Istio config in `cluster-config/`. This matches the existing repository layout — no restructuring needed.
 
 ## Complexity Tracking
 
-No constitution violations — this change is directly aligned with Principle II (Private Networking Always).
+| Violation | Why Needed | Simpler Alternative Rejected Because |
+|-----------|------------|-------------------------------------|
+| None | N/A | N/A |

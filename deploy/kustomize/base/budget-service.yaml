@@ -26,6 +26,7 @@ spec:
       containers:
       - name: budget-service
         image: ghcr.io/banking-demo/budget-service:1.0.0
+        imagePullPolicy: Always
         ports:
         - containerPort: 8003
           protocol: TCP

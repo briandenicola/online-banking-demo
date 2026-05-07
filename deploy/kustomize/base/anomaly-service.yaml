@@ -26,6 +26,7 @@ spec:
       containers:
       - name: anomaly-service
         image: ghcr.io/banking-demo/anomaly-service:1.0.0
+        imagePullPolicy: Always
         ports:
         - containerPort: 8002
           protocol: TCP

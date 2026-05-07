@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir --root-user-action=ignore \
     opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp \
     opentelemetry-instrumentation-fastapi opentelemetry-instrumentation-requests \
     opentelemetry-instrumentation-httpx \
-    azure-ai-agents azure-identity
+    "azure-ai-projects>=2.1.0" azure-identity openai
 
 EXPOSE 8001
 

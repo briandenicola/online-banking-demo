@@ -7,7 +7,7 @@ metadata:
     app: chatbot-service
     app.kubernetes.io/part-of: banking-demo
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: chatbot-service
@@ -26,6 +26,7 @@ spec:
       containers:
       - name: chatbot-service
         image: ghcr.io/banking-demo/chatbot-service:1.0.0
+        imagePullPolicy: Always
         ports:
         - containerPort: 8001
           protocol: TCP

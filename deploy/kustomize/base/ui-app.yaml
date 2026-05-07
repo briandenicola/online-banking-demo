@@ -6,7 +6,7 @@ metadata:
   labels:
     app: ui-app
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: ui-app
@@ -23,6 +23,7 @@ spec:
       containers:
       - name: ui-app
         image: ghcr.io/banking-demo/ui-app:1.0.0
+        imagePullPolicy: Always
         ports:
         - containerPort: 8080
         securityContext:

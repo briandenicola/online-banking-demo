@@ -105,6 +105,7 @@ tasks:
       - sed -i "s|REPLACE_WITH_COSMOS_ENDPOINT|{{.COSMOS_ENDPOINT}}|g" deploy/kustomize/base/configmap.yaml
       - kubectl apply -k deploy/kustomize/observability/
       - kubectl apply -k deploy/kustomize/base/
+      - kubectl apply -k cluster-config/istio/gateway/
       - git checkout deploy/kustomize/base/configmap.yaml
     vars:
       RG_NAME:

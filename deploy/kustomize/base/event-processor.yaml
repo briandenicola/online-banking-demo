@@ -26,6 +26,7 @@ spec:
       containers:
       - name: event-processor
         image: ghcr.io/banking-demo/event-processor:1.0.0
+        imagePullPolicy: Always
         ports:
         - containerPort: 8080
           protocol: TCP
