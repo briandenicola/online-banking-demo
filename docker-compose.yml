@@ -167,25 +167,6 @@ services:
     depends_on:
       - transaction-service
 
-  # API Gateway (NGINX + njs JWT validation)
-  gateway:
-    build:
-      context: ./gateway
-      dockerfile: Dockerfile
-    container_name: banking-gateway
-    ports:
-      - "80:80"
-    environment:
-      - JWT_KEY=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
-      - JWT_ISSUER=${JWT_ISSUER:-user-service}
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-    depends_on:
-      - user-service
-      - account-service
-      - transaction-service
-      - transfer-service
-    restart: on-failure
 
   # Event Processor (audit/routing consumer)
   event-processor:
@@ -210,8 +191,6 @@ services:
     container_name: banking-ui-app
     ports:
       - "3000:8080"
-    depends_on:
-      - gateway
     restart: on-failure
 
   # --- Optional: Jaeger for local trace viewing ---
