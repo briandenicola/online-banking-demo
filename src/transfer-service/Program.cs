@@ -98,6 +98,9 @@ var useInMemory = builder.Configuration.GetValue<bool>("UseInMemoryDatabase", fa
 if (useInMemory)
 {
     builder.Services.AddLogging();
+    // HTTP Client for service-to-service calls (account + transaction lookups)
+    builder.Services.AddHttpClient();
+    builder.Services.AddHttpContextAccessor();
     builder.Services.AddSingleton<ITransferService, InMemoryTransferService>();
 }
 else
@@ -116,6 +119,7 @@ else
 
     // HTTP Client for service-to-service calls
     builder.Services.AddHttpClient();
+    builder.Services.AddHttpContextAccessor();
 
     // Services
     builder.Services.AddScoped<ITransferService, TransferService.Services.TransferService>();

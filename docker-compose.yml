@@ -69,6 +69,7 @@ services:
       - Redis__ConnectionString=redis:6379
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - Services__AccountService=http://account-service
       - OTEL_SERVICE_NAME=transaction-service
     depends_on:
       redis:

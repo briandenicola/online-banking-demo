@@ -15,3 +15,10 @@
 - Python services need to parse this .NET-style connection string into host/port/ssl components
 - ConfigMap is at deploy/kustomize/base/configmap.yaml
 - Brian's directive: all fixes must maintain docker-compose local development compatibility
+- Transaction-service now calls account-service for balance validation before debit transactions
+- InsufficientFundsException (src/transaction-service/Services/InsufficientFundsException.cs) is thrown by service layer, caught by controller → 400 Bad Request
+- Both Cosmos and InMemory transaction service implementations validate balance via HTTP to account-service
+- Transfer-service already had insufficient funds check in TransferService.cs; InMemoryTransferService was updated by Basher with same pattern
+- InsufficientFundsAttempt events are published to Redis "banking-events" stream for anomaly/audit consumption
+- Services:AccountService config is now set in transaction-service appsettings.json and docker-compose.yml
+- Balance validation is fail-open: if account-service is unreachable, transaction proceeds with a warning log (graceful degradation)

@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -20,7 +21,8 @@ public class TransferService : ITransferService
     private readonly IConnectionMultiplexer _redis;
     private readonly ILogger<TransferService> _logger;
     private readonly IConfiguration _configuration;
-    private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IHttpContextAccessor _httpContextAccessor;
     private const string StreamName = "banking-events";
 
     public TransferService(
@@ -28,7 +30,8 @@ public class TransferService : ITransferService
         IConnectionMultiplexer redis,
         ILogger<TransferService> logger,
         IConfiguration configuration,
-        HttpClient httpClient)
+        IHttpClientFactory httpClientFactory,
+        IHttpContextAccessor httpContextAccessor)
     {
         var databaseName = configuration["CosmosDb:DatabaseName"];
         var containerName = configuration["CosmosDb:ContainerName"];
@@ -36,7 +39,19 @@ public class TransferService : ITransferService
         _redis = redis;
         _logger = logger;
         _configuration = configuration;
-        _httpClient = httpClient;
+        _httpClientFactory = httpClientFactory;
+        _httpContextAccessor = httpContextAccessor;
+    }
+
+    private HttpClient CreateAuthenticatedClient()
+    {
+        var client = _httpClientFactory.CreateClient();
+        var authHeader = _httpContextAccessor.HttpContext?.Request.Headers["Authorization"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(authHeader))
+        {
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", authHeader);
+        }
+        return client;
     }
 
     public async Task<Transfer> InitiateTransferAsync(string userId, CreateTransferRequest request)
@@ -127,7 +142,8 @@ public class TransferService : ITransferService
 
     private async Task<(string Id, string AccountNumber, decimal Balance)?> GetAccountInfoAsync(string accountNumber)
     {
-        var response = await _httpClient.GetAsync($"{_configuration["Services:AccountService"]}/api/accounts/number/{accountNumber}");
+        var client = CreateAuthenticatedClient();
+        var response = await client.GetAsync($"{_configuration["Services:AccountService"]}/api/accounts/number/{accountNumber}");
         if (!response.IsSuccessStatusCode)
             return null;
 
@@ -142,6 +158,7 @@ public class TransferService : ITransferService
 
     private async Task CreateTransferTransactionsAsync(string fromAccountId, string toAccountId, decimal amount, string transferId, string? description)
     {
+        var client = CreateAuthenticatedClient();
         var createTransactionRequest = new CreateTransactionRequest
         {
             AccountId = fromAccountId,
@@ -152,7 +169,7 @@ public class TransferService : ITransferService
             RelatedTransactionId = transferId
         };
 
-        var debitResponse = await _httpClient.PostAsync(
+        var debitResponse = await client.PostAsync(
             $"{_configuration["Services:TransactionService"]}/api/transactions",
             new StringContent(JsonConvert.SerializeObject(createTransactionRequest), Encoding.UTF8, "application/json"));
         if (!debitResponse.IsSuccessStatusCode)
@@ -170,36 +187,14 @@ public class TransferService : ITransferService
             RelatedTransactionId = transferId
         };
 
-        var creditResponse = await _httpClient.PostAsync(
+        var creditResponse = await client.PostAsync(
             $"{_configuration["Services:TransactionService"]}/api/transactions",
             new StringContent(JsonConvert.SerializeObject(createTransactionRequest), Encoding.UTF8, "application/json"));
         if (!creditResponse.IsSuccessStatusCode)
         {
             throw new InvalidOperationException($"Failed to create credit transaction: {creditResponse.StatusCode}");
         }
-
-        var accountServiceUrl = _configuration["Services:AccountService"];
-
-        var debitBalanceResponse = await _httpClient.PostAsync(
-            $"{accountServiceUrl}/api/accounts/{fromAccountId}/balance",
-            new StringContent(JsonConvert.SerializeObject(new { amount = -amount }), Encoding.UTF8, "application/json"));
-        if (!debitBalanceResponse.IsSuccessStatusCode)
-        {
-            _logger.LogError("Failed to debit source account {AccountId}. Transfer {TransferId} may be inconsistent.", fromAccountId, transferId);
-            throw new InvalidOperationException($"Failed to debit source account: {debitBalanceResponse.StatusCode}");
-        }
-
-        var creditBalanceResponse = await _httpClient.PostAsync(
-            $"{accountServiceUrl}/api/accounts/{toAccountId}/balance",
-            new StringContent(JsonConvert.SerializeObject(new { amount = amount }), Encoding.UTF8, "application/json"));
-        if (!creditBalanceResponse.IsSuccessStatusCode)
-        {
-            _logger.LogError("Failed to credit destination account {AccountId}. Reversing debit on {FromAccountId}.", toAccountId, fromAccountId);
-            await _httpClient.PostAsync(
-                $"{accountServiceUrl}/api/accounts/{fromAccountId}/balance",
-                new StringContent(JsonConvert.SerializeObject(new { amount = amount }), Encoding.UTF8, "application/json"));
-            throw new InvalidOperationException($"Failed to credit destination account: {creditBalanceResponse.StatusCode}");
-        }
+        // Balance updates are handled by transaction-service when it creates each transaction
     }
 
     private async Task PublishTransferInitiatedEvent(Transfer transfer)
