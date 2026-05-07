@@ -106,11 +106,52 @@ docs/                         # Workshop-style documentation
 
 ## Implementation Phases
 
+### Phase 0a: Terraform Cleanup & Reorganization
+
+**Goal**: Split the monolithic 511-line `main.tf` into logical files, fix naming inconsistencies, and remove dead code — WITHOUT changing any resource behavior or triggering state changes.
+**Owner**: Basher (Backend)
+**Dependencies**: None — unblocks everything.
+
+| # | Task | Detail | Squad Member |
+|---|------|--------|--------------|
+| 0a-1 | Split main.tf into logical files | `providers.tf`, `locals.tf`, `networking.tf`, `aks.tf`, `cosmos.tf`, `redis.tf`, `ai.tf`, `keyvault.tf`, `monitoring.tf`, `acr.tf` | Basher |
+| 0a-2 | Fix naming inconsistencies | Standardize `this` vs `main` resource naming; use `main` consistently | Basher |
+| 0a-3 | Remove dead/unused outputs | Clean `outputs.tf` — remove references to non-existent attributes (e.g. `primary_access_key`) | Basher |
+| 0a-4 | Organize variables with validation | Group variables in `variables.tf`, add descriptions and validation blocks | Basher |
+| 0a-5 | Run `terraform plan` — confirm zero changes | Must show "No changes. Your infrastructure matches the configuration." | Basher |
+| 0a-6 | Run `terraform validate` — confirm clean | No warnings or errors | Basher |
+
+**Key Constraint**: This is a PURE reorganization. `terraform plan` MUST show zero infrastructure changes after the split. No resource renames that would trigger destroy/recreate.
+
+**File Layout After**:
+```
+infra/cloud/
+├── providers.tf        # terraform block, provider configs
+├── locals.tf           # locals block, random resources
+├── variables.tf        # all input variables (grouped)
+├── outputs.tf          # all outputs (cleaned)
+├── networking.tf       # VNet, subnet
+├── aks.tf              # AKS cluster, role assignments
+├── acr.tf              # Container registry + ACR pull role
+├── cosmos.tf           # Cosmos DB account, database, containers
+├── redis.tf            # Managed Redis, identity, RBAC (azapi)
+├── ai.tf               # AI Foundry, OpenAI models, identities
+├── keyvault.tf         # Key Vault resource
+└── monitoring.tf       # Log Analytics, App Insights
+```
+
+**Verification**:
+- `terraform validate` passes
+- `terraform plan` shows 0 additions, 0 changes, 0 destructions
+- All existing `task apply` workflow continues to work
+
+---
+
 ### Phase 0 (P0): Operational Readiness
 
 **Goal**: Get the current codebase running correctly on AKS.
 **Owner**: Basher (Backend) + Danny (Coordination)
-**Dependencies**: None — unblocks everything.
+**Dependencies**: Phase 0a complete.
 
 | # | Task | Service/File | Squad Member |
 |---|------|-------------|--------------|
@@ -229,10 +270,47 @@ docs/                         # Workshop-style documentation
 
 ---
 
+### Phase 3.5 (Spike): Security & Best Practices Audit
+
+**Goal**: Full security and coding best practices analysis of the entire codebase before investing in DX/documentation. Identify vulnerabilities, anti-patterns, and technical debt that must be resolved.
+**Owner**: Danny (Lead) + Livingston (Tester) + Basher (Fixes)
+**Dependencies**: Phases 0–3 complete (audit the hardened codebase, not the pre-hardened one).
+
+| # | Task | Detail | Squad Member |
+|---|------|--------|--------------|
+| S1 | Static Application Security Testing (SAST) | Run CodeQL/Semgrep across all 9 services; document findings | Livingston |
+| S2 | Dependency vulnerability scan | `dotnet list package --vulnerable`, `pip audit`, `npm audit`, `govulncheck` | Livingston |
+| S3 | Secret scanning audit | Verify no secrets in git history; scan for hardcoded credentials/keys | Livingston |
+| S4 | Container image analysis | Trivy scan all built images; document CRITICAL/HIGH findings | Livingston |
+| S5 | Kubernetes security posture | `kubescape scan` or `kube-bench`; assess pod security standards, RBAC | Livingston |
+| S6 | .NET code quality review | Analyze DI patterns, async/await usage, error handling, input validation across all .NET services | Danny |
+| S7 | Python code quality review | Type hints coverage, error handling, async patterns, input validation in chatbot/budget/anomaly | Danny |
+| S8 | Go code quality review | Error handling, context propagation, goroutine safety in event-processor | Danny |
+| S9 | Frontend security review | XSS vectors, auth token handling, CSP headers, dependency audit in ui-app | Danny |
+| S10 | API security review | Auth bypass paths, rate limiting, input validation, CORS config across all endpoints | Danny |
+| S11 | Infrastructure security review | Terraform misconfigurations, over-permissive RBAC, missing encryption-at-rest | Danny |
+| S12 | Produce audit report with prioritized fixes | `docs/security-audit.md` — findings, severity, remediation plan | Danny |
+| S13 | Implement critical/high fixes | Address all CRITICAL and HIGH findings from the audit | Basher |
+
+**Output**: `docs/security-audit.md` with:
+- Executive summary (pass/fail per category)
+- Findings table (severity, location, description, remediation)
+- Prioritized fix list (CRITICAL → HIGH → MEDIUM)
+- Best practices gap analysis (per language/framework)
+
+**Verification**:
+- Zero CRITICAL findings remain after S13
+- All HIGH findings either fixed or documented with accepted-risk justification
+- Each service passes its language-specific linter with zero errors
+- No secrets in git history (verified by `gitleaks` or equivalent)
+- Kubernetes security posture score ≥80% (kubescape)
+
+---
+
 ### Phase 4 (P4): Developer Experience & Infrastructure
 
 **Goal**: Modernize DX and infrastructure maintainability.
-**Dependencies**: Phase 2 (testing must work before DX docs reference it).
+**Dependencies**: Phase 3.5 (ensure code is clean before documenting it).
 
 | # | Task | Detail | Squad Member |
 |---|------|--------|--------------|
