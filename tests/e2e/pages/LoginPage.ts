@@ -12,9 +12,9 @@ export class LoginPage extends BasePage {
   constructor(page: Page) {
     super(page);
     this.emailInput = page.getByRole('textbox', { name: /email/i });
-    this.passwordInput = page.getByRole('textbox', { name: /password/i });
+    this.passwordInput = page.getByLabel(/password/i);
     this.submitButton = page.getByRole('button', { name: /login|sign in/i });
-    this.errorMessage = page.locator('[role="alert"], .error-message, .MuiAlert-message');
+    this.errorMessage = page.locator('[role="alert"]');
   }
 
   async login(email: string, password: string): Promise<void> {
@@ -31,6 +31,8 @@ export class LoginPage extends BasePage {
   }
 
   async expectNavigatedToDashboard(): Promise<void> {
-    await this.page.waitForURL('**/dashboard', { timeout: 10_000 });
+    // Dashboard is at root '/' — there is no '/dashboard' route
+    await this.page.waitForURL(/\/(?:\?.*)?$/, { timeout: 10_000 });
+    await expect(this.page.getByRole('heading', { level: 4 }).first()).toBeVisible({ timeout: 10_000 });
   }
 }

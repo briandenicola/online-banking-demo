@@ -17,7 +17,7 @@ test.describe('E2E-203: Session Persistence & Token Refresh', () => {
     await loginPage.login('demo@banking-demo.com', 'password123');
     await loginPage.expectNavigatedToDashboard();
 
-    const token = await page.evaluate(() => localStorage.getItem('token'));
+    const token = await page.evaluate(() => localStorage.getItem('auth_token'));
     expect(token).toBeTruthy();
 
     await context.close();
@@ -27,8 +27,8 @@ test.describe('E2E-203: Session Persistence & Token Refresh', () => {
     });
     const newPage = await newContext.newPage();
 
-    await newPage.goto('/dashboard');
-    await newPage.waitForLoadState('domcontentloaded');
+    await newPage.goto('/');
+    await newPage.waitForURL('**/login', { timeout: 10_000 });
 
     expect(await newPage.url()).toContain('/login');
 
@@ -42,21 +42,21 @@ test.describe('E2E-203: Session Persistence & Token Refresh', () => {
     await loginPage.login('demo@banking-demo.com', 'password123');
     await loginPage.expectNavigatedToDashboard();
 
-    const originalToken = await page.evaluate(() => localStorage.getItem('token'));
+    const originalToken = await page.evaluate(() => localStorage.getItem('auth_token'));
 
     await page.goto('/accounts');
     await page.waitForLoadState('domcontentloaded');
-    let currentToken = await page.evaluate(() => localStorage.getItem('token'));
+    let currentToken = await page.evaluate(() => localStorage.getItem('auth_token'));
     expect(currentToken).toBe(originalToken);
 
     await page.goto('/transactions');
     await page.waitForLoadState('domcontentloaded');
-    currentToken = await page.evaluate(() => localStorage.getItem('token'));
+    currentToken = await page.evaluate(() => localStorage.getItem('auth_token'));
     expect(currentToken).toBe(originalToken);
 
-    await page.goto('/dashboard');
+    await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
-    currentToken = await page.evaluate(() => localStorage.getItem('token'));
+    currentToken = await page.evaluate(() => localStorage.getItem('auth_token'));
     expect(currentToken).toBe(originalToken);
   });
 
@@ -69,13 +69,13 @@ test.describe('E2E-203: Session Persistence & Token Refresh', () => {
 
     const storageState = await page.evaluate(() => {
       return {
-        token: localStorage.getItem('token'),
+        token: localStorage.getItem('auth_token'),
         keys: Object.keys(localStorage),
       };
     });
 
     expect(storageState.token).toBeTruthy();
-    expect(storageState.keys).toContain('token');
+    expect(storageState.keys).toContain('auth_token');
   });
 
   test('should handle session when token is manually removed from localStorage', async ({ page }) => {
@@ -85,7 +85,7 @@ test.describe('E2E-203: Session Persistence & Token Refresh', () => {
     await loginPage.login('demo@banking-demo.com', 'password123');
     await loginPage.expectNavigatedToDashboard();
 
-    await page.evaluate(() => localStorage.removeItem('token'));
+    await page.evaluate(() => localStorage.removeItem('auth_token'));
 
     await page.goto('/accounts');
     await page.waitForLoadState('domcontentloaded');
@@ -100,12 +100,12 @@ test.describe('E2E-203: Session Persistence & Token Refresh', () => {
     await loginPage.login('demo@banking-demo.com', 'password123');
     await loginPage.expectNavigatedToDashboard();
 
-    const pages = ['/dashboard', '/accounts', '/transactions', '/dashboard'];
+    const pages = ['/', '/accounts', '/transactions', '/'];
     
     for (const route of pages) {
       await page.goto(route);
       await page.waitForLoadState('domcontentloaded');
-      const token = await page.evaluate(() => localStorage.getItem('token'));
+      const token = await page.evaluate(() => localStorage.getItem('auth_token'));
       expect(token).toBeTruthy();
     }
   });
@@ -118,12 +118,12 @@ test.describe('E2E-203: Session Persistence & Token Refresh', () => {
     await loginPage.login('demo@banking-demo.com', 'password123');
     await loginPage.expectNavigatedToDashboard();
 
-    const tokenBeforeRefresh = await page.evaluate(() => localStorage.getItem('token'));
+    const tokenBeforeRefresh = await page.evaluate(() => localStorage.getItem('auth_token'));
 
     await page.reload();
     await page.waitForLoadState('domcontentloaded');
 
-    const tokenAfterRefresh = await page.evaluate(() => localStorage.getItem('token'));
+    const tokenAfterRefresh = await page.evaluate(() => localStorage.getItem('auth_token'));
     expect(tokenAfterRefresh).toBe(tokenBeforeRefresh);
 
     await dashboardPage.expectLoaded();
@@ -137,7 +137,7 @@ test.describe('E2E-203: Session Persistence & Token Refresh', () => {
     await loginPage.expectNavigatedToDashboard();
 
     await page.evaluate(() => {
-      localStorage.setItem('token', 'expired.invalid.token');
+      localStorage.setItem('auth_token', 'expired.invalid.token');
     });
 
     await page.goto('/accounts');
@@ -146,7 +146,7 @@ test.describe('E2E-203: Session Persistence & Token Refresh', () => {
     await page.waitForTimeout(2000);
 
     const currentUrl = page.url();
-    const hasToken = await page.evaluate(() => localStorage.getItem('token'));
+    const hasToken = await page.evaluate(() => localStorage.getItem('auth_token'));
     
     expect(hasToken === 'expired.invalid.token' || currentUrl.includes('/login')).toBeTruthy();
   });

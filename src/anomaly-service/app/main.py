@@ -2,7 +2,9 @@
 Anomaly Detection Agent for suspicious transaction detection
 """
 import asyncio
+import base64
 import json
+import ssl
 from datetime import datetime
 import logging
 import os
@@ -376,17 +378,120 @@ async def consume_redis_stream(redis_client: redis.Redis):
             backoff = min(backoff * 2, 30)
 
 
+REDIS_SCOPE = "acca5fbb-b7e4-4009-81f1-37e38fd66d78/.default"
+_token_refresh_task: Optional[asyncio.Task] = None
+
+
+def _parse_redis_connection_string(conn_str: str) -> dict:
+    """Parse a .NET-style Redis connection string into components.
+    Format: host:port,ssl=True,abortConnect=False,password=xxx
+    """
+    result = {"host": "redis", "port": 6379, "ssl": False, "password": None}
+    parts = [p.strip() for p in conn_str.split(",")]
+    for i, part in enumerate(parts):
+        if i == 0:
+            # First segment is host:port
+            if ":" in part and "=" not in part:
+                host, port_str = part.rsplit(":", 1)
+                result["host"] = host
+                try:
+                    result["port"] = int(port_str)
+                except ValueError:
+                    result["host"] = part
+            else:
+                result["host"] = part
+            continue
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        key = key.strip().lower()
+        value = value.strip()
+        if key == "ssl" and value.lower() == "true":
+            result["ssl"] = True
+        elif key == "password":
+            result["password"] = value
+    return result
+
+
+def _extract_oid_from_token(token: str) -> str:
+    """Extract the Object ID (oid claim) from a JWT access token."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        return ""
+    payload = parts[1]
+    padding = 4 - len(payload) % 4
+    if padding != 4:
+        payload += "=" * padding
+    try:
+        decoded = base64.urlsafe_b64decode(payload)
+        claims = json.loads(decoded)
+        return claims.get("oid", "")
+    except Exception as e:
+        logger.error(f"Failed to decode token payload: {e}")
+        return ""
+
+
+async def _refresh_redis_token(client, credential):
+    """Periodically refresh the Entra ID token on the Redis connection."""
+    while True:
+        await asyncio.sleep(45 * 60)  # 45 minutes
+        try:
+            token = credential.get_token(REDIS_SCOPE)
+            oid = _extract_oid_from_token(token.token)
+            await client.execute_command("AUTH", oid, token.token)
+            logger.info("✅ Redis token refreshed")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to refresh Redis token: {e}")
+
+
+async def _create_redis_client():
+    """Create a Redis client, supporting both Azure Managed Redis (Entra ID)
+    and local docker-compose connections."""
+    conn_str = os.getenv("REDIS__CONNECTIONSTRING", "redis:6379")
+    parsed = _parse_redis_connection_string(conn_str)
+
+    kwargs = {
+        "host": parsed["host"],
+        "port": parsed["port"],
+        "decode_responses": True,
+    }
+
+    if parsed["ssl"]:
+        kwargs["ssl"] = True
+        kwargs["ssl_cert_reqs"] = None  # Azure Managed Redis uses platform certs
+
+    azure_client_id = os.getenv("AZURE_CLIENT_ID")
+    if azure_client_id and AZURE_AVAILABLE:
+        credential = DefaultAzureCredential()
+        token = credential.get_token(REDIS_SCOPE)
+        oid = _extract_oid_from_token(token.token)
+        kwargs["username"] = oid
+        kwargs["password"] = token.token
+        logger.info(f"Using Entra ID token for Redis authentication (OID: {oid})")
+
+        client = redis.Redis(**kwargs)
+
+        global _token_refresh_task
+        _token_refresh_task = asyncio.create_task(_refresh_redis_token(client, credential))
+
+        return client
+
+    if parsed["password"]:
+        kwargs["password"] = parsed["password"]
+
+    logger.info("Using connection string for Redis authentication (local dev)")
+    return redis.Redis(**kwargs)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: start Redis consumer on startup"""
     global _redis_client
     init_ai_client()
 
-    redis_url = os.getenv("REDIS__CONNECTIONSTRING", "redis:6379")
-    if not redis_url.startswith("redis://"):
-        redis_url = f"redis://{redis_url}"
-
-    redis_client = redis.from_url(redis_url, decode_responses=True)
+    redis_client = await _create_redis_client()
     _redis_client = redis_client
 
     # Verify Redis connectivity
@@ -404,6 +509,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     consumer_task.cancel()
+    if _token_refresh_task:
+        _token_refresh_task.cancel()
     try:
         await consumer_task
     except asyncio.CancelledError:
