@@ -18,14 +18,19 @@ import redis.asyncio as redis
 import structlog
 
 try:
-    from azure.ai.inference import ChatCompletionsClient
-    from azure.ai.inference.models import SystemMessage, UserMessage
     from azure.identity import DefaultAzureCredential
     AZURE_AVAILABLE = True
 except ImportError:
     AZURE_AVAILABLE = False
-    ChatCompletionsClient = None
     DefaultAzureCredential = None
+
+try:
+    from azure.ai.inference import ChatCompletionsClient
+    from azure.ai.inference.models import SystemMessage, UserMessage
+    AI_AVAILABLE = True
+except ImportError:
+    AI_AVAILABLE = False
+    ChatCompletionsClient = None
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -107,7 +112,7 @@ def init_ai_client():
     """Initialize Azure OpenAI client for anomaly explanations using RBAC"""
     global ai_client
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-    if endpoint and ChatCompletionsClient and DefaultAzureCredential:
+    if endpoint and AI_AVAILABLE and AZURE_AVAILABLE:
         ai_client = ChatCompletionsClient(
             endpoint=endpoint,
             credential=DefaultAzureCredential()

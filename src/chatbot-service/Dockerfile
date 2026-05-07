@@ -6,11 +6,11 @@ COPY ./app ./app
 COPY ./pyproject.toml ./
 
 RUN pip install --no-cache-dir --root-user-action=ignore \
-    fastapi uvicorn httpx pydantic python-dotenv structlog \
+    fastapi uvicorn httpx pydantic python-dotenv structlog aiohttp \
     opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp \
     opentelemetry-instrumentation-fastapi opentelemetry-instrumentation-requests \
     opentelemetry-instrumentation-httpx \
-    "azure-ai-projects>=2.1.0" azure-identity openai
+    agent-framework-foundry azure-identity
 
 EXPOSE 8001
 

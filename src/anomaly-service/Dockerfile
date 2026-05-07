@@ -8,6 +8,7 @@ COPY ./pyproject.toml ./
 RUN pip install --no-cache-dir --root-user-action=ignore \
     fastapi uvicorn httpx pydantic python-dotenv structlog redis \
     numpy scikit-learn \
+    azure-identity \
     opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp \
     opentelemetry-instrumentation-fastapi opentelemetry-instrumentation-httpx
 

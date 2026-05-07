@@ -8,20 +8,27 @@
 
 ## Learnings
 
-### 2026-05 — Chatbot SDK Migration: azure-ai-agents → azure-ai-projects
+### 2026-05 — Chatbot SDK Migration: v2.x azure-ai-projects (final)
 
-**Problem:** chatbot-service used `azure-ai-agents` 1.0.0 which creates agents via the classic Foundry Agent Service. Classic agents aren't supported in Canada Central. The threads/runs pattern also added complexity.
+**Problem:** chatbot-service used the old `create_agent()` / `threads.create()` / `messages.create()` / `runs.create_and_process()` API which no longer exists in azure-ai-projects 2.1.0.
 
-**Fix:** Migrated to `azure-ai-projects >= 2.1.0` with the OpenAI Responses API:
-- Replaced `AgentsClient` + threads/runs with `AIProjectClient.get_openai_client()` + `responses.create()`
-- Agent is now pre-created in Azure AI Foundry and referenced via `agent_reference` (name + version) — no runtime creation/deletion
-- Conversation history managed client-side (in-memory per user, capped at 20 messages)
-- Agent name/version configurable via `AZURE_AGENT_NAME` / `AZURE_AGENT_VERSION` env vars
-- Tool functions (get_budget_insights, etc.) kept defined but no longer registered programmatically — tool handling delegated to the Foundry agent
+**Fix:** Full rewrite of `main.py` to use the v2.x SDK:
+- `agents.create_version(agent_name, definition=PromptAgentDefinition(...))` to register agent at startup
+- `project_client.get_openai_client(agent_name=...)` to get an OpenAI-compatible client pointed at the agent endpoint
+- `openai_client.responses.create(model=agent_name, input=messages)` for chat (OpenAI Responses API)
+- Client-side conversation history (in-memory per user, capped at 20 messages) replaces server-side threads
+- `agents.delete(agent_name=...)` on shutdown for cleanup
+- `AIProjectClient(..., allow_preview=True)` required for agent_name-based OpenAI client
+- Graceful 503 degradation preserved when no Azure endpoint configured
 
-**Files:** `src/chatbot-service/app/main.py`, `src/chatbot-service/pyproject.toml`, `src/chatbot-service/Dockerfile`
+**Key v2.x API surface verified by introspection:**
+- `AgentsOperations`: create_version, delete, get, list, etc.
+- `BetaAgentsOperations`: create_session, get_session_log_stream (for compute sessions, not chat)
+- Chat goes through `get_openai_client(agent_name=...)` → OpenAI Responses API
 
-**Pattern:** For Azure AI Foundry agents in regions that only support the new Agent Service, use `azure-ai-projects` SDK with `agent_reference` in the Responses API instead of `azure-ai-agents` with threads/runs.
+**Files:** `src/chatbot-service/app/main.py`, `src/chatbot-service/Dockerfile` (unchanged)
+
+**Pattern:** In azure-ai-projects 2.x, agents are versioned resources (`create_version` + `PromptAgentDefinition`). Chat uses the OpenAI Responses API via `get_openai_client(agent_name=...)`, not threads/runs.
 
 ### 2026-05 — AI Foundry Agents RBAC Scope Fix
 
