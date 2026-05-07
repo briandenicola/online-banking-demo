@@ -79,7 +79,7 @@ public class TransactionService : ITransactionService
 
     public async Task<IEnumerable<Transaction>> GetAccountTransactionsAsync(string accountId, int limit = 50)
     {
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.AccountId = @accountId ORDER BY c.Timestamp DESC")
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.accountId = @accountId ORDER BY c.timestamp DESC")
             .WithParameter("@accountId", accountId);
         
         var iterator = _container.GetItemQueryIterator<Transaction>(query);
@@ -89,7 +89,7 @@ public class TransactionService : ITransactionService
 
     public async Task<IEnumerable<Transaction>> GetUserTransactionsAsync(string userId, int limit = 50)
     {
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.UserId = @userId ORDER BY c.Timestamp DESC")
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.userId = @userId ORDER BY c.timestamp DESC")
             .WithParameter("@userId", userId);
         
         var iterator = _container.GetItemQueryIterator<Transaction>(query);
