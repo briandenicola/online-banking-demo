@@ -75,6 +75,14 @@ spec:
         host: budget-service
         port:
           number: 80
+  - match:
+    - uri:
+        prefix: /api/admin
+    route:
+    - destination:
+        host: anomaly-service
+        port:
+          number: 80
   # Default: serve UI
   - route:
     - destination:
