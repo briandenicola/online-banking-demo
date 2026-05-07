@@ -565,3 +565,47 @@ the hostname, not the child project name. The project name only appears in the `
 - **Status:** Spawned in background mode
 - **Model:** claude-sonnet-4.5
 
+### 2026-05 — Login 401 Investigation
+
+**Problem:** Brian reported 401 on `POST /api/auth/login`. User exists in Cosmos (re-registration fails), but login returns 401. User-service logs showed no login requests.
+
+**Root Cause Analysis:** Multiple contributing issues found:
+1. **Global 401 interceptor bounce-back** (`src/ui-app/src/api/client.ts:20-29`): Catches ALL 401s from any service, clears token, hard-redirects to /login. After login succeeds, `AccountProvider` immediately fires `GET /api/accounts` — if any downstream service returns 401, user gets bounced back.
+2. **Zero logging in login path** (`src/user-service/Controllers/AuthController.cs:42-61`): No log statements + `Microsoft.AspNetCore: Warning` level = login requests invisible in logs. The "no login request in logs" observation was a logging gap, not proof of routing failure.
+3. **`UseHttpsRedirection()` in all .NET services**: Runs before auth middleware. Behind Istio, logs warning but passes through. Not the direct cause.
+4. **Duplicate login endpoints**: `AuthController /api/auth/login` and `UsersController /api/users/login` — identical code, maintenance hazard.
+
+**Key Files:**
+- `src/user-service/Controllers/AuthController.cs` — login endpoint (no logging)
+- `src/user-service/Controllers/UsersController.cs` — duplicate login endpoint
+- `src/ui-app/src/api/client.ts` — 401 interceptor
+- `src/ui-app/src/contexts/AccountContext.tsx` — fires GET /api/accounts on token change
+- `src/user-service/Program.cs:123` — UseHttpsRedirection()
+- `cluster-config/istio/gateway/default-ingress.yaml` — Istio routing (correct)
+
+**Architecture Notes:**
+- JWT config is consistent across services (same key from `banking-secrets.jwt-key`, same issuer `user-service`, audience `banking-demo`)
+- Istio VirtualService correctly routes `/api/auth` → user-service:80 → targetPort 8080
+- No Istio AuthorizationPolicy or RequestAuthentication policies
+- nginx in ui-app serves static only, no API proxy
+- user-service Cosmos SDK is preview version `3.59.0-preview.0` — property serialization uses Newtonsoft default (PascalCase)
+
+- chatbot-service: Rewrote from pre-created agent_reference pattern to programmatic agent creation via `project_client.agents.create_agent()` at startup, with `delete_agent()` on shutdown
+- chatbot-service: Switched chat endpoint from OpenAI Responses API to agents threads/runs pattern (`threads.create`, `messages.create`, `runs.create_and_process`)
+- chatbot-service: Conversation history now managed by Azure AI threads (one thread per user) instead of in-memory message lists
+- chatbot-service: Removed `openai_client` global; `project_client` handles all agent interactions
+
+### 2026-05 — Anomaly-Service Redis Connection Fix
+
+**Problem:** anomaly-service admin endpoints (`/api/admin/stats`, `/api/admin/flagged-transactions`) returned 500. The Python code blindly prepended `redis://` to the `REDIS__CONNECTIONSTRING` env var, but AKS provides a .NET-style connection string (`host:10000,ssl=True,abortConnect=False,password=xxx`).
+
+**Fix:** Replaced `redis.from_url()` with `redis.Redis()` using parsed connection parameters:
+- `_parse_redis_connection_string()` extracts host, port, ssl, password from .NET format (mirrors Go `parseRedisConnectionString()` in event-processor)
+- Entra ID token auth when `AZURE_CLIENT_ID` is set: uses `DefaultAzureCredential` with Redis scope, extracts OID from JWT for username
+- Token refresh every 45 minutes via background task
+- TLS enabled when `ssl=True` in connection string
+- Falls back to simple host:port for local docker-compose
+
+**Files:** `src/anomaly-service/app/main.py`
+
+**Pattern:** All services connecting to Azure Managed Redis must parse .NET connection strings and support Entra ID auth. Go event-processor (`src/event-processor/main.go:305-336`) is the reference implementation.
