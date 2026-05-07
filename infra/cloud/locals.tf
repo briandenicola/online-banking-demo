@@ -1,6 +1,7 @@
 #############################################
-# LOCALS — Common values, random resources, resource group, storage
+# LOCALS — Common values, resource group
 #############################################
+data "azurerm_client_config" "current" {}
 
 locals {
   location            = var.region
@@ -18,33 +19,8 @@ locals {
   redis_name          = "${local.resource_name}-redis"
   loganalytics_name   = "${local.resource_name}-logs"
   appinsights_name    = "${local.resource_name}-ai"
-  keyvault_name       = "${local.resource_name}-kv"
+  keyvault_name       = substr("${replace(local.resource_name, "-", "")}kv", 0, 24)
   acr_name            = "${replace(local.resource_name, "-", "")}acr"
-}
-
-data "azurerm_client_config" "current" {}
-
-resource "random_pet" "this" {}
-
-resource "random_id" "this" {
-  byte_length = 2
-}
-
-resource "random_uuid" "guid" {}
-
-resource "random_integer" "vnet_cidr" {
-  min = 10
-  max = 250
-}
-
-resource "random_integer" "services_cidr" {
-  min = 64
-  max = 99
-}
-
-resource "random_integer" "pod_cidr" {
-  min = 100
-  max = 127
 }
 
 resource "azurerm_resource_group" "this" {
@@ -57,11 +33,4 @@ resource "azurerm_resource_group" "this" {
   }
 }
 
-resource "azurerm_storage_account" "main" {
-  name                      = local.storage_name
-  resource_group_name       = azurerm_resource_group.this.name
-  location                  = azurerm_resource_group.this.location
-  account_tier              = "Standard"
-  account_replication_type  = "LRS"
-  shared_access_key_enabled = false
-}
+

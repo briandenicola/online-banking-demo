@@ -17,17 +17,18 @@ resource "azurerm_federated_identity_credential" "aks_banking_workload_identity"
   issuer                    = azurerm_kubernetes_cluster.main.oidc_issuer_url
 }
 
-# RBAC: Redis Data Contributor
+# RBAC: Redis Data Access (Enterprise/Managed Redis uses database-level policy)
 resource "azapi_resource" "redis_access_policy_assignment" {
-  type      = "Microsoft.Cache/redis/accessPolicyAssignments@2024-11-01"
-  name      = "banking-services-redis-access"
-  parent_id = azurerm_managed_redis.main.id
+  type      = "Microsoft.Cache/redisEnterprise/databases/accessPolicyAssignments@2024-09-01-preview"
+  name      = "bankingservices"
+  parent_id = "${azurerm_managed_redis.main.id}/databases/default"
 
   body = {
     properties = {
-      accessPolicyName = "Data Contributor"
-      objectId         = azurerm_user_assigned_identity.banking_services.principal_id
-      objectIdAlias    = azurerm_user_assigned_identity.banking_services.name
+      accessPolicyName = "default"
+      user = {
+        objectId = azurerm_user_assigned_identity.banking_services.principal_id
+      }
     }
   }
 }
