@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json.Serialization;
 
 namespace TransferService.Models;
 
@@ -7,6 +8,7 @@ namespace TransferService.Models;
 /// </summary>
 public class Transfer
 {
+    [JsonPropertyName("id")]
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string FromAccountId { get; set; } = null!;
     public string ToAccountId { get; set; } = null!;
