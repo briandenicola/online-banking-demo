@@ -167,6 +167,14 @@ public class TransactionService : ITransactionService
         try
         {
             var client = _httpClientFactory.CreateClient();
+
+            // Forward JWT for service-to-service auth
+            var authHeader = _httpContextAccessor.HttpContext?.Request.Headers["Authorization"].FirstOrDefault();
+            if (!string.IsNullOrEmpty(authHeader))
+            {
+                client.DefaultRequestHeaders.Authorization = System.Net.Http.Headers.AuthenticationHeaderValue.Parse(authHeader);
+            }
+
             var response = await client.GetAsync($"{accountServiceUrl}/api/accounts/{accountId}");
             if (!response.IsSuccessStatusCode)
             {
