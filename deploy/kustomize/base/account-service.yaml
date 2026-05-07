@@ -28,11 +28,6 @@ spec:
         - containerPort: 8080
           protocol: TCP
         env:
-        - name: CosmosDb__ConnectionString
-          valueFrom:
-            secretKeyRef:
-              name: banking-secrets
-              key: cosmos-connection-string
         - name: APPLICATIONINSIGHTS_CONNECTION_STRING
           valueFrom:
             secretKeyRef:

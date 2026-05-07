@@ -124,7 +124,6 @@ tasks:
       - |
         kubectl create secret generic banking-secrets \
           --namespace banking-demo \
-          --from-literal=cosmos-connection-string="{{.COSMOS_CONN}}" \
           --from-literal=appinsights-connection-string="{{.APPINSIGHTS_CONN}}" \
           --from-literal=jwt-key="{{.JWT_KEY}}" \
           --from-literal=openai-endpoint="{{.OPENAI_ENDPOINT}}" \
@@ -148,8 +147,6 @@ tasks:
             azure.workload.identity/use: "true"
         EOF
     vars:
-      COSMOS_CONN:
-        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw cosmos_connection_string
       APPINSIGHTS_CONN:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw application_insights_connection_string
       JWT_KEY:

@@ -11,13 +11,7 @@ output "storage_account_name" {
 }
 
 output "cosmos_db_endpoint" {
-  value     = azurerm_cosmosdb_account.main.endpoint
-  sensitive = true
-}
-
-output "cosmos_db_key" {
-  value     = azurerm_cosmosdb_account.main.primary_key
-  sensitive = true
+  value = azurerm_cosmosdb_account.main.endpoint
 }
 
 output "redis_host" {
@@ -57,9 +51,4 @@ output "acr_name" {
 
 output "acr_login_server" {
   value = azurerm_container_registry.main.login_server
-}
-
-output "cosmos_connection_string" {
-  value     = "AccountEndpoint=${azurerm_cosmosdb_account.main.endpoint};AccountKey=${azurerm_cosmosdb_account.main.primary_key};"
-  sensitive = true
 }
