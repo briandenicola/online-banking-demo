@@ -1,4 +1,5 @@
 using System;
+using Newtonsoft.Json;
 
 namespace TransactionService.Models;
 
@@ -7,6 +8,7 @@ namespace TransactionService.Models;
 /// </summary>
 public class Transaction
 {
+    [JsonProperty("id")]
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string AccountId { get; set; } = null!;
     public decimal Amount { get; set; }

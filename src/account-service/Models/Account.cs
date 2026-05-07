@@ -1,4 +1,5 @@
 using System;
+using Newtonsoft.Json;
 
 namespace AccountService.Models;
 
@@ -7,6 +8,7 @@ namespace AccountService.Models;
 /// </summary>
 public class Account
 {
+    [JsonProperty("id")]
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string UserId { get; set; } = null!;
     public string AccountNumber { get; set; } = null!;
