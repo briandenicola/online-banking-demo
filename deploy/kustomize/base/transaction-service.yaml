@@ -40,6 +40,11 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: redis-connection-string
+        - name: Jwt__Key
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: jwt-key
         envFrom:
         - configMapRef:
             name: banking-demo-config
