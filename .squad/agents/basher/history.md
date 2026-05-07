@@ -8,6 +8,14 @@
 
 ## Learnings
 
+### 2026-05 — AI Foundry Agents RBAC Scope Fix
+
+**Problem:** chatbot-service returned 503 because `create_agent()` failed with PermissionDenied. The `Azure AI Developer` role was scoped to the AI Services account (`data.azurerm_cognitive_account.openai.id`), but the Agents API requires permissions at the AI Foundry **project** scope.
+
+**Fix:** Changed scope of `banking_ai_developer` role assignment in `infra/cloud/identity.tf` (line 45) from `data.azurerm_cognitive_account.openai.id` to `azapi_resource.ai_foundry_project.id`.
+
+**Pattern:** AI Foundry Agents API RBAC must be scoped to the project resource (`Microsoft.CognitiveServices/accounts/projects`), not the parent AI Services account. The project resource is defined in `infra/cloud/ai.tf`.
+
 ### 2026-05 — Redis Connectivity Fix
 
 **Problem:** event-processor (Go) and user-service (.NET) crashed on Redis connect. Azure Managed Redis was deployed with `access_keys_authentication_enabled = false` (Entra-only) and the configmap had unresolved placeholders.
@@ -529,3 +537,16 @@ the hostname, not the child project name. The project name only appears in the `
 **ACR:** Correct ACR is `bjdcsa` (not `burstingmastiff55181acr` from project notes). Images at `bjdcsa.azurecr.io/transfer-service:latest`.
 
 **Deployment:** Image built and pushed to ACR. AKS cluster was unreachable (network timeout) — rollout restart pending.
+
+---
+
+## 2026-05-07T17:56:00Z - Basher Spawn: Fix Azure AI Developer RBAC
+
+**Scribe Spawn Event**
+- **Task:** Fix Azure AI Developer role assignment scope in identity.tf
+- **Issue:** Chatbot service 503 PermissionDenied on agents/write data action
+- **Root Cause:** Role scoped to parent account (AI Services account) instead of AI Foundry project
+- **Fix:** Change role scope from account-level to project-level in infra/cloud/identity.tf
+- **Status:** Spawned in background mode
+- **Model:** claude-sonnet-4.5
+
