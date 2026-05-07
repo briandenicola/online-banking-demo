@@ -1,14 +1,13 @@
 """
 AI-powered financial advice chatbot service using Azure AI Foundry Agents.
 
-Uses the azure-ai-projects SDK with the OpenAI Responses API to reference
-a pre-created agent in Azure AI Foundry (not created at runtime).
+Creates the agent programmatically at startup via `project_client.agents`
+and tears it down on shutdown. Chat uses the agents threads/runs pattern.
 """
 import logging
 from datetime import datetime, timezone
 import os
 import uuid
-from collections import defaultdict
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -99,13 +98,13 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# OpenAI client (obtained from AIProjectClient)
-openai_client = None
-agent_name = None
-agent_version = None
+# Globals for the programmatically-created agent
+project_client: Optional[AIProjectClient] = None
+agent_id: Optional[str] = None
+agent_name: Optional[str] = None
 
-# In-memory conversation history per user (list of message dicts)
-user_conversations: dict[str, list[dict]] = defaultdict(list)
+# In-memory conversation threads per user (maps user_id -> thread_id)
+user_threads: dict[str, str] = {}
 
 
 def get_budget_insights(user_id: str, period: str = "30d") -> dict:
@@ -152,7 +151,7 @@ def analyze_transaction(description: str, amount: float) -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global openai_client, agent_name, agent_version
+    global project_client, agent_id, agent_name
 
     logger.info("=" * 60)
     logger.info("🤖 Chatbot Service — Startup")
@@ -160,11 +159,11 @@ async def lifespan(app: FastAPI):
 
     endpoint = os.getenv("AZURE_AI_AGENTS_ENDPOINT") or os.getenv("AZURE_OPENAI_ENDPOINT")
     agent_name = os.getenv("AZURE_AGENT_NAME", "financial-advisor-agent")
-    agent_version = os.getenv("AZURE_AGENT_VERSION", "1")
+    model = os.getenv("AZURE_OPENAI_MODEL", "gpt-4o")
 
     logger.info(f"  AZURE_AI_AGENTS_ENDPOINT: {endpoint or '❌ NOT SET'}")
     logger.info(f"  AZURE_AGENT_NAME: {agent_name}")
-    logger.info(f"  AZURE_AGENT_VERSION: {agent_version}")
+    logger.info(f"  AZURE_OPENAI_MODEL: {model}")
     logger.info(f"  AZURE_TENANT_ID: {'✅ set' if os.getenv('AZURE_TENANT_ID') else '❌ not set'}")
     logger.info(f"  AZURE_CLIENT_ID: {'✅ set' if os.getenv('AZURE_CLIENT_ID') else '❌ not set'}")
     logger.info(f"  AZURE_CLIENT_SECRET: {'✅ set' if os.getenv('AZURE_CLIENT_SECRET') else '❌ not set'}")
@@ -193,12 +192,26 @@ async def lifespan(app: FastAPI):
                 endpoint=endpoint,
                 credential=credential,
             )
-            openai_client = project_client.get_openai_client()
-            logger.info("✅ AIProjectClient + OpenAI client created")
-            logger.info(f"🔗 Referencing agent: {agent_name} (v{agent_version})")
-            logger.info("🟢 Chatbot service READY — accepting requests")
+            logger.info("✅ AIProjectClient created")
         except Exception as ex:
             logger.error(f"❌ Failed to create AIProjectClient: {ex}")
+            logger.info("=" * 60)
+            yield
+            return
+
+        logger.info(f"🤖 Creating agent '{agent_name}' with model '{model}'...")
+        try:
+            agent = project_client.agents.create_agent(
+                model=model,
+                name=agent_name,
+                instructions=FINANCIAL_ADVISOR_INSTRUCTIONS,
+            )
+            agent_id = agent.id
+            logger.info(f"✅ Agent created: id={agent_id}")
+            logger.info("🟢 Chatbot service READY — accepting requests")
+        except Exception as ex:
+            logger.error(f"❌ Failed to create agent: {ex}")
+            project_client = None
             logger.info("=" * 60)
             yield
             return
@@ -207,7 +220,15 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # No cleanup needed — agent is pre-created in Foundry, not managed at runtime
+    # Shutdown: delete the programmatically-created agent
+    if agent_id and project_client:
+        logger.info(f"🗑️  Deleting agent {agent_id}...")
+        try:
+            project_client.agents.delete_agent(agent_id)
+            logger.info("✅ Agent deleted")
+        except Exception as ex:
+            logger.warning(f"⚠️  Failed to delete agent on shutdown: {ex}")
+
     logger.info("🛑 Chatbot service shutting down")
 
 
@@ -242,7 +263,7 @@ class ChatResponse(BaseModel):
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """Get financial advice from the AI agent."""
-    if not openai_client:
+    if not project_client or not agent_id:
         raise HTTPException(
             status_code=503,
             detail="Azure AI Foundry not configured. Set AZURE_AI_AGENTS_ENDPOINT environment variable."
@@ -252,48 +273,52 @@ async def chat(request: ChatRequest):
 
     try:
         with tracer.start_as_current_span("ai-agent.chat") as span:
-            span.set_attribute("agent.name", agent_name)
-            span.set_attribute("agent.version", agent_version)
+            span.set_attribute("agent.name", agent_name or "")
+            span.set_attribute("agent.id", agent_id)
             span.set_attribute("user.id", request.user_id)
             span.set_attribute("user.message", request.message[:100])
 
-            # Build input messages: system instructions + conversation history + new user message
-            messages: list[dict] = [
-                {"role": "system", "content": FINANCIAL_ADVISOR_INSTRUCTIONS},
-            ]
-
-            # Append prior conversation history for this user
-            messages.extend(user_conversations[request.user_id])
-
-            # Add the new user message (with optional context)
             user_content = request.message
             if request.context:
                 user_content = f"Context: {request.context}\n\nQuestion: {request.message}"
 
-            messages.append({"role": "user", "content": user_content})
+            # Reuse or create a thread for this user
+            thread_id = user_threads.get(request.user_id)
+            if not thread_id:
+                thread = project_client.agents.threads.create()
+                thread_id = thread.id
+                user_threads[request.user_id] = thread_id
 
-            # Call the Responses API referencing the pre-created Foundry agent
-            response = openai_client.responses.create(
-                input=messages,
-                extra_body={
-                    "agent_reference": {
-                        "name": agent_name,
-                        "version": agent_version,
-                        "type": "agent_reference",
-                    }
-                },
+            # Add the user message to the thread
+            project_client.agents.messages.create(
+                thread_id=thread_id,
+                role="user",
+                content=user_content,
             )
 
-            answer = response.output_text or "I couldn't generate a response at this time."
+            # Run the agent on the thread
+            run = project_client.agents.runs.create_and_process(
+                thread_id=thread_id,
+                agent_id=agent_id,
+            )
+
+            if run.status != "completed":
+                logger.error(f"Agent run failed: status={run.status}, error={run.last_error}")
+                raise HTTPException(status_code=500, detail="Agent run did not complete successfully.")
+
+            # Retrieve the assistant's latest response
+            messages = project_client.agents.messages.list(thread_id=thread_id, order="desc", limit=1)
+            answer = "I couldn't generate a response at this time."
+            for msg in messages.data:
+                if msg.role == "assistant":
+                    # Extract text from content blocks
+                    for block in msg.content:
+                        if hasattr(block, "text"):
+                            answer = block.text.value
+                            break
+                    break
+
             span.set_attribute("response.length", len(answer))
-
-            # Store conversation turn in history
-            user_conversations[request.user_id].append({"role": "user", "content": user_content})
-            user_conversations[request.user_id].append({"role": "assistant", "content": answer})
-
-            # Cap history to last 20 messages to prevent unbounded growth
-            if len(user_conversations[request.user_id]) > 20:
-                user_conversations[request.user_id] = user_conversations[request.user_id][-20:]
 
         suggestions = [
             "How can I save more each month?",
@@ -312,8 +337,8 @@ async def chat(request: ChatRequest):
 
 @app.post("/api/chat/new", response_model=ChatResponse)
 async def chat_new_session(request: ChatRequest):
-    """Start a new chat session (clears conversation history)."""
-    user_conversations.pop(request.user_id, None)
+    """Start a new chat session (creates a fresh thread for this user)."""
+    user_threads.pop(request.user_id, None)
     return await chat(request)
 
 
@@ -322,7 +347,7 @@ async def health():
     return {
         "status": "healthy",
         "agent_name": agent_name,
-        "agent_version": agent_version,
+        "agent_id": agent_id,
         "sdk_available": AZURE_PROJECTS_AVAILABLE,
     }
 
@@ -334,7 +359,7 @@ async def healthz():
 
 @app.get("/readyz")
 async def ready():
-    checks = {"azure_credential": False, "openai_client_ready": openai_client is not None}
+    checks = {"azure_credential": False, "agent_ready": agent_id is not None}
 
     if AZURE_PROJECTS_AVAILABLE and DefaultAzureCredential:
         try:
@@ -346,7 +371,7 @@ async def ready():
     else:
         checks["azure_credential"] = None  # Not configured
 
-    all_ready = checks.get("azure_credential") is not False and checks["openai_client_ready"]
+    all_ready = checks.get("azure_credential") is not False and checks["agent_ready"]
     status = "ready" if all_ready else "degraded"
     return {"status": status, "checks": checks}
 
