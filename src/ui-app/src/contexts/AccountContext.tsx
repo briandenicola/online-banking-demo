@@ -73,7 +73,14 @@ export const AccountProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const transfer = async (fromId: string, toId: string, amount: number): Promise<boolean> => {
     try {
-      await apiClient.post('/transfers', { fromAccountId: fromId, toAccountId: toId, amount });
+      const fromAcc = accounts.find(a => a.id === fromId);
+      const toAcc = accounts.find(a => a.id === toId);
+      if (!fromAcc || !toAcc) return false;
+      await apiClient.post('/transfers', {
+        fromAccountNumber: fromAcc.number,
+        toAccountNumber: toAcc.number,
+        amount,
+      });
       // Update local state on success
       setAccounts(prev => prev.map(acc => {
         if (acc.id === fromId) return { ...acc, balance: acc.balance - amount };
