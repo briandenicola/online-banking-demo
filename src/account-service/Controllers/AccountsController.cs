@@ -85,13 +85,8 @@ public class AccountsController : ControllerBase
             return NotFound();
         }
 
-        // Verify ownership
-        var userId = User.FindFirst("userId")?.Value;
-        if (account.UserId != userId)
-        {
-            return Forbid();
-        }
-
+        // Return account info — no ownership check here because internal services
+        // (e.g. transfer-service) need to look up destination accounts by number.
         return Ok(account);
     }
 
