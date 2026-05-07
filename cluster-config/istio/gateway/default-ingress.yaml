@@ -1,0 +1,83 @@
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: banking-demo-vs
+  namespace: banking-demo
+spec:
+  hosts:
+  - "*"
+  gateways:
+  - aks-istio-ingress/banking-demo-gateway
+  http:
+  # UI app (default catch-all at bottom)
+  - match:
+    - uri:
+        prefix: /api/auth
+    route:
+    - destination:
+        host: user-service
+        port:
+          number: 80
+  - match:
+    - uri:
+        prefix: /api/users
+    route:
+    - destination:
+        host: user-service
+        port:
+          number: 80
+  - match:
+    - uri:
+        prefix: /api/accounts
+    route:
+    - destination:
+        host: account-service
+        port:
+          number: 80
+  - match:
+    - uri:
+        prefix: /api/transactions
+    route:
+    - destination:
+        host: transaction-service
+        port:
+          number: 80
+  - match:
+    - uri:
+        prefix: /api/transfers
+    route:
+    - destination:
+        host: transfer-service
+        port:
+          number: 80
+  - match:
+    - uri:
+        prefix: /api/chat
+    route:
+    - destination:
+        host: chatbot-service
+        port:
+          number: 80
+  - match:
+    - uri:
+        prefix: /api/anomaly
+    route:
+    - destination:
+        host: anomaly-service
+        port:
+          number: 80
+  - match:
+    - uri:
+        prefix: /api/budget
+    route:
+    - destination:
+        host: budget-service
+        port:
+          number: 80
+  # Default: serve UI
+  - route:
+    - destination:
+        host: ui-app
+        port:
+          number: 80

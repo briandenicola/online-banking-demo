@@ -85,6 +85,13 @@ resource "azurerm_kubernetes_cluster" "main" {
 
   monitor_metrics {}
 
+  service_mesh_profile {
+    mode                             = "Istio"
+    revisions                        = ["asm-1-28"]
+    internal_ingress_gateway_enabled = true
+    external_ingress_gateway_enabled = true
+  }
+
   maintenance_window_auto_upgrade {
     frequency   = "Weekly"
     interval    = 1

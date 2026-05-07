@@ -15,33 +15,32 @@ resources:
 - chatbot-service.yaml
 - event-processor.yaml
 - hpa.yaml
-- ingress.yaml
 - ui-app.yaml
 images:
 - name: ghcr.io/banking-demo/account-service
-  newName: wittybluejay46780acr.azurecr.io/account-service
+  newName: burstingmastiff55181acr.azurecr.io/account-service
   newTag: latest
 - name: ghcr.io/banking-demo/anomaly-service
-  newName: wittybluejay46780acr.azurecr.io/anomaly-service
+  newName: burstingmastiff55181acr.azurecr.io/anomaly-service
   newTag: latest
 - name: ghcr.io/banking-demo/budget-service
-  newName: wittybluejay46780acr.azurecr.io/budget-service
+  newName: burstingmastiff55181acr.azurecr.io/budget-service
   newTag: latest
 - name: ghcr.io/banking-demo/chatbot-service
-  newName: wittybluejay46780acr.azurecr.io/chatbot-service
+  newName: burstingmastiff55181acr.azurecr.io/chatbot-service
   newTag: latest
 - name: ghcr.io/banking-demo/event-processor
-  newName: wittybluejay46780acr.azurecr.io/event-processor
+  newName: burstingmastiff55181acr.azurecr.io/event-processor
   newTag: latest
 - name: ghcr.io/banking-demo/transaction-service
-  newName: wittybluejay46780acr.azurecr.io/transaction-service
+  newName: burstingmastiff55181acr.azurecr.io/transaction-service
   newTag: latest
 - name: ghcr.io/banking-demo/transfer-service
-  newName: wittybluejay46780acr.azurecr.io/transfer-service
+  newName: burstingmastiff55181acr.azurecr.io/transfer-service
   newTag: latest
 - name: ghcr.io/banking-demo/ui-app
-  newName: wittybluejay46780acr.azurecr.io/ui-app
+  newName: burstingmastiff55181acr.azurecr.io/ui-app
   newTag: latest
 - name: ghcr.io/banking-demo/user-service
-  newName: wittybluejay46780acr.azurecr.io/user-service
+  newName: burstingmastiff55181acr.azurecr.io/user-service
   newTag: latest

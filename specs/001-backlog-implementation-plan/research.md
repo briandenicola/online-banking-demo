@@ -69,3 +69,27 @@
 **Alternatives considered**:
 - README-only: Insufficient for multi-page walkthrough
 - Docusaurus/MkDocs: Adds build tooling dependency; raw markdown is simpler
+
+## R9: Subnet CIDR Allocation for Private Endpoints & Agent Service
+
+**Decision**: Use `cidrsubnet(local.vnet_cidr, 8, 4)` for private endpoints and `cidrsubnet(local.vnet_cidr, 8, 5)` for agents.
+**Rationale**: VNet is /16, each subnet is /24 (254 IPs). Index 3 = AKS. Sequential indices 4, 5 follow convention. /24 is future-proof for PE growth and agent scaling.
+**Alternatives considered**:
+- Smaller subnets (/27): Constrains future PE count; no cost savings on a /16
+- Non-sequential indices: Breaks convention-over-configuration principle
+
+## R10: NSG Strategy for New Subnets
+
+**Decision**: Single shared NSG for PE and agent subnets (separate from AKS-managed NSG).
+**Rationale**: Reference pattern (`ai-application-architectures`) uses one NSG. Both subnets have similar traffic profiles. AKS manages its own NSG on node subnet.
+**Alternatives considered**:
+- Per-subnet NSG: Over-engineering unless rules diverge later
+- No NSG: Violates Constitution Principle I (Security by Design)
+
+## R11: Agent Subnet Delegation
+
+**Decision**: Delegate agent subnet to `Microsoft.App/environments`.
+**Rationale**: Azure AI Agent Service requires this delegation type. Confirmed in user's reference repo and Azure docs.
+**Alternatives considered**:
+- No delegation: Blocks Agent Service deployment
+- `Microsoft.Web/serverFarms`: Wrong provider for Container Apps-based agents
