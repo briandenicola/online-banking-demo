@@ -12,10 +12,23 @@ tasks:
       - npx playwright install --with-deps chromium firefox
 
   run:
-    desc: Run all E2E tests
+    desc: Run all E2E tests (set BASE_URL for live cluster)
     dir: '{{.E2E_DIR}}'
     cmds:
       - npx playwright test
+    env:
+      BASE_URL: '{{.BASE_URL | default "http://localhost"}}'
+
+  cloud:
+    desc: Run E2E tests against the live AKS cluster
+    dir: '{{.E2E_DIR}}'
+    cmds:
+      - npx playwright test --project=chromium
+    env:
+      BASE_URL: 'http://{{.GATEWAY_IP}}'
+    vars:
+      GATEWAY_IP:
+        sh: kubectl get svc -n aks-istio-ingress aks-istio-ingressgateway-external -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
 
   ui:
     desc: Open Playwright UI mode (interactive test runner)
