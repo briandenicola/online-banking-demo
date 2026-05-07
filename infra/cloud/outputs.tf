@@ -28,8 +28,8 @@ output "redis_connection_string" {
   value = "${azurerm_managed_redis.main.hostname}:10000,ssl=True,abortConnect=False"
 }
 
-output "redis_managed_identity_client_id" {
-  value = azurerm_user_assigned_identity.redis_managed_identity.client_id
+output "banking_services_client_id" {
+  value = azurerm_user_assigned_identity.banking_services.client_id
 }
 
 output "application_insights_key" {
@@ -49,10 +49,6 @@ output "key_vault_uri" {
 output "openai_endpoint" {
   value     = "https://${local.openai_name}.services.ai.azure.com/api/projects/${local.project_name}"
   sensitive = false
-}
-
-output "managed_identity_client_id" {
-  value = azurerm_user_assigned_identity.openai_managed_identity.client_id
 }
 
 output "acr_name" {
