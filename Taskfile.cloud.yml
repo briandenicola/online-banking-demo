@@ -57,7 +57,7 @@ tasks:
       AZURE_OPENAI_ENDPOINT:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw openai_endpoint
       AZURE_CLIENT_ID:
-        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw managed_identity_client_id
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw banking_services_client_id
       APPLICATIONINSIGHTS_CONNECTION_STRING:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw application_insights_connection_string
 
@@ -102,13 +102,18 @@ tasks:
       - sed -i s/devicecode/azurecli/g ~/.kube/config
       - task: _secrets:create
       - task: _images:update
+      - sed -i "s|REPLACE_WITH_COSMOS_ENDPOINT|{{.COSMOS_ENDPOINT}}|g" deploy/kustomize/base/configmap.yaml
       - kubectl apply -k deploy/kustomize/observability/
       - kubectl apply -k deploy/kustomize/base/
+      - kubectl apply -k cluster-config/istio/gateway/
+      - git checkout deploy/kustomize/base/configmap.yaml
     vars:
       RG_NAME:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw resource_group_name
       AKS_NAME:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw aks_name
+      COSMOS_ENDPOINT:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw cosmos_db_endpoint
 
   # === Internal tasks ===
   _secrets:create:
@@ -120,7 +125,6 @@ tasks:
       - |
         kubectl create secret generic banking-secrets \
           --namespace banking-demo \
-          --from-literal=cosmos-connection-string="{{.COSMOS_CONN}}" \
           --from-literal=appinsights-connection-string="{{.APPINSIGHTS_CONN}}" \
           --from-literal=jwt-key="{{.JWT_KEY}}" \
           --from-literal=openai-endpoint="{{.OPENAI_ENDPOINT}}" \
@@ -136,28 +140,14 @@ tasks:
         apiVersion: v1
         kind: ServiceAccount
         metadata:
-          name: ai-workload-identity
+          name: banking-workload-identity
           namespace: banking-demo
           annotations:
             azure.workload.identity/client-id: "{{.AZURE_CLIENT_ID}}"
           labels:
             azure.workload.identity/use: "true"
         EOF
-      - |
-        cat <<EOF | kubectl apply -f -
-        apiVersion: v1
-        kind: ServiceAccount
-        metadata:
-          name: redis-workload-identity
-          namespace: banking-demo
-          annotations:
-            azure.workload.identity/client-id: "{{.REDIS_MI_CLIENT_ID}}"
-          labels:
-            azure.workload.identity/use: "true"
-        EOF
     vars:
-      COSMOS_CONN:
-        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw cosmos_connection_string
       APPINSIGHTS_CONN:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw application_insights_connection_string
       JWT_KEY:
@@ -167,9 +157,7 @@ tasks:
       REDIS_CONN:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw redis_connection_string
       AZURE_CLIENT_ID:
-        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw managed_identity_client_id
-      REDIS_MI_CLIENT_ID:
-        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw redis_managed_identity_client_id
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw banking_services_client_id
 
   _images:update:
     internal: true

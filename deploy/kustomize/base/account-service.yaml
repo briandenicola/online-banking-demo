@@ -7,7 +7,7 @@ metadata:
     app: account-service
     app.kubernetes.io/part-of: banking-demo
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: account-service
@@ -15,7 +15,9 @@ spec:
     metadata:
       labels:
         app: account-service
+        azure.workload.identity/use: "true"
     spec:
+      serviceAccountName: banking-workload-identity
       securityContext:
         runAsNonRoot: true
         runAsUser: 64198
@@ -24,20 +26,21 @@ spec:
       containers:
       - name: account-service
         image: ghcr.io/banking-demo/account-service:1.0.0
+        imagePullPolicy: Always
         ports:
         - containerPort: 8080
           protocol: TCP
         env:
-        - name: CosmosDb__ConnectionString
-          valueFrom:
-            secretKeyRef:
-              name: banking-secrets
-              key: cosmos-connection-string
         - name: APPLICATIONINSIGHTS_CONNECTION_STRING
           valueFrom:
             secretKeyRef:
               name: banking-secrets
               key: appinsights-connection-string
+        - name: Jwt__Key
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: jwt-key
         envFrom:
         - configMapRef:
             name: banking-demo-config

@@ -8,12 +8,20 @@ const Accounts: React.FC = () => {
   const { accounts, addAccount } = useAccountContext();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleAddAccount = (account: { name: string; number: string; balance: number; type: string }) => {
-    addAccount(account);
-    setSuccess(true);
-    setDialogOpen(false);
-    setTimeout(() => setSuccess(false), 3000);
+  const handleAddAccount = async (account: { name: string; number: string; balance: number; type: string }) => {
+    try {
+      setError(null);
+      await addAccount(account);
+      setSuccess(true);
+      setDialogOpen(false);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (e) {
+      console.error('Failed to add account:', e);
+      setError('Failed to add account. Please try again.');
+      setTimeout(() => setError(null), 5000);
+    }
   };
 
   return (
@@ -32,6 +40,7 @@ const Accounts: React.FC = () => {
       </Box>
 
       {success && <Alert severity="success" sx={{ mb: 2 }}>Account added successfully!</Alert>}
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       
       <TableContainer component={Paper} sx={{ mt: 2 }}>
         <Table>

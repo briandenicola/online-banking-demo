@@ -119,3 +119,13 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 - Taskfile.e2e.yml is included in root Taskfile.yml under `e2e:` namespace — commands use `task e2e:*` prefix
 - 4 test phases: auth (4 specs), core (3 specs), advanced (6 specs), admin-ai (7 specs) = 20 spec files total
 - Playwright config uses `BASE_URL` env var for override (default: http://localhost)
+- App uses `auth_token` and `auth_email` localStorage keys (NOT `token`). All test references must use `auth_token`.
+- Dashboard is at route `/` — no `/dashboard` route exists. DashboardPage.path must be `/`.
+- Dashboard welcome heading is `<Typography variant="h4">` (renders as h4, not h1/h2).
+- Logout is in a dropdown menu behind user avatar button in AppShell header. Must click avatar first, then menuitem "Sign Out".
+- MUI password fields with `type="password"` appear as `textbox` role in Playwright's accessibility tree. Use `getByRole('textbox', { name: 'Password', exact: true })`.
+- Registration page's "Sign In" navigation is a `<Button>` not `<a>` link. Use `getByRole('button')` not `getByRole('link')`.
+- Axios 401 interceptor does `window.location.href = '/login'` on ANY 401, including login attempts. This causes a full page reload that clears React error state before tests can observe it. Invalid credential tests must verify URL stays at `/login` rather than checking for error alerts.
+- Registration's email field is `type="email"` — HTML5 validation fires BEFORE React's custom `validate()`. Email format test must check `input.validity.valid` instead of MUI helperText.
+- Registration client-side validation (password length, mismatch) shows errors in MUI helperText (`.MuiFormHelperText-root`), NOT in `[role="alert"]`. Only `serverError` uses `<Alert>`.
+- Error message locator `[role="alert"], .MuiAlert-message` causes strict mode violations because both match the same Alert component. Use `[role="alert"]` alone.

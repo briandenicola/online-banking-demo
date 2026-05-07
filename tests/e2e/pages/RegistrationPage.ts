@@ -18,11 +18,11 @@ export class RegistrationPage extends BasePage {
     this.firstNameInput = page.getByRole('textbox', { name: /first name/i });
     this.lastNameInput = page.getByRole('textbox', { name: /last name/i });
     this.emailInput = page.getByRole('textbox', { name: /email/i });
-    this.passwordInput = page.getByLabel(/^password$/i);
-    this.confirmPasswordInput = page.getByLabel(/confirm password/i);
+    this.passwordInput = page.getByRole('textbox', { name: 'Password', exact: true });
+    this.confirmPasswordInput = page.getByRole('textbox', { name: 'Confirm Password' });
     this.submitButton = page.getByRole('button', { name: /register|sign up|create account/i });
-    this.errorMessage = page.locator('[role="alert"], .error-message, .MuiAlert-message');
-    this.loginLink = page.getByRole('link', { name: /login|sign in/i });
+    this.errorMessage = page.locator('[role="alert"]');
+    this.loginLink = page.getByRole('button', { name: /sign in/i });
   }
 
   async register(
@@ -49,6 +49,12 @@ export class RegistrationPage extends BasePage {
 
   async expectNavigatedToLogin(): Promise<void> {
     await this.page.waitForURL('**/login', { timeout: 10_000 });
+  }
+
+  async expectHelperText(text: string | RegExp): Promise<void> {
+    const helperText = this.page.locator('.MuiFormHelperText-root');
+    const matcher = typeof text === 'string' ? new RegExp(text, 'i') : text;
+    await expect(helperText.filter({ hasText: matcher }).first()).toBeVisible({ timeout: 5_000 });
   }
 
   async getValidationError(fieldName: string): Promise<string | null> {

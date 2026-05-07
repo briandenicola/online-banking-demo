@@ -1,34 +1,32 @@
 """
-AI-powered financial advice chatbot service using Azure AI Foundry Agents
+AI-powered financial advice chatbot using Microsoft Agent Framework.
+
+Uses agent-framework-foundry:
+- FoundryChatClient for Azure AI Foundry model access
+- Agent with @tool-decorated functions for financial data
+- AgentSession for multi-turn conversation history
 """
-import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
+import json
 import os
 import uuid
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Annotated, Optional
 
 import httpx
 import structlog
 
 try:
-    from azure.ai.agents import AgentsClient
-    from azure.ai.agents.models import FunctionTool, ToolSet, FunctionDefinition
+    from agent_framework import Agent, tool
+    from agent_framework.foundry import FoundryChatClient
     from azure.identity import DefaultAzureCredential
-    AZURE_AGENTS_AVAILABLE = True
+    AGENT_FRAMEWORK_AVAILABLE = True
 except ImportError:
-    AZURE_AGENTS_AVAILABLE = False
-    AgentsClient = None
-    FunctionTool = None
-    ToolSet = None
-    FunctionDefinition = None
+    AGENT_FRAMEWORK_AVAILABLE = False
+    Agent = None
+    FoundryChatClient = None
     DefaultAzureCredential = None
-
-try:
-    from opentelemetry.instrumentation.azure import AzureInstrumentor
-except ImportError:
-    AzureInstrumentor = None
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -63,6 +61,15 @@ structlog.configure(
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = structlog.get_logger("chatbot-service")
 
+FINANCIAL_ADVISOR_INSTRUCTIONS = (
+    "You are a helpful financial advisor agent for an online banking application. "
+    "Provide concise, actionable financial advice. "
+    "Never provide specific investment recommendations. "
+    "Use the available tools to get budget insights, spending patterns, and analyze transactions. "
+    "Always cite data from tools when providing advice."
+)
+
+
 # Initialize telemetry
 def init_telemetry():
     otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
@@ -73,8 +80,6 @@ def init_telemetry():
         )
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
-        if AzureInstrumentor:
-            AzureInstrumentor().instrument()
 
 init_telemetry()
 
@@ -89,144 +94,136 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
         response.headers["X-Correlation-ID"] = correlation_id
         return response
 
-# Azure AI Agents client and agent
-agents_client = None
-agent_id = None
-user_threads = {}  # In-memory thread storage per user
+
+# --- Agent Framework tool functions ---
+BUDGET_SERVICE_URL = os.getenv("BUDGET_SERVICE_URL", "http://budget-service:8003")
 
 
-def get_budget_insights(user_id: str, period: str = "30d") -> dict:
-    """Get budget insights for a user - financial advisor tool"""
+@tool(approval_mode="never_require")
+def get_budget_insights(
+    user_id: Annotated[str, Field(description="The user ID to get budget insights for")],
+    period: Annotated[str, Field(description="Time period (e.g. '7d', '30d')")] = "30d",
+) -> str:
+    """Get budget insights including spending breakdown and savings rate for a user."""
     try:
-        budget_service_url = os.getenv("BUDGET_SERVICE_URL", "http://budget-service:8003")
-        response = httpx.get(f"{budget_service_url}/insights/{user_id}?period={period}", timeout=10.0)
+        response = httpx.get(f"{BUDGET_SERVICE_URL}/insights/{user_id}?period={period}", timeout=10.0)
         if response.ok:
-            return response.json()
+            return json.dumps(response.json())
     except Exception as e:
         logger.warning(f"Failed to get budget insights: {e}")
-    raise ValueError("Unable to retrieve budget insights")
+    return json.dumps({"error": "Unable to retrieve budget insights"})
 
 
-def get_spending_pattern(user_id: str) -> dict:
-    """Get spending patterns for a user - financial advisor tool"""
+@tool(approval_mode="never_require")
+def get_spending_pattern(
+    user_id: Annotated[str, Field(description="The user ID to analyze spending for")],
+) -> str:
+    """Get recent spending patterns and trends for a user over the last 7 days."""
     try:
-        budget_service_url = os.getenv("BUDGET_SERVICE_URL", "http://budget-service:8003")
-        response = httpx.get(f"{budget_service_url}/insights/{user_id}?period=7d", timeout=10.0)
+        response = httpx.get(f"{BUDGET_SERVICE_URL}/insights/{user_id}?period=7d", timeout=10.0)
         if response.ok:
-            return response.json()
+            return json.dumps(response.json())
     except Exception as e:
         logger.warning(f"Failed to get spending patterns: {e}")
-    raise ValueError("Unable to retrieve spending patterns")
+    return json.dumps({"error": "Unable to retrieve spending patterns"})
 
 
-def analyze_transaction(description: str, amount: float) -> dict:
-    """Analyze a transaction for budgeting - financial advisor tool"""
+@tool(approval_mode="never_require")
+def analyze_transaction(
+    description: Annotated[str, Field(description="Transaction description text")],
+    amount: Annotated[float, Field(description="Transaction amount in dollars")],
+) -> str:
+    """Analyze and categorize a transaction for budgeting purposes."""
     try:
-        budget_service_url = os.getenv("BUDGET_SERVICE_URL", "http://budget-service:8003")
-        response = httpx.post(f"{budget_service_url}/categorize", params={"description": description}, timeout=10.0)
+        response = httpx.post(f"{BUDGET_SERVICE_URL}/categorize", params={"description": description}, timeout=10.0)
         if response.ok:
             data = response.json()
-            return {
+            return json.dumps({
                 "description": description,
                 "amount": amount,
                 "suggested_category": data.get("category", "Uncategorized"),
-                "note": "Transaction analyzed successfully"
-            }
+                "note": "Transaction analyzed successfully",
+            })
     except Exception as e:
         logger.warning(f"Failed to analyze transaction: {e}")
-    raise ValueError("Unable to analyze transaction")
+    return json.dumps({"error": "Unable to analyze transaction"})
 
 
-def _create_toolset():
-    """Build ToolSet with financial advisor functions."""
-    toolset = ToolSet()
-    functions = FunctionTool(functions={get_budget_insights, get_spending_pattern, analyze_transaction})
-    toolset.add(functions)
-    return toolset
+# Globals
+financial_agent: Optional["Agent"] = None
+agent_ready: bool = False
+model_name: str = ""
+
+# In-memory sessions per user (maps user_id -> AgentSession)
+user_sessions: dict = {}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global agents_client, agent_id
-    
+    global financial_agent, agent_ready, model_name
+
     logger.info("=" * 60)
-    logger.info("🤖 Chatbot Service — Startup")
+    logger.info("🤖 Chatbot Service — Startup (Microsoft Agent Framework)")
     logger.info("=" * 60)
-    
-    # Support both AZURE_AI_AGENTS_ENDPOINT and AZURE_OPENAI_ENDPOINT for flexibility
-    endpoint = os.getenv("AZURE_AI_AGENTS_ENDPOINT") or os.getenv("AZURE_OPENAI_ENDPOINT")
-    model = os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4-mini")
-    
-    logger.info(f"  AZURE_AI_AGENTS_ENDPOINT: {endpoint or '❌ NOT SET'}")
-    logger.info(f"  AZURE_OPENAI_MODEL: {model}")
+
+    # Support both FOUNDRY_PROJECT_ENDPOINT and legacy AZURE_OPENAI_ENDPOINT
+    endpoint = (
+        os.getenv("FOUNDRY_PROJECT_ENDPOINT")
+        or os.getenv("AZURE_AI_AGENTS_ENDPOINT")
+        or os.getenv("AZURE_OPENAI_ENDPOINT")
+    )
+    model_name = os.getenv("FOUNDRY_MODEL") or os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4-mini")
+
+    logger.info(f"  Endpoint: {endpoint or '❌ NOT SET'}")
+    logger.info(f"  Model: {model_name}")
     logger.info(f"  AZURE_TENANT_ID: {'✅ set' if os.getenv('AZURE_TENANT_ID') else '❌ not set'}")
     logger.info(f"  AZURE_CLIENT_ID: {'✅ set' if os.getenv('AZURE_CLIENT_ID') else '❌ not set'}")
-    logger.info(f"  AZURE_CLIENT_SECRET: {'✅ set' if os.getenv('AZURE_CLIENT_SECRET') else '❌ not set'}")
-    logger.info(f"  AZURE_AGENTS_AVAILABLE (SDK): {AZURE_AGENTS_AVAILABLE}")
-    
+    logger.info(f"  AGENT_FRAMEWORK_AVAILABLE: {AGENT_FRAMEWORK_AVAILABLE}")
+
     if not endpoint:
         logger.warning("⚠️  No Azure endpoint configured — chatbot will return 503 on requests")
-    elif not AZURE_AGENTS_AVAILABLE:
-        logger.warning("⚠️  azure-ai-agents SDK not installed — chatbot will return 503 on requests")
+    elif not AGENT_FRAMEWORK_AVAILABLE:
+        logger.warning("⚠️  agent-framework SDK not installed — chatbot will return 503 on requests")
     else:
         logger.info("🔐 Acquiring Azure credential...")
         try:
             credential = DefaultAzureCredential()
             token = credential.get_token("https://cognitiveservices.azure.com/.default")
-            logger.info(f"✅ Token acquired successfully (expires: {token.expires_on})")
+            logger.info(f"✅ Token acquired (expires: {token.expires_on})")
         except Exception as ex:
             logger.error(f"❌ Credential acquisition FAILED: {ex}")
-            logger.error("   Check AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET are correct")
             logger.info("=" * 60)
             yield
             return
-        
-        logger.info(f"🔌 Connecting to Azure AI Foundry at: {endpoint}")
+
+        logger.info(f"🔌 Creating FoundryChatClient → {endpoint}")
         try:
-            agents_client = AgentsClient(
-                endpoint=endpoint,
-                credential=DefaultAzureCredential()
+            client = FoundryChatClient(
+                project_endpoint=endpoint,
+                model=model_name,
+                credential=credential,
             )
-            logger.info("✅ AgentsClient created")
+
+            financial_agent = Agent(
+                client=client,
+                name="FinancialAdvisor",
+                instructions=FINANCIAL_ADVISOR_INSTRUCTIONS,
+                tools=[get_budget_insights, get_spending_pattern, analyze_transaction],
+            )
+            agent_ready = True
+            logger.info("🟢 Agent ready — accepting requests")
         except Exception as ex:
-            logger.error(f"❌ Failed to create AgentsClient: {ex}")
+            logger.error(f"❌ Failed to create agent: {ex}")
             logger.info("=" * 60)
             yield
             return
-        
-        logger.info(f"🏗️  Creating financial-advisor-agent (model: {model})...")
-        try:
-            agent = agents_client.create_agent(
-                model=model,
-                name="financial-advisor-agent",
-                instructions="""You are a helpful financial advisor agent. 
-                Provide concise, actionable financial advice. 
-                Never provide specific investment recommendations.
-                Use the available tools to get budget insights, spending patterns, and analyze transactions.
-                Always cite data from tools when providing advice.""",
-                toolset=_create_toolset()
-            )
-            agent_id = agent.id
-            logger.info(f"✅ Agent created successfully! ID: {agent_id}")
-            logger.info("🟢 Chatbot service READY — accepting requests")
-        except Exception as ex:
-            logger.error(f"❌ Agent creation FAILED: {ex}")
-            logger.error("   Ensure 'Azure AI Developer' role is assigned on the AI Foundry project")
-            agents_client = None
-    
+
     logger.info("=" * 60)
-    
     yield
-    
-    if agent_id and agents_client:
-        try:
-            agents_client.delete_agent(agent_id)
-            logger.info(f"🧹 Cleaned up agent {agent_id}")
-        except Exception as e:
-            logger.warning(f"⚠️  Error cleaning up agent: {e}")
+    logger.info("🛑 Chatbot service shutting down")
 
 
-app = FastAPI(title="Chatbot Service", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Chatbot Service", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(CorrelationIdMiddleware)
 
@@ -238,7 +235,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize instrumentation
 FastAPIInstrumentor.instrument_app(app)
 HTTPXClientInstrumentor().instrument()
 
@@ -256,78 +252,47 @@ class ChatResponse(BaseModel):
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """
-    Get financial advice from the AI agent
-    """
-    if not agents_client or not agent_id:
+    """Get financial advice from the AI agent."""
+    if not agent_ready or not financial_agent:
         raise HTTPException(
-            status_code=503, 
-            detail="Azure AI Foundry not configured. Set AZURE_AI_AGENTS_ENDPOINT environment variable."
+            status_code=503,
+            detail="Azure AI Foundry not configured. Set FOUNDRY_PROJECT_ENDPOINT or AZURE_OPENAI_ENDPOINT.",
         )
-    
+
     tracer = trace.get_tracer(__name__)
-    
+
     try:
         with tracer.start_as_current_span("ai-agent.chat") as span:
-            span.set_attribute("agent.id", agent_id)
+            span.set_attribute("agent.name", "FinancialAdvisor")
+            span.set_attribute("agent.model", model_name)
             span.set_attribute("user.id", request.user_id)
             span.set_attribute("user.message", request.message[:100])
-            
-            # Get or create thread for user
-            thread_id = user_threads.get(request.user_id)
-            if not thread_id:
-                thread = agents_client.create_thread()
-                thread_id = thread.id
-                user_threads[request.user_id] = thread_id
-                logger.info(f"Created new thread {thread_id} for user {request.user_id}")
-            
-            # Add user message to thread
-            user_message = f"Context: {request.context}\n\nQuestion: {request.message}"
-            agents_client.create_message(
-                thread_id=thread_id,
-                role="user",
-                content=user_message
-            )
-            
-            # Run agent on thread
-            run = agents_client.create_run(
-                thread_id=thread_id,
-                agent_id=agent_id
-            )
-            
-            span.set_attribute("run.id", run.id)
-            
-            # Wait for run completion with async sleep to avoid blocking event loop
-            while run.status in ["queued", "in_progress", "requires_action"]:
-                await asyncio.sleep(0.5)
-                run = agents_client.get_run(thread_id, run.id)
-            
-            span.set_attribute("run.status", run.status)
-            
-            if run.status == "failed":
-                raise HTTPException(status_code=500, detail=f"Agent run failed: {run.last_error}")
-            
-            # Get messages from thread
-            messages = agents_client.list_messages(thread_id=thread_id)
-            answer = ""
-            for msg in messages.data:
-                if msg.role == "assistant":
-                    answer = msg.content[0].text.value if msg.content else ""
-                    break
-            
+
+            user_content = request.message
+            if request.context:
+                user_content = f"Context: {request.context}\n\nQuestion: {request.message}"
+
+            # Get or create a session for multi-turn conversation
+            if request.user_id not in user_sessions:
+                user_sessions[request.user_id] = financial_agent.create_session()
+
+            session = user_sessions[request.user_id]
+
+            result = await financial_agent.run(user_content, session=session)
+            answer = str(result) if result else "I couldn't generate a response at this time."
+
             span.set_attribute("response.length", len(answer))
-            
-            if not answer:
-                answer = "I couldn't generate a response at this time."
-        
+
         suggestions = [
             "How can I save more each month?",
             "What's my spending pattern?",
             "Should I consider a budget?",
         ]
-        
+
         return ChatResponse(response=answer, suggestions=suggestions)
-    
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in agent chat: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -335,10 +300,8 @@ async def chat(request: ChatRequest):
 
 @app.post("/api/chat/new", response_model=ChatResponse)
 async def chat_new_session(request: ChatRequest):
-    """
-    Start a new chat session (clears conversation history)
-    """
-    user_threads.pop(request.user_id, None)
+    """Start a new chat session (clears conversation history for this user)."""
+    user_sessions.pop(request.user_id, None)
     return await chat(request)
 
 
@@ -346,21 +309,22 @@ async def chat_new_session(request: ChatRequest):
 async def health():
     return {
         "status": "healthy",
-        "agent_id": agent_id,
-        "agents_available": AZURE_AGENTS_AVAILABLE
+        "agent_ready": agent_ready,
+        "model": model_name,
+        "sdk_available": AGENT_FRAMEWORK_AVAILABLE,
     }
 
 
 @app.get("/healthz")
 async def healthz():
-    return {"status": "healthy", "service": "chatbot-service", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "healthy", "service": "chatbot-service", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/readyz")
 async def ready():
-    checks = {"azure_credential": False, "agent_configured": agent_id is not None}
+    checks = {"azure_credential": False, "agent_ready": agent_ready}
 
-    if AZURE_AGENTS_AVAILABLE and DefaultAzureCredential:
+    if AGENT_FRAMEWORK_AVAILABLE and DefaultAzureCredential:
         try:
             credential = DefaultAzureCredential()
             token = credential.get_token("https://cognitiveservices.azure.com/.default")
@@ -368,9 +332,9 @@ async def ready():
         except Exception:
             checks["azure_credential"] = False
     else:
-        checks["azure_credential"] = None  # Not configured
+        checks["azure_credential"] = None
 
-    all_ready = checks.get("azure_credential") is not False and checks["agent_configured"]
+    all_ready = checks.get("azure_credential") is not False and checks["agent_ready"]
     status = "ready" if all_ready else "degraded"
     return {"status": status, "checks": checks}
 

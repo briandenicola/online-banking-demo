@@ -17,14 +17,14 @@ test.describe('E2E-204: Logout & Session Cleanup', () => {
   });
 
   test('should remove token from localStorage on logout', async ({ page }) => {
-    const tokenBeforeLogout = await page.evaluate(() => localStorage.getItem('token'));
+    const tokenBeforeLogout = await page.evaluate(() => localStorage.getItem('auth_token'));
     expect(tokenBeforeLogout).toBeTruthy();
 
     await dashboardPage.logout();
 
     await page.waitForTimeout(500);
 
-    const tokenAfterLogout = await page.evaluate(() => localStorage.getItem('token'));
+    const tokenAfterLogout = await page.evaluate(() => localStorage.getItem('auth_token'));
     expect(tokenAfterLogout).toBeNull();
   });
 
@@ -48,7 +48,7 @@ test.describe('E2E-204: Logout & Session Cleanup', () => {
       return {
         allKeys: keys,
         authKeys: authKeys,
-        tokenValue: localStorage.getItem('token'),
+        tokenValue: localStorage.getItem('auth_token'),
       };
     });
 
@@ -59,7 +59,7 @@ test.describe('E2E-204: Logout & Session Cleanup', () => {
     await dashboardPage.logout();
     await page.waitForURL('**/login');
 
-    await page.goto('/dashboard');
+    await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
     await page.waitForURL('**/login', { timeout: 10_000 });
 
@@ -76,7 +76,7 @@ test.describe('E2E-204: Logout & Session Cleanup', () => {
     await dashboardPage.logout();
     await page.waitForURL('**/login');
 
-    await page.goto('/dashboard');
+    await page.goto('/');
     await page.waitForURL('**/login');
 
     expect(await page.url()).toContain('/login');
@@ -84,7 +84,7 @@ test.describe('E2E-204: Logout & Session Cleanup', () => {
     await loginPage.login('demo@banking-demo.com', 'password123');
     await loginPage.expectNavigatedToDashboard();
 
-    const newToken = await page.evaluate(() => localStorage.getItem('token'));
+    const newToken = await page.evaluate(() => localStorage.getItem('auth_token'));
     expect(newToken).toBeTruthy();
   });
 
@@ -92,19 +92,22 @@ test.describe('E2E-204: Logout & Session Cleanup', () => {
     await page.goto('/accounts');
     await page.waitForLoadState('domcontentloaded');
 
-    const logoutButton = page.getByRole('button', { name: /logout|sign out/i });
+    // Open user menu and click Sign Out
+    const userMenuButton = page.locator('header button').last();
+    await userMenuButton.click();
+    const logoutButton = page.getByRole('menuitem', { name: /logout|sign out/i });
     await logoutButton.click();
 
     await page.waitForURL('**/login', { timeout: 10_000 });
 
-    const token = await page.evaluate(() => localStorage.getItem('token'));
+    const token = await page.evaluate(() => localStorage.getItem('auth_token'));
     expect(token).toBeNull();
   });
 
   test('should clear session state completely', async ({ page }) => {
     const storageBeforeLogout = await page.evaluate(() => {
       return {
-        token: localStorage.getItem('token'),
+        token: localStorage.getItem('auth_token'),
         localStorageLength: localStorage.length,
       };
     });
@@ -116,7 +119,7 @@ test.describe('E2E-204: Logout & Session Cleanup', () => {
 
     const storageAfterLogout = await page.evaluate(() => {
       return {
-        token: localStorage.getItem('token'),
+        token: localStorage.getItem('auth_token'),
         sessionToken: sessionStorage.getItem('token'),
       };
     });
@@ -151,7 +154,7 @@ test.describe('E2E-204: Logout & Session Cleanup', () => {
     await page.waitForTimeout(500);
 
     const isOnLoginPage = (await page.url()).includes('/login');
-    const tokenCleared = await page.evaluate(() => localStorage.getItem('token') === null);
+    const tokenCleared = await page.evaluate(() => localStorage.getItem('auth_token') === null);
 
     expect(isOnLoginPage).toBeTruthy();
     expect(tokenCleared).toBeTruthy();

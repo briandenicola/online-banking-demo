@@ -20,12 +20,12 @@ test.describe('E2E-201: User Registration Flow', () => {
     await registrationPage.confirmPasswordInput.fill('Password123!');
     await registrationPage.submitButton.click();
 
-    await expect(registrationPage.emailInput).toBeVisible();
-    const validationMessage = await registrationPage.page.evaluate(() => {
-      const input = document.querySelector('input[type="email"], input[name*="email"]') as HTMLInputElement;
-      return input?.validationMessage || '';
+    // type="email" triggers HTML5 validation before custom validation runs
+    const isInvalid = await registrationPage.page.evaluate(() => {
+      const input = document.querySelector('input[type="email"]') as HTMLInputElement;
+      return input ? !input.validity.valid : false;
     });
-    expect(validationMessage).toBeTruthy();
+    expect(isInvalid).toBeTruthy();
   });
 
   test('should validate password minimum length', async () => {
@@ -36,7 +36,8 @@ test.describe('E2E-201: User Registration Flow', () => {
     await registrationPage.confirmPasswordInput.fill('short');
     await registrationPage.submitButton.click();
 
-    await registrationPage.expectError('at least 8 characters');
+    // Client-side validation shows helperText, not [role="alert"]
+    await registrationPage.expectHelperText('at least 8 characters');
   });
 
   test('should validate password confirmation matches', async () => {
@@ -47,7 +48,8 @@ test.describe('E2E-201: User Registration Flow', () => {
     await registrationPage.confirmPasswordInput.fill('DifferentPassword123!');
     await registrationPage.submitButton.click();
 
-    await registrationPage.expectError('do not match');
+    // Client-side validation shows helperText, not [role="alert"]
+    await registrationPage.expectHelperText('do not match');
   });
 
   test('should validate required fields', async () => {

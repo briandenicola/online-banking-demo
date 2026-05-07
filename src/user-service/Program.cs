@@ -34,6 +34,7 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer(options =>
 {
+    options.UseSecurityTokenValidators = true;
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuer = true,
@@ -64,7 +65,7 @@ builder.Services.AddCors(options =>
 // HttpClient for account-service communication
 builder.Services.AddHttpClient("AccountService", client =>
 {
-    var accountServiceUrl = builder.Configuration["Services:AccountServiceUrl"] ?? "http://account-service:8080";
+    var accountServiceUrl = builder.Configuration["ACCOUNT_SERVICE_URL"] ?? "http://account-service:8080";
     client.BaseAddress = new Uri(accountServiceUrl);
     client.Timeout = TimeSpan.FromSeconds(10);
 });
@@ -84,8 +85,12 @@ else
     builder.Services.AddSingleton<CosmosClient>(sp =>
     {
         var configuration = sp.GetRequiredService<IConfiguration>();
-        var cosmosClient = new CosmosClient(configuration["CosmosDb:ConnectionString"]);
-        return cosmosClient;
+        var endpoint = configuration["CosmosDb:Endpoint"];
+        if (!string.IsNullOrEmpty(endpoint))
+        {
+            return new CosmosClient(endpoint, new DefaultAzureCredential());
+        }
+        return new CosmosClient(configuration["CosmosDb:ConnectionString"]);
     });
 
     // Redis for event streaming (Entra ID auth when running in Azure)

@@ -7,7 +7,7 @@ metadata:
     app: chatbot-service
     app.kubernetes.io/part-of: banking-demo
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: chatbot-service
@@ -17,7 +17,7 @@ spec:
         app: chatbot-service
         azure.workload.identity/use: "true"
     spec:
-      serviceAccountName: ai-workload-identity
+      serviceAccountName: banking-workload-identity
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -26,15 +26,18 @@ spec:
       containers:
       - name: chatbot-service
         image: ghcr.io/banking-demo/chatbot-service:1.0.0
+        imagePullPolicy: Always
         ports:
         - containerPort: 8001
           protocol: TCP
         env:
-        - name: AZURE_OPENAI_ENDPOINT
+        - name: FOUNDRY_PROJECT_ENDPOINT
           valueFrom:
             secretKeyRef:
               name: banking-secrets
               key: openai-endpoint
+        - name: FOUNDRY_MODEL
+          value: "gpt-5.4-mini"
         envFrom:
         - configMapRef:
             name: banking-demo-config

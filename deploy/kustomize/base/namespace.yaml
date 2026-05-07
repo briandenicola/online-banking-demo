@@ -4,3 +4,4 @@ metadata:
   name: banking-demo
   labels:
     app.kubernetes.io/part-of: banking-demo
+    istio.io/rev: asm-1-28

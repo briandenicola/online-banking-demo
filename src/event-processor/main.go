@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -149,8 +150,9 @@ func newRedisClient(ctx context.Context, connStr string) (*redis.Client, error) 
 			return nil, fmt.Errorf("failed to get Redis token: %w", err)
 		}
 
+		opts.Username = extractOIDFromToken(token.Token)
 		opts.Password = token.Token
-		log.Println("Using Entra ID token for Redis authentication")
+		log.Printf("Using Entra ID token for Redis authentication (OID: %s)", opts.Username)
 
 		client := redis.NewClient(opts)
 
@@ -178,13 +180,40 @@ func refreshRedisToken(ctx context.Context, client *redis.Client, cred *azidenti
 				log.Printf("⚠️ Failed to refresh Redis token: %v", err)
 				continue
 			}
-			if err := client.Do(ctx, "AUTH", "default", token.Token).Err(); err != nil {
+			oid := extractOIDFromToken(token.Token)
+			if err := client.Do(ctx, "AUTH", oid, token.Token).Err(); err != nil {
 				log.Printf("⚠️ Failed to re-auth Redis with new token: %v", err)
 			} else {
 				log.Println("✅ Redis token refreshed")
 			}
 		}
 	}
+}
+
+// extractOIDFromToken extracts the Object ID (oid claim) from a JWT access token
+func extractOIDFromToken(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	// Decode the payload (second part), adding padding if needed
+	payload := parts[1]
+	if m := len(payload) % 4; m != 0 {
+		payload += strings.Repeat("=", 4-m)
+	}
+	decoded, err := base64.URLEncoding.DecodeString(payload)
+	if err != nil {
+		log.Printf("Failed to decode token payload: %v", err)
+		return ""
+	}
+	var claims struct {
+		OID string `json:"oid"`
+	}
+	if err := json.Unmarshal(decoded, &claims); err != nil {
+		log.Printf("Failed to parse token claims: %v", err)
+		return ""
+	}
+	return claims.OID
 }
 
 // consumeEvents reads from the Redis Stream using consumer groups

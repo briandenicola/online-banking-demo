@@ -51,6 +51,7 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer(options =>
 {
+    options.UseSecurityTokenValidators = true;
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuer = true,
@@ -97,6 +98,9 @@ var useInMemory = builder.Configuration.GetValue<bool>("UseInMemoryDatabase", fa
 if (useInMemory)
 {
     builder.Services.AddLogging();
+    // HTTP Client for service-to-service calls (account + transaction lookups)
+    builder.Services.AddHttpClient();
+    builder.Services.AddHttpContextAccessor();
     builder.Services.AddSingleton<ITransferService, InMemoryTransferService>();
 }
 else
@@ -105,12 +109,17 @@ else
     builder.Services.AddSingleton<CosmosClient>(sp =>
     {
         var configuration = sp.GetRequiredService<IConfiguration>();
-        var cosmosClient = new CosmosClient(configuration["CosmosDb:ConnectionString"]);
-        return cosmosClient;
+        var endpoint = configuration["CosmosDb:Endpoint"];
+        if (!string.IsNullOrEmpty(endpoint))
+        {
+            return new CosmosClient(endpoint, new DefaultAzureCredential());
+        }
+        return new CosmosClient(configuration["CosmosDb:ConnectionString"]);
     });
 
     // HTTP Client for service-to-service calls
     builder.Services.AddHttpClient();
+    builder.Services.AddHttpContextAccessor();
 
     // Services
     builder.Services.AddScoped<ITransferService, TransferService.Services.TransferService>();

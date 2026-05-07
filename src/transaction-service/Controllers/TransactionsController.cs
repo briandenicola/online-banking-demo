@@ -1,4 +1,3 @@
-using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -16,7 +15,9 @@ public class TransactionsController : ControllerBase
     private readonly ITransactionService _transactionService;
     private readonly ILogger<TransactionsController> _logger;
 
-    public TransactionsController(ITransactionService transactionService, ILogger<TransactionsController> logger)
+    public TransactionsController(
+        ITransactionService transactionService,
+        ILogger<TransactionsController> logger)
     {
         _transactionService = transactionService;
         _logger = logger;
@@ -25,8 +26,23 @@ public class TransactionsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> CreateTransaction([FromBody] CreateTransactionRequest request)
     {
-        var transaction = await _transactionService.CreateTransactionAsync(request);
-        return CreatedAtAction(nameof(GetTransaction), new { id = transaction.Id }, transaction);
+        var userId = User.FindFirst("userId")?.Value;
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized();
+        }
+
+        try
+        {
+            var transaction = await _transactionService.CreateTransactionAsync(request, userId);
+            return CreatedAtAction(nameof(GetTransaction), new { id = transaction.Id }, transaction);
+        }
+        catch (InsufficientFundsException ex)
+        {
+            _logger.LogWarning("Insufficient funds for account {AccountId}: balance {Balance}, requested {Amount}",
+                ex.AccountId, ex.CurrentBalance, ex.RequestedAmount);
+            return BadRequest(new { error = "Insufficient funds", message = ex.Message });
+        }
     }
 
     [HttpGet("{id}")]
@@ -69,7 +85,6 @@ public class TransactionsController : ControllerBase
             return Unauthorized();
         }
 
-        // For now, return all transactions - in production, filter by user's accounts
         var transactions = await _transactionService.GetUserTransactionsAsync(userId);
         return Ok(transactions);
     }

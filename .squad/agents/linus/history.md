@@ -142,3 +142,17 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 - Added `/tmp` temp paths (`client_body_temp_path`, `proxy_temp_path`, etc.) for read-only root filesystem compatibility in Kubernetes
 - Pre-created temp directories in Dockerfile RUN step with proper nginx ownership
 - **Lesson:** When customizing nginx in non-root containers, always replace the full main config to avoid directive conflicts with the base image defaults
+
+### 2026-05-07 — Nginx Gateway Proxy Removal
+- Removed `location /api/` and `location @fallback_api` blocks from `src/ui-app/nginx.conf`
+- The gateway service was deleted when the project moved to Istio; the stale `proxy_pass http://gateway:80` caused nginx DNS resolution failures and CrashLoopBackOff in K8s
+- Istio VirtualService (`cluster-config/istio/gateway/default-ingress.yaml`) now handles all `/api/*` routing at the mesh level
+- nginx.conf now only serves static files with SPA fallback — no proxy responsibilities
+
+### 2026-05-07 — addAccount API Integration Fix
+- `addAccount` in `AccountContext.tsx` was local-only (never called backend); now calls `POST /accounts` via apiClient
+- Backend `CreateAccountRequest` expects `{ accountType, initialBalance, currency? }` — form fields map: `type` → `accountType`, `balance` → `initialBalance`
+- Server response `{ id, accountNumber, accountType, balance, currency }` is mapped to local `Account` using same logic as `fetchAccounts`
+- Removed `nextAccountId` state — IDs are server-generated
+- Both callers updated: `Accounts.tsx` (with error Alert) and `Transactions.tsx` (with console.error fallback)
+- Pattern: always use server response for local state hydration, never construct objects client-side with fake IDs

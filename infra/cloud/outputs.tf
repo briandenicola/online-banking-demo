@@ -11,13 +11,7 @@ output "storage_account_name" {
 }
 
 output "cosmos_db_endpoint" {
-  value     = azurerm_cosmosdb_account.main.endpoint
-  sensitive = true
-}
-
-output "cosmos_db_key" {
-  value     = azurerm_cosmosdb_account.main.primary_key
-  sensitive = true
+  value = azurerm_cosmosdb_account.main.endpoint
 }
 
 output "redis_host" {
@@ -28,8 +22,8 @@ output "redis_connection_string" {
   value = "${azurerm_managed_redis.main.hostname}:10000,ssl=True,abortConnect=False"
 }
 
-output "redis_managed_identity_client_id" {
-  value = azurerm_user_assigned_identity.redis_managed_identity.client_id
+output "banking_services_client_id" {
+  value = azurerm_user_assigned_identity.banking_services.client_id
 }
 
 output "application_insights_key" {
@@ -51,19 +45,10 @@ output "openai_endpoint" {
   sensitive = false
 }
 
-output "managed_identity_client_id" {
-  value = azurerm_user_assigned_identity.openai_managed_identity.client_id
-}
-
 output "acr_name" {
   value = azurerm_container_registry.main.name
 }
 
 output "acr_login_server" {
   value = azurerm_container_registry.main.login_server
-}
-
-output "cosmos_connection_string" {
-  value     = "AccountEndpoint=${azurerm_cosmosdb_account.main.endpoint};AccountKey=${azurerm_cosmosdb_account.main.primary_key};"
-  sensitive = true
 }

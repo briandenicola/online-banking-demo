@@ -17,7 +17,7 @@ spec:
         app: event-processor
         azure.workload.identity/use: "true"
     spec:
-      serviceAccountName: redis-workload-identity
+      serviceAccountName: banking-workload-identity
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534
@@ -26,6 +26,7 @@ spec:
       containers:
       - name: event-processor
         image: ghcr.io/banking-demo/event-processor:1.0.0
+        imagePullPolicy: Always
         ports:
         - containerPort: 8080
           protocol: TCP

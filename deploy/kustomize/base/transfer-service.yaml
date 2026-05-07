@@ -7,7 +7,7 @@ metadata:
     app: transfer-service
     app.kubernetes.io/part-of: banking-demo
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: transfer-service
@@ -17,7 +17,7 @@ spec:
         app: transfer-service
         azure.workload.identity/use: "true"
     spec:
-      serviceAccountName: redis-workload-identity
+      serviceAccountName: banking-workload-identity
       securityContext:
         runAsNonRoot: true
         runAsUser: 64198
@@ -26,15 +26,11 @@ spec:
       containers:
       - name: transfer-service
         image: ghcr.io/banking-demo/transfer-service:1.0.0
+        imagePullPolicy: Always
         ports:
         - containerPort: 8080
           protocol: TCP
         env:
-        - name: CosmosDb__ConnectionString
-          valueFrom:
-            secretKeyRef:
-              name: banking-secrets
-              key: cosmos-connection-string
         - name: APPLICATIONINSIGHTS_CONNECTION_STRING
           valueFrom:
             secretKeyRef:
@@ -45,6 +41,11 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: redis-connection-string
+        - name: Jwt__Key
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: jwt-key
         envFrom:
         - configMapRef:
             name: banking-demo-config

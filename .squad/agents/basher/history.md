@@ -8,6 +8,36 @@
 
 ## Learnings
 
+### 2026-05 — Chatbot SDK Migration: v2.x azure-ai-projects (final)
+
+**Problem:** chatbot-service used the old `create_agent()` / `threads.create()` / `messages.create()` / `runs.create_and_process()` API which no longer exists in azure-ai-projects 2.1.0.
+
+**Fix:** Full rewrite of `main.py` to use the v2.x SDK:
+- `agents.create_version(agent_name, definition=PromptAgentDefinition(...))` to register agent at startup
+- `project_client.get_openai_client(agent_name=...)` to get an OpenAI-compatible client pointed at the agent endpoint
+- `openai_client.responses.create(model=agent_name, input=messages)` for chat (OpenAI Responses API)
+- Client-side conversation history (in-memory per user, capped at 20 messages) replaces server-side threads
+- `agents.delete(agent_name=...)` on shutdown for cleanup
+- `AIProjectClient(..., allow_preview=True)` required for agent_name-based OpenAI client
+- Graceful 503 degradation preserved when no Azure endpoint configured
+
+**Key v2.x API surface verified by introspection:**
+- `AgentsOperations`: create_version, delete, get, list, etc.
+- `BetaAgentsOperations`: create_session, get_session_log_stream (for compute sessions, not chat)
+- Chat goes through `get_openai_client(agent_name=...)` → OpenAI Responses API
+
+**Files:** `src/chatbot-service/app/main.py`, `src/chatbot-service/Dockerfile` (unchanged)
+
+**Pattern:** In azure-ai-projects 2.x, agents are versioned resources (`create_version` + `PromptAgentDefinition`). Chat uses the OpenAI Responses API via `get_openai_client(agent_name=...)`, not threads/runs.
+
+### 2026-05 — AI Foundry Agents RBAC Scope Fix
+
+**Problem:** chatbot-service returned 503 because `create_agent()` failed with PermissionDenied. The `Azure AI Developer` role was scoped to the AI Services account (`data.azurerm_cognitive_account.openai.id`), but the Agents API requires permissions at the AI Foundry **project** scope.
+
+**Fix:** Changed scope of `banking_ai_developer` role assignment in `infra/cloud/identity.tf` (line 45) from `data.azurerm_cognitive_account.openai.id` to `azapi_resource.ai_foundry_project.id`.
+
+**Pattern:** AI Foundry Agents API RBAC must be scoped to the project resource (`Microsoft.CognitiveServices/accounts/projects`), not the parent AI Services account. The project resource is defined in `infra/cloud/ai.tf`.
+
 ### 2026-05 — Redis Connectivity Fix
 
 **Problem:** event-processor (Go) and user-service (.NET) crashed on Redis connect. Azure Managed Redis was deployed with `access_keys_authentication_enabled = false` (Entra-only) and the configmap had unresolved placeholders.
@@ -505,3 +535,122 @@ the hostname, not the child project name. The project name only appears in the `
 - Cloud: `AZURE_CLIENT_ID` injected by AKS workload identity webhook → services detect and use `DefaultAzureCredential` → Entra token auth to Redis
 - Local: No `AZURE_CLIENT_ID` → services fall back to connection string password (docker-compose Redis on port 6379, no TLS)
 - No extra env var needed — `AZURE_CLIENT_ID` presence is the signal (set automatically by workload identity)
+
+### Transfer Service 500 Fix (Bug 3) — 2026-05-07
+
+**Root Cause:** `TransferService.cs` catch block saved the failed transfer to Cosmos but then re-threw the exception (`throw;`). Since `TransfersController` had no try/catch, every error became an unhandled 500.
+
+**Secondary Issue:** Unused Polly v8 dependency with v7-style API (`Policy.Handle<>()`, `AsyncRetryPolicy`). While Polly 8.x includes backward compat, the retry policy was never actually invoked — dead code with a wrong-version dependency.
+
+**Fixes Applied:**
+- `src/transfer-service/Services/TransferService.cs`: Removed `throw;` from catch block. Now returns failed transfer with status/reason. Added inner try/catch around failure persistence so a Cosmos error during error-handling doesn't mask the original failure.
+- `src/transfer-service/Controllers/TransfersController.cs`: Added status check — returns `400 BadRequest` with error details when transfer fails instead of `201 Created`.
+- `src/transfer-service/transfer-service.csproj`: Removed unused `Polly 8.2.0` package reference.
+- Removed `using Polly; using Polly.Retry;` and `AsyncRetryPolicy` field from TransferService.
+
+**Key File Paths:**
+- Service: `src/transfer-service/Services/TransferService.cs`
+- Controller: `src/transfer-service/Controllers/TransfersController.cs`
+- Program: `src/transfer-service/Program.cs`
+- Model: `src/transfer-service/Models/Transfer.cs`
+- Kustomize: `deploy/kustomize/base/transfer-service.yaml`
+- Azure overlay: `deploy/kustomize/overlays/azure/kustomization.yaml`
+
+**ACR:** Correct ACR is `bjdcsa` (not `burstingmastiff55181acr` from project notes). Images at `bjdcsa.azurecr.io/transfer-service:latest`.
+
+**Deployment:** Image built and pushed to ACR. AKS cluster was unreachable (network timeout) — rollout restart pending.
+
+---
+
+## 2026-05-07T17:56:00Z - Basher Spawn: Fix Azure AI Developer RBAC
+
+**Scribe Spawn Event**
+- **Task:** Fix Azure AI Developer role assignment scope in identity.tf
+- **Issue:** Chatbot service 503 PermissionDenied on agents/write data action
+- **Root Cause:** Role scoped to parent account (AI Services account) instead of AI Foundry project
+- **Fix:** Change role scope from account-level to project-level in infra/cloud/identity.tf
+- **Status:** Spawned in background mode
+- **Model:** claude-sonnet-4.5
+
+### 2026-05 — Login 401 Investigation
+
+**Problem:** Brian reported 401 on `POST /api/auth/login`. User exists in Cosmos (re-registration fails), but login returns 401. User-service logs showed no login requests.
+
+**Root Cause Analysis:** Multiple contributing issues found:
+1. **Global 401 interceptor bounce-back** (`src/ui-app/src/api/client.ts:20-29`): Catches ALL 401s from any service, clears token, hard-redirects to /login. After login succeeds, `AccountProvider` immediately fires `GET /api/accounts` — if any downstream service returns 401, user gets bounced back.
+2. **Zero logging in login path** (`src/user-service/Controllers/AuthController.cs:42-61`): No log statements + `Microsoft.AspNetCore: Warning` level = login requests invisible in logs. The "no login request in logs" observation was a logging gap, not proof of routing failure.
+3. **`UseHttpsRedirection()` in all .NET services**: Runs before auth middleware. Behind Istio, logs warning but passes through. Not the direct cause.
+4. **Duplicate login endpoints**: `AuthController /api/auth/login` and `UsersController /api/users/login` — identical code, maintenance hazard.
+
+**Key Files:**
+- `src/user-service/Controllers/AuthController.cs` — login endpoint (no logging)
+- `src/user-service/Controllers/UsersController.cs` — duplicate login endpoint
+- `src/ui-app/src/api/client.ts` — 401 interceptor
+- `src/ui-app/src/contexts/AccountContext.tsx` — fires GET /api/accounts on token change
+- `src/user-service/Program.cs:123` — UseHttpsRedirection()
+- `cluster-config/istio/gateway/default-ingress.yaml` — Istio routing (correct)
+
+**Architecture Notes:**
+- JWT config is consistent across services (same key from `banking-secrets.jwt-key`, same issuer `user-service`, audience `banking-demo`)
+- Istio VirtualService correctly routes `/api/auth` → user-service:80 → targetPort 8080
+- No Istio AuthorizationPolicy or RequestAuthentication policies
+- nginx in ui-app serves static only, no API proxy
+- user-service Cosmos SDK is preview version `3.59.0-preview.0` — property serialization uses Newtonsoft default (PascalCase)
+
+- chatbot-service: Rewrote from pre-created agent_reference pattern to programmatic agent creation via `project_client.agents.create_agent()` at startup, with `delete_agent()` on shutdown
+- chatbot-service: Switched chat endpoint from OpenAI Responses API to agents threads/runs pattern (`threads.create`, `messages.create`, `runs.create_and_process`)
+- chatbot-service: Conversation history now managed by Azure AI threads (one thread per user) instead of in-memory message lists
+- chatbot-service: Removed `openai_client` global; `project_client` handles all agent interactions
+
+### 2026-05 — Anomaly-Service Redis Connection Fix
+
+**Problem:** anomaly-service admin endpoints (`/api/admin/stats`, `/api/admin/flagged-transactions`) returned 500. The Python code blindly prepended `redis://` to the `REDIS__CONNECTIONSTRING` env var, but AKS provides a .NET-style connection string (`host:10000,ssl=True,abortConnect=False,password=xxx`).
+
+**Fix:** Replaced `redis.from_url()` with `redis.Redis()` using parsed connection parameters:
+- `_parse_redis_connection_string()` extracts host, port, ssl, password from .NET format (mirrors Go `parseRedisConnectionString()` in event-processor)
+- Entra ID token auth when `AZURE_CLIENT_ID` is set: uses `DefaultAzureCredential` with Redis scope, extracts OID from JWT for username
+- Token refresh every 45 minutes via background task
+- TLS enabled when `ssl=True` in connection string
+- Falls back to simple host:port for local docker-compose
+
+**Files:** `src/anomaly-service/app/main.py`
+
+**Pattern:** All services connecting to Azure Managed Redis must parse .NET connection strings and support Entra ID auth. Go event-processor (`src/event-processor/main.go:305-336`) is the reference implementation.
+
+### 2026-05 — Balance Update Fix: Transaction-Service Owns Balance Side Effects
+
+**Problem:** When transactions were created (direct or via transfer), account balances were NOT updated. The transaction-service only recorded transactions without adjusting balances. The InMemoryTransferService was a stub with no real transfer logic.
+
+**Fix:**
+- Transaction-service now calls `POST /api/accounts/{id}/balance` on account-service after every transaction creation, using JWT forwarded from the incoming request
+- Transfer-service no longer duplicates balance updates — removed direct balance calls from Cosmos TransferService
+- InMemoryTransferService rebuilt with full transfer logic: account lookup, balance validation, transaction creation via HTTP calls (mirroring Cosmos version)
+- Both TransferService implementations now use `IHttpClientFactory` + `IHttpContextAccessor` for authenticated service-to-service calls
+- Added `HttpClient`, `IHttpClientFactory`, and `IHttpContextAccessor` DI registrations in both transaction-service and transfer-service `Program.cs`
+
+**Key files:**
+- `src/transaction-service/Controllers/TransactionsController.cs` — balance update call after CreateTransaction
+- `src/transaction-service/Program.cs` — HttpClient + HttpContextAccessor DI
+- `src/transfer-service/Services/TransferService.cs` — removed balance calls, added auth forwarding
+- `src/transfer-service/Services/InMemoryTransferService.cs` — full transfer logic with HTTP calls
+- `src/transfer-service/Program.cs` — HttpClient + HttpContextAccessor for both InMemory and Cosmos branches
+- `src/account-service/Controllers/AccountsController.cs` — existing `POST {id}/balance` endpoint (unchanged)
+
+**Pattern:** Transaction-service is the single owner of balance side effects. Any code that creates a transaction (direct or via transfer) gets automatic balance updates. Transfer-service only orchestrates creating debit/credit transaction pairs.
+
+**Pattern:** Service-to-service calls must forward the incoming JWT via `IHttpContextAccessor` to satisfy `[Authorize]` on downstream services.
+
+### 2026-05-07 — Transfer Service Account Lookup Fix
+
+**Problem:** Transfers failed with "From account not found" — both `fromAccountId` and `toAccountId` were null.
+
+**Root causes (two bugs):**
+1. **Missing port in docker-compose inter-service URLs:** .NET 9 containers default to port 8080. `Services__AccountService=http://account-service` (no port = port 80) caused connection refused. Fixed by adding `:8080` to all service URLs in docker-compose.yml.
+2. **Ownership check on `GetAccountByNumber` blocked cross-user transfers:** The account-service endpoint returned 403 for the destination account since it belongs to a different user. Removed ownership check — account-by-number lookups are needed for service-to-service calls (transfers).
+
+**Files changed:**
+- `docker-compose.yml` — added `:8080` to `Services__AccountService` and `Services__TransactionService` URLs
+- `src/account-service/Controllers/AccountsController.cs` — removed ownership check from `GetAccountByNumber`
+
+**Pattern:** .NET 9 containers listen on 8080 by default (not 80). All inter-service URLs in docker-compose must include `:8080`.
+**Pattern:** Account-by-number lookup must not enforce ownership — it's used for cross-user transfers.

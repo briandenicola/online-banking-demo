@@ -17,7 +17,7 @@ spec:
         app: anomaly-service
         azure.workload.identity/use: "true"
     spec:
-      serviceAccountName: ai-workload-identity
+      serviceAccountName: banking-workload-identity
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -26,6 +26,7 @@ spec:
       containers:
       - name: anomaly-service
         image: ghcr.io/banking-demo/anomaly-service:1.0.0
+        imagePullPolicy: Always
         ports:
         - containerPort: 8002
           protocol: TCP
@@ -35,6 +36,11 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: appinsights-connection-string
+        - name: REDIS__CONNECTIONSTRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: redis-connection-string
         envFrom:
         - configMapRef:
             name: banking-demo-config

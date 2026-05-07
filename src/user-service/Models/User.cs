@@ -1,4 +1,5 @@
 using System;
+using Newtonsoft.Json;
 
 namespace UserService.Models;
 
@@ -7,6 +8,7 @@ namespace UserService.Models;
 /// </summary>
 public class User
 {
+    [JsonProperty("id")]
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string Username { get; set; } = null!;
     public string Email { get; set; } = null!;

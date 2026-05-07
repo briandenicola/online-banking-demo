@@ -1,5 +1,9 @@
 using System.Collections.Concurrent;
 using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Newtonsoft.Json;
 using OnlineBankingDemo.Contracts.Dtos;
 using StackExchange.Redis;
@@ -12,12 +16,23 @@ public class InMemoryTransactionService : ITransactionService
     private readonly ConcurrentDictionary<string, Transaction> _transactions = new();
     private readonly IConnectionMultiplexer _redis;
     private readonly ILogger<InMemoryTransactionService> _logger;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IConfiguration _configuration;
+    private readonly IHttpContextAccessor _httpContextAccessor;
     private const string StreamName = "banking-events";
 
-    public InMemoryTransactionService(IConnectionMultiplexer redis, ILogger<InMemoryTransactionService> logger)
+    public InMemoryTransactionService(
+        IConnectionMultiplexer redis,
+        ILogger<InMemoryTransactionService> logger,
+        IHttpClientFactory httpClientFactory,
+        IConfiguration configuration,
+        IHttpContextAccessor httpContextAccessor)
     {
         _redis = redis;
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
+        _configuration = configuration;
+        _httpContextAccessor = httpContextAccessor;
         SeedDemoTransactions();
     }
 
@@ -57,12 +72,19 @@ public class InMemoryTransactionService : ITransactionService
         _logger.LogInformation("Seeded {Count} demo transactions", _transactions.Count);
     }
 
-    public async Task<Transaction> CreateTransactionAsync(CreateTransactionRequest request)
+    public async Task<Transaction> CreateTransactionAsync(CreateTransactionRequest request, string userId)
     {
+        // Check balance for debit transactions before creating
+        if (IsDebitTransaction(request))
+        {
+            await ValidateBalanceAsync(request.AccountId, Math.Abs(request.Amount));
+        }
+
         var transaction = new Transaction
         {
             Id = System.Guid.NewGuid().ToString(),
             AccountId = request.AccountId,
+            UserId = userId,
             Amount = request.Amount,
             Currency = request.Currency ?? "USD",
             Type = request.Type,
@@ -70,6 +92,9 @@ public class InMemoryTransactionService : ITransactionService
             Category = request.Category ?? "Uncategorized"
         };
         _transactions[transaction.Id] = transaction;
+
+        // Update account balance (transaction-service owns balance side effects)
+        await UpdateAccountBalanceAsync(transaction.AccountId, transaction.Amount);
 
         // Publish TransactionCreated event to Redis Stream
         try
@@ -124,5 +149,133 @@ public class InMemoryTransactionService : ITransactionService
             .OrderByDescending(t => t.Timestamp)
             .Take(limit);
         return Task.FromResult(transactions);
+    }
+
+    private static bool IsDebitTransaction(CreateTransactionRequest request)
+    {
+        return request.Amount < 0 ||
+               string.Equals(request.Type, "Debit", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task ValidateBalanceAsync(string accountId, decimal amount)
+    {
+        var accountServiceUrl = _configuration["Services:AccountService"];
+        if (string.IsNullOrEmpty(accountServiceUrl))
+        {
+            _logger.LogWarning("AccountService URL not configured; skipping balance validation");
+            return;
+        }
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            var response = await client.GetAsync($"{accountServiceUrl}/api/accounts/{accountId}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Could not fetch account {AccountId} for balance check (HTTP {StatusCode})", accountId, response.StatusCode);
+                return;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            var account = System.Text.Json.JsonSerializer.Deserialize<AccountInfo>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            if (account != null && account.Balance < amount)
+            {
+                _logger.LogWarning("Insufficient funds: account {AccountId} balance {Balance} < requested {Amount}",
+                    accountId, account.Balance, amount);
+
+                // Publish anomaly event for insufficient funds attempt
+                await PublishInsufficientFundsEvent(accountId, account.Balance, amount);
+
+                throw new InsufficientFundsException(accountId, account.Balance, amount);
+            }
+        }
+        catch (InsufficientFundsException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Balance validation failed for account {AccountId}; allowing transaction to proceed", accountId);
+        }
+    }
+
+    private async Task PublishInsufficientFundsEvent(string accountId, decimal balance, decimal requestedAmount)
+    {
+        try
+        {
+            var eventPayload = new
+            {
+                eventType = "InsufficientFundsAttempt",
+                timestamp = DateTime.UtcNow.ToString("o"),
+                data = new
+                {
+                    accountId,
+                    currentBalance = balance,
+                    requestedAmount,
+                    type = "Debit"
+                }
+            };
+
+            var db = _redis.GetDatabase();
+            await db.StreamAddAsync(StreamName, new NameValueEntry[]
+            {
+                new("payload", JsonConvert.SerializeObject(eventPayload))
+            });
+
+            _logger.LogInformation("Published InsufficientFundsAttempt event for account {AccountId}", accountId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to publish InsufficientFundsAttempt event for account {AccountId}", accountId);
+        }
+    }
+
+    private async Task UpdateAccountBalanceAsync(string accountId, decimal amount)
+    {
+        var accountServiceUrl = _configuration["Services:AccountService"];
+        if (string.IsNullOrEmpty(accountServiceUrl))
+        {
+            _logger.LogWarning("AccountService URL not configured; skipping balance update");
+            return;
+        }
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            
+            // Forward JWT token for service-to-service authentication
+            var authHeader = _httpContextAccessor.HttpContext?.Request.Headers["Authorization"].FirstOrDefault();
+            if (!string.IsNullOrEmpty(authHeader))
+            {
+                client.DefaultRequestHeaders.Authorization = AuthenticationHeaderValue.Parse(authHeader);
+            }
+            
+            var requestBody = JsonConvert.SerializeObject(new { Amount = amount });
+            var content = new StringContent(requestBody, System.Text.Encoding.UTF8, "application/json");
+            
+            var response = await client.PostAsync($"{accountServiceUrl}/api/accounts/{accountId}/balance", content);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError("Failed to update account balance for {AccountId} (HTTP {StatusCode})", accountId, response.StatusCode);
+            }
+            else
+            {
+                _logger.LogInformation("Updated account {AccountId} balance by {Amount}", accountId, amount);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to call account-service to update balance for account {AccountId}", accountId);
+        }
+    }
+
+    private class AccountInfo
+    {
+        public string Id { get; set; } = null!;
+        public decimal Balance { get; set; }
     }
 }

@@ -14,7 +14,7 @@ export interface Account {
 interface AccountContextType {
   accounts: Account[];
   fetchAccounts: () => Promise<void>;
-  addAccount: (account: Omit<Account, 'id'>) => void;
+  addAccount: (account: Omit<Account, 'id'>) => Promise<void>;
   transfer: (fromId: string, toId: string, amount: number) => Promise<boolean>;
 }
 
@@ -29,7 +29,6 @@ export const useAccountContext = () => {
 export const AccountProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { user, token } = useAuthContext();
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [nextAccountId, setNextAccountId] = useState(1);
 
   const fetchAccounts = useCallback(async () => {
     if (!user || !token) return;
@@ -44,9 +43,6 @@ export const AccountProvider: React.FC<{ children: ReactNode }> = ({ children })
         currency: a.currency as string,
       }));
       setAccounts(mapped);
-      if (mapped.length > 0) {
-        setNextAccountId(Math.max(...mapped.map(a => parseInt(a.id) || 0)) + 1);
-      }
     } catch (e) {
       console.error('Failed to fetch accounts:', e);
     }
@@ -57,18 +53,36 @@ export const AccountProvider: React.FC<{ children: ReactNode }> = ({ children })
     fetchAccounts();
   }, [fetchAccounts]);
 
-  const addAccount = (accountData: Omit<Account, 'id'>) => {
+  const addAccount = async (accountData: Omit<Account, 'id'>): Promise<void> => {
+    const response = await apiClient.post('/accounts', {
+      accountType: accountData.type,
+      initialBalance: accountData.balance,
+      currency: accountData.currency,
+    });
+    const a = response.data;
     const newAccount: Account = {
-      ...accountData,
-      id: nextAccountId.toString(),
+      id: a.id as string,
+      name: `${a.accountType} Account`,
+      number: a.accountNumber as string,
+      balance: a.balance as number,
+      type: (a.accountType as string || '').toLowerCase(),
+      currency: a.currency as string,
     };
     setAccounts(prev => [...prev, newAccount]);
-    setNextAccountId(prev => prev + 1);
   };
 
   const transfer = async (fromId: string, toId: string, amount: number): Promise<boolean> => {
     try {
-      await apiClient.post('/transfers', { fromAccountId: fromId, toAccountId: toId, amount });
+      const fromAcc = accounts.find(a => a.id === fromId);
+      const toAcc = accounts.find(a => a.id === toId);
+      if (!fromAcc || !toAcc) return false;
+      await apiClient.post('/transfers', {
+        fromAccountId: fromAcc.id,
+        toAccountId: toAcc.id,
+        fromAccountNumber: fromAcc.number,
+        toAccountNumber: toAcc.number,
+        amount,
+      });
       // Update local state on success
       setAccounts(prev => prev.map(acc => {
         if (acc.id === fromId) return { ...acc, balance: acc.balance - amount };

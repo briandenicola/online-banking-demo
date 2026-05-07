@@ -11,7 +11,7 @@ public class CreateTransactionRequest
     public string AccountId { get; set; } = null!;
 
     [Required]
-    [Range(0.01, 1000000, ErrorMessage = "Amount must be between 0.01 and 1,000,000")]
+    [Range(-1000000, 1000000, ErrorMessage = "Amount must be between -1,000,000 and 1,000,000 and cannot be zero")]
     public decimal Amount { get; set; }
 
     [Required]

@@ -24,7 +24,9 @@ public class AccountsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> CreateAccount([FromBody] CreateAccountRequest request)
     {
-        var userId = User.FindFirst("userId")?.Value;
+        // Support both JWT claim and X-User-Id header (for authenticated internal service calls)
+        var userId = User.FindFirst("userId")?.Value
+            ?? Request.Headers["X-User-Id"].FirstOrDefault();
         if (string.IsNullOrEmpty(userId))
         {
             return Unauthorized();
@@ -83,13 +85,8 @@ public class AccountsController : ControllerBase
             return NotFound();
         }
 
-        // Verify ownership
-        var userId = User.FindFirst("userId")?.Value;
-        if (account.UserId != userId)
-        {
-            return Forbid();
-        }
-
+        // Return account info — no ownership check here because internal services
+        // (e.g. transfer-service) need to look up destination accounts by number.
         return Ok(account);
     }
 

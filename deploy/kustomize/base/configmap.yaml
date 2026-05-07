@@ -12,4 +12,7 @@ data:
   BUDGET_SERVICE_URL: "http://budget-service.banking-demo.svc.cluster.local"
   CHATBOT_SERVICE_URL: "http://chatbot-service.banking-demo.svc.cluster.local"
   EVENT_PROCESSOR_URL: "http://event-processor.banking-demo.svc.cluster.local"
+  Services__AccountService: "http://account-service.banking-demo.svc.cluster.local"
+  Services__TransactionService: "http://transaction-service.banking-demo.svc.cluster.local"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4317"
+  CosmosDb__Endpoint: "REPLACE_WITH_COSMOS_ENDPOINT"

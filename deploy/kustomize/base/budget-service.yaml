@@ -17,7 +17,7 @@ spec:
         app: budget-service
         azure.workload.identity/use: "true"
     spec:
-      serviceAccountName: ai-workload-identity
+      serviceAccountName: banking-workload-identity
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -26,6 +26,7 @@ spec:
       containers:
       - name: budget-service
         image: ghcr.io/banking-demo/budget-service:1.0.0
+        imagePullPolicy: Always
         ports:
         - containerPort: 8003
           protocol: TCP

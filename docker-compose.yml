@@ -69,6 +69,7 @@ services:
       - Redis__ConnectionString=redis:6379
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - Services__AccountService=http://account-service:8080
       - OTEL_SERVICE_NAME=transaction-service
     depends_on:
       redis:
@@ -88,8 +89,8 @@ services:
       - Jwt__Key=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
       - Jwt__Issuer=${JWT_ISSUER:-user-service}
       - Redis__ConnectionString=redis:6379
-      - Services__AccountService=http://account-service
-      - Services__TransactionService=http://transaction-service
+      - Services__AccountService=http://account-service:8080
+      - Services__TransactionService=http://transaction-service:8080
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - OTEL_SERVICE_NAME=transfer-service
@@ -110,11 +111,11 @@ services:
     ports:
       - "8001:8001"
     environment:
-      - AZURE_AI_AGENTS_ENDPOINT=${AZURE_AI_AGENTS_ENDPOINT}
+      - FOUNDRY_PROJECT_ENDPOINT=${FOUNDRY_PROJECT_ENDPOINT:-${AZURE_AI_AGENTS_ENDPOINT}}
+      - FOUNDRY_MODEL=${FOUNDRY_MODEL:-gpt-5.4-mini}
       - AZURE_TENANT_ID=${AZURE_TENANT_ID}
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
       - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}
-      - AZURE_OPENAI_MODEL=${AZURE_OPENAI_MODEL:-gpt-4o-mini}
       - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - OTEL_SERVICE_NAME=chatbot-service
@@ -167,25 +168,6 @@ services:
     depends_on:
       - transaction-service
 
-  # API Gateway (NGINX + njs JWT validation)
-  gateway:
-    build:
-      context: ./gateway
-      dockerfile: Dockerfile
-    container_name: banking-gateway
-    ports:
-      - "80:80"
-    environment:
-      - JWT_KEY=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
-      - JWT_ISSUER=${JWT_ISSUER:-user-service}
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-    depends_on:
-      - user-service
-      - account-service
-      - transaction-service
-      - transfer-service
-    restart: on-failure
 
   # Event Processor (audit/routing consumer)
   event-processor:
@@ -210,8 +192,6 @@ services:
     container_name: banking-ui-app
     ports:
       - "3000:8080"
-    depends_on:
-      - gateway
     restart: on-failure
 
   # --- Optional: Jaeger for local trace viewing ---

@@ -6,6 +6,14 @@ public class CreateTransferRequest
 {
     [Required]
     [StringLength(50)]
+    public string FromAccountId { get; set; } = null!;
+
+    [Required]
+    [StringLength(50)]
+    public string ToAccountId { get; set; } = null!;
+
+    [Required]
+    [StringLength(50)]
     public string FromAccountNumber { get; set; } = null!;
 
     [Required]

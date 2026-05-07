@@ -142,6 +142,10 @@ public class UsersController : ControllerBase
         try
         {
             var client = _httpClientFactory.CreateClient("AccountService");
+
+            // Mint a short-lived JWT so account-service can authenticate this internal call
+            var token = await _authService.GenerateTokenAsync(userId, "system");
+
             var accountRequest = new CreateAccountRequest
             {
                 AccountType = "checking",
@@ -151,7 +155,8 @@ public class UsersController : ControllerBase
 
             var json = JsonConvert.SerializeObject(accountRequest);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
-            content.Headers.Add("X-User-Id", userId);
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 
             var response = await client.PostAsync("/api/accounts", content);
 
