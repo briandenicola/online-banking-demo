@@ -32,12 +32,13 @@ public class TransactionService : ITransactionService
         _configuration = configuration;
     }
 
-    public async Task<Transaction> CreateTransactionAsync(OnlineBankingDemo.Contracts.Dtos.CreateTransactionRequest request)
+    public async Task<Transaction> CreateTransactionAsync(OnlineBankingDemo.Contracts.Dtos.CreateTransactionRequest request, string userId)
     {
         var transaction = new Transaction
         {
             Id = Guid.NewGuid().ToString(),
             AccountId = request.AccountId,
+            UserId = userId,
             Amount = request.Amount,
             Currency = request.Currency ?? "USD",
             Type = request.Type,

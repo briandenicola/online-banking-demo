@@ -57,12 +57,13 @@ public class InMemoryTransactionService : ITransactionService
         _logger.LogInformation("Seeded {Count} demo transactions", _transactions.Count);
     }
 
-    public async Task<Transaction> CreateTransactionAsync(CreateTransactionRequest request)
+    public async Task<Transaction> CreateTransactionAsync(CreateTransactionRequest request, string userId)
     {
         var transaction = new Transaction
         {
             Id = System.Guid.NewGuid().ToString(),
             AccountId = request.AccountId,
+            UserId = userId,
             Amount = request.Amount,
             Currency = request.Currency ?? "USD",
             Type = request.Type,

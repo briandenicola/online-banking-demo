@@ -25,7 +25,13 @@ public class TransactionsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> CreateTransaction([FromBody] CreateTransactionRequest request)
     {
-        var transaction = await _transactionService.CreateTransactionAsync(request);
+        var userId = User.FindFirst("userId")?.Value;
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized();
+        }
+
+        var transaction = await _transactionService.CreateTransactionAsync(request, userId);
         return CreatedAtAction(nameof(GetTransaction), new { id = transaction.Id }, transaction);
     }
 
