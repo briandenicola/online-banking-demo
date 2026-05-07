@@ -394,3 +394,36 @@ Basher implemented the Redis architecture decision:
 - `docs/secure-deployment-plan.md:Layer 1b` — New backlog section with Terraform HCL snippets, K8s manifests, Taskfile tasks, verification criteria
 - `.squad/decisions/inbox/danny-kv-csi-backlog.md` — Comprehensive decision doc with architecture, phases, risks, rollback plan, success criteria
 
+
+### eShopOnAKS Deep Analysis (2026-05-06)
+
+**Objective:** Analyze briandenicola/eShopOnAKS to identify patterns, documentation, and features for online-banking-demo.
+
+**Key Findings:**
+
+1. **Documentation Excellence:** eShopOnAKS uses a workshop-style format with 11 structured guides. Every doc has: concept → numbered steps → manual commands → example output → challenge questions → navigation. This is the #1 pattern to adopt.
+
+2. **Table of Contents:** `toc.md` at repo root provides section-level navigation across all docs. We have nothing similar.
+
+3. **Infrastructure Modularity:** Terraform is split into 7 modules (core/aks/keyvault/monitoring/redis/sql/chaos) with explicit dependency chains in `modules.tf`. Our `infra/cloud/main.tf` is a monolith.
+
+4. **Cluster Config (GitOps):** `cluster-config/` directory with Kustomize for platform concerns (cert-manager, istio, keda, prometheus). Flux extension in Terraform manages it with ordered kustomizations. Matches our planned approach.
+
+5. **Developer Experience:** Full DevContainer + Codespaces setup, `.aliases.rc`, Taskfile with status/restart/dns/hubble commands. Far ahead of our current DX.
+
+6. **Observability Stack:** OTEL Collector → Azure Monitor (App Insights + Managed Grafana). Prometheus scraping via cluster-config. Documented with screenshots.
+
+7. **Testing:** Playwright E2E (3 specs + login fixture) triggered via GitHub Actions. Chaos Engineering via Azure Chaos Studio.
+
+8. **Security:** API server IP restrictions, image cleaner, Microsoft Defender, maintenance windows — additions to our plan.
+
+9. **No Agentic Features:** eShopOnAKS has OpenAI resource (disabled) and Copilot mention but no agentic workflows. This is our differentiation opportunity.
+
+**Backlog Items Added (Layer 5):**
+- 23 concrete items across 8 categories: Documentation Overhaul, Developer Experience, Build & Container, Observability, Testing & Resilience, Infrastructure Maturity, Agentic Showcase, and priority matrix
+- Priority S/M/L sizing with dependencies mapped
+- Items range from XS (shell aliases) to L (Terraform module refactoring, workshop-style docs)
+
+**Artifacts Created:**
+- `docs/eshop-analysis.md` — Full analysis with gap tables and pattern comparisons
+- `docs/secure-deployment-plan.md` — Layer 5 appended with 23 backlog items

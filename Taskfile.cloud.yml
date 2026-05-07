@@ -57,7 +57,7 @@ tasks:
       AZURE_OPENAI_ENDPOINT:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw openai_endpoint
       AZURE_CLIENT_ID:
-        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw managed_identity_client_id
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw banking_services_client_id
       APPLICATIONINSIGHTS_CONNECTION_STRING:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw application_insights_connection_string
 
@@ -136,22 +136,10 @@ tasks:
         apiVersion: v1
         kind: ServiceAccount
         metadata:
-          name: ai-workload-identity
+          name: banking-workload-identity
           namespace: banking-demo
           annotations:
             azure.workload.identity/client-id: "{{.AZURE_CLIENT_ID}}"
-          labels:
-            azure.workload.identity/use: "true"
-        EOF
-      - |
-        cat <<EOF | kubectl apply -f -
-        apiVersion: v1
-        kind: ServiceAccount
-        metadata:
-          name: redis-workload-identity
-          namespace: banking-demo
-          annotations:
-            azure.workload.identity/client-id: "{{.REDIS_MI_CLIENT_ID}}"
           labels:
             azure.workload.identity/use: "true"
         EOF
@@ -167,9 +155,7 @@ tasks:
       REDIS_CONN:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw redis_connection_string
       AZURE_CLIENT_ID:
-        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw managed_identity_client_id
-      REDIS_MI_CLIENT_ID:
-        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw redis_managed_identity_client_id
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw banking_services_client_id
 
   _images:update:
     internal: true
