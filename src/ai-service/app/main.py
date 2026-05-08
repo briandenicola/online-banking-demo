@@ -27,13 +27,14 @@ import redis.asyncio as redis
 import structlog
 
 try:
-    from agent_framework import Agent, tool
-    from agent_framework.foundry import FoundryChatClient
+    from agent_framework import Agent
+    from agent_framework_foundry import FoundryAgent, FoundryChatClient
     from azure.identity import DefaultAzureCredential
     AGENT_FRAMEWORK_AVAILABLE = True
 except ImportError:
     AGENT_FRAMEWORK_AVAILABLE = False
     Agent = None
+    FoundryAgent = None
     FoundryChatClient = None
     DefaultAzureCredential = None
 
@@ -84,6 +85,9 @@ FLAGGING_THRESHOLD = 0.7
 # Module-level state
 _redis_client: Optional[redis.Redis] = None
 _analyzer_pipeline: Optional["AnalyzerPipeline"] = None
+_foundry_credential = None
+_foundry_endpoint: Optional[str] = None
+_foundry_model: Optional[str] = None
 _ai_calls_today: int = 0
 _ai_calls_date: str = ""
 
@@ -248,8 +252,7 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
 {"riskScore": <float 0.0-1.0>, "explanation": "<1-2 sentence explanation>", "flags": ["<flag1>", ...]}"""
 
     def __init__(self):
-        self._client: Optional[FoundryChatClient] = None
-        self._model: str = ""
+        self._agent: Optional["FoundryAgent"] = None
         self._ready = False
 
     @property
@@ -260,10 +263,9 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
     def enabled(self) -> bool:
         return self._ready
 
-    def initialize(self, client: FoundryChatClient, model: str):
-        """Initialize with a FoundryChatClient instance."""
-        self._client = client
-        self._model = model
+    def initialize(self, agent: "FoundryAgent"):
+        """Initialize with a persistent FoundryAgent instance."""
+        self._agent = agent
         self._ready = True
 
     async def analyze(self, transaction: dict) -> RiskAssessment:
@@ -290,14 +292,8 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
                     f"- Account: {transaction.get('accountId', 'N/A')}"
                 )
 
-                risk_agent = Agent(
-                    client=self._client,
-                    name="RiskAssessor",
-                    instructions=self.SYSTEM_PROMPT,
-                    tools=[],
-                )
-                session = risk_agent.create_session()
-                response = await risk_agent.run(user_message, session=session)
+                session = self._agent.create_session()
+                response = await self._agent.run(user_message, session=session)
 
                 _ai_calls_today += 1
                 span.set_attribute("ai.calls_today", _ai_calls_today)
@@ -405,8 +401,7 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
 {"category": "<category name>", "confidence": <float 0.0-1.0>, "reasoning": "<brief reason>"}"""
 
     def __init__(self):
-        self._client: Optional[FoundryChatClient] = None
-        self._model: str = ""
+        self._agent: Optional["FoundryAgent"] = None
         self._ready = False
 
     @property
@@ -417,10 +412,9 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
     def enabled(self) -> bool:
         return self._ready
 
-    def initialize(self, client: FoundryChatClient, model: str):
-        """Initialize with a FoundryChatClient instance."""
-        self._client = client
-        self._model = model
+    def initialize(self, agent: "FoundryAgent"):
+        """Initialize with a persistent FoundryAgent instance."""
+        self._agent = agent
         self._ready = True
 
     async def categorize(self, transaction: dict, hints: list[str] | None = None) -> CategoryResult:
@@ -439,14 +433,8 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
                 if hints:
                     user_message += f"\n\nUser-defined categories (prefer these when applicable): {', '.join(hints)}"
 
-                cat_agent = Agent(
-                    client=self._client,
-                    name="TransactionCategorizer",
-                    instructions=self.SYSTEM_PROMPT,
-                    tools=[],
-                )
-                session = cat_agent.create_session()
-                response = await cat_agent.run(user_message, session=session)
+                session = self._agent.create_session()
+                response = await self._agent.run(user_message, session=session)
 
                 result = self._parse_response(str(response))
                 span.set_attribute("category.result", result.category)
@@ -854,7 +842,7 @@ async def consume_redis_stream(redis_client: redis.Redis):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: initialize analyzer pipeline and start consumer."""
-    global _redis_client, _analyzer_pipeline
+    global _redis_client, _analyzer_pipeline, _foundry_credential, _foundry_endpoint, _foundry_model
 
     logger.info("=" * 60)
     logger.info("🔍 Anomaly Detection Service — Startup (v2.0 Foundry)")
@@ -880,18 +868,33 @@ async def lifespan(app: FastAPI):
     if endpoint and AGENT_FRAMEWORK_AVAILABLE:
         try:
             credential = DefaultAzureCredential()
+            _foundry_credential = credential
+            _foundry_endpoint = endpoint
+            _foundry_model = model_name
             token = credential.get_token("https://cognitiveservices.azure.com/.default")
             logger.info(f"✅ Azure credential acquired (expires: {token.expires_on})")
 
-            client = FoundryChatClient(
+            risk_agent = FoundryAgent(
                 project_endpoint=endpoint,
-                model=model_name,
                 credential=credential,
+                agent_name="risk-assessor",
+                agent_version="1",
+                description="Financial transaction risk scoring agent",
+                instructions=FoundryRiskAnalyzer.SYSTEM_PROMPT,
             )
-            foundry_analyzer.initialize(client, model_name)
-            foundry_categorizer.initialize(client, model_name)
-            logger.info("✅ Foundry risk analyzer initialized")
-            logger.info("✅ Foundry categorizer initialized")
+            foundry_analyzer.initialize(risk_agent)
+            logger.info("✅ Foundry risk agent created (persistent)")
+
+            categorizer_agent = FoundryAgent(
+                project_endpoint=endpoint,
+                credential=credential,
+                agent_name="transaction-categorizer",
+                agent_version="1",
+                description="Financial transaction categorization agent",
+                instructions=FoundryCategorizer.SYSTEM_PROMPT,
+            )
+            foundry_categorizer.initialize(categorizer_agent)
+            logger.info("✅ Foundry categorizer agent created (persistent)")
         except Exception as e:
             logger.error(f"❌ Foundry initialization failed: {e}")
     else:
@@ -1213,3 +1216,133 @@ async def review_flagged_transaction(tx_id: str, review: ReviewRequest):
     )
 
     return FlaggedTransaction(**flagged_tx)
+
+
+@app.get("/api/admin/prompts")
+async def get_active_prompts():
+    """Return the system prompts currently used for risk scoring and categorization."""
+    if not _analyzer_pipeline:
+        raise HTTPException(status_code=503, detail="Analyzer pipeline not initialized")
+
+    prompts = []
+
+    for analyzer in _analyzer_pipeline._analyzers:
+        prompt_text = getattr(analyzer, 'SYSTEM_PROMPT', None)
+        if prompt_text:
+            prompts.append({
+                "name": analyzer.name,
+                "type": "risk-scoring",
+                "enabled": analyzer.enabled,
+                "systemPrompt": prompt_text.strip()
+            })
+
+    for categorizer in _analyzer_pipeline._categorizers:
+        prompt_text = getattr(categorizer, 'SYSTEM_PROMPT', None)
+        if prompt_text:
+            prompts.append({
+                "name": categorizer.name,
+                "type": "categorization",
+                "enabled": categorizer.enabled,
+                "systemPrompt": prompt_text.strip()
+            })
+
+    return prompts
+
+
+class EvalRequest(BaseModel):
+    """Request to run a Foundry evaluation."""
+    eval_name: str = Field(description="Display name for the evaluation run")
+    system_prompt: str = Field(description="System prompt to evaluate")
+    transactions: list[dict] = Field(description="List of transaction dicts to test against")
+    evaluators: list[str] = Field(
+        default=["coherence", "fluency", "relevance"],
+        description="Foundry evaluator names (short form preferred, e.g. 'coherence' not 'builtin.coherence')"
+    )
+
+
+@app.post("/api/admin/evaluate")
+async def run_foundry_evaluation(request: EvalRequest):
+    """Run a Foundry evaluation using the Agent Framework's FoundryEvals.
+    
+    For each transaction, first gets the model's response using the provided
+    system prompt, then evaluates the full conversation (system→user→assistant).
+    """
+    if not AGENT_FRAMEWORK_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Agent Framework not available")
+    if not _foundry_endpoint or not _foundry_credential:
+        raise HTTPException(status_code=503, detail="Foundry not configured")
+
+    from agent_framework_foundry import FoundryEvals, FoundryChatClient, FoundryAgent
+    from agent_framework._evaluation import EvalItem
+    from agent_framework import Message
+
+    client = FoundryChatClient(
+        project_endpoint=_foundry_endpoint,
+        model=_foundry_model or "gpt-5.4-mini",
+        credential=_foundry_credential,
+    )
+
+    # Create a temporary agent with the prompt being evaluated
+    eval_agent = FoundryAgent(
+        project_endpoint=_foundry_endpoint,
+        credential=_foundry_credential,
+        agent_name="risk-assessor",
+        agent_version="1",
+        instructions=request.system_prompt,
+    )
+
+    eval_items = []
+    for tx in request.transactions:
+        user_msg = (
+            f"Analyze this transaction:\n"
+            f"- Amount: ${tx.get('amount', 0):,.2f}\n"
+            f"- Type: {tx.get('type', 'Unknown')}\n"
+            f"- Description: {tx.get('description', 'N/A')}"
+        )
+
+        # Get the model's actual response first
+        session = eval_agent.create_session()
+        response = await eval_agent.run(user_msg, session=session)
+        assistant_response = str(response)
+
+        conversation = [
+            Message(role="system", contents=[request.system_prompt]),
+            Message(role="user", contents=[user_msg]),
+            Message(role="assistant", contents=[assistant_response]),
+        ]
+        eval_items.append(EvalItem(conversation=conversation))
+
+    evals = FoundryEvals(
+        client=client,
+        evaluators=request.evaluators,
+    )
+
+    results = await evals.evaluate(eval_items, eval_name=request.eval_name)
+
+    # Build detailed items for JSON download
+    detailed_items = []
+    for item in results.items:
+        scores = {s.name: {"score": s.score, "passed": s.passed} for s in item.scores}
+        sample = item.scores[0].sample if item.scores and item.scores[0].sample else {}
+        detailed_items.append({
+            "item_id": item.item_id,
+            "status": item.status,
+            "query": sample.get("query", item.input_text or ""),
+            "response": sample.get("response", item.output_text or ""),
+            "query_messages": sample.get("query_messages", []),
+            "response_messages": sample.get("response_messages", []),
+            "scores": scores,
+        })
+
+    return {
+        "eval_id": results.eval_id,
+        "run_id": results.run_id,
+        "status": results.status,
+        "total": results.total,
+        "passed": results.passed,
+        "failed": results.failed,
+        "all_passed": results.all_passed,
+        "per_evaluator": results.per_evaluator,
+        "report_url": results.report_url,
+        "items": detailed_items,
+    }

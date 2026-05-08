@@ -1,0 +1,12 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: banking-demo-tls
+  namespace: aks-istio-ingress
+spec:
+  secretName: banking-demo-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+  - "${CUSTOM_DOMAIN}"

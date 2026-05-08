@@ -22,6 +22,7 @@ tasks:
     cmds:
       - task: _init
       - task: apply
+      - task: infra:config
 
   apply:
     desc: Apply Terraform infrastructure
@@ -98,15 +99,29 @@ tasks:
   deploy:
     desc: Deploy application to Kubernetes cluster (updates image refs then applies)
     cmds:
+      - task: _images:update
+      - kubectl apply -k deploy/kustomize/observability/
+      - kubectl apply -k deploy/kustomize/base/
+      - envsubst < cluster-config/istio/gateway/istio-ingress-gateway.yaml | kubectl apply -f -
+
+  # === One-time infra configuration ===
+  # Run after Terraform creates AKS. Sets up credentials, namespaces, secrets,
+  # configmap values, secret-provider-class, and optionally TLS via cert-manager.
+  # DNS SETUP: Create a DNS A record pointing CUSTOM_DOMAIN to the Istio ingress
+  # gateway external IP. Get the IP with: kubectl get svc -n aks-istio-ingress
+
+  infra:config:
+    desc: One-time AKS configuration (credentials, namespaces, secrets, configmap, CSI, TLS)
+    cmds:
       - az aks get-credentials --resource-group {{.RG_NAME}} --name {{.AKS_NAME}} --overwrite-existing
       - sed -i s/devicecode/azurecli/g ~/.kube/config
       - task: _secrets:create
-      - task: _images:update
       - sed -i "s|REPLACE_WITH_COSMOS_ENDPOINT|{{.COSMOS_ENDPOINT}}|g" deploy/kustomize/base/configmap.yaml
-      - kubectl apply -k deploy/kustomize/observability/
-      - kubectl apply -k deploy/kustomize/base/
-      - kubectl apply -k cluster-config/istio/gateway/
+      - sed -i "s|REPLACE_WITH_KEYVAULT_NAME|{{.KEYVAULT_NAME}}|g" deploy/kustomize/base/secret-provider-class.yaml
+      - sed -i "s|REPLACE_WITH_TENANT_ID|{{.TENANT_ID}}|g" deploy/kustomize/base/secret-provider-class.yaml
+      - sed -i "s|REPLACE_WITH_AZURE_CLIENT_ID|{{.AZURE_CLIENT_ID}}|g" deploy/kustomize/base/secret-provider-class.yaml
       - git checkout deploy/kustomize/base/configmap.yaml
+      - git checkout deploy/kustomize/base/secret-provider-class.yaml
     vars:
       RG_NAME:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw resource_group_name
@@ -114,22 +129,35 @@ tasks:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw aks_name
       COSMOS_ENDPOINT:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw cosmos_db_endpoint
+      KEYVAULT_NAME:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw key_vault_name
+      TENANT_ID:
+        sh: az account show --query tenantId -o tsv
+      AZURE_CLIENT_ID:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw banking_services_client_id
+
+  infra:tls:
+    desc: Install cert-manager and configure TLS certificates
+    cmds:
+      - helm repo add jetstack https://charts.jetstack.io
+      - helm repo update
+      - helm upgrade --install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true
+      - envsubst < cluster-config/cert-manager/certificate.yaml | kubectl apply -f -
+      - kubectl apply -f cluster-config/cert-manager/clusterissuer.yaml
+
+  infra:tls:status:
+    desc: Check TLS certificate status
+    cmds:
+      - kubectl get certificate -n aks-istio-ingress
+      - kubectl get certificaterequest -n aks-istio-ingress
 
   # === Internal tasks ===
   _secrets:create:
     internal: true
-    desc: Create banking-secrets and workload identity service account
+    desc: Create namespaces, observability secret, and workload identity service account
     cmds:
       - kubectl create namespace banking-demo --dry-run=client -o yaml | kubectl apply -f -
       - kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
-      - |
-        kubectl create secret generic banking-secrets \
-          --namespace banking-demo \
-          --from-literal=appinsights-connection-string="{{.APPINSIGHTS_CONN}}" \
-          --from-literal=jwt-key="{{.JWT_KEY}}" \
-          --from-literal=openai-endpoint="{{.OPENAI_ENDPOINT}}" \
-          --from-literal=redis-connection-string="{{.REDIS_CONN}}" \
-          --dry-run=client -o yaml | kubectl apply -f -
       - |
         kubectl create secret generic banking-secrets \
           --namespace observability \
@@ -150,12 +178,6 @@ tasks:
     vars:
       APPINSIGHTS_CONN:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw application_insights_connection_string
-      JWT_KEY:
-        sh: openssl rand -base64 32
-      OPENAI_ENDPOINT:
-        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw openai_endpoint
-      REDIS_CONN:
-        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw redis_connection_string
       AZURE_CLIENT_ID:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw banking_services_client_id
 
@@ -173,6 +195,7 @@ tasks:
       - kustomize edit set image ghcr.io/banking-demo/ai-service={{.ACR_LOGIN_SERVER}}/ai-service:{{.TAG}}
       - kustomize edit set image ghcr.io/banking-demo/event-processor={{.ACR_LOGIN_SERVER}}/event-processor:{{.TAG}}
       - kustomize edit set image ghcr.io/banking-demo/ui-app={{.ACR_LOGIN_SERVER}}/ui-app:{{.TAG}}
+      - kustomize edit set image ghcr.io/banking-demo/prompt-eval-service={{.ACR_LOGIN_SERVER}}/prompt-eval-service:{{.TAG}}
 
   _init:
     internal: true

@@ -36,6 +36,7 @@ import AssessmentIcon from '@mui/icons-material/Assessment';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import ReplayIcon from '@mui/icons-material/Replay';
 import apiClient from '../api/client';
+import AdminEvalTab from '../components/AdminEvalTab';
 
 interface AdminStats {
   totalFlagged: number;
@@ -343,6 +344,7 @@ const AdminPage: React.FC = () => {
         <Tabs value={activeTab} onChange={(_, newValue) => { setActiveTab(newValue); setExpandedRow(null); }}>
           <Tab label="Flagged Transactions" />
           <Tab label="All Transactions" />
+          <Tab label="AI Evaluation" />
         </Tabs>
       </Box>
 
@@ -681,6 +683,9 @@ const AdminPage: React.FC = () => {
           </Table>
         </TableContainer>
       )}
+
+      {/* AI Evaluation Tab */}
+      {activeTab === 2 && <AdminEvalTab />}
     </Box>
   );
 };

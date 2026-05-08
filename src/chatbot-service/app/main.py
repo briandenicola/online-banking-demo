@@ -7,6 +7,7 @@ Uses agent-framework-foundry:
 - AgentSession for multi-turn conversation history
 """
 import logging
+from contextvars import ContextVar
 from datetime import datetime, timezone
 import json
 import os
@@ -65,7 +66,9 @@ FINANCIAL_ADVISOR_INSTRUCTIONS = (
     "You are a helpful financial advisor agent for an online banking application. "
     "Provide concise, actionable financial advice. "
     "Never provide specific investment recommendations. "
-    "Use the available tools to get budget insights, spending patterns, and analyze transactions. "
+    "Use the available tools to look up the user's accounts, transactions, spending patterns, and budget insights. "
+    "When a user asks about their transactions or account activity, ALWAYS use the get_user_transactions tool first. "
+    "When a user asks about their balances or accounts, ALWAYS use the get_user_accounts tool first. "
     "Always cite data from tools when providing advice."
 )
 
@@ -97,6 +100,11 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
 
 # --- Agent Framework tool functions ---
 BUDGET_SERVICE_URL = os.getenv("BUDGET_SERVICE_URL", "http://budget-service:8003")
+TRANSACTION_SERVICE_URL = os.getenv("TRANSACTION_SERVICE_URL", "http://transaction-service:8080")
+ACCOUNT_SERVICE_URL = os.getenv("ACCOUNT_SERVICE_URL", "http://account-service:8080")
+
+# ContextVar to pass the user's JWT to tool functions
+_current_auth_token: ContextVar[str] = ContextVar("_current_auth_token", default="")
 
 
 @tool(approval_mode="never_require")
@@ -107,7 +115,7 @@ def get_budget_insights(
     """Get budget insights including spending breakdown and savings rate for a user."""
     try:
         response = httpx.get(f"{BUDGET_SERVICE_URL}/insights/{user_id}?period={period}", timeout=10.0)
-        if response.ok:
+        if response.is_success:
             return json.dumps(response.json())
     except Exception as e:
         logger.warning(f"Failed to get budget insights: {e}")
@@ -121,7 +129,7 @@ def get_spending_pattern(
     """Get recent spending patterns and trends for a user over the last 7 days."""
     try:
         response = httpx.get(f"{BUDGET_SERVICE_URL}/insights/{user_id}?period=7d", timeout=10.0)
-        if response.ok:
+        if response.is_success:
             return json.dumps(response.json())
     except Exception as e:
         logger.warning(f"Failed to get spending patterns: {e}")
@@ -136,7 +144,7 @@ def analyze_transaction(
     """Analyze and categorize a transaction for budgeting purposes."""
     try:
         response = httpx.post(f"{BUDGET_SERVICE_URL}/categorize", params={"description": description}, timeout=10.0)
-        if response.ok:
+        if response.is_success:
             data = response.json()
             return json.dumps({
                 "description": description,
@@ -149,18 +157,122 @@ def analyze_transaction(
     return json.dumps({"error": "Unable to analyze transaction"})
 
 
+@tool(approval_mode="never_require")
+def get_user_transactions(
+    user_id: Annotated[str, Field(description="The user ID (not used directly — auth token determines the user)")],
+) -> str:
+    """Get the authenticated user's recent transactions from the transaction service."""
+    token = _current_auth_token.get("")
+    if not token:
+        return json.dumps({"error": "No auth token available to fetch transactions"})
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        response = httpx.get(f"{TRANSACTION_SERVICE_URL}/api/transactions/my", headers=headers, timeout=10.0)
+        if response.is_success:
+            txns = response.json()
+            # Summarize for the agent — limit to recent 20 to keep context manageable
+            summary = []
+            for tx in txns[:20]:
+                summary.append({
+                    "id": tx.get("id", ""),
+                    "amount": tx.get("amount", 0),
+                    "type": tx.get("type", ""),
+                    "description": tx.get("description", ""),
+                    "category": tx.get("category", ""),
+                    "riskScore": tx.get("riskScore", 0),
+                    "createdAt": tx.get("createdAt", ""),
+                })
+            return json.dumps({"transactions": summary, "total": len(txns)})
+        else:
+            logger.warning(f"Transaction service returned {response.status_code}: {response.text[:200]}")
+            return json.dumps({"error": f"Transaction service returned {response.status_code}"})
+    except Exception as e:
+        logger.warning(f"Failed to get transactions: {e}")
+    return json.dumps({"error": "Unable to retrieve transactions"})
+
+
+@tool(approval_mode="never_require")
+def get_user_accounts(
+    user_id: Annotated[str, Field(description="The user ID (not used directly — auth token determines the user)")],
+) -> str:
+    """Get the authenticated user's bank accounts including balances."""
+    token = _current_auth_token.get("")
+    if not token:
+        return json.dumps({"error": "No auth token available to fetch accounts"})
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        response = httpx.get(f"{ACCOUNT_SERVICE_URL}/api/accounts/my", headers=headers, timeout=10.0)
+        if response.is_success:
+            accounts = response.json()
+            summary = []
+            for acct in accounts:
+                summary.append({
+                    "id": acct.get("id", ""),
+                    "accountNumber": acct.get("accountNumber", ""),
+                    "type": acct.get("type", ""),
+                    "balance": acct.get("balance", 0),
+                    "currency": acct.get("currency", "USD"),
+                })
+            return json.dumps({"accounts": summary})
+        else:
+            logger.warning(f"Account service returned {response.status_code}: {response.text[:200]}")
+            return json.dumps({"error": f"Account service returned {response.status_code}"})
+    except Exception as e:
+        logger.warning(f"Failed to get accounts: {e}")
+    return json.dumps({"error": "Unable to retrieve accounts"})
+
+
 # Globals
 financial_agent: Optional["Agent"] = None
 agent_ready: bool = False
 model_name: str = ""
+cosmos_chat_container = None
 
 # In-memory sessions per user (maps user_id -> AgentSession)
 user_sessions: dict = {}
 
 
+async def _save_chat_message(user_id: str, role: str, text: str):
+    """Persist a chat message to Cosmos DB."""
+    if not cosmos_chat_container:
+        return
+    try:
+        doc = {
+            "id": uuid.uuid4().hex,
+            "userId": user_id,
+            "role": role,
+            "text": text,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        cosmos_chat_container.upsert_item(doc)
+    except Exception as e:
+        logger.warning(f"Failed to save chat message: {e}")
+
+
+def _load_chat_history(user_id: str, limit: int = 50) -> list[dict]:
+    """Load recent chat history from Cosmos DB."""
+    if not cosmos_chat_container:
+        return []
+    try:
+        query = "SELECT * FROM c WHERE c.userId = @uid ORDER BY c.timestamp DESC OFFSET 0 LIMIT @limit"
+        items = list(cosmos_chat_container.query_items(
+            query=query,
+            parameters=[
+                {"name": "@uid", "value": user_id},
+                {"name": "@limit", "value": limit},
+            ],
+            partition_key=user_id,
+        ))
+        items.reverse()
+        return [{"role": i["role"], "text": i["text"], "timestamp": i.get("timestamp", "")} for i in items]
+    except Exception as e:
+        logger.warning(f"Failed to load chat history: {e}")
+        return []
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global financial_agent, agent_ready, model_name
+    global financial_agent, agent_ready, model_name, cosmos_chat_container
 
     logger.info("=" * 60)
     logger.info("🤖 Chatbot Service — Startup (Microsoft Agent Framework)")
@@ -208,7 +320,7 @@ async def lifespan(app: FastAPI):
                 client=client,
                 name="FinancialAdvisor",
                 instructions=FINANCIAL_ADVISOR_INSTRUCTIONS,
-                tools=[get_budget_insights, get_spending_pattern, analyze_transaction],
+                tools=[get_budget_insights, get_spending_pattern, analyze_transaction, get_user_transactions, get_user_accounts],
             )
             agent_ready = True
             logger.info("🟢 Agent ready — accepting requests")
@@ -217,6 +329,20 @@ async def lifespan(app: FastAPI):
             logger.info("=" * 60)
             yield
             return
+
+        # Initialize Cosmos DB for chat persistence
+        cosmos_endpoint = os.getenv("CosmosDb__Endpoint")
+        if cosmos_endpoint:
+            try:
+                from azure.cosmos import CosmosClient
+                cosmos_client = CosmosClient(cosmos_endpoint, credential=credential)
+                db = cosmos_client.get_database_client("BankingDemo")
+                cosmos_chat_container = db.get_container_client("ChatSessions")
+                logger.info("💾 Cosmos chat persistence ready")
+            except Exception as ex:
+                logger.warning(f"⚠️  Cosmos chat init failed (chat will be in-memory only): {ex}")
+        else:
+            logger.info("ℹ️  No Cosmos endpoint — chat history is in-memory only")
 
     logger.info("=" * 60)
     yield
@@ -248,16 +374,22 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     suggestions: list[str] = Field(default_factory=list)
+    history: list[dict] = Field(default_factory=list)
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, http_request: Request):
     """Get financial advice from the AI agent."""
     if not agent_ready or not financial_agent:
         raise HTTPException(
             status_code=503,
             detail="Azure AI Foundry not configured. Set FOUNDRY_PROJECT_ENDPOINT or AZURE_OPENAI_ENDPOINT.",
         )
+
+    # Extract JWT from Authorization header so tools can forward it
+    auth_header = http_request.headers.get("Authorization", "")
+    token = auth_header.removeprefix("Bearer ").strip() if auth_header.startswith("Bearer ") else ""
+    _current_auth_token.set(token)
 
     tracer = trace.get_tracer(__name__)
 
@@ -281,6 +413,10 @@ async def chat(request: ChatRequest):
             result = await financial_agent.run(user_content, session=session)
             answer = str(result) if result else "I couldn't generate a response at this time."
 
+            # Persist both messages to Cosmos
+            await _save_chat_message(request.user_id, "user", request.message)
+            await _save_chat_message(request.user_id, "assistant", answer)
+
             span.set_attribute("response.length", len(answer))
 
         suggestions = [
@@ -299,10 +435,17 @@ async def chat(request: ChatRequest):
 
 
 @app.post("/api/chat/new", response_model=ChatResponse)
-async def chat_new_session(request: ChatRequest):
+async def chat_new_session(request: ChatRequest, http_request: Request):
     """Start a new chat session (clears conversation history for this user)."""
     user_sessions.pop(request.user_id, None)
-    return await chat(request)
+    return await chat(request, http_request)
+
+
+@app.get("/api/chat/history/{user_id}")
+async def get_chat_history(user_id: str):
+    """Load persisted chat history for a user."""
+    messages = _load_chat_history(user_id)
+    return {"messages": messages}
 
 
 @app.get("/health")

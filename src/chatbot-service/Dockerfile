@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir --root-user-action=ignore \
     opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp \
     opentelemetry-instrumentation-fastapi opentelemetry-instrumentation-requests \
     opentelemetry-instrumentation-httpx \
-    agent-framework-foundry azure-identity
+    agent-framework-foundry azure-identity azure-cosmos
 
 EXPOSE 8001
 
