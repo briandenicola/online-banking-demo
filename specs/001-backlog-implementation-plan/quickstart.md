@@ -59,7 +59,7 @@ dotnet test src/account-service.Tests/
 dotnet test src/transfer-service.Tests/
 
 # Python tests
-cd src/anomaly-service && pytest
+cd src/ai-service && pytest
 cd src/budget-service && pytest
 
 # React tests
@@ -79,6 +79,6 @@ cd tests/e2e && npx playwright test
 | transfer-service | 8080 | .NET 8 | Fund transfers |
 | event-processor | 8080 | Go | Redis Streams consumer |
 | chatbot-service | 8001 | Python | AI chatbot |
-| anomaly-service | 8002 | Python | Anomaly detection |
+| ai-service | 8002 | Python | Anomaly detection |
 | budget-service | 8003 | Python | Budget analysis |
 | ui-app | 80 | React | Frontend SPA |

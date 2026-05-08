@@ -13,7 +13,7 @@ Azure Resource Group
 │  ├─ Deployments (2 replicas each):
 │  │  ├─ user-service, account-service
 │  │  ├─ transaction-service, transfer-service
-│  │  └─ chatbot-service, anomaly-service, budget-service
+│  │  └─ chatbot-service, ai-service, budget-service
 │  ├─ Services (ClusterIP, LoadBalancer for gateway)
 │  ├─ ConfigMaps & Secrets (banking-secrets)
 │

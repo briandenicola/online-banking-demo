@@ -3,7 +3,7 @@
 ## Project Context
 - **Project:** online-banking-demo
 - **User:** Brian
-- **Stack:** C#/.NET (user-service, account-service, transaction-service, transfer-service), Python/FastAPI (anomaly-service, budget-service, chatbot-service), Go (event-processor), React/TypeScript (ui-app), Redis, Docker Compose, Azure AKS
+- **Stack:** C#/.NET (user-service, account-service, transaction-service, transfer-service), Python/FastAPI (ai-service, budget-service, chatbot-service), Go (event-processor), React/TypeScript (ui-app), Redis, Docker Compose, Azure AKS
 - **Joined:** 2026-05-07
 - **Focus:** Python service config fixes and cross-service consistency
 

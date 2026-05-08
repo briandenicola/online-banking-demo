@@ -109,10 +109,12 @@ public class InMemoryTransactionService : ITransactionService
                 timestamp = DateTime.UtcNow.ToString("o"),
                 data = new
                 {
+                    id = transaction.Id,
                     accountId = transaction.AccountId,
                     amount = transaction.Amount,
                     type = transaction.Type,
-                    description = transaction.Description
+                    description = transaction.Description,
+                    category = transaction.Category
                 }
             };
 

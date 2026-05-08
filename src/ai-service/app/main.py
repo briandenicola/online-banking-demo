@@ -68,7 +68,7 @@ structlog.configure(
 )
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
-logger = structlog.get_logger("anomaly-service")
+logger = structlog.get_logger("ai-service")
 
 # Constants
 STREAM_NAME = "banking-events"
@@ -94,7 +94,7 @@ def init_telemetry():
     if otlp_endpoint:
         exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
         provider = TracerProvider(
-            resource=Resource.create({"service.name": "anomaly-service"})
+            resource=Resource.create({"service.name": "ai-service"})
         )
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
@@ -943,7 +943,7 @@ async def health():
 async def healthz():
     return {
         "status": "healthy",
-        "service": "anomaly-service",
+        "service": "ai-service",
         "version": "2.0.0",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }

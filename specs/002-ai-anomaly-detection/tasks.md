@@ -7,7 +7,7 @@
 - [ ] T3 Store ALL scored transactions in Redis — new key pattern scored-tx:{id} with TTL 30d, new sorted set scored-transactions by timestamp, keep existing flagged-transactions set for riskScore > 0.7
 - [ ] T4 Add GET /api/admin/transactions endpoint — returns all scored transactions with risk scores, support sort/order/limit query params, update GET /api/admin/stats to include totalScored and aiCallsToday
 - [ ] T5 Update requirements.txt and Dockerfile — remove scikit-learn/numpy/azure-ai-inference, add agent-framework + agent-framework-foundry
-- [ ] T6 Update anomaly-service K8s deployment — add FOUNDRY_PROJECT_ENDPOINT from banking-secrets.openai-endpoint, add FOUNDRY_MODEL=gpt-5.4-mini, remove AZURE_OPENAI_ENDPOINT refs
+- [ ] T6 Update ai-service K8s deployment — add FOUNDRY_PROJECT_ENDPOINT from banking-secrets.openai-endpoint, add FOUNDRY_MODEL=gpt-5.4-mini, remove AZURE_OPENAI_ENDPOINT refs
 
 ## Phase 2: Admin UI Enhancement
 
@@ -17,5 +17,5 @@
 
 ## Phase 3: Testing & Deployment
 
-- [ ] T10 Update anomaly-service tests — mock FoundryChatClient, test risk prompt JSON output, test threshold flagging logic, test Redis scored/flagged storage
-- [ ] T11 Build and deploy — ACR build anomaly-service + ui-app, rollout restart, smoke test: create transaction → verify risk score appears in admin
+- [ ] T10 Update ai-service tests — mock FoundryChatClient, test risk prompt JSON output, test threshold flagging logic, test Redis scored/flagged storage
+- [ ] T11 Build and deploy — ACR build ai-service + ui-app, rollout restart, smoke test: create transaction → verify risk score appears in admin

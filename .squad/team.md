@@ -24,6 +24,6 @@
 
 - **Project:** online-banking-demo
 - **User:** Brian
-- **Stack:** C#/.NET (user-service, account-service, transaction-service, transfer-service), Python/FastAPI (anomaly-service, budget-service, chatbot-service, event-processor), React/TypeScript (ui-app), Redis, Docker Compose, Azure (infra), Taskfile
+- **Stack:** C#/.NET (user-service, account-service, transaction-service, transfer-service), Python/FastAPI (ai-service, budget-service, chatbot-service, event-processor), React/TypeScript (ui-app), Redis, Docker Compose, Azure (infra), Taskfile
 - **Created:** 2026-05-05
 - **Origin:** AI-generated application under review

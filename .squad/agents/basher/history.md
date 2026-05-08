@@ -4,7 +4,7 @@
 - **Project:** online-banking-demo — AI-generated online banking application
 - **User:** Brian
 - **Stack:** C#/.NET + Python/FastAPI microservices, Redis, Docker Compose, Azure
-- **Services:** user-service, account-service, transaction-service, transfer-service (C#), anomaly-service, budget-service, chatbot-service, event-processor (Python)
+- **Services:** user-service, account-service, transaction-service, transfer-service (C#), ai-service, budget-service, chatbot-service, event-processor (Python)
 
 ## Learnings
 
@@ -67,7 +67,7 @@
 **Critical Bugs Found:**
 - `src/transaction-service/Services/TransactionService.cs:56-66` — Partition key mismatch breaks all reads
 - `src/transfer-service/Services/TransferService.cs:95-106` — Transfers don't update balances (core logic missing)
-- `src/anomaly-service/app/main.py:220-223` — Missing await on async detect_anomaly()
+- `src/ai-service/app/main.py:220-223` — Missing await on async detect_anomaly()
 - `src/chatbot-service/app/main.py:72-98` — Tool URLs don't match budget-service routes (always 404)
 - `src/chatbot-service/app/main.py:111-177` — Lifespan assigned wrong; init may never run
 - `src/transaction-service/Program.cs:130-149` — Publishes real Event Hub message on every startup
@@ -117,7 +117,7 @@ These bugs are end-to-end blockers: partition key mismatch means transaction ser
 
 3. **user-service** — Fixed login 404 by adding /api/users/login and /api/users/register endpoints to UsersController (frontend calls /api/users/login, which routes via nginx to user-service, but only AuthController at /api/auth/login existed); replaced SHA256 with BCrypt.Net-Next for password hashing.
 
-4. **anomaly-service** — Added missing `await` on `detect_anomaly()` call in event processor.
+4. **ai-service** — Added missing `await` on `detect_anomaly()` call in event processor.
 
 5. **chatbot-service** — Fixed lifespan (pass to FastAPI constructor); fixed busy-wait polling with `await asyncio.sleep(0.5)`; fixed budget-service URLs to match actual routes (`/insights/{userId}`, `/categorize`); fixed mutable default with `Field(default_factory=list)`.
 
@@ -143,7 +143,7 @@ These bugs are end-to-end blockers: partition key mismatch means transaction ser
 
 **Implementation (Backend Services):**
 1. **event-processor (Go)** — Updated to consume from Redis Streams (`xread` commands) instead of Event Hub consumer group
-2. **anomaly-service (Python)** — Emits processed transaction events to Redis stream instead of posting to Event Hub
+2. **ai-service (Python)** — Emits processed transaction events to Redis stream instead of posting to Event Hub
 3. **budget-service (Python)** — Updated to push categorization results to Redis stream
 4. **chatbot-service (Python)** — Updated to emit tool results to Redis stream
 5. **transaction-service (C#)** — Posts transaction events to Redis stream via IEventPublisher
@@ -385,7 +385,7 @@ Previous attempt passed only managed identity client ID without secret, which cr
 
 2. **docker-compose.yml** — ❌ ISSUES FOUND
    - chatbot-service (line 107): Used `context: .` but should be `context: ./src/chatbot-service`
-   - anomaly-service (line 129): Used `context: .` but should be `context: ./src/anomaly-service`
+   - ai-service (line 129): Used `context: .` but should be `context: ./src/ai-service`
    - budget-service (line 151): Used `context: .` but should be `context: ./src/budget-service`
    - .NET services correctly used `context: .` + `dockerfile: src/{service}/Dockerfile`
    - event-processor correctly used `context: ./src/event-processor`
@@ -421,7 +421,7 @@ Previous attempt passed only managed identity client ID without secret, which cr
 
 **Redis Client Libraries Per Service:**
 - .NET services (user, transaction, transfer): StackExchange.Redis, config key `Redis:ConnectionString` or `REDIS_HOST`+`REDIS_PORT`
-- Python anomaly-service: redis-py asyncio, env var `REDIS__CONNECTIONSTRING`
+- Python ai-service: redis-py asyncio, env var `REDIS__CONNECTIONSTRING`
 - Go event-processor: go-redis/v9, env var `REDIS__CONNECTIONSTRING`
 
 **User Preferences:**
@@ -604,7 +604,7 @@ the hostname, not the child project name. The project name only appears in the `
 
 ### 2026-05 — Anomaly-Service Redis Connection Fix
 
-**Problem:** anomaly-service admin endpoints (`/api/admin/stats`, `/api/admin/flagged-transactions`) returned 500. The Python code blindly prepended `redis://` to the `REDIS__CONNECTIONSTRING` env var, but AKS provides a .NET-style connection string (`host:10000,ssl=True,abortConnect=False,password=xxx`).
+**Problem:** ai-service admin endpoints (`/api/admin/stats`, `/api/admin/flagged-transactions`) returned 500. The Python code blindly prepended `redis://` to the `REDIS__CONNECTIONSTRING` env var, but AKS provides a .NET-style connection string (`host:10000,ssl=True,abortConnect=False,password=xxx`).
 
 **Fix:** Replaced `redis.from_url()` with `redis.Redis()` using parsed connection parameters:
 - `_parse_redis_connection_string()` extracts host, port, ssl, password from .NET format (mirrors Go `parseRedisConnectionString()` in event-processor)
@@ -613,7 +613,7 @@ the hostname, not the child project name. The project name only appears in the `
 - TLS enabled when `ssl=True` in connection string
 - Falls back to simple host:port for local docker-compose
 
-**Files:** `src/anomaly-service/app/main.py`
+**Files:** `src/ai-service/app/main.py`
 
 **Pattern:** All services connecting to Azure Managed Redis must parse .NET connection strings and support Entra ID auth. Go event-processor (`src/event-processor/main.go:305-336`) is the reference implementation.
 

@@ -32,7 +32,7 @@
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
 - [ ] T004 Build and push all .NET service containers to ACR using `az acr build` with repo root context in src/user-service/, src/account-service/, src/transaction-service/, src/transfer-service/
-- [ ] T005 [P] Build and push Python service containers to ACR — src/chatbot-service/, src/anomaly-service/, src/budget-service/
+- [ ] T005 [P] Build and push Python service containers to ACR — src/chatbot-service/, src/ai-service/, src/budget-service/
 - [ ] T006 [P] Build and push Go event-processor container to ACR — src/event-processor/
 - [ ] T007 [P] Build and push UI app container to ACR — src/ui-app/
 - [ ] T008 Create K8s secrets in banking-demo namespace — jwt-key, redis-connection-string, appinsights-connection-string (interim; replaced by KeyVault CSI in US2)
@@ -56,7 +56,7 @@
 - [ ] T013 [US1] Fix chatbot-service AI Foundry auth — verify Azure AI Developer role from infra/cloud/identity.tf is applied, restart chatbot pod, confirm /api/chat returns 200
 - [ ] T014 [US1] Fix transfer-service partition key — ensure Cosmos container partition key matches code in src/transfer-service/Services/TransferService.cs (stored memory: partition key mismatch bug)
 - [ ] T015 [US1] Fix chatbot→budget route mismatch — verify src/chatbot-service/app/main.py calls correct budget-service endpoint path per deploy/kustomize/base/configmap.yaml
-- [ ] T016 [US1] Fix anomaly-service missing await — add await to async call in src/anomaly-service/app/main.py (stored memory: missing await bug)
+- [ ] T016 [US1] Fix ai-service missing await — add await to async call in src/ai-service/app/main.py (stored memory: missing await bug)
 - [ ] T017 [US1] Fix OTEL Collector restart loop — update deploy/kustomize/observability/otel-collector.yaml with increased initialDelaySeconds on liveness probe and memory limits per research R7
 - [ ] T018 [US1] Run full endpoint smoke test: /api/users, /api/accounts, /api/transactions, /api/transfers, /api/chat, /api/anomalies, /api/budget — all must return 200
 

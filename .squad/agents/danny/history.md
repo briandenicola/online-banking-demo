@@ -4,7 +4,7 @@
 - **Project:** online-banking-demo — AI-generated online banking application
 - **User:** Brian
 - **Stack:** C#/.NET + Python/FastAPI microservices, React/TS UI, Redis, Docker Compose, Azure
-- **Services:** user-service, account-service, transaction-service, transfer-service (C#), anomaly-service, budget-service, chatbot-service, event-processor (Python), ui-app (React)
+- **Services:** user-service, account-service, transaction-service, transfer-service (C#), ai-service, budget-service, chatbot-service, event-processor (Python), ui-app (React)
 
 ## Learnings
 

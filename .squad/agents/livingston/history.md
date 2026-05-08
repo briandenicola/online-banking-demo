@@ -46,7 +46,7 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 
 ### Completed
 - Created xUnit test projects for user-service (22 tests), account-service (18 tests), transfer-service (10 tests)
-- Created pytest suites for anomaly-service (7 tests) and budget-service (8 tests)
+- Created pytest suites for ai-service (7 tests) and budget-service (8 tests)
 - Fixed React tests: 14 tests across App.test.tsx, Login.test.tsx, Accounts.test.tsx
 - Total: **79 passing tests** across all layers
 

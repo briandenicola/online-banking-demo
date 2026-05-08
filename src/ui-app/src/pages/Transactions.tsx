@@ -99,7 +99,9 @@ const Transactions: React.FC = () => {
           date: t.timestamp as string,
           description: t.description as string,
           amount: t.amount as number,
-          category: score?.category || (t.category as string | undefined),
+          category: (score?.category && score.category !== 'Uncategorized' ? score.category : null) 
+            || (t.category as string | undefined) 
+            || undefined,
           type: t.type as string | undefined,
           riskScore: score?.riskScore,
           aiExplanation: score?.explanation,

@@ -160,7 +160,7 @@ online-banking-demo/
 │   ├── transaction-service/    # .NET 9 Transaction history
 │   ├── transfer-service/       # .NET 9 Money transfer service
 │   ├── chatbot-service/        # Python AI financial advisor
-│   ├── anomaly-service/        # Python fraud detection agent
+│   ├── ai-service/        # Python AI services (risk scoring, categorization)
 │   ├── budget-service/         # Python budget analysis agent
 │   ├── event-processor/        # Go event streaming processor
 │   └── ui-app/                 # React web frontend
