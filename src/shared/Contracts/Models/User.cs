@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace OnlineBankingDemo.Contracts.Models;
 
@@ -12,6 +13,7 @@ public class User
     public string Email { get; set; } = null!;
     public string FirstName { get; set; } = null!;
     public string LastName { get; set; } = null!;
+    public string Role { get; set; } = "user";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastLoginAt { get; set; }
     public bool IsActive { get; set; } = true;

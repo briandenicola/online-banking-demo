@@ -91,7 +91,7 @@ Stored in Cosmos DB (prompt-eval-service container).
 | Field | Type | Validation |
 |-------|------|-----------|
 | userId | string | Must be Admin role |
-| targetService | string | enum: `"chatbot-service"`, `"budget-service"`, `"anomaly-service"` |
+| targetService | string | enum: `"chatbot-service"`, `"budget-service"`, `"ai-service"` |
 | prompt | string | max 4000 chars |
 | status | string | enum: `"pending"`, `"running"`, `"completed"`, `"failed"` |
 | evaluationResults | object | Quality metrics (1-5 scale) |

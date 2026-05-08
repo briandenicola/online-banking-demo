@@ -87,7 +87,7 @@ tasks:
     cmds:
       - az acr build --registry {{.ACR_NAME}} --image chatbot-service:{{.TAG}} ./src/chatbot-service/
       - az acr build --registry {{.ACR_NAME}} --image budget-service:{{.TAG}} ./src/budget-service/
-      - az acr build --registry {{.ACR_NAME}} --image anomaly-service:{{.TAG}} ./src/anomaly-service/
+      - az acr build --registry {{.ACR_NAME}} --image ai-service:{{.TAG}} ./src/ai-service/
       - az acr build --registry {{.ACR_NAME}} --image event-processor:{{.TAG}} ./src/event-processor/
 
   build:ui:
@@ -170,7 +170,7 @@ tasks:
       - kustomize edit set image ghcr.io/banking-demo/transfer-service={{.ACR_LOGIN_SERVER}}/transfer-service:{{.TAG}}
       - kustomize edit set image ghcr.io/banking-demo/chatbot-service={{.ACR_LOGIN_SERVER}}/chatbot-service:{{.TAG}}
       - kustomize edit set image ghcr.io/banking-demo/budget-service={{.ACR_LOGIN_SERVER}}/budget-service:{{.TAG}}
-      - kustomize edit set image ghcr.io/banking-demo/anomaly-service={{.ACR_LOGIN_SERVER}}/anomaly-service:{{.TAG}}
+      - kustomize edit set image ghcr.io/banking-demo/ai-service={{.ACR_LOGIN_SERVER}}/ai-service:{{.TAG}}
       - kustomize edit set image ghcr.io/banking-demo/event-processor={{.ACR_LOGIN_SERVER}}/event-processor:{{.TAG}}
       - kustomize edit set image ghcr.io/banking-demo/ui-app={{.ACR_LOGIN_SERVER}}/ui-app:{{.TAG}}
 

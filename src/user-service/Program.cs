@@ -134,4 +134,43 @@ app.MapControllers();
 app.MapGet("/healthz", () => Results.Ok(new { status = "healthy", service = "user-service", timestamp = DateTime.UtcNow }));
 app.MapGet("/readyz", () => Results.Ok(new { status = "ready" }));
 
+// Promote the first user to admin if no admins exist (convention: first user = admin)
+if (!useInMemory)
+{
+    using var scope = app.Services.CreateScope();
+    var cosmosClient = scope.ServiceProvider.GetRequiredService<CosmosClient>();
+    var config = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+    var container = cosmosClient.GetContainer(config["CosmosDb:DatabaseName"], config["CosmosDb:ContainerName"]);
+
+    try
+    {
+        // Check if any admin users exist
+        var adminQuery = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.Role = 'admin'");
+        var adminIterator = container.GetItemQueryIterator<int>(adminQuery);
+        var adminResult = await adminIterator.ReadNextAsync();
+        var adminCount = adminResult.FirstOrDefault();
+
+        if (adminCount == 0)
+        {
+            // Find the oldest user by CreatedAt and promote to admin
+            var firstUserQuery = new QueryDefinition("SELECT * FROM c ORDER BY c.CreatedAt ASC OFFSET 0 LIMIT 1");
+            var firstUserIterator = container.GetItemQueryIterator<UserService.Models.User>(firstUserQuery);
+            var firstUserResult = await firstUserIterator.ReadNextAsync();
+            var firstUser = firstUserResult.FirstOrDefault();
+
+            if (firstUser != null)
+            {
+                firstUser.Role = "admin";
+                await container.ReplaceItemAsync(firstUser, firstUser.Id, new PartitionKey(firstUser.Id));
+                logger.LogInformation("Promoted user {Username} ({Email}) to admin role — first user convention", firstUser.Username, firstUser.Email);
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Failed to check/promote admin user on startup — non-critical");
+    }
+}
+
 app.Run();

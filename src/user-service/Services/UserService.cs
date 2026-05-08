@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Azure.Cosmos;
@@ -108,6 +109,52 @@ public class UserService : IUserService
             return false;
 
         return BC.Verify(password, user.PasswordHash);
+    }
+
+    public async Task<bool> ChangePasswordAsync(string userId, string currentPassword, string newPassword)
+    {
+        var user = await GetUserByIdAsync(userId);
+        if (user == null) return false;
+
+        if (!BC.Verify(currentPassword, user.PasswordHash))
+            return false;
+
+        user.PasswordHash = BC.HashPassword(newPassword);
+        await _container.ReplaceItemAsync(user, user.Id, new PartitionKey(user.Id));
+        _logger.LogInformation("Password changed for user {UserId}", userId);
+        return true;
+    }
+
+    public async Task<string?> GetAvatarAsync(string userId)
+    {
+        var user = await GetUserByIdAsync(userId);
+        return user?.AvatarBase64;
+    }
+
+    public async Task SetAvatarAsync(string userId, string avatarBase64)
+    {
+        var user = await GetUserByIdAsync(userId);
+        if (user == null) throw new InvalidOperationException("User not found");
+
+        user.AvatarBase64 = avatarBase64;
+        await _container.ReplaceItemAsync(user, user.Id, new PartitionKey(user.Id));
+        _logger.LogInformation("Avatar updated for user {UserId}", userId);
+    }
+
+    public async Task<List<string>> GetCategoryPreferencesAsync(string userId)
+    {
+        var user = await GetUserByIdAsync(userId);
+        return user?.CategoryPreferences ?? new List<string>();
+    }
+
+    public async Task SetCategoryPreferencesAsync(string userId, List<string> categories)
+    {
+        var user = await GetUserByIdAsync(userId);
+        if (user == null) throw new InvalidOperationException("User not found");
+
+        user.CategoryPreferences = categories;
+        await _container.ReplaceItemAsync(user, user.Id, new PartitionKey(user.Id));
+        _logger.LogInformation("Category preferences updated for user {UserId}: {Count} categories", userId, categories.Count);
     }
 
     private async Task PublishUserRegisteredEvent(UserModel user)

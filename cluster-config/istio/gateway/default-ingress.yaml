@@ -64,7 +64,7 @@ spec:
         prefix: /api/anomaly
     route:
     - destination:
-        host: anomaly-service
+        host: ai-service
         port:
           number: 80
   - match:
@@ -80,7 +80,7 @@ spec:
         prefix: /api/admin
     route:
     - destination:
-        host: anomaly-service
+        host: ai-service
         port:
           number: 80
   # Default: serve UI

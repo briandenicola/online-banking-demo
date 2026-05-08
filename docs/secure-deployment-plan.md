@@ -1329,7 +1329,7 @@ Internet
 │  │ transfer-service   │  │
 │  │ chatbot-service    │  │
 │  │ budget-service     │  │
-│  │ anomaly-service    │  │
+│  │ ai-service    │  │
 │  │ event-processor    │  │
 │  │ ui-app             │  │
 │  └────────────────────┘  │

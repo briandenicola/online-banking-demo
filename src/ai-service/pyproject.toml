@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "anomaly-service"
+name = "ai-service"
 version = "1.0.0"
 description = "Suspicious transaction detection agent"
 authors = ["Online Banking Demo"]

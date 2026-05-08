@@ -1,6 +1,6 @@
 # Azure Authentication in Docker
 
-The Python services (anomaly-service, budget-service, chatbot-service) use `DefaultAzureCredential` from the `azure-identity` SDK to authenticate with Azure AI services. This document explains how credentials are provided when running inside Docker containers.
+The Python services (ai-service, budget-service, chatbot-service) use `DefaultAzureCredential` from the `azure-identity` SDK to authenticate with Azure AI services. This document explains how credentials are provided when running inside Docker containers.
 
 ## How DefaultAzureCredential Works
 
@@ -92,7 +92,7 @@ The `docker-compose.yml` passes these as environment variables to the containers
 Each service exposes a `/readyz` endpoint that verifies Azure credential access by attempting to acquire a token:
 
 ```bash
-# Check anomaly-service
+# Check ai-service
 curl http://localhost:8002/readyz
 
 # Check budget-service

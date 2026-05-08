@@ -11,6 +11,7 @@ import Transactions from './pages/Transactions';
 import Transfers from './pages/Transfers';
 import Chat from './pages/Chat';
 import AdminPage from './pages/AdminPage';
+import Settings from './pages/Settings';
 import Login from './pages/Login';
 import RegisterPage from './pages/RegisterPage';
 import AppShell from './components/AppShell';
@@ -18,7 +19,7 @@ import { AuthProvider, useAuthContext } from './contexts/AuthContext';
 import { AccountProvider } from './contexts/AccountContext';
 
 const AppContent: React.FC = () => {
-  const { user } = useAuthContext();
+  const { user, isAdmin } = useAuthContext();
 
   if (!user) {
     return (
@@ -38,7 +39,8 @@ const AppContent: React.FC = () => {
         <Route path="/transactions" element={<Transactions />} />
         <Route path="/transfers" element={<Transfers />} />
         <Route path="/chat" element={<Chat />} />
-        <Route path="/admin" element={<AdminPage />} />
+        <Route path="/settings" element={<Settings />} />
+        {isAdmin && <Route path="/admin" element={<AdminPage />} />}
         <Route path="/login" element={<Navigate to="/" />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>

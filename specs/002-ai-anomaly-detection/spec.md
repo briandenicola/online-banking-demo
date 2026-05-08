@@ -2,7 +2,7 @@
 
 ## Problem Statement
 
-The anomaly-service currently uses a local scikit-learn `IsolationForest` model for transaction risk scoring. This approach has critical limitations:
+The ai-service currently uses a local scikit-learn `IsolationForest` model for transaction risk scoring. This approach has critical limitations:
 
 1. **Cold start** — requires 10+ in-memory transactions before scoring begins; pod restarts reset the model
 2. **No AI integration** — `AZURE_OPENAI_ENDPOINT` is never configured; AI explanation generation is dead code
@@ -36,12 +36,12 @@ Replace the IsolationForest ML model with Azure AI Foundry (GPT-5.4-mini) for tr
 - Admin can review/clear flagged transactions (existing functionality, keep working)
 
 ### R4: Remove scikit-learn Dependency
-- Remove `IsolationForest`, `numpy`, `sklearn` from anomaly-service
+- Remove `IsolationForest`, `numpy`, `sklearn` from ai-service
 - Remove in-memory `transaction_history` and feature extraction code
 - Simplify to: consume event → call Foundry → store result → flag if high risk
 
 ### R5: K8s Configuration
-- Add `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL` env vars to anomaly-service K8s deployment (same pattern as chatbot-service)
+- Add `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL` env vars to ai-service K8s deployment (same pattern as chatbot-service)
 - Remove `AZURE_OPENAI_ENDPOINT` references
 
 ## Architecture
@@ -50,7 +50,7 @@ Replace the IsolationForest ML model with Azure AI Foundry (GPT-5.4-mini) for tr
 Redis Stream (banking-events)
     │
     ▼
-anomaly-service (consume_redis_stream)
+ai-service (consume_redis_stream)
     │
     ├── Call Foundry GPT-5.4-mini with transaction context
     │   └── Returns: { riskScore: 0.0-1.0, explanation: "...", flags: [...] }
@@ -76,6 +76,6 @@ Admin UI
 - **Foundry endpoint**: Terraform output `openai_endpoint` → already provisioned
 - **Model**: `gpt-5.4-mini` already deployed (same as chatbot)
 - **K8s secret**: `banking-secrets.openai-endpoint` already exists (chatbot uses it)
-- **Workload Identity**: anomaly-service already uses `banking-workload-identity` SA with `Cognitive Services OpenAI User` role
-- **Redis**: anomaly-service already connected and consuming from `banking-events` stream
-- **Istio routing**: `/api/admin` already routes to anomaly-service
+- **Workload Identity**: ai-service already uses `banking-workload-identity` SA with `Cognitive Services OpenAI User` role
+- **Redis**: ai-service already connected and consuming from `banking-events` stream
+- **Istio routing**: `/api/admin` already routes to ai-service

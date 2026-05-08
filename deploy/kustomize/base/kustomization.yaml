@@ -11,7 +11,7 @@ resources:
 - account-service.yaml
 - transaction-service.yaml
 - transfer-service.yaml
-- anomaly-service.yaml
+- ai-service.yaml
 - budget-service.yaml
 - chatbot-service.yaml
 - event-processor.yaml
@@ -20,8 +20,8 @@ images:
 - name: ghcr.io/banking-demo/account-service
   newName: leadingterrier26956acr.azurecr.io/account-service
   newTag: latest
-- name: ghcr.io/banking-demo/anomaly-service
-  newName: leadingterrier26956acr.azurecr.io/anomaly-service
+- name: ghcr.io/banking-demo/ai-service
+  newName: leadingterrier26956acr.azurecr.io/ai-service
   newTag: latest
 - name: ghcr.io/banking-demo/budget-service
   newName: leadingterrier26956acr.azurecr.io/budget-service

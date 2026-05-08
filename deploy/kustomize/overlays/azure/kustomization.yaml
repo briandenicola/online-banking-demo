@@ -23,8 +23,8 @@ images:
   - name: ghcr.io/banking-demo/budget-service
     newName: ${ACR_LOGIN_SERVER}/budget-service
     newTag: latest
-  - name: ghcr.io/banking-demo/anomaly-service
-    newName: ${ACR_LOGIN_SERVER}/anomaly-service
+  - name: ghcr.io/banking-demo/ai-service
+    newName: ${ACR_LOGIN_SERVER}/ai-service
     newTag: latest
   - name: ghcr.io/banking-demo/event-processor
     newName: ${ACR_LOGIN_SERVER}/event-processor

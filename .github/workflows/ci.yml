@@ -25,7 +25,7 @@ jobs:
           - transaction-service
           - transfer-service
           - chatbot-service
-          - anomaly-service
+          - ai-service
           - budget-service
           - event-processor
 
@@ -45,7 +45,7 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Build and push .NET services
-      if: matrix.service != 'chatbot-service' && matrix.service != 'anomaly-service' && matrix.service != 'budget-service' && matrix.service != 'event-processor'
+      if: matrix.service != 'chatbot-service' && matrix.service != 'ai-service' && matrix.service != 'budget-service' && matrix.service != 'event-processor'
       uses: docker/build-push-action@v5
       with:
         context: .
@@ -56,7 +56,7 @@ jobs:
         cache-to: type=gha,mode=max
 
     - name: Build and push Python services
-      if: matrix.service == 'chatbot-service' || matrix.service == 'anomaly-service' || matrix.service == 'budget-service'
+      if: matrix.service == 'chatbot-service' || matrix.service == 'ai-service' || matrix.service == 'budget-service'
       uses: docker/build-push-action@v5
       with:
         context: ./src/${{ matrix.service }}
@@ -108,7 +108,7 @@ jobs:
 
     - name: Run Python tests
       run: |
-        for svc in chatbot-service anomaly-service budget-service; do
+        for svc in chatbot-service ai-service budget-service; do
           if [ -d "src/$svc" ]; then
             echo "--- Testing $svc ---"
             cd "src/$svc"

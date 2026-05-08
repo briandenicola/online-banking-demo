@@ -6,6 +6,7 @@ interface User {
   email: string;
   firstName: string;
   lastName: string;
+  role: string;
 }
 
 interface AuthContextType {
@@ -13,6 +14,7 @@ interface AuthContextType {
   token: string | null;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
+  isAdmin: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -23,6 +25,15 @@ export const useAuthContext = () => {
   return context;
 };
 
+function decodeJwtPayload(token: string): Record<string, unknown> {
+  try {
+    const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(base64));
+  } catch {
+    return {};
+  }
+}
+
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth_token'));
@@ -31,6 +42,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   useEffect(() => {
     if (token && !user) {
       const email = localStorage.getItem('auth_email');
+      const role = localStorage.getItem('auth_role') || 'user';
       if (email) {
         const emailParts = email.split('@')[0].split('.');
         setUser({
@@ -38,6 +50,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           email,
           firstName: emailParts[0] || 'User',
           lastName: emailParts[1] || 'Name',
+          role,
         });
       }
     }
@@ -48,16 +61,22 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const data = response.data;
     const newToken = data.token;
 
+    // Extract role from JWT claims
+    const claims = decodeJwtPayload(newToken);
+    const role = (claims['http://schemas.microsoft.com/ws/2008/06/identity/claims/role'] as string) || (data.role as string) || 'user';
+
     localStorage.setItem('auth_token', newToken);
     localStorage.setItem('auth_email', email);
+    localStorage.setItem('auth_role', role);
     setToken(newToken);
 
     const emailParts = email.split('@')[0].split('.');
     setUser({
-      id: '1',
+      id: data.userId || '1',
       email,
       firstName: emailParts[0] || 'User',
       lastName: emailParts[1] || 'Name',
+      role,
     });
   };
 
@@ -66,10 +85,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setToken(null);
     localStorage.removeItem('auth_token');
     localStorage.removeItem('auth_email');
+    localStorage.removeItem('auth_role');
   };
 
+  const isAdmin = user?.role === 'admin';
+
   return (
-    <AuthContext.Provider value={{ user, token, login, logout }}>
+    <AuthContext.Provider value={{ user, token, login, logout, isAdmin }}>
       {children}
     </AuthContext.Provider>
   );

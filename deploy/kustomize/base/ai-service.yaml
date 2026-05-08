@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: anomaly-service
+  name: ai-service
   namespace: banking-demo
   labels:
-    app: anomaly-service
+    app: ai-service
     app.kubernetes.io/part-of: banking-demo
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: anomaly-service
+      app: ai-service
   template:
     metadata:
       labels:
-        app: anomaly-service
+        app: ai-service
         azure.workload.identity/use: "true"
     spec:
       serviceAccountName: banking-workload-identity
@@ -24,8 +24,8 @@ spec:
         runAsGroup: 1000
         fsGroup: 1000
       containers:
-      - name: anomaly-service
-        image: ghcr.io/banking-demo/anomaly-service:1.0.0
+      - name: ai-service
+        image: ghcr.io/banking-demo/ai-service:1.0.0
         imagePullPolicy: Always
         ports:
         - containerPort: 8002
@@ -41,6 +41,13 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: redis-connection-string
+        - name: FOUNDRY_PROJECT_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: openai-endpoint
+        - name: FOUNDRY_MODEL
+          value: "gpt-5.4-mini"
         envFrom:
         - configMapRef:
             name: banking-demo-config
@@ -70,14 +77,14 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: anomaly-service
+  name: ai-service
   namespace: banking-demo
   labels:
-    app: anomaly-service
+    app: ai-service
 spec:
   type: ClusterIP
   selector:
-    app: anomaly-service
+    app: ai-service
   ports:
   - port: 80
     targetPort: 8002

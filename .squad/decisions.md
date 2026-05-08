@@ -329,7 +329,7 @@
 
 **Implementation:** Added pytest and httpx as dev dependencies in pyproject.toml. Tests cover endpoint contracts and validation.
 
-**Coverage:** 15 pytest tests across anomaly-service, budget-service, chatbot-service.
+**Coverage:** 15 pytest tests across ai-service, budget-service, chatbot-service.
 
 ### Decision: React: Jest mocks for react-router-dom v7
 **Date:** 2026-05-05  
@@ -385,7 +385,7 @@
 
 **Why:** User request — captured as backlog feature.
 
-**Scope:** New UI route + backend endpoint to query flagged transactions from anomaly-service results.
+**Scope:** New UI route + backend endpoint to query flagged transactions from ai-service results.
 
 ---
 
@@ -666,7 +666,7 @@ This is a runtime config change only — no new dependencies or architectural sh
 The online-banking-demo project has two categories of services with different Docker build context requirements:
 
 1. **.NET services** (user-service, account-service, transaction-service, transfer-service) — Dockerfiles reference `COPY src/shared/` to include shared contracts and observability libraries
-2. **Python/Go services** (chatbot-service, budget-service, anomaly-service, event-processor) — Dockerfiles use relative paths like `COPY ./app` or `COPY go.mod`
+2. **Python/Go services** (chatbot-service, budget-service, ai-service, event-processor) — Dockerfiles use relative paths like `COPY ./app` or `COPY go.mod`
 
 ## Decision
 
@@ -712,7 +712,7 @@ chatbot-service:
 
 **docker-compose.yml had three incorrect build contexts:**
 - chatbot-service was using `context: .` — changed to `context: ./src/chatbot-service`
-- anomaly-service was using `context: .` — changed to `context: ./src/anomaly-service`
+- ai-service was using `context: .` — changed to `context: ./src/ai-service`
 - budget-service was using `context: .` — changed to `context: ./src/budget-service`
 
 These Python services have Dockerfiles with relative paths (`COPY ./app ./app`) that fail when repo root is the context.
@@ -1090,7 +1090,7 @@ deploy/kustomize/base/
 ├── account-service.yaml
 ├── transaction-service.yaml
 ├── transfer-service.yaml
-├── anomaly-service.yaml
+├── ai-service.yaml
 ├── budget-service.yaml
 ├── chatbot-service.yaml
 ├── event-processor.yaml

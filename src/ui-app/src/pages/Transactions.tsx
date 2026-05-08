@@ -18,7 +18,8 @@ import {
   DialogContent,
   DialogActions,
   TextField,
-  MenuItem
+  MenuItem,
+  Autocomplete
 } from '@mui/material';
 import { Warning as WarningIcon, CheckCircle as CheckCircleIcon, Add as AddIcon } from '@mui/icons-material';
 import { useAuthContext } from '../contexts/AuthContext';
@@ -28,12 +29,13 @@ import apiClient from '../api/client';
 
 interface Transaction {
   id: string;
+  accountId: string;
   date: string;
   description: string;
   amount: number;
-  balance: number;
   category?: string;
-  isAnomalous?: boolean;
+  type?: string;
+  riskScore?: number;
   aiExplanation?: string;
 }
 
@@ -64,6 +66,7 @@ const Transactions: React.FC = () => {
     autoCategorize: true
   });
   const [success, setSuccess] = useState<string | null>(null);
+  const [userCategories, setUserCategories] = useState<string[]>([]);
 
   // Update default accountId when accounts load
   useEffect(() => {
@@ -72,20 +75,51 @@ const Transactions: React.FC = () => {
     }
   }, [accounts, newTransaction.accountId]);
 
+  // Load user-defined category preferences for autocomplete
+  useEffect(() => {
+    const loadCategories = async () => {
+      try {
+        const res = await apiClient.get('/users/me/categories');
+        setUserCategories(res.data.categories || []);
+      } catch { /* no categories */ }
+    };
+    loadCategories();
+  }, []);
+
   const fetchTransactions = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await apiClient.get('/transactions/my');
-      const data = Array.isArray(response.data) ? response.data : (response.data.transactions || []);
-      setTransactions(data.map((t: Record<string, unknown>) => ({
-        id: t.id as string,
-        date: t.timestamp as string,
-        description: t.description as string,
-        amount: t.amount as number,
-        balance: 0,
-        category: t.category as string | undefined,
-        isAnomalous: false,
-      })));
+      const [txResponse, scoredResponse] = await Promise.all([
+        apiClient.get('/transactions/my'),
+        apiClient.get('/admin/transactions').catch(() => ({ data: [] })),
+      ]);
+      const data = Array.isArray(txResponse.data) ? txResponse.data : (txResponse.data.transactions || []);
+      const scored = Array.isArray(scoredResponse.data) ? scoredResponse.data : [];
+
+      // Build lookup by transactionId for risk scores and AI categories
+      const scoreMap = new Map<string, { riskScore: number; explanation: string; category?: string }>();
+      for (const s of scored) {
+        if (s.transactionId) {
+          scoreMap.set(s.transactionId, { riskScore: s.riskScore, explanation: s.explanation, category: s.category });
+        }
+      }
+
+      setTransactions(data.map((t: Record<string, unknown>) => {
+        const score = scoreMap.get(t.id as string);
+        return {
+          id: t.id as string,
+          accountId: t.accountId as string,
+          date: t.timestamp as string,
+          description: t.description as string,
+          amount: t.amount as number,
+          category: (score?.category && score.category !== 'Uncategorized' ? score.category : null) 
+            || (t.category as string | undefined) 
+            || undefined,
+          type: t.type as string | undefined,
+          riskScore: score?.riskScore,
+          aiExplanation: score?.explanation,
+        };
+      }));
     } catch (e) {
       setError('Failed to load transactions');
     } finally {
@@ -175,47 +209,69 @@ const Transactions: React.FC = () => {
           <TableHead>
             <TableRow>
               <TableCell>Date</TableCell>
+              <TableCell>Account</TableCell>
               <TableCell>Description</TableCell>
-              <TableCell>Category</TableCell>
               <TableCell align="right">Amount</TableCell>
-              <TableCell align="right">Balance</TableCell>
-              <TableCell>Status</TableCell>
+              <TableCell>Type</TableCell>
+              <TableCell>Risk</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {transactions.map((txn) => (
-              <TableRow key={txn.id}>
-                <TableCell>{txn.date}</TableCell>
-                <TableCell>{txn.description}</TableCell>
-                <TableCell>
-                  <Chip label={txn.category || 'Uncategorized'} size="small" variant="outlined" />
-                </TableCell>
-                <TableCell align="right">
-                  <Typography color={txn.amount < 0 ? 'error' : 'success'}>
-                    ${Math.abs(txn.amount).toFixed(2)}
-                  </Typography>
-                </TableCell>
-                <TableCell align="right">${txn.balance.toFixed(2)}</TableCell>
-                <TableCell>
-                  {txn.isAnomalous ? (
-                    <Chip
-                      icon={<WarningIcon />}
-                      label="Flagged"
-                      color="error"
-                      size="small"
-                      title={txn.aiExplanation || 'Suspicious transaction'}
-                    />
-                  ) : (
-                    <Chip
-                      icon={<CheckCircleIcon />}
-                      label="Normal"
-                      color="success"
-                      size="small"
-                    />
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
+            {transactions.map((txn) => {
+              const account = accounts.find(a => a.id === txn.accountId);
+              return (
+                <TableRow key={txn.id}>
+                  <TableCell>
+                    {new Date(txn.date).toLocaleDateString()}
+                  </TableCell>
+                  <TableCell>
+                    {account ? `${account.name} (${account.number})` : txn.accountId?.slice(0, 8) || '—'}
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2">{txn.description}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {txn.category || 'Uncategorized'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Typography color={txn.amount < 0 ? 'error' : 'success.main'} sx={{ fontWeight: 500 }}>
+                      ${Math.abs(txn.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Chip label={txn.type || 'Unknown'} size="small" variant="outlined" />
+                  </TableCell>
+                  <TableCell>
+                    {txn.riskScore == null ? (
+                      <Chip label="Unscored" size="small" variant="outlined" />
+                    ) : txn.riskScore >= 0.7 ? (
+                      <Chip
+                        icon={<WarningIcon />}
+                        label={`High (${txn.riskScore.toFixed(2)})`}
+                        color="error"
+                        size="small"
+                        title={txn.aiExplanation || 'Suspicious transaction'}
+                      />
+                    ) : txn.riskScore >= 0.3 ? (
+                      <Chip
+                        icon={<WarningIcon />}
+                        label={`Medium (${txn.riskScore.toFixed(2)})`}
+                        color="warning"
+                        size="small"
+                        title={txn.aiExplanation}
+                      />
+                    ) : (
+                      <Chip
+                        icon={<CheckCircleIcon />}
+                        label={`Normal (${txn.riskScore.toFixed(2)})`}
+                        color="success"
+                        size="small"
+                      />
+                    )}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </TableContainer>
@@ -283,14 +339,21 @@ const Transactions: React.FC = () => {
               required
               placeholder="e.g., Starbucks Coffee, Amazon Purchase"
             />
-            <TextField
-              fullWidth
-              label="Category (optional)"
-              value={newTransaction.category}
-              onChange={(e) => setNewTransaction({...newTransaction, category: e.target.value})}
-              margin="dense"
+            <Autocomplete
+              freeSolo
+              options={userCategories}
+              value={newTransaction.category || ''}
+              onInputChange={(_e, value) => setNewTransaction({...newTransaction, category: value})}
               disabled={newTransaction.autoCategorize}
-              helperText={newTransaction.autoCategorize ? "AI will auto-categorize" : "Leave empty for manual"}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  fullWidth
+                  label="Category (optional)"
+                  margin="dense"
+                  helperText={newTransaction.autoCategorize ? "AI will auto-categorize" : "Type or pick from your saved categories"}
+                />
+              )}
             />
           </Box>
         </DialogContent>

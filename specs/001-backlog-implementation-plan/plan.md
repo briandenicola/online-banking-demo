@@ -69,7 +69,7 @@ src/
 ├── transfer-service/       # .NET 8 — Fund transfers (existing)
 ├── event-processor/        # Go 1.22 — Redis Streams consumer (existing)
 ├── chatbot-service/        # Python/FastAPI — AI chatbot (existing)
-├── anomaly-service/        # Python/FastAPI — Anomaly detection (existing)
+├── ai-service/        # Python/FastAPI — Anomaly detection (existing)
 ├── budget-service/         # Python/FastAPI — Budget analysis (existing)
 ├── ui-app/                 # React/TypeScript/MUI — Frontend SPA (existing)
 └── shared/                 # .NET shared models/DTOs (existing)

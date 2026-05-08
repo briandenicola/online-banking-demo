@@ -18,7 +18,7 @@ public class AuthService : IAuthService
         _configuration = configuration;
     }
 
-    public async Task<string> GenerateTokenAsync(string userId, string username)
+    public async Task<string> GenerateTokenAsync(string userId, string username, string role)
     {
         var key = Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]);
         var expiresInMinutes = int.Parse(_configuration["Jwt:ExpiresInMinutes"]);
@@ -28,7 +28,8 @@ public class AuthService : IAuthService
             new(JwtRegisteredClaimNames.Sub, userId),
             new(JwtRegisteredClaimNames.UniqueName, username),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-            new("userId", userId)
+            new("userId", userId),
+            new(ClaimTypes.Role, role)
         };
 
         var tokenDescriptor = new SecurityTokenDescriptor
