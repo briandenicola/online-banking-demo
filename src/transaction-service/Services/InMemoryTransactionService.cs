@@ -94,7 +94,11 @@ public class InMemoryTransactionService : ITransactionService
         _transactions[transaction.Id] = transaction;
 
         // Update account balance (transaction-service owns balance side effects)
-        await UpdateAccountBalanceAsync(transaction.AccountId, transaction.Amount);
+        // Debit transactions decrease balance, so negate positive amounts
+        var balanceChange = IsDebitTransaction(request) && transaction.Amount > 0
+            ? -transaction.Amount
+            : transaction.Amount;
+        await UpdateAccountBalanceAsync(transaction.AccountId, balanceChange);
 
         // Publish TransactionCreated event to Redis Stream
         try

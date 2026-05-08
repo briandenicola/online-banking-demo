@@ -67,7 +67,11 @@ public class TransactionService : ITransactionService
         await _container.CreateItemAsync(transaction, new PartitionKey(transaction.AccountId));
         
         // Update account balance (transaction-service owns balance side effects)
-        await UpdateAccountBalanceAsync(transaction.AccountId, transaction.Amount);
+        // Debit transactions decrease balance, so negate positive amounts
+        var balanceChange = IsDebitTransaction(request) && transaction.Amount > 0
+            ? -transaction.Amount
+            : transaction.Amount;
+        await UpdateAccountBalanceAsync(transaction.AccountId, balanceChange);
         
         // Publish TransactionCreated event to Redis Stream
         await PublishTransactionCreatedEvent(transaction);
