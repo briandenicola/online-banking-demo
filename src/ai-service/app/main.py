@@ -615,36 +615,43 @@ async def _refresh_redis_token(client, credential):
 
 
 async def _create_redis_client():
-    """Create a Redis client supporting both Azure Managed Redis (Entra ID)
-    and local docker-compose connections."""
+    """Create a Redis client supporting both Azure Managed Redis (Entra ID cluster)
+    and local docker-compose connections (standard single-node)."""
     conn_str = os.getenv("REDIS__CONNECTIONSTRING", "redis:6379")
     parsed = _parse_redis_connection_string(conn_str)
 
-    kwargs = {
-        "host": parsed["host"],
-        "port": parsed["port"],
-        "decode_responses": True,
-    }
-
-    if parsed["ssl"]:
-        kwargs["ssl"] = True
-        kwargs["ssl_cert_reqs"] = None
-
     azure_client_id = os.getenv("AZURE_CLIENT_ID")
+
     if azure_client_id and AGENT_FRAMEWORK_AVAILABLE:
+        # Azure Managed Redis uses OSS Cluster mode — must use RedisCluster
         credential = DefaultAzureCredential()
         token = credential.get_token(REDIS_SCOPE)
         oid = _extract_oid_from_token(token.token)
-        kwargs["username"] = oid
-        kwargs["password"] = token.token
         logger.info(f"Using Entra ID token for Redis authentication (OID: {oid})")
 
-        client = redis.Redis(**kwargs)
+        client = redis.asyncio.RedisCluster(
+            host=parsed["host"],
+            port=parsed["port"],
+            username=oid,
+            password=token.token,
+            ssl=parsed["ssl"],
+            ssl_cert_reqs=None,
+            decode_responses=True,
+        )
 
         global _token_refresh_task
         _token_refresh_task = asyncio.create_task(_refresh_redis_token(client, credential))
         return client
 
+    # Local dev: standard single-node Redis
+    kwargs = {
+        "host": parsed["host"],
+        "port": parsed["port"],
+        "decode_responses": True,
+    }
+    if parsed["ssl"]:
+        kwargs["ssl"] = True
+        kwargs["ssl_cert_reqs"] = None
     if parsed["password"]:
         kwargs["password"] = parsed["password"]
 
@@ -790,7 +797,7 @@ async def consume_redis_stream(redis_client: redis.Redis):
                 consumername=CONSUMER_NAME,
                 streams={STREAM_NAME: ">"},
                 count=10,
-                block=5000,
+                block=1000,
             )
 
             if not messages:
@@ -827,6 +834,15 @@ async def consume_redis_stream(redis_client: redis.Redis):
 
         except redis.ConnectionError as e:
             logger.error(f"Redis connection error: {e}. Retrying in {backoff}s...")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
+        except redis.ResponseError as e:
+            # Azure Managed Redis proxy returns 11613 when BLOCK commands
+            # can't be redirected during resharding — just retry immediately
+            if "11613" in str(e):
+                await asyncio.sleep(1)
+                continue
+            logger.error(f"Redis response error in consumer loop: {e}. Retrying in {backoff}s...")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30)
         except Exception as e:
