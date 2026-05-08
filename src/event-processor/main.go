@@ -36,7 +36,7 @@ const (
 // EventProcessor handles Redis Stream messages
 type EventProcessor struct {
 	tracer trace.Tracer
-	client *redis.Client
+	client redis.Cmdable
 }
 
 // BankingEvent represents an incoming banking event
@@ -86,7 +86,11 @@ func main() {
 			time.Sleep(time.Duration(i+1) * time.Second)
 		}
 	}
-	defer rdb.Close()
+	defer func() {
+		if c, ok := rdb.(interface{ Close() error }); ok {
+			c.Close()
+		}
+	}()
 
 	// Create consumer group (idempotent)
 	err = rdb.XGroupCreateMkStream(ctx, streamName, consumerGroup, "0").Err()
@@ -131,12 +135,13 @@ func main() {
 }
 
 // newRedisClient creates a Redis client. If AZURE_CLIENT_ID is set (workload identity),
-// it uses Entra ID token-based auth. Otherwise falls back to connection string parsing
+// it uses a ClusterClient with Entra ID token-based auth (Azure Managed Redis uses OSS
+// Cluster mode). Otherwise falls back to standard Client with connection string parsing
 // (for local dev with docker-compose).
-func newRedisClient(ctx context.Context, connStr string) (*redis.Client, error) {
+func newRedisClient(ctx context.Context, connStr string) (redis.Cmdable, error) {
 	opts := parseRedisConnectionString(connStr)
 
-	// If running with Azure workload identity, use Entra ID token auth
+	// If running with Azure workload identity, use ClusterClient + Entra ID token auth
 	if os.Getenv("AZURE_CLIENT_ID") != "" {
 		cred, err := azidentity.NewDefaultAzureCredential(nil)
 		if err != nil {
@@ -150,11 +155,25 @@ func newRedisClient(ctx context.Context, connStr string) (*redis.Client, error) 
 			return nil, fmt.Errorf("failed to get Redis token: %w", err)
 		}
 
-		opts.Username = extractOIDFromToken(token.Token)
-		opts.Password = token.Token
-		log.Printf("Using Entra ID token for Redis authentication (OID: %s)", opts.Username)
+		oid := extractOIDFromToken(token.Token)
+		log.Printf("Using Entra ID token for Redis ClusterClient (OID: %s)", oid)
 
-		client := redis.NewClient(opts)
+		clusterOpts := &redis.ClusterOptions{
+			Addrs:    []string{opts.Addr},
+			Username: oid,
+			Password: token.Token,
+		}
+		if opts.TLSConfig != nil {
+			// Azure Managed Redis cluster nodes use internal IPs that don't match
+			// the TLS certificate's hostname. We must skip verification for
+			// cluster-internal connections while still using TLS encryption.
+			clusterOpts.TLSConfig = &tls.Config{
+				MinVersion:         tls.VersionTLS12,
+				InsecureSkipVerify: true,
+			}
+		}
+
+		client := redis.NewClusterClient(clusterOpts)
 
 		// Refresh token periodically (Azure tokens expire in ~1 hour)
 		go refreshRedisToken(ctx, client, cred)
@@ -167,7 +186,7 @@ func newRedisClient(ctx context.Context, connStr string) (*redis.Client, error) 
 }
 
 // refreshRedisToken periodically refreshes the Entra ID token on the Redis connection
-func refreshRedisToken(ctx context.Context, client *redis.Client, cred *azidentity.DefaultAzureCredential) {
+func refreshRedisToken(ctx context.Context, client *redis.ClusterClient, cred *azidentity.DefaultAzureCredential) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -181,7 +200,9 @@ func refreshRedisToken(ctx context.Context, client *redis.Client, cred *azidenti
 				continue
 			}
 			oid := extractOIDFromToken(token.Token)
-			if err := client.Do(ctx, "AUTH", oid, token.Token).Err(); err != nil {
+			if err := client.ForEachShard(ctx, func(ctx context.Context, shard *redis.Client) error {
+				return shard.Do(ctx, "AUTH", oid, token.Token).Err()
+			}); err != nil {
 				log.Printf("⚠️ Failed to re-auth Redis with new token: %v", err)
 			} else {
 				log.Println("✅ Redis token refreshed")
@@ -232,7 +253,7 @@ func (p *EventProcessor) consumeEvents(ctx context.Context) {
 			Consumer: consumerName,
 			Streams:  []string{streamName, ">"},
 			Count:    10,
-			Block:    5 * time.Second,
+			Block:    1 * time.Second,
 		}).Result()
 
 		if err != nil {
