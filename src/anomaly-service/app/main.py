@@ -8,7 +8,8 @@ Uses agent-framework-foundry for risk scoring:
 
 Architecture:
 - Analyzers: Pluggable risk assessment engines (Foundry AI, future: evals, red-team)
-- Pipeline: Event → Analyze → Score → Store → Flag (if high-risk)
+- Categorizers: Pluggable transaction categorization (Foundry AI, user-defined hints)
+- Pipeline: Event → Analyze → Score → Categorize → Store → Flag (if high-risk)
 - Storage: Redis sorted sets for scored/flagged transactions
 """
 import asyncio
@@ -122,6 +123,13 @@ class RiskAssessment(BaseModel):
     riskScore: float = Field(ge=0.0, le=1.0, description="Risk score 0.0 (safe) to 1.0 (critical)")
     explanation: str = Field(description="Human-readable explanation of the risk assessment")
     flags: list[str] = Field(default_factory=list, description="Risk flag categories detected")
+
+
+class CategoryResult(BaseModel):
+    """Result of AI-powered transaction categorization."""
+    category: str = Field(description="Assigned category (e.g., Groceries, Entertainment)")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence in the categorization")
+    reasoning: str = Field(default="", description="Brief explanation of why this category was chosen")
 
 
 class ScoredTransaction(BaseModel):
@@ -329,24 +337,182 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
             )
 
 
+# ============================================================
+# Extensible Categorizer Framework
+# ============================================================
+
+class BaseCategorizer(abc.ABC):
+    """Base class for transaction categorizers.
+
+    Separate from risk analyzers — categorization is about labeling
+    transactions (Groceries, Entertainment, etc.), not assessing risk.
+
+    User-defined category hints can be passed to influence categorization.
+    """
+
+    @property
+    @abc.abstractmethod
+    def name(self) -> str:
+        """Unique identifier for this categorizer."""
+        ...
+
+    @abc.abstractmethod
+    async def categorize(self, transaction: dict, hints: list[str] | None = None) -> CategoryResult:
+        """Categorize a transaction, optionally using user-defined category hints."""
+        ...
+
+    @property
+    def enabled(self) -> bool:
+        """Override to conditionally disable a categorizer."""
+        return True
+
+
+class FoundryCategorizer(BaseCategorizer):
+    """AI-powered transaction categorizer using Azure AI Foundry.
+
+    Uses a dedicated prompt focused solely on categorization.
+    Accepts optional user-defined category hints to personalize results.
+    """
+
+    SYSTEM_PROMPT = """You are a financial transaction categorizer. Your ONLY job is to assign a category to a transaction.
+
+Choose the single best category from common banking categories:
+- Groceries
+- Dining & Restaurants
+- Entertainment
+- Transportation
+- Utilities
+- Healthcare
+- Shopping
+- Travel
+- Income
+- Transfer
+- Subscription
+- Education
+- Housing
+- Insurance
+- Savings
+- Cash Withdrawal
+- Fees & Charges
+- Other
+
+If the user has provided custom categories, prefer those when they are a good fit.
+
+Respond with ONLY a JSON object (no markdown, no text outside JSON):
+{"category": "<category name>", "confidence": <float 0.0-1.0>, "reasoning": "<brief reason>"}"""
+
+    def __init__(self):
+        self._client: Optional[FoundryChatClient] = None
+        self._model: str = ""
+        self._ready = False
+
+    @property
+    def name(self) -> str:
+        return "foundry-categorizer"
+
+    @property
+    def enabled(self) -> bool:
+        return self._ready
+
+    def initialize(self, client: FoundryChatClient, model: str):
+        """Initialize with a FoundryChatClient instance."""
+        self._client = client
+        self._model = model
+        self._ready = True
+
+    async def categorize(self, transaction: dict, hints: list[str] | None = None) -> CategoryResult:
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span("foundry.categorization") as span:
+            span.set_attribute("categorizer.name", self.name)
+
+            try:
+                user_message = (
+                    f"Categorize this transaction:\n"
+                    f"- Description: {transaction.get('description', 'N/A')}\n"
+                    f"- Amount: ${transaction.get('amount', 0):,.2f}\n"
+                    f"- Type: {transaction.get('type', 'Unknown')}"
+                )
+
+                if hints:
+                    user_message += f"\n\nUser-defined categories (prefer these when applicable): {', '.join(hints)}"
+
+                cat_agent = Agent(
+                    client=self._client,
+                    name="TransactionCategorizer",
+                    instructions=self.SYSTEM_PROMPT,
+                    tools=[],
+                )
+                session = cat_agent.create_session()
+                response = await cat_agent.run(user_message, session=session)
+
+                result = self._parse_response(str(response))
+                span.set_attribute("category.result", result.category)
+                span.set_attribute("category.confidence", result.confidence)
+                return result
+
+            except Exception as e:
+                logger.error(f"Foundry categorization failed: {e}")
+                span.record_exception(e)
+                return CategoryResult(
+                    category="Uncategorized",
+                    confidence=0.0,
+                    reasoning=f"AI categorization failed: {str(e)[:100]}"
+                )
+
+    @staticmethod
+    def _parse_response(response: str) -> CategoryResult:
+        try:
+            text = response.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+                if text.endswith("```"):
+                    text = text[:-3]
+                text = text.strip()
+
+            data = json.loads(text)
+            return CategoryResult(
+                category=data.get("category", "Uncategorized"),
+                confidence=max(0.0, min(1.0, float(data.get("confidence", 0.5)))),
+                reasoning=data.get("reasoning", "")
+            )
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            logger.warning(f"Failed to parse categorization response: {e}, raw: {response[:200]}")
+            return CategoryResult(
+                category="Uncategorized",
+                confidence=0.0,
+                reasoning="Failed to parse AI categorization"
+            )
+
+
 class AnalyzerPipeline:
     """Orchestrates multiple analyzers and aggregates results.
 
     Future analyzers (evals, red-team, rule-based) can be registered here.
     The pipeline runs enabled analyzers and returns the highest-risk result.
+    Categorizers run separately from risk analyzers (separation of concerns).
     """
 
     def __init__(self):
         self._analyzers: list[BaseAnalyzer] = []
+        self._categorizers: list[BaseCategorizer] = []
 
     def register(self, analyzer: BaseAnalyzer):
         """Register an analyzer in the pipeline."""
         self._analyzers.append(analyzer)
         logger.info(f"Registered analyzer: {analyzer.name} (enabled={analyzer.enabled})")
 
+    def register_categorizer(self, categorizer: BaseCategorizer):
+        """Register a categorizer in the pipeline."""
+        self._categorizers.append(categorizer)
+        logger.info(f"Registered categorizer: {categorizer.name} (enabled={categorizer.enabled})")
+
     @property
     def analyzers(self) -> list[BaseAnalyzer]:
         return self._analyzers
+
+    @property
+    def categorizers(self) -> list[BaseCategorizer]:
+        return self._categorizers
 
     async def assess(self, transaction: dict) -> RiskAssessment:
         """Run all enabled analyzers and return the highest-risk assessment."""
@@ -370,6 +536,22 @@ class AnalyzerPipeline:
 
         # Return highest risk score (conservative approach)
         return max(results, key=lambda r: r.riskScore)
+
+    async def categorize(self, transaction: dict, hints: list[str] | None = None) -> CategoryResult:
+        """Run the first enabled categorizer to assign a category."""
+        for categorizer in self._categorizers:
+            if not categorizer.enabled:
+                continue
+            try:
+                return await categorizer.categorize(transaction, hints=hints)
+            except Exception as e:
+                logger.error(f"Categorizer {categorizer.name} failed: {e}")
+
+        return CategoryResult(
+            category=transaction.get("category", "Uncategorized"),
+            confidence=0.0,
+            reasoning="No categorizers available"
+        )
 
 
 # ============================================================
@@ -484,8 +666,16 @@ async def _create_redis_client():
 # ============================================================
 
 async def score_and_store_transaction(transaction: dict) -> ScoredTransaction:
-    """Score a transaction through the analyzer pipeline and store results."""
+    """Score and categorize a transaction, then store results."""
     assessment = await _analyzer_pipeline.assess(transaction)
+
+    # Categorize independently from risk scoring
+    existing_category = transaction.get("category", "")
+    if not existing_category or existing_category == "Uncategorized":
+        cat_result = await _analyzer_pipeline.categorize(transaction)
+        category = cat_result.category
+    else:
+        category = existing_category
 
     scored_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
@@ -497,7 +687,7 @@ async def score_and_store_transaction(transaction: dict) -> ScoredTransaction:
         amount=transaction.get("amount", 0),
         type=transaction.get("type", ""),
         description=transaction.get("description", ""),
-        category=transaction.get("category", ""),
+        category=category,
         riskScore=assessment.riskScore,
         explanation=assessment.explanation,
         flags=assessment.flags,
@@ -643,6 +833,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"  AGENT_FRAMEWORK_AVAILABLE: {AGENT_FRAMEWORK_AVAILABLE}")
 
     foundry_analyzer = FoundryRiskAnalyzer()
+    foundry_categorizer = FoundryCategorizer()
 
     if endpoint and AGENT_FRAMEWORK_AVAILABLE:
         try:
@@ -656,19 +847,21 @@ async def lifespan(app: FastAPI):
                 credential=credential,
             )
             foundry_analyzer.initialize(client, model_name)
+            foundry_categorizer.initialize(client, model_name)
             logger.info("✅ Foundry risk analyzer initialized")
+            logger.info("✅ Foundry categorizer initialized")
         except Exception as e:
             logger.error(f"❌ Foundry initialization failed: {e}")
     else:
         logger.warning("⚠️ Foundry not available — using fallback scoring")
 
     _analyzer_pipeline.register(foundry_analyzer)
+    _analyzer_pipeline.register_categorizer(foundry_categorizer)
 
-    # Future analyzers can be registered here:
+    # Future analyzers/categorizers can be registered here:
     # _analyzer_pipeline.register(EvalAnalyzer())
-    # _analyzer_pipeline.register(RedTeamAnalyzer())
-    # _analyzer_pipeline.register(RuleBasedAnalyzer())
     # _analyzer_pipeline.register(VelocityAnalyzer())
+    # _analyzer_pipeline.register_categorizer(UserHintCategorizer())
 
     # Initialize Redis
     redis_client = await _create_redis_client()

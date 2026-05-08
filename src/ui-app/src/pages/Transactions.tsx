@@ -34,7 +34,7 @@ interface Transaction {
   amount: number;
   category?: string;
   type?: string;
-  isAnomalous?: boolean;
+  riskScore?: number;
   aiExplanation?: string;
 }
 
@@ -76,18 +76,35 @@ const Transactions: React.FC = () => {
   const fetchTransactions = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await apiClient.get('/transactions/my');
-      const data = Array.isArray(response.data) ? response.data : (response.data.transactions || []);
-      setTransactions(data.map((t: Record<string, unknown>) => ({
-        id: t.id as string,
-        accountId: t.accountId as string,
-        date: t.timestamp as string,
-        description: t.description as string,
-        amount: t.amount as number,
-        category: t.category as string | undefined,
-        type: t.type as string | undefined,
-        isAnomalous: false,
-      })));
+      const [txResponse, scoredResponse] = await Promise.all([
+        apiClient.get('/transactions/my'),
+        apiClient.get('/admin/transactions').catch(() => ({ data: [] })),
+      ]);
+      const data = Array.isArray(txResponse.data) ? txResponse.data : (txResponse.data.transactions || []);
+      const scored = Array.isArray(scoredResponse.data) ? scoredResponse.data : [];
+
+      // Build lookup by transactionId for risk scores and AI categories
+      const scoreMap = new Map<string, { riskScore: number; explanation: string; category?: string }>();
+      for (const s of scored) {
+        if (s.transactionId) {
+          scoreMap.set(s.transactionId, { riskScore: s.riskScore, explanation: s.explanation, category: s.category });
+        }
+      }
+
+      setTransactions(data.map((t: Record<string, unknown>) => {
+        const score = scoreMap.get(t.id as string);
+        return {
+          id: t.id as string,
+          accountId: t.accountId as string,
+          date: t.timestamp as string,
+          description: t.description as string,
+          amount: t.amount as number,
+          category: score?.category || (t.category as string | undefined),
+          type: t.type as string | undefined,
+          riskScore: score?.riskScore,
+          aiExplanation: score?.explanation,
+        };
+      }));
     } catch (e) {
       setError('Failed to load transactions');
     } finally {
@@ -181,7 +198,7 @@ const Transactions: React.FC = () => {
               <TableCell>Description</TableCell>
               <TableCell align="right">Amount</TableCell>
               <TableCell>Type</TableCell>
-              <TableCell>Status</TableCell>
+              <TableCell>Risk</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -210,18 +227,28 @@ const Transactions: React.FC = () => {
                     <Chip label={txn.type || 'Unknown'} size="small" variant="outlined" />
                   </TableCell>
                   <TableCell>
-                    {txn.isAnomalous ? (
+                    {txn.riskScore == null ? (
+                      <Chip label="Unscored" size="small" variant="outlined" />
+                    ) : txn.riskScore >= 0.7 ? (
                       <Chip
                         icon={<WarningIcon />}
-                        label="Flagged"
+                        label={`High (${txn.riskScore.toFixed(2)})`}
                         color="error"
                         size="small"
                         title={txn.aiExplanation || 'Suspicious transaction'}
                       />
+                    ) : txn.riskScore >= 0.3 ? (
+                      <Chip
+                        icon={<WarningIcon />}
+                        label={`Medium (${txn.riskScore.toFixed(2)})`}
+                        color="warning"
+                        size="small"
+                        title={txn.aiExplanation}
+                      />
                     ) : (
                       <Chip
                         icon={<CheckCircleIcon />}
-                        label="Normal"
+                        label={`Normal (${txn.riskScore.toFixed(2)})`}
                         color="success"
                         size="small"
                       />

@@ -148,7 +148,8 @@ const AdminPage: React.FC = () => {
   const handleAction = async (id: string, action: 'review' | 'clear') => {
     setActionLoading(id);
     try {
-      await apiClient.put(`/admin/flagged-transactions/${id}/review`, { action });
+      const status = action === 'review' ? 'reviewed' : 'cleared';
+      await apiClient.put(`/admin/flagged-transactions/${id}/review`, { status, notes: `Marked as ${status} by admin` });
       await fetchData();
     } catch {
       setError(`Failed to ${action} transaction. Please try again.`);
