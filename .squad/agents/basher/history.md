@@ -8,6 +8,26 @@
 
 ## Learnings
 
+### 2026-05 — TLS on Istio Ingress with cert-manager
+
+**Setup:** Added TLS termination to the Istio ingress gateway using cert-manager + Let's Encrypt.
+
+**Architecture decisions:**
+- cert-manager installed via Helm (Taskfile tasks), not Terraform — operational tooling stays in Taskfile
+- ClusterIssuer uses HTTP-01 challenge with `class: istio` solver for managed AKS Istio
+- TLS secret (`banking-demo-tls`) lives in `aks-istio-ingress` namespace (required for managed Istio)
+- Gateway keeps HTTP (port 80) with `httpsRedirect: true`, adds HTTPS (port 443) with SIMPLE TLS mode
+- `CUSTOM_DOMAIN` env var drives domain configuration via `envsubst` in `tls:setup` task
+
+**Key files:**
+- `cluster-config/cert-manager/clusterissuer.yaml` — Let's Encrypt production ClusterIssuer
+- `cluster-config/cert-manager/certificate.yaml` — Certificate resource (uses `${CUSTOM_DOMAIN}`)
+- `cluster-config/istio/gateway/istio-ingress-gateway.yaml` — Updated Gateway with HTTPS server
+- `Taskfile.cloud.yml` — `tls:install-cert-manager`, `tls:setup`, `tls:status` tasks
+- `.env.example` — `CUSTOM_DOMAIN` variable added
+
+**Pattern:** For managed AKS Istio, TLS certs must be in `aks-istio-ingress` namespace. The `credentialName` on the Gateway server references the cert-manager Secret name directly.
+
 ### 2026-05 — Chatbot SDK Migration: v2.x azure-ai-projects (final)
 
 **Problem:** chatbot-service used the old `create_agent()` / `threads.create()` / `messages.create()` / `runs.create_and_process()` API which no longer exists in azure-ai-projects 2.1.0.
@@ -654,3 +674,23 @@ the hostname, not the child project name. The project name only appears in the `
 
 **Pattern:** .NET 9 containers listen on 8080 by default (not 80). All inter-service URLs in docker-compose must include `:8080`.
 **Pattern:** Account-by-number lookup must not enforce ownership — it's used for cross-user transfers.
+
+### 2026-05-08 — TLS Cert-Manager on Istio Ingress
+
+**Feature:** Added automated TLS termination to the Istio ingress gateway using cert-manager with Let's Encrypt.
+
+**Architecture choices:**
+- cert-manager installed via Helm (Taskfile), not Terraform — keeps operational tooling in Taskfile
+- ClusterIssuer with HTTP-01 challenge and `class: istio` — works with managed AKS Istio without DNS provider config
+- TLS secret lives in `aks-istio-ingress` namespace (required by managed Istio for gateway credential reference)
+- Gateway keeps HTTP (port 80) with `httpsRedirect: true`, adds HTTPS (port 443) with SIMPLE TLS mode
+- `CUSTOM_DOMAIN` env var drives certificate domain via `envsubst`
+
+**Key files created:**
+- `cluster-config/cert-manager/clusterissuer.yaml` — Let's Encrypt production ClusterIssuer
+- `cluster-config/cert-manager/certificate.yaml` — Certificate resource template (uses `${CUSTOM_DOMAIN}`)
+- `cluster-config/istio/gateway/istio-ingress-gateway.yaml` — Updated with HTTPS server + redirect
+- `Taskfile.cloud.yml` — Added `tls:install-cert-manager`, `tls:setup`, `tls:status` tasks
+- `.env.example` — Added `CUSTOM_DOMAIN` variable
+
+**Pattern:** For managed AKS Istio, TLS certs must be in `aks-istio-ingress` namespace. The `credentialName` on the Gateway server references the cert-manager Secret name directly. HTTP-01 solver class `istio` works without DNS configuration.
