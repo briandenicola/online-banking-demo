@@ -18,7 +18,8 @@ import {
   DialogContent,
   DialogActions,
   TextField,
-  MenuItem
+  MenuItem,
+  Autocomplete
 } from '@mui/material';
 import { Warning as WarningIcon, CheckCircle as CheckCircleIcon, Add as AddIcon } from '@mui/icons-material';
 import { useAuthContext } from '../contexts/AuthContext';
@@ -65,6 +66,7 @@ const Transactions: React.FC = () => {
     autoCategorize: true
   });
   const [success, setSuccess] = useState<string | null>(null);
+  const [userCategories, setUserCategories] = useState<string[]>([]);
 
   // Update default accountId when accounts load
   useEffect(() => {
@@ -72,6 +74,17 @@ const Transactions: React.FC = () => {
       setNewTransaction(prev => ({ ...prev, accountId: accounts[0].id }));
     }
   }, [accounts, newTransaction.accountId]);
+
+  // Load user-defined category preferences for autocomplete
+  useEffect(() => {
+    const loadCategories = async () => {
+      try {
+        const res = await apiClient.get('/users/me/categories');
+        setUserCategories(res.data.categories || []);
+      } catch { /* no categories */ }
+    };
+    loadCategories();
+  }, []);
 
   const fetchTransactions = useCallback(async () => {
     try {
@@ -326,14 +339,21 @@ const Transactions: React.FC = () => {
               required
               placeholder="e.g., Starbucks Coffee, Amazon Purchase"
             />
-            <TextField
-              fullWidth
-              label="Category (optional)"
-              value={newTransaction.category}
-              onChange={(e) => setNewTransaction({...newTransaction, category: e.target.value})}
-              margin="dense"
+            <Autocomplete
+              freeSolo
+              options={userCategories}
+              value={newTransaction.category || ''}
+              onInputChange={(_e, value) => setNewTransaction({...newTransaction, category: value})}
               disabled={newTransaction.autoCategorize}
-              helperText={newTransaction.autoCategorize ? "AI will auto-categorize" : "Leave empty for manual"}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  fullWidth
+                  label="Category (optional)"
+                  margin="dense"
+                  helperText={newTransaction.autoCategorize ? "AI will auto-categorize" : "Type or pick from your saved categories"}
+                />
+              )}
             />
           </Box>
         </DialogContent>
