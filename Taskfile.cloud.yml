@@ -82,6 +82,7 @@ tasks:
       - az acr build --registry {{.ACR_NAME}} --image account-service:{{.TAG}} -f ./src/account-service/Dockerfile .
       - az acr build --registry {{.ACR_NAME}} --image transaction-service:{{.TAG}} -f ./src/transaction-service/Dockerfile .
       - az acr build --registry {{.ACR_NAME}} --image transfer-service:{{.TAG}} -f ./src/transfer-service/Dockerfile .
+      - az acr build --registry {{.ACR_NAME}} --image prompt-eval-service:{{.TAG}} -f ./src/prompt-eval-service/Dockerfile .
 
   build:python:
     desc: Build all Python service images
@@ -90,7 +91,6 @@ tasks:
       - az acr build --registry {{.ACR_NAME}} --image budget-service:{{.TAG}} ./src/budget-service/
       - az acr build --registry {{.ACR_NAME}} --image ai-service:{{.TAG}} ./src/ai-service/
       - az acr build --registry {{.ACR_NAME}} --image event-processor:{{.TAG}} ./src/event-processor/
-      - az acr build --registry {{.ACR_NAME}} --image prompt-eval-service:{{.TAG}} ./src/prompt-eval-service/
 
   build:ui:
     desc: Build UI application image
