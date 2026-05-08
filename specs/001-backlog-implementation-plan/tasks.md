@@ -390,7 +390,7 @@ With Squad agents:
 - [ ] T205 [P] [US2] Create MCP server for banking accounts — expose account data via Model Context Protocol
 - [ ] T206 [P] [US2] Create MCP server for banking transactions — expose transaction data via MCP
 - [ ] T207 [P] [US2] Create MCP server for banking budgets — expose budget data via MCP
-- [ ] T208 [US2] Multi-agent orchestration — risk→categorize→advise pipeline with shared context via Redis
+- [ ] T208 [US2] Multi-agent account opening (KYC) — orchestrator + document extraction + identity verification + compliance agents with real-time UI progress
 - [ ] T209 [US2] Agent365 integration — Teams/Outlook agent manifest pointing to existing REST APIs
 - [ ] T210 [US2] Update `docs/future-ai-capabilities.md` with implementation status and learnings
 

@@ -41,14 +41,52 @@ Transfer Request ($5,000)
 
 ### Implementation Ideas
 
-1. **Orchestrator agent** — A meta-agent that coordinates risk-assessor → categorizer → advisor in a pipeline, passing context between stages
-2. **Shared context via Redis** — Publish enriched events with risk scores and categories, consumed by downstream agents
-3. **Azure AI Foundry Agent Groups** — When GA, use Foundry's built-in multi-agent orchestration
-4. **AutoGen / Semantic Kernel multi-agent** — Framework-level orchestration with agent-to-agent messaging
+**Primary Scenario: Multi-Agent Account Opening (KYC)**
+
+A realistic bank account opening flow where multiple AI agents collaborate:
+
+```
+Customer submits application
+    │
+    ├─▶ Document Extraction Agent
+    │     Reads uploaded documents (ID, proof of address, pay stubs)
+    │     Extracts: name, DOB, address, income, document type
+    │     Output: structured applicant profile
+    │
+    ├─▶ Identity Verification Agent
+    │     Cross-references extracted data against application form
+    │     Checks for inconsistencies (name mismatch, expired ID)
+    │     Output: identity_verified: true/false, confidence score, flags
+    │
+    ├─▶ Compliance/KYC Agent
+    │     Screens against sanctions lists, PEP databases
+    │     Evaluates risk category (low/medium/high)
+    │     Checks jurisdiction requirements
+    │     Output: kyc_status: approved/review/rejected, risk_tier
+    │
+    └─▶ Account Provisioning Agent (Orchestrator)
+          Collects results from all agents
+          If all pass → auto-approve, create account, send welcome
+          If any flag → route to human review queue
+          If rejected → notify with reason
+```
+
+**UI Flow:**
+1. User fills application form (name, DOB, SSN, employment, income)
+2. User uploads documents (photo ID, proof of address, optional: pay stub)
+3. Progress indicator shows each agent's status in real-time
+4. Final decision: Approved / Pending Review / Rejected
+
+**Technical Approach:**
+1. **Orchestrator agent** — Coordinates the pipeline, passes context between stages via Redis Streams events
+2. **Document processing** — Azure AI Document Intelligence for OCR/extraction, Foundry agent for interpretation
+3. **Agent-to-agent context** — Each agent publishes results to `account-opening-events` stream; orchestrator aggregates
+4. **Human-in-the-loop** — Flagged applications go to admin review queue (existing admin panel)
+5. **Audit trail** — Every agent decision logged with reasoning for compliance
 
 ### Effort Estimate
 
-Medium — requires an orchestrator service or event enrichment pipeline. The Redis Streams infrastructure already supports the event flow.
+Medium-High — requires new account-opening service, document upload API, 3-4 new Foundry agents, orchestration pipeline. The Redis Streams and admin panel infrastructure already exist. Azure AI Document Intelligence adds a new Azure dependency.
 
 ---
 
