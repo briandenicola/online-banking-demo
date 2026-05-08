@@ -284,7 +284,7 @@ test.describe('E2E-304: Budget/Spending View', () => {
     await budgetPage.navigate();
     await budgetPage.expectLoaded();
 
-    const token = await authenticatedPage.evaluate(() => localStorage.getItem('token'));
+    const token = await authenticatedPage.evaluate(() => localStorage.getItem('auth_token'));
     expect(token).toBeTruthy();
   });
 });

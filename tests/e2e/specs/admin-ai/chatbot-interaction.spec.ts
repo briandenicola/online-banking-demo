@@ -19,7 +19,7 @@ test.describe('E2E-404: Chatbot Interaction — Message Flow', () => {
 
     if (!chatAvailable && !toggleAvailable) {
       // Try opening from dashboard
-      await authenticatedPage.goto('/dashboard');
+      await authenticatedPage.goto('/');
       await authenticatedPage.waitForLoadState('domcontentloaded');
       await authenticatedPage.waitForTimeout(1000);
 

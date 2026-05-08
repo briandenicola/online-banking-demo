@@ -1,8 +1,9 @@
 import { test, expect } from '../../fixtures/authFixture';
+import { ensureTestUser } from '../../fixtures/authFixture';
 import { AdminPage } from '../../pages/AdminPage';
 
 const ADMIN_CREDENTIALS = {
-  email: 'testuser',
+  email: 'admin@banking-demo.com',
   password: 'password123',
 };
 
@@ -10,10 +11,14 @@ test.describe('E2E-402: Admin User Management — List & Filter', () => {
   let adminPage: AdminPage;
   let adminToken: string;
 
+  test.beforeAll(async ({ request }) => {
+    await ensureTestUser(request, ADMIN_CREDENTIALS);
+  });
+
   test.beforeEach(async ({ page, request }) => {
     const loginResponse = await request.post('/api/users/login', {
       data: {
-        email: ADMIN_CREDENTIALS.email,
+        username: ADMIN_CREDENTIALS.email,
         password: ADMIN_CREDENTIALS.password,
       },
     });
@@ -32,9 +37,11 @@ test.describe('E2E-402: Admin User Management — List & Filter', () => {
     }
 
     adminToken = token;
-    await page.addInitScript((t: string) => {
-      window.localStorage.setItem('token', t);
-    }, token);
+    await page.addInitScript((state: { token: string; email: string; role: string }) => {
+      window.localStorage.setItem('auth_token', state.token);
+      window.localStorage.setItem('auth_email', state.email);
+      window.localStorage.setItem('auth_role', state.role);
+    }, { token, email: ADMIN_CREDENTIALS.email, role: body.role ?? 'admin' });
 
     adminPage = new AdminPage(page);
     await adminPage.navigate();

@@ -131,7 +131,7 @@ test.describe('E2E-405: Chatbot Memory & Context', () => {
       expect(newSessionResponse.length).toBeGreaterThan(0);
     } else {
       // Simulate new session by navigating away and back
-      await authenticatedPage.goto('/dashboard');
+      await authenticatedPage.goto('/');
       await authenticatedPage.waitForLoadState('domcontentloaded');
 
       // Clear any session storage that might persist chat context

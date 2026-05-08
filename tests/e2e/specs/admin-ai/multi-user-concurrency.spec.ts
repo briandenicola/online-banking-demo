@@ -1,13 +1,19 @@
 import { test as baseTest, expect, Browser, BrowserContext, Page } from '@playwright/test';
-import { apiLogin, DEFAULT_USER, AuthCredentials } from '../../fixtures/authFixture';
+import { apiLogin, ensureTestUser, DEFAULT_USER, AuthCredentials } from '../../fixtures/authFixture';
 
 const TEST_USERS: AuthCredentials[] = [
-  { email: 'demo@banking-demo.com', password: 'password123' },
-  { email: 'testuser', password: 'password123' },
-  { email: 'demo@banking-demo.com', password: 'password123' }, // Same user, separate session
+  { email: 'e2e-default@banking-demo.com', password: 'password123' },
+  { email: 'testuser@banking-demo.com', password: 'password123' },
+  { email: 'e2e-default@banking-demo.com', password: 'password123' }, // Same user, separate session
 ];
 
 baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
+  baseTest.beforeAll(async ({ request }) => {
+    // Ensure all test users are registered
+    for (const creds of TEST_USERS) {
+      await ensureTestUser(request, creds);
+    }
+  });
   baseTest('should handle 3+ users logging in simultaneously', async ({ browser, request }) => {
     // Create separate browser contexts for each user
     const contexts: BrowserContext[] = [];
@@ -18,7 +24,7 @@ baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
       // Login all users in parallel
       const loginPromises = TEST_USERS.map(creds =>
         request.post('/api/users/login', {
-          data: { email: creds.email, password: creds.password },
+          data: { username: creds.email, password: creds.password },
         })
       );
 
@@ -47,14 +53,14 @@ baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
         const context = await browser.newContext();
         const page = await context.newPage();
         await page.addInitScript((t: string) => {
-          window.localStorage.setItem('token', t);
+          window.localStorage.setItem('auth_token', t);
         }, token);
         contexts.push(context);
         pages.push(page);
       }
 
       // All users navigate to dashboard simultaneously
-      const navPromises = pages.map(page => page.goto('/dashboard'));
+      const navPromises = pages.map(page => page.goto('/'));
       await Promise.all(navPromises);
 
       // All pages should load successfully
@@ -77,7 +83,7 @@ baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
     try {
       // Login first user
       const user1Response = await request.post('/api/users/login', {
-        data: { email: TEST_USERS[0].email, password: TEST_USERS[0].password },
+        data: { username: TEST_USERS[0].email, password: TEST_USERS[0].password },
       });
 
       if (!user1Response.ok()) {
@@ -90,7 +96,7 @@ baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
 
       // Login second user
       const user2Response = await request.post('/api/users/login', {
-        data: { email: TEST_USERS[1].email, password: TEST_USERS[1].password },
+        data: { username: TEST_USERS[1].email, password: TEST_USERS[1].password },
       });
 
       if (!user2Response.ok()) {
@@ -115,10 +121,10 @@ baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
       const page2 = await context2.newPage();
 
       await page1.addInitScript((t: string) => {
-        window.localStorage.setItem('token', t);
+        window.localStorage.setItem('auth_token', t);
       }, user1Token);
       await page2.addInitScript((t: string) => {
-        window.localStorage.setItem('token', t);
+        window.localStorage.setItem('auth_token', t);
       }, user2Token);
 
       // Navigate both to accounts page
@@ -156,8 +162,8 @@ baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
       }
 
       // Verify localStorage isolation between contexts
-      const token1 = await page1.evaluate(() => localStorage.getItem('token'));
-      const token2 = await page2.evaluate(() => localStorage.getItem('token'));
+      const token1 = await page1.evaluate(() => localStorage.getItem('auth_token'));
+      const token2 = await page2.evaluate(() => localStorage.getItem('auth_token'));
 
       expect(token1).toBe(user1Token);
       expect(token2).toBe(user2Token);
@@ -172,7 +178,7 @@ baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
   baseTest('should handle concurrent transfers without race conditions', async ({ request }) => {
     // Login as primary user
     const loginResponse = await request.post('/api/users/login', {
-      data: { email: TEST_USERS[0].email, password: TEST_USERS[0].password },
+      data: { username: TEST_USERS[0].email, password: TEST_USERS[0].password },
     });
 
     if (!loginResponse.ok()) {
@@ -264,7 +270,7 @@ baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
     try {
       // Login as two different sessions of the same user
       const loginResponse = await request.post('/api/users/login', {
-        data: { email: TEST_USERS[0].email, password: TEST_USERS[0].password },
+        data: { username: TEST_USERS[0].email, password: TEST_USERS[0].password },
       });
 
       if (!loginResponse.ok()) {
@@ -289,10 +295,10 @@ baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
       const page2 = await context2.newPage();
 
       await page1.addInitScript((t: string) => {
-        window.localStorage.setItem('token', t);
+        window.localStorage.setItem('auth_token', t);
       }, token);
       await page2.addInitScript((t: string) => {
-        window.localStorage.setItem('token', t);
+        window.localStorage.setItem('auth_token', t);
       }, token);
 
       // User 1 navigates to transfers, User 2 navigates to transactions
@@ -314,8 +320,8 @@ baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
       expect(page1Url).not.toBe(page2Url);
 
       // Both should have the token in localStorage
-      const token1 = await page1.evaluate(() => localStorage.getItem('token'));
-      const token2 = await page2.evaluate(() => localStorage.getItem('token'));
+      const token1 = await page1.evaluate(() => localStorage.getItem('auth_token'));
+      const token2 = await page2.evaluate(() => localStorage.getItem('auth_token'));
       expect(token1).toBeTruthy();
       expect(token2).toBeTruthy();
     } finally {
@@ -329,10 +335,10 @@ baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
     // Login as two different users
     const [user1Resp, user2Resp] = await Promise.all([
       request.post('/api/users/login', {
-        data: { email: TEST_USERS[0].email, password: TEST_USERS[0].password },
+        data: { username: TEST_USERS[0].email, password: TEST_USERS[0].password },
       }),
       request.post('/api/users/login', {
-        data: { email: TEST_USERS[1].email, password: TEST_USERS[1].password },
+        data: { username: TEST_USERS[1].email, password: TEST_USERS[1].password },
       }),
     ]);
 

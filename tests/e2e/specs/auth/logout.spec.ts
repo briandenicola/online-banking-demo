@@ -1,17 +1,22 @@
 import { test, expect } from '@playwright/test';
 import { LoginPage } from '../../pages/LoginPage';
 import { DashboardPage } from '../../pages/DashboardPage';
+import { ensureDefaultUser } from '../../utils/testHelpers';
 
 test.describe('E2E-204: Logout & Session Cleanup', () => {
   let loginPage: LoginPage;
   let dashboardPage: DashboardPage;
+
+  test.beforeAll(async ({ request }) => {
+    await ensureDefaultUser(request);
+  });
 
   test.beforeEach(async ({ page }) => {
     loginPage = new LoginPage(page);
     dashboardPage = new DashboardPage(page);
 
     await loginPage.navigate();
-    await loginPage.login('demo@banking-demo.com', 'password123');
+    await loginPage.login('e2e-default@banking-demo.com', 'password123');
     await loginPage.expectNavigatedToDashboard();
     await dashboardPage.expectLoaded();
   });
@@ -81,7 +86,7 @@ test.describe('E2E-204: Logout & Session Cleanup', () => {
 
     expect(await page.url()).toContain('/login');
 
-    await loginPage.login('demo@banking-demo.com', 'password123');
+    await loginPage.login('e2e-default@banking-demo.com', 'password123');
     await loginPage.expectNavigatedToDashboard();
 
     const newToken = await page.evaluate(() => localStorage.getItem('auth_token'));

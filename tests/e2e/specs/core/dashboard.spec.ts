@@ -15,7 +15,7 @@ test.describe('E2E-205: Dashboard Load & Account Display', () => {
     await dashboardPage.navigate();
     await dashboardPage.expectLoaded();
 
-    expect(await authenticatedPage.url()).toContain('/dashboard');
+    expect(authenticatedPage.url()).toMatch(/\/(\?.*)?$/);
   });
 
   test('should display welcome message on dashboard', async ({ authenticatedPage }) => {
@@ -62,6 +62,8 @@ test.describe('E2E-205: Dashboard Load & Account Display', () => {
     await dashboardPage.navigate();
     await dashboardPage.expectLoaded();
 
+    // Logout is behind the avatar menu dropdown
+    await dashboardPage.userMenuButton.click();
     await expect(dashboardPage.logoutButton).toBeVisible();
   });
 
@@ -124,7 +126,7 @@ test.describe('E2E-205: Dashboard Load & Account Display', () => {
     await dashboardPage.navigate();
     await dashboardPage.expectLoaded();
 
-    const token = await authenticatedPage.evaluate(() => localStorage.getItem('token'));
+    const token = await authenticatedPage.evaluate(() => localStorage.getItem('auth_token'));
     expect(token).toBeTruthy();
   });
 });

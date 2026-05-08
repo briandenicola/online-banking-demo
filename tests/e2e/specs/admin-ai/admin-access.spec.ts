@@ -1,19 +1,24 @@
 import { test, expect } from '../../fixtures/authFixture';
+import { ensureTestUser } from '../../fixtures/authFixture';
 import { AdminPage } from '../../pages/AdminPage';
 import { LoginPage } from '../../pages/LoginPage';
 import { test as baseTest } from '@playwright/test';
 
 const ADMIN_CREDENTIALS = {
-  email: 'testuser',
+  email: 'admin@banking-demo.com',
   password: 'password123',
 };
 
 test.describe('E2E-401: Admin Dashboard Access & Permission Check', () => {
+  test.beforeAll(async ({ request }) => {
+    await ensureTestUser(request, ADMIN_CREDENTIALS);
+  });
+
   test.describe('Non-Admin User Access Restrictions', () => {
     test('should not show admin nav link for regular user', async ({ authenticatedPage }) => {
       const adminPage = new AdminPage(authenticatedPage);
       // Navigate to dashboard first
-      await authenticatedPage.goto('/dashboard');
+      await authenticatedPage.goto('/');
       await authenticatedPage.waitForLoadState('domcontentloaded');
 
       const adminNavVisible = await adminPage.isAdminNavVisible();
@@ -40,7 +45,7 @@ test.describe('E2E-401: Admin Dashboard Access & Permission Check', () => {
       // Login as admin via API
       const loginResponse = await request.post('/api/users/login', {
         data: {
-          email: ADMIN_CREDENTIALS.email,
+          username: ADMIN_CREDENTIALS.email,
           password: ADMIN_CREDENTIALS.password,
         },
       });
@@ -59,9 +64,11 @@ test.describe('E2E-401: Admin Dashboard Access & Permission Check', () => {
       }
 
       // Inject admin token
-      await page.addInitScript((t: string) => {
-        window.localStorage.setItem('token', t);
-      }, token);
+      await page.addInitScript((state: { token: string; email: string; role: string }) => {
+        window.localStorage.setItem('auth_token', state.token);
+        window.localStorage.setItem('auth_email', state.email);
+        window.localStorage.setItem('auth_role', state.role);
+      }, { token, email: ADMIN_CREDENTIALS.email, role: body.role ?? 'admin' });
 
       const adminPage = new AdminPage(page);
       await adminPage.navigate();
@@ -84,7 +91,7 @@ test.describe('E2E-401: Admin Dashboard Access & Permission Check', () => {
     test('should display stats cards on admin dashboard', async ({ page, request }) => {
       const loginResponse = await request.post('/api/users/login', {
         data: {
-          email: ADMIN_CREDENTIALS.email,
+          username: ADMIN_CREDENTIALS.email,
           password: ADMIN_CREDENTIALS.password,
         },
       });
@@ -102,9 +109,11 @@ test.describe('E2E-401: Admin Dashboard Access & Permission Check', () => {
         return;
       }
 
-      await page.addInitScript((t: string) => {
-        window.localStorage.setItem('token', t);
-      }, token);
+      await page.addInitScript((state: { token: string; email: string; role: string }) => {
+        window.localStorage.setItem('auth_token', state.token);
+        window.localStorage.setItem('auth_email', state.email);
+        window.localStorage.setItem('auth_role', state.role);
+      }, { token, email: ADMIN_CREDENTIALS.email, role: body.role ?? 'admin' });
 
       const adminPage = new AdminPage(page);
       await adminPage.navigate();
@@ -125,7 +134,7 @@ test.describe('E2E-401: Admin Dashboard Access & Permission Check', () => {
     test('should show admin navigation link for admin user', async ({ page, request }) => {
       const loginResponse = await request.post('/api/users/login', {
         data: {
-          email: ADMIN_CREDENTIALS.email,
+          username: ADMIN_CREDENTIALS.email,
           password: ADMIN_CREDENTIALS.password,
         },
       });
@@ -143,11 +152,13 @@ test.describe('E2E-401: Admin Dashboard Access & Permission Check', () => {
         return;
       }
 
-      await page.addInitScript((t: string) => {
-        window.localStorage.setItem('token', t);
-      }, token);
+      await page.addInitScript((state: { token: string; email: string; role: string }) => {
+        window.localStorage.setItem('auth_token', state.token);
+        window.localStorage.setItem('auth_email', state.email);
+        window.localStorage.setItem('auth_role', state.role);
+      }, { token, email: ADMIN_CREDENTIALS.email, role: body.role ?? 'admin' });
 
-      await page.goto('/dashboard');
+      await page.goto('/');
       await page.waitForLoadState('domcontentloaded');
       await page.waitForTimeout(2000);
 

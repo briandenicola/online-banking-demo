@@ -102,7 +102,7 @@ test.describe('E2E-206: View Account Details', () => {
     await accountsPage.navigate();
     await accountsPage.expectLoaded();
 
-    const token = await authenticatedPage.evaluate(() => localStorage.getItem('token'));
+    const token = await authenticatedPage.evaluate(() => localStorage.getItem('auth_token'));
     expect(token).toBeTruthy();
   });
 

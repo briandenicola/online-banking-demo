@@ -1,10 +1,16 @@
 import { test, expect } from '@playwright/test';
 import { RegistrationPage } from '../../pages/RegistrationPage';
 import { LoginPage } from '../../pages/LoginPage';
+import { ensureDefaultUser } from '../../utils/testHelpers';
 
 test.describe('E2E-201: User Registration Flow', () => {
   let registrationPage: RegistrationPage;
   let loginPage: LoginPage;
+
+  test.beforeAll(async ({ request }) => {
+    // Ensure the default E2E user exists so the duplicate test has a user to conflict with
+    await ensureDefaultUser(request);
+  });
 
   test.beforeEach(async ({ page }) => {
     registrationPage = new RegistrationPage(page);
@@ -99,7 +105,7 @@ test.describe('E2E-201: User Registration Flow', () => {
   });
 
   test('should prevent duplicate email registration', async () => {
-    const existingEmail = 'demo@banking-demo.com';
+    const existingEmail = 'e2e-default@banking-demo.com';
 
     await registrationPage.register(
       'Test',

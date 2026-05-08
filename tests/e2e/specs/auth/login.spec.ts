@@ -1,10 +1,15 @@
 import { test, expect } from '@playwright/test';
 import { LoginPage } from '../../pages/LoginPage';
 import { DashboardPage } from '../../pages/DashboardPage';
+import { ensureDefaultUser } from '../../utils/testHelpers';
 
 test.describe('E2E-202: User Login Flow', () => {
   let loginPage: LoginPage;
   let dashboardPage: DashboardPage;
+
+  test.beforeAll(async ({ request }) => {
+    await ensureDefaultUser(request);
+  });
 
   test.beforeEach(async ({ page }) => {
     loginPage = new LoginPage(page);
@@ -13,7 +18,7 @@ test.describe('E2E-202: User Login Flow', () => {
   });
 
   test('should successfully login with valid credentials and redirect to dashboard', async ({ page }) => {
-    await loginPage.login('demo@banking-demo.com', 'password123');
+    await loginPage.login('e2e-default@banking-demo.com', 'password123');
     await loginPage.expectNavigatedToDashboard();
 
     await dashboardPage.expectLoaded();
@@ -22,7 +27,7 @@ test.describe('E2E-202: User Login Flow', () => {
   });
 
   test('should store JWT token in localStorage after successful login', async ({ page }) => {
-    await loginPage.login('demo@banking-demo.com', 'password123');
+    await loginPage.login('e2e-default@banking-demo.com', 'password123');
     await loginPage.expectNavigatedToDashboard();
 
     const token = await page.evaluate(() => localStorage.getItem('auth_token'));
@@ -38,7 +43,7 @@ test.describe('E2E-202: User Login Flow', () => {
   });
 
   test('should not navigate to dashboard with invalid password', async ({ page }) => {
-    await loginPage.login('demo@banking-demo.com', 'wrongpassword');
+    await loginPage.login('e2e-default@banking-demo.com', 'wrongpassword');
     // 401 interceptor triggers page reload to /login
     await page.waitForLoadState('domcontentloaded');
     expect(page.url()).toContain('/login');
@@ -55,7 +60,7 @@ test.describe('E2E-202: User Login Flow', () => {
   });
 
   test('should use stored token for subsequent page loads', async ({ page }) => {
-    await loginPage.login('demo@banking-demo.com', 'password123');
+    await loginPage.login('e2e-default@banking-demo.com', 'password123');
     await loginPage.expectNavigatedToDashboard();
 
     const token = await page.evaluate(() => localStorage.getItem('auth_token'));
@@ -71,7 +76,7 @@ test.describe('E2E-202: User Login Flow', () => {
   });
 
   test('should persist session across page reloads', async ({ page }) => {
-    await loginPage.login('demo@banking-demo.com', 'password123');
+    await loginPage.login('e2e-default@banking-demo.com', 'password123');
     await loginPage.expectNavigatedToDashboard();
 
     await page.reload();
@@ -85,7 +90,7 @@ test.describe('E2E-202: User Login Flow', () => {
 
   test('should work with alternative test user credentials', async ({ page }) => {
     // Use the seeded demo user since 'testuser' may not exist
-    await loginPage.login('demo@banking-demo.com', 'password123');
+    await loginPage.login('e2e-default@banking-demo.com', 'password123');
     await loginPage.expectNavigatedToDashboard();
 
     const token = await page.evaluate(() => localStorage.getItem('auth_token'));
@@ -102,7 +107,7 @@ test.describe('E2E-202: User Login Flow', () => {
     await page.waitForLoadState('domcontentloaded');
 
     loginPage = new LoginPage(page);
-    await loginPage.login('demo@banking-demo.com', 'password123');
+    await loginPage.login('e2e-default@banking-demo.com', 'password123');
     await loginPage.expectNavigatedToDashboard();
   });
 });

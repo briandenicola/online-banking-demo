@@ -399,7 +399,7 @@ test.describe('E2E-306: Anomaly Detection Alerts', () => {
     await dashboardPage.navigate();
     await dashboardPage.expectLoaded();
 
-    const token = await authenticatedPage.evaluate(() => localStorage.getItem('token'));
+    const token = await authenticatedPage.evaluate(() => localStorage.getItem('auth_token'));
     expect(token).toBeTruthy();
   });
 });

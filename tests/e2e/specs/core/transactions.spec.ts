@@ -152,7 +152,7 @@ test.describe('E2E-207: Transaction List & Pagination', () => {
     await transactionsPage.navigate();
     await transactionsPage.expectLoaded();
 
-    const token = await authenticatedPage.evaluate(() => localStorage.getItem('token'));
+    const token = await authenticatedPage.evaluate(() => localStorage.getItem('auth_token'));
     expect(token).toBeTruthy();
   });
 

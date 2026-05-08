@@ -20,15 +20,10 @@ export class TransfersPage extends BasePage {
   constructor(page: Page) {
     super(page);
     this.pageTitle = page.locator('h1, h2, h4').filter({ hasText: /transfer/i });
-    this.fromAccountSelect = page.locator(
-      '[data-testid="from-account"], select[name="fromAccount"], #fromAccount, [name="fromAccountId"]'
-    ).first();
-    this.toAccountSelect = page.locator(
-      '[data-testid="to-account"], select[name="toAccount"], #toAccount, [name="toAccountId"]'
-    ).first();
-    this.amountInput = page.locator(
-      '[data-testid="transfer-amount"], input[name="amount"], #amount'
-    ).first();
+    // MUI TextField with select prop renders as a div with role="combobox", not a native <select>
+    this.fromAccountSelect = page.getByLabel(/from account/i);
+    this.toAccountSelect = page.getByLabel(/to account/i);
+    this.amountInput = page.getByLabel(/amount/i);
     this.submitButton = page.getByRole('button', { name: /transfer|submit|send/i });
     this.confirmButton = page.getByRole('button', { name: /confirm|yes/i });
     this.cancelButton = page.getByRole('button', { name: /cancel|no/i });

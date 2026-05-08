@@ -14,7 +14,8 @@ export class DashboardPage extends BasePage {
     super(page);
     this.welcomeMessage = page.locator('h1, h2, h4, [data-testid="welcome"]');
     this.accountsList = page.locator('[data-testid="accounts-list"], .accounts-list, .MuiList-root');
-    this.navLinks = page.locator('nav a, [role="navigation"] a');
+    // Navigation uses MUI buttons (not <a> links)
+    this.navLinks = page.locator('nav a, [role="navigation"] a, header button, nav button');
     this.logoutButton = page.getByRole('menuitem', { name: /logout|sign out/i });
     // User avatar button (shows first letter of user's name)
     this.userMenuButton = page.locator('header button').last();
@@ -30,7 +31,8 @@ export class DashboardPage extends BasePage {
   }
 
   async navigateTo(route: string): Promise<void> {
-    await this.navLinks.filter({ hasText: new RegExp(route, 'i') }).first().click();
+    await this.navLinks.filter({ hasText: new RegExp(`^${route}$`, 'i') }).first().click();
+    await this.page.waitForLoadState('networkidle');
   }
 
   async logout(): Promise<void> {

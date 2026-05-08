@@ -192,7 +192,7 @@ test.describe('E2E-406: Chatbot Fallback — Azure Unavailable', () => {
     }
 
     // User should be able to navigate to other pages without issue
-    await authenticatedPage.goto('/dashboard');
+    await authenticatedPage.goto('/');
     await authenticatedPage.waitForLoadState('domcontentloaded');
     await authenticatedPage.waitForTimeout(2000);
 

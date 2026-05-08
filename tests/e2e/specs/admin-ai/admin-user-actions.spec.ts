@@ -1,14 +1,15 @@
 import { test, expect } from '../../fixtures/authFixture';
+import { ensureTestUser } from '../../fixtures/authFixture';
 import { AdminPage } from '../../pages/AdminPage';
 import { LoginPage } from '../../pages/LoginPage';
 
 const ADMIN_CREDENTIALS = {
-  email: 'testuser',
+  email: 'admin@banking-demo.com',
   password: 'password123',
 };
 
 const REGULAR_USER_CREDENTIALS = {
-  email: 'demo@banking-demo.com',
+  email: 'e2e-default@banking-demo.com',
   password: 'password123',
 };
 
@@ -16,10 +17,15 @@ test.describe('E2E-403: Admin User Actions — Suspend/Unsuspend', () => {
   let adminPage: AdminPage;
   let adminToken: string;
 
+  test.beforeAll(async ({ request }) => {
+    await ensureTestUser(request, ADMIN_CREDENTIALS);
+    await ensureTestUser(request, REGULAR_USER_CREDENTIALS);
+  });
+
   test.beforeEach(async ({ page, request }) => {
     const loginResponse = await request.post('/api/users/login', {
       data: {
-        email: ADMIN_CREDENTIALS.email,
+        username: ADMIN_CREDENTIALS.email,
         password: ADMIN_CREDENTIALS.password,
       },
     });
@@ -38,9 +44,11 @@ test.describe('E2E-403: Admin User Actions — Suspend/Unsuspend', () => {
     }
 
     adminToken = token;
-    await page.addInitScript((t: string) => {
-      window.localStorage.setItem('token', t);
-    }, token);
+    await page.addInitScript((state: { token: string; email: string; role: string }) => {
+      window.localStorage.setItem('auth_token', state.token);
+      window.localStorage.setItem('auth_email', state.email);
+      window.localStorage.setItem('auth_role', state.role);
+    }, { token, email: ADMIN_CREDENTIALS.email, role: body.role ?? 'admin' });
 
     adminPage = new AdminPage(page);
     await adminPage.navigate();
@@ -180,7 +188,7 @@ test.describe('E2E-403: Admin User Actions — Suspend/Unsuspend', () => {
       // Try to login as suspended user
       const loginResponse = await request.post('/api/users/login', {
         data: {
-          email: REGULAR_USER_CREDENTIALS.email,
+          username: REGULAR_USER_CREDENTIALS.email,
           password: REGULAR_USER_CREDENTIALS.password,
         },
       });
@@ -250,7 +258,7 @@ test.describe('E2E-403: Admin User Actions — Suspend/Unsuspend', () => {
     // Verify user can login again
     const loginResponse = await request.post('/api/users/login', {
       data: {
-        email: targetUser.email,
+        username: targetUser.email,
         password: 'password123',
       },
     });

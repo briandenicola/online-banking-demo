@@ -1,4 +1,4 @@
-import { expect, Page } from '@playwright/test';
+import { expect, Page, APIRequestContext } from '@playwright/test';
 
 export interface HealthCheckOptions {
   url: string;
@@ -79,4 +79,25 @@ export async function retry<T>(
   }
 
   throw lastError ?? new Error(`Retry timed out after ${timeout}ms`);
+}
+
+/**
+ * Ensures the demo user exists by registering via the API.
+ * Ignores 409 (already exists). Call in test.beforeAll for UI-based login tests.
+ */
+export async function ensureDefaultUser(
+  request: APIRequestContext,
+  email = 'e2e-default@banking-demo.com',
+  password = 'password123'
+): Promise<void> {
+  await request.post('/api/users/register', {
+    data: {
+      username: email,
+      email,
+      firstName: 'Demo',
+      lastName: 'User',
+      password,
+    },
+  });
+  // Ignore response — 201 (created) or 409 (already exists) are both fine
 }

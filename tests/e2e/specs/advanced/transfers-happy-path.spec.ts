@@ -171,7 +171,7 @@ test.describe('E2E-301: Transfer Between Accounts (Happy Path)', () => {
     await transfersPage.navigate();
     await transfersPage.expectLoaded();
 
-    const token = await authenticatedPage.evaluate(() => localStorage.getItem('token'));
+    const token = await authenticatedPage.evaluate(() => localStorage.getItem('auth_token'));
     expect(token).toBeTruthy();
   });
 });
