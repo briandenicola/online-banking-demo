@@ -44,13 +44,14 @@ public class UsersController : ControllerBase
         }
 
         var user = await _userService.GetUserByUsernameAsync(request.Username);
-        var token = await _authService.GenerateTokenAsync(user!.Id, user.Username);
+        var token = await _authService.GenerateTokenAsync(user!.Id, user.Username, user.Role);
 
         return Ok(new
         {
             Token = token,
             UserId = user.Id,
             Username = user.Username,
+            Role = user.Role,
             ExpiresIn = int.Parse(System.Environment.GetEnvironmentVariable("Jwt__ExpiresInMinutes") ?? "60") * 60
         });
     }
@@ -144,7 +145,7 @@ public class UsersController : ControllerBase
             var client = _httpClientFactory.CreateClient("AccountService");
 
             // Mint a short-lived JWT so account-service can authenticate this internal call
-            var token = await _authService.GenerateTokenAsync(userId, "system");
+            var token = await _authService.GenerateTokenAsync(userId, "system", "user");
 
             var accountRequest = new CreateAccountRequest
             {

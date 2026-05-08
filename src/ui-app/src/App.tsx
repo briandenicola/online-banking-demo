@@ -18,7 +18,7 @@ import { AuthProvider, useAuthContext } from './contexts/AuthContext';
 import { AccountProvider } from './contexts/AccountContext';
 
 const AppContent: React.FC = () => {
-  const { user } = useAuthContext();
+  const { user, isAdmin } = useAuthContext();
 
   if (!user) {
     return (
@@ -38,7 +38,7 @@ const AppContent: React.FC = () => {
         <Route path="/transactions" element={<Transactions />} />
         <Route path="/transfers" element={<Transfers />} />
         <Route path="/chat" element={<Chat />} />
-        <Route path="/admin" element={<AdminPage />} />
+        {isAdmin && <Route path="/admin" element={<AdminPage />} />}
         <Route path="/login" element={<Navigate to="/" />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>

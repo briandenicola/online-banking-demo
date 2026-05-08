@@ -44,7 +44,7 @@ const navItems = [
 ];
 
 const AppShell: React.FC<AppShellProps> = ({ children }) => {
-  const { user, logout } = useAuthContext();
+  const { user, logout, isAdmin } = useAuthContext();
   const navigate = useNavigate();
   const location = useLocation();
   const theme = useTheme();
@@ -121,15 +121,17 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
           {isMobile && <Box sx={{ flexGrow: 1 }} />}
 
-          {/* Admin Button */}
-          <Button
-            color="inherit"
-            startIcon={<AdminPanelSettingsIcon />}
-            onClick={() => navigate('/admin')}
-            sx={{ mr: 1, opacity: 0.9, '&:hover': { opacity: 1 } }}
-          >
-            {!isMobile && 'Admin'}
-          </Button>
+          {/* Admin Button — only for admin role */}
+          {isAdmin && (
+            <Button
+              color="inherit"
+              startIcon={<AdminPanelSettingsIcon />}
+              onClick={() => navigate('/admin')}
+              sx={{ mr: 1, opacity: 0.9, '&:hover': { opacity: 1 } }}
+            >
+              {!isMobile && 'Admin'}
+            </Button>
+          )}
 
           {/* User Menu */}
           <IconButton onClick={handleMenuOpen} sx={{ ml: 1 }}>

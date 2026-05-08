@@ -49,13 +49,14 @@ public class AuthController : ControllerBase
         }
 
         var user = await _userService.GetUserByUsernameAsync(request.Username);
-        var token = await _authService.GenerateTokenAsync(user!.Id, user.Username);
+        var token = await _authService.GenerateTokenAsync(user!.Id, user.Username, user.Role);
 
         return Ok(new
         {
             Token = token,
             UserId = user.Id,
             Username = user.Username,
+            Role = user.Role,
             ExpiresIn = int.Parse(System.Environment.GetEnvironmentVariable("Jwt__ExpiresInMinutes") ?? "60") * 60
         });
     }

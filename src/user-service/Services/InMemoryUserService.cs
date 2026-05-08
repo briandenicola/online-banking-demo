@@ -26,6 +26,7 @@ public class InMemoryUserService : IUserService
             Email = "test@example.com",
             FirstName = "Test",
             LastName = "User",
+            Role = "admin",
             PasswordHash = passwordHash,
             Salt = "" // No longer needed with bcrypt
         };
@@ -40,6 +41,7 @@ public class InMemoryUserService : IUserService
             Email = "demo@banking-demo.com",
             FirstName = "Demo",
             LastName = "User",
+            Role = "admin",
             PasswordHash = demoPasswordHash,
             Salt = ""
         };
