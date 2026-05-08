@@ -79,14 +79,14 @@ Customer submits application
 
 **Technical Approach:**
 1. **Orchestrator agent** — Coordinates the pipeline, passes context between stages via Redis Streams events
-2. **Document processing** — Azure AI Document Intelligence for OCR/extraction, Foundry agent for interpretation
+2. **Document processing** — Azure AI Content Understanding for document analysis/extraction, Foundry agent for interpretation
 3. **Agent-to-agent context** — Each agent publishes results to `account-opening-events` stream; orchestrator aggregates
 4. **Human-in-the-loop** — Flagged applications go to admin review queue (existing admin panel)
 5. **Audit trail** — Every agent decision logged with reasoning for compliance
 
 ### Effort Estimate
 
-Medium-High — requires new account-opening service, document upload API, 3-4 new Foundry agents, orchestration pipeline. The Redis Streams and admin panel infrastructure already exist. Azure AI Document Intelligence adds a new Azure dependency.
+Medium-High — requires new account-opening service, document upload API, 3-4 new Foundry agents, orchestration pipeline. The Redis Streams and admin panel infrastructure already exist. Azure AI Content Understanding adds a new Azure dependency.
 
 ---
 
