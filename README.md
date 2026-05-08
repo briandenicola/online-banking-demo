@@ -32,10 +32,20 @@ task local:up
 
 ## Documentation
 
+- **[Documentation Hub](docs/README.md)** — Start here for all guides
 - **[Local Development](docs/deployment-local.md)** — Docker Compose setup, environment variables, hot reload workflows
 - **[Azure Cloud Deployment](docs/deployment-azure.md)** — Terraform provisioning, AKS + Istio, Taskfile-driven deployment
 - **[System Architecture](docs/architecture.md)** — Service map, communication patterns, authentication, event pipeline
 - **[Testing Guide](docs/testing.md)** — Playwright E2E test suite (4 phases, 195+ specs)
+
+### Agentic Development
+
+This project was built using AI-assisted development practices:
+
+- **[ADRs](docs/adr/README.md)** — Architecture Decision Records capturing key technical choices
+- **[Squad Guide](docs/squad-guide.md)** — How the AI team framework (Squad) was used with specialized agent roles
+- **[Copilot Integration](docs/copilot-integration.md)** — GitHub Copilot CLI usage, speckit workflow, and lessons learned
+- **[Future AI Capabilities](docs/future-ai-capabilities.md)** — Spike on multi-agent orchestration, MCP/A2A, Agent365, AI red teaming
 
 ## Architecture
 
