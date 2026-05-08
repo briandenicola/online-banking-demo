@@ -100,10 +100,10 @@ tasks:
     desc: Deploy application to Kubernetes cluster (updates image refs then applies)
     cmds:
       - task: _images:update
-      - task: _configmap:update
-      - task: _secretproviderclass:update
       - kubectl apply -k deploy/kustomize/observability/
       - kubectl apply -k deploy/kustomize/base/
+      - task: _configmap:update
+      - task: _secretproviderclass:update
       - kubectl apply -f cluster-config/istio/gateway/istio-ingress-gateway.yaml
       - kubectl apply -f cluster-config/istio/gateway/default-ingress.yaml
 
