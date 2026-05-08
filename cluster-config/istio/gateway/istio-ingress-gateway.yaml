@@ -11,16 +11,5 @@ spec:
       number: 80
       name: http
       protocol: HTTP
-    tls:
-      httpsRedirect: true
     hosts:
     - "*"
-  - port:
-      number: 443
-      name: https
-      protocol: HTTPS
-    tls:
-      mode: SIMPLE
-      credentialName: banking-demo-tls
-    hosts:
-    - "${CUSTOM_DOMAIN}"
