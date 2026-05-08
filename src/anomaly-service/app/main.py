@@ -286,12 +286,12 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
                     tools=[],
                 )
                 session = risk_agent.create_session()
-                response = await session.send_message(user_message)
+                response = await risk_agent.run(user_message, session=session)
 
                 _ai_calls_today += 1
                 span.set_attribute("ai.calls_today", _ai_calls_today)
 
-                result = self._parse_response(response)
+                result = self._parse_response(str(response))
                 span.set_attribute("risk.score", result.riskScore)
                 return result
 
@@ -885,6 +885,69 @@ async def get_scored_transaction(tx_id: str):
     if not raw:
         raise HTTPException(status_code=404, detail="Scored transaction not found")
     return ScoredTransaction(**json.loads(raw))
+
+
+@app.post("/api/admin/scored-transactions/{tx_id}/rescore", response_model=ScoredTransaction)
+async def rescore_transaction(tx_id: str):
+    """Re-run AI risk analysis on an existing scored transaction."""
+    if not _redis_client:
+        raise HTTPException(status_code=503, detail="Redis not available")
+    if not _analyzer_pipeline:
+        raise HTTPException(status_code=503, detail="Analyzer pipeline not initialized")
+
+    raw = await _redis_client.get(f"{SCORED_TRANSACTION_PREFIX}{tx_id}")
+    if not raw:
+        raise HTTPException(status_code=404, detail="Scored transaction not found")
+
+    existing = json.loads(raw)
+    transaction = {
+        "transactionId": existing.get("transactionId", ""),
+        "accountId": existing.get("accountId", ""),
+        "amount": existing.get("amount", 0),
+        "type": existing.get("type", ""),
+        "description": existing.get("description", ""),
+        "category": existing.get("category", ""),
+    }
+
+    assessment = await _analyzer_pipeline.assess(transaction)
+    now = datetime.now(timezone.utc)
+
+    existing["riskScore"] = assessment.riskScore
+    existing["explanation"] = assessment.explanation
+    existing["flags"] = assessment.flags
+    existing["scoredAt"] = now.isoformat()
+    existing["status"] = "rescored"
+
+    await _redis_client.set(
+        f"{SCORED_TRANSACTION_PREFIX}{tx_id}",
+        json.dumps(existing),
+        ex=SCORED_TX_TTL_SECONDS,
+    )
+
+    # Update flagged status if threshold crossed
+    if assessment.riskScore >= FLAGGING_THRESHOLD:
+        flagged_tx = FlaggedTransaction(
+            id=tx_id,
+            transactionId=existing["transactionId"],
+            accountId=existing["accountId"],
+            amount=existing["amount"],
+            type=existing["type"],
+            riskScore=assessment.riskScore,
+            reason=assessment.explanation,
+            flags=assessment.flags,
+            flaggedAt=now.isoformat(),
+        )
+        await _redis_client.set(
+            f"{FLAGGED_TRANSACTION_PREFIX}{tx_id}",
+            flagged_tx.model_dump_json(),
+        )
+        await _redis_client.zadd(FLAGGED_TRANSACTIONS_KEY, {tx_id: now.timestamp()})
+    else:
+        # Remove from flagged if score dropped below threshold
+        await _redis_client.delete(f"{FLAGGED_TRANSACTION_PREFIX}{tx_id}")
+        await _redis_client.zrem(FLAGGED_TRANSACTIONS_KEY, tx_id)
+
+    return ScoredTransaction(**existing)
 
 
 @app.put("/api/admin/flagged-transactions/{tx_id}/review", response_model=FlaggedTransaction)

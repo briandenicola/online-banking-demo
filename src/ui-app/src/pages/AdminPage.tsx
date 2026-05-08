@@ -34,6 +34,7 @@ import PendingActionsIcon from '@mui/icons-material/PendingActions';
 import VerifiedIcon from '@mui/icons-material/Verified';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
+import ReplayIcon from '@mui/icons-material/Replay';
 import apiClient from '../api/client';
 
 interface AdminStats {
@@ -151,6 +152,18 @@ const AdminPage: React.FC = () => {
       await fetchData();
     } catch {
       setError(`Failed to ${action} transaction. Please try again.`);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleRescore = async (id: string) => {
+    setActionLoading(id);
+    try {
+      await apiClient.post(`/admin/scored-transactions/${id}/rescore`);
+      await fetchData();
+    } catch {
+      setError('Failed to rescore transaction. Please try again.');
     } finally {
       setActionLoading(null);
     }
@@ -539,12 +552,13 @@ const AdminPage: React.FC = () => {
                   </TableSortLabel>
                 </TableCell>
                 <TableCell>Description</TableCell>
+                <TableCell align="center">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {sortedAllTransactions.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} align="center">
+                  <TableCell colSpan={8} align="center">
                     <Typography variant="body1" sx={{ py: 4 }} color="text.secondary">
                       No scored transactions found.
                     </Typography>
@@ -581,9 +595,21 @@ const AdminPage: React.FC = () => {
                         />
                       </TableCell>
                       <TableCell>{tx.description}</TableCell>
+                      <TableCell align="center">
+                        <Tooltip title="Resend for AI Analysis">
+                          <IconButton
+                            size="small"
+                            color="primary"
+                            disabled={actionLoading === tx.id}
+                            onClick={(e) => { e.stopPropagation(); handleRescore(tx.id); }}
+                          >
+                            {actionLoading === tx.id ? <CircularProgress size={18} /> : <ReplayIcon />}
+                          </IconButton>
+                        </Tooltip>
+                      </TableCell>
                     </TableRow>
                     <TableRow>
-                      <TableCell colSpan={7} sx={{ py: 0, borderBottom: expandedRow === tx.id ? undefined : 'none' }}>
+                      <TableCell colSpan={8} sx={{ py: 0, borderBottom: expandedRow === tx.id ? undefined : 'none' }}>
                         <Collapse in={expandedRow === tx.id} timeout="auto" unmountOnExit>
                           <Box sx={{ py: 2, px: 3 }}>
                             <Typography variant="subtitle2" gutterBottom>

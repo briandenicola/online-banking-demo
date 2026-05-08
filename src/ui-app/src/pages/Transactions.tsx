@@ -28,11 +28,12 @@ import apiClient from '../api/client';
 
 interface Transaction {
   id: string;
+  accountId: string;
   date: string;
   description: string;
   amount: number;
-  balance: number;
   category?: string;
+  type?: string;
   isAnomalous?: boolean;
   aiExplanation?: string;
 }
@@ -79,11 +80,12 @@ const Transactions: React.FC = () => {
       const data = Array.isArray(response.data) ? response.data : (response.data.transactions || []);
       setTransactions(data.map((t: Record<string, unknown>) => ({
         id: t.id as string,
+        accountId: t.accountId as string,
         date: t.timestamp as string,
         description: t.description as string,
         amount: t.amount as number,
-        balance: 0,
         category: t.category as string | undefined,
+        type: t.type as string | undefined,
         isAnomalous: false,
       })));
     } catch (e) {
@@ -175,47 +177,59 @@ const Transactions: React.FC = () => {
           <TableHead>
             <TableRow>
               <TableCell>Date</TableCell>
+              <TableCell>Account</TableCell>
               <TableCell>Description</TableCell>
-              <TableCell>Category</TableCell>
               <TableCell align="right">Amount</TableCell>
-              <TableCell align="right">Balance</TableCell>
+              <TableCell>Type</TableCell>
               <TableCell>Status</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {transactions.map((txn) => (
-              <TableRow key={txn.id}>
-                <TableCell>{txn.date}</TableCell>
-                <TableCell>{txn.description}</TableCell>
-                <TableCell>
-                  <Chip label={txn.category || 'Uncategorized'} size="small" variant="outlined" />
-                </TableCell>
-                <TableCell align="right">
-                  <Typography color={txn.amount < 0 ? 'error' : 'success'}>
-                    ${Math.abs(txn.amount).toFixed(2)}
-                  </Typography>
-                </TableCell>
-                <TableCell align="right">${txn.balance.toFixed(2)}</TableCell>
-                <TableCell>
-                  {txn.isAnomalous ? (
-                    <Chip
-                      icon={<WarningIcon />}
-                      label="Flagged"
-                      color="error"
-                      size="small"
-                      title={txn.aiExplanation || 'Suspicious transaction'}
-                    />
-                  ) : (
-                    <Chip
-                      icon={<CheckCircleIcon />}
-                      label="Normal"
-                      color="success"
-                      size="small"
-                    />
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
+            {transactions.map((txn) => {
+              const account = accounts.find(a => a.id === txn.accountId);
+              return (
+                <TableRow key={txn.id}>
+                  <TableCell>
+                    {new Date(txn.date).toLocaleDateString()}
+                  </TableCell>
+                  <TableCell>
+                    {account ? `${account.name} (${account.number})` : txn.accountId?.slice(0, 8) || '—'}
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2">{txn.description}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {txn.category || 'Uncategorized'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Typography color={txn.amount < 0 ? 'error' : 'success.main'} sx={{ fontWeight: 500 }}>
+                      ${Math.abs(txn.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Chip label={txn.type || 'Unknown'} size="small" variant="outlined" />
+                  </TableCell>
+                  <TableCell>
+                    {txn.isAnomalous ? (
+                      <Chip
+                        icon={<WarningIcon />}
+                        label="Flagged"
+                        color="error"
+                        size="small"
+                        title={txn.aiExplanation || 'Suspicious transaction'}
+                      />
+                    ) : (
+                      <Chip
+                        icon={<CheckCircleIcon />}
+                        label="Normal"
+                        color="success"
+                        size="small"
+                      />
+                    )}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </TableContainer>
