@@ -41,6 +41,13 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: redis-connection-string
+        - name: FOUNDRY_PROJECT_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: openai-endpoint
+        - name: FOUNDRY_MODEL
+          value: "gpt-5.4-mini"
         envFrom:
         - configMapRef:
             name: banking-demo-config

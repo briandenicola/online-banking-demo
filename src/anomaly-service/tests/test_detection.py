@@ -1,128 +1,168 @@
-"""Tests for anomaly detection endpoint."""
+"""Tests for the anomaly detection service v2.0 (Foundry-based)."""
+import json
 import pytest
-from fastapi.testclient import TestClient
-from app.main import app
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from app.main import (
+    RiskAssessment,
+    FoundryRiskAnalyzer,
+    AnalyzerPipeline,
+    ScoredTransaction,
+    FlaggedTransaction,
+    AdminStats,
+    FLAGGING_THRESHOLD,
+)
+from tests.conftest import FakeAnalyzer
 
 
-@pytest.fixture
-def client():
-    return TestClient(app)
-
-
-class TestHealthEndpoint:
+class TestHealthEndpoints:
     def test_health_returns_healthy(self, client):
         response = client.get("/health")
         assert response.status_code == 200
-        assert response.json() == {"status": "healthy"}
+        assert response.json()["status"] == "healthy"
+
+    def test_healthz_returns_service_info(self, client):
+        response = client.get("/healthz")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "healthy"
+        assert data["service"] == "anomaly-service"
+        assert data["version"] == "2.0.0"
+        assert "timestamp" in data
+
+
+class TestAnalyzerPipeline:
+    """Test the extensible analyzer pipeline."""
+
+    @pytest.mark.asyncio
+    async def test_pipeline_no_analyzers_returns_zero_score(self):
+        pipeline = AnalyzerPipeline()
+        result = await pipeline.assess({"amount": 100})
+        assert result.riskScore == 0.0
+        assert "no_analyzers" in result.flags
+
+    @pytest.mark.asyncio
+    async def test_pipeline_single_analyzer(self, sample_transaction):
+        pipeline = AnalyzerPipeline()
+        pipeline.register(FakeAnalyzer("test", 0.3, "Slightly risky"))
+        result = await pipeline.assess(sample_transaction)
+        assert result.riskScore == 0.3
+        assert result.explanation == "Slightly risky"
+
+    @pytest.mark.asyncio
+    async def test_pipeline_returns_highest_risk(self, sample_transaction):
+        pipeline = AnalyzerPipeline()
+        pipeline.register(FakeAnalyzer("low", 0.1, "Low risk"))
+        pipeline.register(FakeAnalyzer("high", 0.8, "High risk", ["suspicious"]))
+        result = await pipeline.assess(sample_transaction)
+        assert result.riskScore == 0.8
+        assert result.explanation == "High risk"
+        assert "suspicious" in result.flags
+
+    @pytest.mark.asyncio
+    async def test_pipeline_skips_disabled_analyzers(self, sample_transaction):
+        pipeline = AnalyzerPipeline()
+        pipeline.register(FakeAnalyzer("disabled", 0.9, "Should skip", enabled=False))
+        pipeline.register(FakeAnalyzer("enabled", 0.2, "Normal"))
+        result = await pipeline.assess(sample_transaction)
+        assert result.riskScore == 0.2
+
+    @pytest.mark.asyncio
+    async def test_pipeline_handles_analyzer_exception(self, sample_transaction):
+        """If one analyzer throws, others still run."""
+        pipeline = AnalyzerPipeline()
+
+        class BrokenAnalyzer(FakeAnalyzer):
+            async def analyze(self, transaction):
+                raise RuntimeError("Analyzer crashed")
+
+        pipeline.register(BrokenAnalyzer("broken", 0.9))
+        pipeline.register(FakeAnalyzer("fallback", 0.2, "Fallback"))
+        result = await pipeline.assess(sample_transaction)
+        assert result.riskScore == 0.2
+
+    @pytest.mark.asyncio
+    async def test_pipeline_register_adds_analyzer(self):
+        pipeline = AnalyzerPipeline()
+        assert len(pipeline.analyzers) == 0
+        pipeline.register(FakeAnalyzer("a", 0.1))
+        assert len(pipeline.analyzers) == 1
+        assert pipeline.analyzers[0].name == "a"
+
+
+class TestFoundryRiskAnalyzer:
+    """Test the Foundry-based risk analyzer."""
+
+    def test_not_enabled_without_initialization(self):
+        analyzer = FoundryRiskAnalyzer()
+        assert analyzer.enabled is False
+        assert analyzer.name == "foundry-risk"
+
+    def test_enabled_after_initialization(self):
+        analyzer = FoundryRiskAnalyzer()
+        mock_client = MagicMock()
+        analyzer.initialize(mock_client, "gpt-5.4-mini")
+        assert analyzer.enabled is True
+
+    def test_parse_valid_json_response(self):
+        analyzer = FoundryRiskAnalyzer()
+        response = '{"riskScore": 0.75, "explanation": "Large transfer", "flags": ["large_amount"]}'
+        result = analyzer._parse_response(response)
+        assert result.riskScore == 0.75
+        assert result.explanation == "Large transfer"
+        assert "large_amount" in result.flags
+
+    def test_parse_json_with_markdown_fences(self):
+        analyzer = FoundryRiskAnalyzer()
+        response = '```json\n{"riskScore": 0.4, "explanation": "Moderate", "flags": []}\n```'
+        result = analyzer._parse_response(response)
+        assert result.riskScore == 0.4
+
+    def test_parse_invalid_json_returns_fallback(self):
+        analyzer = FoundryRiskAnalyzer()
+        result = analyzer._parse_response("not json at all")
+        assert result.riskScore == 0.5
+        assert "parse_error" in result.flags
+
+    def test_parse_clamps_risk_score(self):
+        analyzer = FoundryRiskAnalyzer()
+        result = analyzer._parse_response('{"riskScore": 1.5, "explanation": "Over", "flags": []}')
+        assert result.riskScore == 1.0
+        result = analyzer._parse_response('{"riskScore": -0.5, "explanation": "Under", "flags": []}')
+        assert result.riskScore == 0.0
+
+
+class TestRiskAssessmentModel:
+    """Test the RiskAssessment Pydantic model."""
+
+    def test_valid_risk_assessment(self):
+        ra = RiskAssessment(riskScore=0.5, explanation="Test", flags=["flag1"])
+        assert ra.riskScore == 0.5
+        assert ra.flags == ["flag1"]
+
+    def test_risk_score_bounds(self):
+        with pytest.raises(Exception):
+            RiskAssessment(riskScore=1.5, explanation="Too high", flags=[])
+        with pytest.raises(Exception):
+            RiskAssessment(riskScore=-0.1, explanation="Too low", flags=[])
+
+    def test_default_flags_empty(self):
+        ra = RiskAssessment(riskScore=0.1, explanation="Normal")
+        assert ra.flags == []
 
 
 class TestDetectEndpoint:
-    def test_normal_transaction_not_anomalous(self, client):
-        """A normal small transaction should not be flagged."""
-        payload = {
-            "id": "evt-1",
-            "transactionId": "txn-001",
-            "accountId": "acc-001",
-            "amount": 50.0,
-            "type": "Purchase",
-            "description": "Coffee shop",
-            "category": "Food & Dining"
-        }
+    """Test the synchronous /detect endpoint."""
 
-        response = client.post("/detect", json=payload)
+    def test_detect_returns_503_without_pipeline(self, client):
+        """Without lifespan (no pipeline), detect returns 503."""
+        response = client.post("/detect", json={"amount": 100, "type": "Purchase"})
+        assert response.status_code == 503
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["transactionId"] == "txn-001"
-        assert "isAnomalous" in data
-        assert "confidenceScore" in data
 
-    def test_high_amount_transaction(self, client):
-        """A high-value transaction should trigger heuristic checks when model is trained."""
-        payload = {
-            "id": "evt-2",
-            "transactionId": "txn-002",
-            "accountId": "acc-001",
-            "amount": 50000.0,
-            "type": "Transfer",
-            "description": "Large wire transfer",
-            "category": "Transfer"
-        }
+class TestFlaggingThreshold:
+    """Test the flagging threshold constant."""
 
-        response = client.post("/detect", json=payload)
+    def test_threshold_is_0_7(self):
+        assert FLAGGING_THRESHOLD == 0.7
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["transactionId"] == "txn-002"
-        # With insufficient training data, model won't flag it yet
-        assert "isAnomalous" in data
-        assert isinstance(data["confidenceScore"], float)
-
-    def test_missing_required_fields_returns_422(self, client):
-        """Missing required fields should return validation error."""
-        payload = {
-            "id": "evt-3",
-            "transactionId": "txn-003"
-            # Missing required fields
-        }
-
-        response = client.post("/detect", json=payload)
-
-        assert response.status_code == 422
-
-    def test_detect_returns_anomaly_result_schema(self, client):
-        """Response should match AnomalyResult schema."""
-        payload = {
-            "id": "evt-4",
-            "transactionId": "txn-004",
-            "accountId": "acc-001",
-            "amount": 100.0,
-            "type": "Purchase",
-            "description": "Grocery store",
-            "category": "Shopping"
-        }
-
-        response = client.post("/detect", json=payload)
-
-        assert response.status_code == 200
-        data = response.json()
-        assert "transactionId" in data
-        assert "isAnomalous" in data
-        assert "confidenceScore" in data
-        assert "reason" in data
-
-    def test_zero_amount_transaction(self, client):
-        """Edge case: zero amount transaction."""
-        payload = {
-            "id": "evt-5",
-            "transactionId": "txn-005",
-            "accountId": "acc-001",
-            "amount": 0.0,
-            "type": "Adjustment",
-            "description": "Zero adjustment",
-            "category": "Other"
-        }
-
-        response = client.post("/detect", json=payload)
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["transactionId"] == "txn-005"
-
-    def test_negative_amount_transaction(self, client):
-        """Edge case: negative amount (refund)."""
-        payload = {
-            "id": "evt-6",
-            "transactionId": "txn-006",
-            "accountId": "acc-001",
-            "amount": -200.0,
-            "type": "Refund",
-            "description": "Return refund",
-            "category": "Shopping"
-        }
-
-        response = client.post("/detect", json=payload)
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["transactionId"] == "txn-006"

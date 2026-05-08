@@ -20,6 +20,8 @@ import {
   Alert,
   Tooltip,
   TableSortLabel,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -30,6 +32,8 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import SecurityIcon from '@mui/icons-material/Security';
 import PendingActionsIcon from '@mui/icons-material/PendingActions';
 import VerifiedIcon from '@mui/icons-material/Verified';
+import AssessmentIcon from '@mui/icons-material/Assessment';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
 import apiClient from '../api/client';
 
 interface AdminStats {
@@ -37,28 +41,56 @@ interface AdminStats {
   pendingReview: number;
   cleared: number;
   avgRiskScore: number;
+  totalScored: number;
+  highRiskCount: number;
+  aiCallsToday: number;
 }
 
 interface FlaggedTransaction {
   id: string;
-  date: string;
-  account: string;
+  transactionId: string;
+  accountId: string;
   amount: number;
   type: string;
   riskScore: number;
   reason: string;
+  flags: string[];
+  flaggedAt: string;
   status: string;
-  riskAssessment?: string;
+  notes?: string;
 }
 
-type SortField = 'date' | 'amount' | 'riskScore' | 'status';
+interface ScoredTransaction {
+  id: string;
+  transactionId: string;
+  accountId: string;
+  amount: number;
+  type: string;
+  description: string;
+  category: string;
+  riskScore: number;
+  explanation: string;
+  flags: string[];
+  scoredAt: string;
+  status: string;
+  notes?: string;
+}
+
+type FlaggedSortField = 'flaggedAt' | 'amount' | 'riskScore' | 'status';
+type AllSortField = 'scoredAt' | 'amount' | 'riskScore';
 type SortDirection = 'asc' | 'desc';
 
-const getRiskColor = (score: number): 'error' | 'warning' | 'info' | 'success' => {
-  if (score > 0.8) return 'error';
-  if (score > 0.6) return 'warning';
-  if (score > 0.4) return 'info';
+const getRiskColor = (score: number): 'error' | 'warning' | 'success' => {
+  if (score > 0.7) return 'error';
+  if (score > 0.3) return 'warning';
   return 'success';
+};
+
+const getRiskChipSx = (score: number) => {
+  if (score > 0.7) return {};
+  if (score > 0.5) return { bgcolor: '#ed6c02', color: '#fff' };
+  if (score > 0.3) return { bgcolor: '#ffc107', color: 'rgba(0,0,0,0.87)' };
+  return {};
 };
 
 const getStatusChip = (status: string) => {
@@ -75,24 +107,30 @@ const getStatusChip = (status: string) => {
 };
 
 const AdminPage: React.FC = () => {
+  const [activeTab, setActiveTab] = useState(0);
   const [stats, setStats] = useState<AdminStats | null>(null);
-  const [transactions, setTransactions] = useState<FlaggedTransaction[]>([]);
+  const [flaggedTransactions, setFlaggedTransactions] = useState<FlaggedTransaction[]>([]);
+  const [allTransactions, setAllTransactions] = useState<ScoredTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
-  const [sortField, setSortField] = useState<SortField>('riskScore');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [flaggedSortField, setFlaggedSortField] = useState<FlaggedSortField>('riskScore');
+  const [flaggedSortDirection, setFlaggedSortDirection] = useState<SortDirection>('desc');
+  const [allSortField, setAllSortField] = useState<AllSortField>('riskScore');
+  const [allSortDirection, setAllSortDirection] = useState<SortDirection>('desc');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
       setError(null);
-      const [statsRes, txRes] = await Promise.all([
+      const [statsRes, flaggedRes, allRes] = await Promise.all([
         apiClient.get('/admin/stats'),
         apiClient.get('/admin/flagged-transactions'),
+        apiClient.get('/admin/transactions'),
       ]);
       setStats(statsRes.data);
-      setTransactions(txRes.data);
+      setFlaggedTransactions(flaggedRes.data);
+      setAllTransactions(allRes.data);
     } catch (err) {
       setError('Failed to load admin data. Please try again.');
     } finally {
@@ -118,26 +156,49 @@ const AdminPage: React.FC = () => {
     }
   };
 
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+  const handleFlaggedSort = (field: FlaggedSortField) => {
+    if (flaggedSortField === field) {
+      setFlaggedSortDirection(flaggedSortDirection === 'asc' ? 'desc' : 'asc');
     } else {
-      setSortField(field);
-      setSortDirection('desc');
+      setFlaggedSortField(field);
+      setFlaggedSortDirection('desc');
     }
   };
 
-  const sortedTransactions = [...transactions].sort((a, b) => {
-    const modifier = sortDirection === 'asc' ? 1 : -1;
-    switch (sortField) {
-      case 'date':
-        return modifier * (new Date(a.date).getTime() - new Date(b.date).getTime());
+  const handleAllSort = (field: AllSortField) => {
+    if (allSortField === field) {
+      setAllSortDirection(allSortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setAllSortField(field);
+      setAllSortDirection('desc');
+    }
+  };
+
+  const sortedFlaggedTransactions = [...flaggedTransactions].sort((a, b) => {
+    const modifier = flaggedSortDirection === 'asc' ? 1 : -1;
+    switch (flaggedSortField) {
+      case 'flaggedAt':
+        return modifier * (new Date(a.flaggedAt).getTime() - new Date(b.flaggedAt).getTime());
       case 'amount':
         return modifier * (a.amount - b.amount);
       case 'riskScore':
         return modifier * (a.riskScore - b.riskScore);
       case 'status':
         return modifier * a.status.localeCompare(b.status);
+      default:
+        return 0;
+    }
+  });
+
+  const sortedAllTransactions = [...allTransactions].sort((a, b) => {
+    const modifier = allSortDirection === 'asc' ? 1 : -1;
+    switch (allSortField) {
+      case 'scoredAt':
+        return modifier * (new Date(a.scoredAt).getTime() - new Date(b.scoredAt).getTime());
+      case 'amount':
+        return modifier * (a.amount - b.amount);
+      case 'riskScore':
+        return modifier * (a.riskScore - b.riskScore);
       default:
         return 0;
     }
@@ -180,7 +241,7 @@ const AdminPage: React.FC = () => {
       {/* Stats Cards */}
       {stats && (
         <Grid container spacing={3} sx={{ mb: 4 }}>
-          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+          <Grid size={{ xs: 12, sm: 6, md: 2 }}>
             <Card>
               <CardContent sx={{ textAlign: 'center' }}>
                 <WarningAmberIcon color="error" sx={{ fontSize: 40 }} />
@@ -193,7 +254,7 @@ const AdminPage: React.FC = () => {
               </CardContent>
             </Card>
           </Grid>
-          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+          <Grid size={{ xs: 12, sm: 6, md: 2 }}>
             <Card>
               <CardContent sx={{ textAlign: 'center' }}>
                 <PendingActionsIcon color="warning" sx={{ fontSize: 40 }} />
@@ -206,7 +267,7 @@ const AdminPage: React.FC = () => {
               </CardContent>
             </Card>
           </Grid>
-          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+          <Grid size={{ xs: 12, sm: 6, md: 2 }}>
             <Card>
               <CardContent sx={{ textAlign: 'center' }}>
                 <VerifiedIcon color="success" sx={{ fontSize: 40 }} />
@@ -219,7 +280,7 @@ const AdminPage: React.FC = () => {
               </CardContent>
             </Card>
           </Grid>
-          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+          <Grid size={{ xs: 12, sm: 6, md: 2 }}>
             <Card>
               <CardContent sx={{ textAlign: 'center' }}>
                 <SecurityIcon color="info" sx={{ fontSize: 40 }} />
@@ -232,151 +293,316 @@ const AdminPage: React.FC = () => {
               </CardContent>
             </Card>
           </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 2 }}>
+            <Card>
+              <CardContent sx={{ textAlign: 'center' }}>
+                <AssessmentIcon color="primary" sx={{ fontSize: 40 }} />
+                <Typography variant="h4" sx={{ mt: 1 }}>
+                  {stats.totalScored}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Total Scored
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 2 }}>
+            <Card>
+              <CardContent sx={{ textAlign: 'center' }}>
+                <SmartToyIcon color="secondary" sx={{ fontSize: 40 }} />
+                <Typography variant="h4" sx={{ mt: 1 }}>
+                  {stats.aiCallsToday}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  AI Calls Today
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
         </Grid>
       )}
 
-      {/* Flagged Transactions Table */}
-      <TableContainer component={Paper} elevation={2}>
-        <Table>
-          <TableHead>
-            <TableRow>
-              <TableCell />
-              <TableCell>
-                <TableSortLabel
-                  active={sortField === 'date'}
-                  direction={sortField === 'date' ? sortDirection : 'asc'}
-                  onClick={() => handleSort('date')}
-                >
-                  Date
-                </TableSortLabel>
-              </TableCell>
-              <TableCell>Account</TableCell>
-              <TableCell>
-                <TableSortLabel
-                  active={sortField === 'amount'}
-                  direction={sortField === 'amount' ? sortDirection : 'asc'}
-                  onClick={() => handleSort('amount')}
-                >
-                  Amount
-                </TableSortLabel>
-              </TableCell>
-              <TableCell>Type</TableCell>
-              <TableCell>
-                <TableSortLabel
-                  active={sortField === 'riskScore'}
-                  direction={sortField === 'riskScore' ? sortDirection : 'asc'}
-                  onClick={() => handleSort('riskScore')}
-                >
-                  Risk Score
-                </TableSortLabel>
-              </TableCell>
-              <TableCell>Reason</TableCell>
-              <TableCell>
-                <TableSortLabel
-                  active={sortField === 'status'}
-                  direction={sortField === 'status' ? sortDirection : 'asc'}
-                  onClick={() => handleSort('status')}
-                >
-                  Status
-                </TableSortLabel>
-              </TableCell>
-              <TableCell>Actions</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {sortedTransactions.length === 0 ? (
+      {/* Tab Navigation */}
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+        <Tabs value={activeTab} onChange={(_, newValue) => { setActiveTab(newValue); setExpandedRow(null); }}>
+          <Tab label="Flagged Transactions" />
+          <Tab label="All Transactions" />
+        </Tabs>
+      </Box>
+
+      {/* Flagged Transactions Tab */}
+      {activeTab === 0 && (
+        <TableContainer component={Paper} elevation={2}>
+          <Table>
+            <TableHead>
               <TableRow>
-                <TableCell colSpan={9} align="center">
-                  <Typography variant="body1" sx={{ py: 4 }} color="text.secondary">
-                    No flagged transactions found.
-                  </Typography>
-                </TableCell>
-              </TableRow>
-            ) : (
-              sortedTransactions.map((tx) => (
-                <React.Fragment key={tx.id}>
-                  <TableRow
-                    hover
-                    sx={{ cursor: 'pointer' }}
-                    onClick={() => setExpandedRow(expandedRow === tx.id ? null : tx.id)}
+                <TableCell />
+                <TableCell>
+                  <TableSortLabel
+                    active={flaggedSortField === 'flaggedAt'}
+                    direction={flaggedSortField === 'flaggedAt' ? flaggedSortDirection : 'asc'}
+                    onClick={() => handleFlaggedSort('flaggedAt')}
                   >
-                    <TableCell>
-                      <IconButton size="small">
-                        {expandedRow === tx.id ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                      </IconButton>
-                    </TableCell>
-                    <TableCell>
-                      {new Date(tx.date).toLocaleDateString()}
-                    </TableCell>
-                    <TableCell>{tx.account}</TableCell>
-                    <TableCell>
-                      ${tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    </TableCell>
-                    <TableCell>{tx.type}</TableCell>
-                    <TableCell>
-                      <Chip
-                        label={tx.riskScore.toFixed(2)}
-                        color={getRiskColor(tx.riskScore)}
-                        size="small"
-                        variant="filled"
-                      />
-                    </TableCell>
-                    <TableCell>{tx.reason}</TableCell>
-                    <TableCell>{getStatusChip(tx.status)}</TableCell>
-                    <TableCell>
-                      <Box sx={{ display: 'flex', gap: 0.5 }} onClick={(e) => e.stopPropagation()}>
-                        <Tooltip title="Mark as Reviewed">
-                          <IconButton
-                            size="small"
-                            color="info"
-                            onClick={() => handleAction(tx.id, 'review')}
-                            disabled={actionLoading === tx.id || tx.status === 'reviewed'}
-                          >
-                            {actionLoading === tx.id ? (
-                              <CircularProgress size={20} />
-                            ) : (
-                              <RateReviewIcon />
+                    Date
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>Account</TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={flaggedSortField === 'amount'}
+                    direction={flaggedSortField === 'amount' ? flaggedSortDirection : 'asc'}
+                    onClick={() => handleFlaggedSort('amount')}
+                  >
+                    Amount
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>Type</TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={flaggedSortField === 'riskScore'}
+                    direction={flaggedSortField === 'riskScore' ? flaggedSortDirection : 'asc'}
+                    onClick={() => handleFlaggedSort('riskScore')}
+                  >
+                    Risk Score
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>Reason</TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={flaggedSortField === 'status'}
+                    direction={flaggedSortField === 'status' ? flaggedSortDirection : 'asc'}
+                    onClick={() => handleFlaggedSort('status')}
+                  >
+                    Status
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {sortedFlaggedTransactions.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={9} align="center">
+                    <Typography variant="body1" sx={{ py: 4 }} color="text.secondary">
+                      No flagged transactions found.
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                sortedFlaggedTransactions.map((tx) => (
+                  <React.Fragment key={tx.id}>
+                    <TableRow
+                      hover
+                      sx={{ cursor: 'pointer' }}
+                      onClick={() => setExpandedRow(expandedRow === tx.id ? null : tx.id)}
+                    >
+                      <TableCell>
+                        <IconButton size="small">
+                          {expandedRow === tx.id ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                        </IconButton>
+                      </TableCell>
+                      <TableCell>
+                        {new Date(tx.flaggedAt).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell>{tx.accountId}</TableCell>
+                      <TableCell>
+                        ${tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </TableCell>
+                      <TableCell>{tx.type}</TableCell>
+                      <TableCell>
+                        <Chip
+                          label={tx.riskScore.toFixed(2)}
+                          color={getRiskColor(tx.riskScore)}
+                          size="small"
+                          variant="filled"
+                          sx={getRiskChipSx(tx.riskScore)}
+                        />
+                      </TableCell>
+                      <TableCell>{tx.reason}</TableCell>
+                      <TableCell>{getStatusChip(tx.status)}</TableCell>
+                      <TableCell>
+                        <Box sx={{ display: 'flex', gap: 0.5 }} onClick={(e) => e.stopPropagation()}>
+                          <Tooltip title="Mark as Reviewed">
+                            <IconButton
+                              size="small"
+                              color="info"
+                              onClick={() => handleAction(tx.id, 'review')}
+                              disabled={actionLoading === tx.id || tx.status === 'reviewed'}
+                            >
+                              {actionLoading === tx.id ? (
+                                <CircularProgress size={20} />
+                              ) : (
+                                <RateReviewIcon />
+                              )}
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Clear Transaction">
+                            <IconButton
+                              size="small"
+                              color="success"
+                              onClick={() => handleAction(tx.id, 'clear')}
+                              disabled={actionLoading === tx.id || tx.status === 'cleared'}
+                            >
+                              <CheckCircleIcon />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell colSpan={9} sx={{ py: 0, borderBottom: expandedRow === tx.id ? undefined : 'none' }}>
+                        <Collapse in={expandedRow === tx.id} timeout="auto" unmountOnExit>
+                          <Box sx={{ py: 2, px: 3 }}>
+                            <Typography variant="subtitle2" gutterBottom>
+                              AI Explanation
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                              {tx.reason}
+                            </Typography>
+
+                            {tx.flags && tx.flags.length > 0 && (
+                              <Box sx={{ mb: 2 }}>
+                                <Typography variant="subtitle2" gutterBottom>
+                                  Risk Flags
+                                </Typography>
+                                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                                  {tx.flags.map((flag, idx) => (
+                                    <Chip key={idx} label={flag} color="error" size="small" variant="outlined" />
+                                  ))}
+                                </Box>
+                              </Box>
                             )}
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="Clear Transaction">
-                          <IconButton
-                            size="small"
-                            color="success"
-                            onClick={() => handleAction(tx.id, 'clear')}
-                            disabled={actionLoading === tx.id || tx.status === 'cleared'}
-                          >
-                            <CheckCircleIcon />
-                          </IconButton>
-                        </Tooltip>
-                      </Box>
-                    </TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell colSpan={9} sx={{ py: 0, borderBottom: expandedRow === tx.id ? undefined : 'none' }}>
-                      <Collapse in={expandedRow === tx.id} timeout="auto" unmountOnExit>
-                        <Box sx={{ py: 2, px: 3 }}>
-                          <Typography variant="subtitle2" gutterBottom>
-                            Risk Assessment Details
-                          </Typography>
-                          <Typography variant="body2" color="text.secondary">
-                            {tx.riskAssessment || `Transaction flagged due to: ${tx.reason}. Risk score: ${tx.riskScore.toFixed(2)}. Current status: ${tx.status}.`}
-                          </Typography>
-                          <Box sx={{ mt: 1 }}>
-                            <Typography variant="caption" color="text.secondary">
-                              Transaction ID: {tx.id} | Date: {new Date(tx.date).toLocaleString()} | Account: {tx.account}
+
+                            <Typography variant="subtitle2" gutterBottom>
+                              Transaction Metadata
+                            </Typography>
+                            <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                              <Typography variant="body2" color="text.secondary">
+                                <strong>Transaction ID:</strong> {tx.transactionId}
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                <strong>Account:</strong> {tx.accountId}
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                <strong>Amount:</strong> ${tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                <strong>Type:</strong> {tx.type}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </Collapse>
+                      </TableCell>
+                    </TableRow>
+                  </React.Fragment>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
+
+      {/* All Transactions Tab */}
+      {activeTab === 1 && (
+        <TableContainer component={Paper} elevation={2}>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell />
+                <TableCell>
+                  <TableSortLabel
+                    active={allSortField === 'scoredAt'}
+                    direction={allSortField === 'scoredAt' ? allSortDirection : 'asc'}
+                    onClick={() => handleAllSort('scoredAt')}
+                  >
+                    Date
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>Account</TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={allSortField === 'amount'}
+                    direction={allSortField === 'amount' ? allSortDirection : 'asc'}
+                    onClick={() => handleAllSort('amount')}
+                  >
+                    Amount
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>Type</TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={allSortField === 'riskScore'}
+                    direction={allSortField === 'riskScore' ? allSortDirection : 'asc'}
+                    onClick={() => handleAllSort('riskScore')}
+                  >
+                    Risk Score
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>Description</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {sortedAllTransactions.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} align="center">
+                    <Typography variant="body1" sx={{ py: 4 }} color="text.secondary">
+                      No scored transactions found.
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                sortedAllTransactions.map((tx) => (
+                  <React.Fragment key={tx.id}>
+                    <TableRow
+                      hover
+                      sx={{ cursor: 'pointer' }}
+                      onClick={() => setExpandedRow(expandedRow === tx.id ? null : tx.id)}
+                    >
+                      <TableCell>
+                        <IconButton size="small">
+                          {expandedRow === tx.id ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                        </IconButton>
+                      </TableCell>
+                      <TableCell>
+                        {new Date(tx.scoredAt).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell>{tx.accountId}</TableCell>
+                      <TableCell>
+                        ${tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </TableCell>
+                      <TableCell>{tx.type}</TableCell>
+                      <TableCell>
+                        <Chip
+                          label={tx.riskScore.toFixed(2)}
+                          color={getRiskColor(tx.riskScore)}
+                          size="small"
+                          variant="filled"
+                          sx={getRiskChipSx(tx.riskScore)}
+                        />
+                      </TableCell>
+                      <TableCell>{tx.description}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell colSpan={7} sx={{ py: 0, borderBottom: expandedRow === tx.id ? undefined : 'none' }}>
+                        <Collapse in={expandedRow === tx.id} timeout="auto" unmountOnExit>
+                          <Box sx={{ py: 2, px: 3 }}>
+                            <Typography variant="subtitle2" gutterBottom>
+                              AI Explanation
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary">
+                              {tx.explanation}
                             </Typography>
                           </Box>
-                        </Box>
-                      </Collapse>
-                    </TableCell>
-                  </TableRow>
-                </React.Fragment>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
+                        </Collapse>
+                      </TableCell>
+                    </TableRow>
+                  </React.Fragment>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
     </Box>
   );
 };
