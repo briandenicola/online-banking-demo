@@ -335,3 +335,63 @@ With Squad agents:
 - Stop at any checkpoint to validate story independently
 - Infrastructure rebuild (Phase 1–2) is the current blocker — user is reprovisioning now
 - Stored memories flagged known bugs: partition key mismatch, chatbot→budget route, missing await, CI test job
+
+---
+
+## Completed Status (as of May 2026)
+
+- ✅ **US1** (Operational Readiness) — Complete
+- ✅ **US3** (User Roles & RBAC) — Complete
+- ✅ **US5** (AI Admin Portal) — Complete
+- ✅ **US6** (Developer Experience) — Complete (DevContainer, docs hub, workshop navigation)
+- ✅ **US8** (Agentic Showcase) — Complete (ADRs, Squad guide, Copilot integration, future AI spike)
+- ❌ **US7** (Infrastructure Modernization) — Closed (too risky with live infra; chaos carved out as standalone)
+- 🟡 **US2** (Security Hardening) — Partial (KeyVault CSI ✅, Redis Entra ✅; mTLS/network policies deferred to next phase)
+- 🟡 **US4** (Observability & Testing) — In progress (Playwright fixes in progress)
+
+---
+
+## Next Phase: New Backlog
+
+### NEW US1: Security & Network Hardening (Priority: P0)
+
+**Goal**: Private endpoints for all Azure PaaS, Cilium network policies, Istio STRICT mTLS, Hubble UI, Capacity Host for AI Foundry
+
+**Prerequisites**: Current US4 Playwright work complete
+
+- [ ] T101 [P] [US1] Add Cosmos DB private endpoint in `infra/cloud/` — disable public access, add private DNS zone
+- [ ] T102 [P] [US1] Add Azure Managed Redis private endpoint in `infra/cloud/` — disable public access, add private DNS zone
+- [ ] T103 [P] [US1] Add ACR private endpoint in `infra/cloud/` — disable public access, add private DNS zone
+- [ ] T104 [P] [US1] Add Key Vault private endpoint in `infra/cloud/` — disable public access, add private DNS zone
+- [ ] T105 [P] [US1] Add Application Insights / Log Analytics private link scope in `infra/cloud/`
+- [ ] T106 [US1] Configure AKS VNet integration to reach all private endpoints — verify DNS resolution from pods
+- [ ] T107 [US1] Deploy AI Foundry with Capacity Host (dedicated compute) + private endpoint
+- [ ] T108 [US1] Update ai-service and chatbot-service connection configs for private endpoint URLs
+- [ ] T109 [US1] Create `cluster-config/network-policies/` — deny-all default CiliumNetworkPolicy for banking-demo namespace
+- [ ] T110 [P] [US1] Create per-service Cilium allow rules (transfer→account, transfer→transaction, etc.)
+- [ ] T111 [P] [US1] Create Cilium allow rules for ingress from Istio gateway + egress to Azure PaaS
+- [ ] T112 [US1] Create `cluster-config/istio/peer-authentication.yaml` — PeerAuthentication STRICT mTLS for banking-demo namespace
+- [ ] T113 [US1] Deploy Hubble UI for Cilium network flow visualization — add to cluster-config or Taskfile
+- [ ] T114 [US1] Validate: all services reach private endpoints, public access disabled, mTLS STRICT verified, Cilium policies enforced
+- [ ] T115 [US1] Update `docs/deployment-azure.md` with private endpoint and security hardening documentation
+
+**Checkpoint**: All Azure PaaS behind private endpoints, Cilium policies enforced, Istio mTLS STRICT, Hubble deployed
+
+### NEW US2: Agentic Capabilities (Priority: P1)
+
+**Goal**: Advanced AI patterns — red teaming, MCP servers, multi-agent orchestration, Agent365
+
+**Prerequisites**: NEW US1 complete (secure baseline)
+
+- [ ] T201 [US2] Create `tests/red-team/` with AI red team scripts using `azure-ai-evaluation` SDK against chatbot and risk scoring
+- [ ] T202 [US2] Add prompt injection tests — transaction descriptions that attempt to manipulate risk scores
+- [ ] T203 [US2] Add data exfiltration tests — cross-user data leak attempts via chatbot
+- [ ] T204 [US2] Add input guardrails based on red team findings — sanitization for chatbot and risk scoring inputs
+- [ ] T205 [P] [US2] Create MCP server for banking accounts — expose account data via Model Context Protocol
+- [ ] T206 [P] [US2] Create MCP server for banking transactions — expose transaction data via MCP
+- [ ] T207 [P] [US2] Create MCP server for banking budgets — expose budget data via MCP
+- [ ] T208 [US2] Multi-agent orchestration — risk→categorize→advise pipeline with shared context via Redis
+- [ ] T209 [US2] Agent365 integration — Teams/Outlook agent manifest pointing to existing REST APIs
+- [ ] T210 [US2] Update `docs/future-ai-capabilities.md` with implementation status and learnings
+
+**Checkpoint**: Red teaming validated, MCP servers deployed, multi-agent pipeline working, Agent365 manifest created
