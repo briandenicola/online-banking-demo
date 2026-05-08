@@ -69,6 +69,8 @@ interface ScoredTransaction {
   type: string;
   description: string;
   category: string;
+  categoryConfidence: number;
+  categoryReasoning: string;
   riskScore: number;
   explanation: string;
   flags: string[];
@@ -543,6 +545,7 @@ const AdminPage: React.FC = () => {
                   </TableSortLabel>
                 </TableCell>
                 <TableCell>Type</TableCell>
+                <TableCell>Category</TableCell>
                 <TableCell>
                   <TableSortLabel
                     active={allSortField === 'riskScore'}
@@ -559,7 +562,7 @@ const AdminPage: React.FC = () => {
             <TableBody>
               {sortedAllTransactions.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} align="center">
+                  <TableCell colSpan={9} align="center">
                     <Typography variant="body1" sx={{ py: 4 }} color="text.secondary">
                       No scored transactions found.
                     </Typography>
@@ -587,6 +590,9 @@ const AdminPage: React.FC = () => {
                       </TableCell>
                       <TableCell>{tx.type}</TableCell>
                       <TableCell>
+                        <Chip label={tx.category || 'Uncategorized'} size="small" variant="outlined" />
+                      </TableCell>
+                      <TableCell>
                         <Chip
                           label={tx.riskScore.toFixed(2)}
                           color={getRiskColor(tx.riskScore)}
@@ -610,15 +616,60 @@ const AdminPage: React.FC = () => {
                       </TableCell>
                     </TableRow>
                     <TableRow>
-                      <TableCell colSpan={8} sx={{ py: 0, borderBottom: expandedRow === tx.id ? undefined : 'none' }}>
+                      <TableCell colSpan={9} sx={{ py: 0, borderBottom: expandedRow === tx.id ? undefined : 'none' }}>
                         <Collapse in={expandedRow === tx.id} timeout="auto" unmountOnExit>
                           <Box sx={{ py: 2, px: 3 }}>
-                            <Typography variant="subtitle2" gutterBottom>
-                              AI Explanation
+                            <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 700 }}>
+                              AI Processing Steps
                             </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                              {tx.explanation}
-                            </Typography>
+
+                            {/* Step 1: Categorization */}
+                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mb: 1.5 }}>
+                              <Chip label="1" size="small" color="info" sx={{ minWidth: 24, fontWeight: 700 }} />
+                              <Box>
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                  Categorization
+                                </Typography>
+                                <Typography variant="body2" color="text.secondary">
+                                  Category: <strong>{tx.category || 'Uncategorized'}</strong>
+                                  {tx.categoryConfidence > 0 && (
+                                    <> — Confidence: {(tx.categoryConfidence * 100).toFixed(0)}%</>
+                                  )}
+                                </Typography>
+                                {tx.categoryReasoning && (
+                                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+                                    {tx.categoryReasoning}
+                                  </Typography>
+                                )}
+                              </Box>
+                            </Box>
+
+                            {/* Step 2: Risk Scoring */}
+                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mb: 1.5 }}>
+                              <Chip label="2" size="small" color="warning" sx={{ minWidth: 24, fontWeight: 700 }} />
+                              <Box>
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                  Risk Scoring
+                                </Typography>
+                                <Typography variant="body2" color="text.secondary">
+                                  Score: <strong>{tx.riskScore.toFixed(2)}</strong>
+                                  {tx.flags.length > 0 && (
+                                    <> — Flags: {tx.flags.join(', ')}</>
+                                  )}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+                                  {tx.explanation}
+                                </Typography>
+                              </Box>
+                            </Box>
+
+                            {tx.notes && (
+                              <Box sx={{ mt: 1, pl: 4.5 }}>
+                                <Typography variant="caption" color="text.secondary">
+                                  Admin notes: {tx.notes}
+                                </Typography>
+                              </Box>
+                            )}
                           </Box>
                         </Collapse>
                       </TableCell>

@@ -133,7 +133,7 @@ class CategoryResult(BaseModel):
 
 
 class ScoredTransaction(BaseModel):
-    """A transaction with its AI risk assessment."""
+    """A transaction with its AI risk assessment and categorization."""
     id: str
     transactionId: str
     accountId: str
@@ -141,6 +141,8 @@ class ScoredTransaction(BaseModel):
     type: str
     description: str
     category: str = ""
+    categoryConfidence: float = 0.0
+    categoryReasoning: str = ""
     riskScore: float
     explanation: str
     flags: list[str] = []
@@ -666,16 +668,31 @@ async def _create_redis_client():
 # ============================================================
 
 async def score_and_store_transaction(transaction: dict) -> ScoredTransaction:
-    """Score and categorize a transaction, then store results."""
-    assessment = await _analyzer_pipeline.assess(transaction)
+    """Categorize and score a transaction, then store results."""
 
-    # Categorize independently from risk scoring
+    # Step 1: Categorize first (separate concern from risk)
     existing_category = transaction.get("category", "")
     if not existing_category or existing_category == "Uncategorized":
         cat_result = await _analyzer_pipeline.categorize(transaction)
         category = cat_result.category
+        logger.info(
+            f"🏷️ Categorized transaction: {category} "
+            f"(confidence: {cat_result.confidence:.2f}, reason: {cat_result.reasoning})"
+        )
     else:
         category = existing_category
+        cat_result = CategoryResult(category=category, confidence=1.0, reasoning="User-provided category")
+        logger.info(f"🏷️ Using user-provided category: {category}")
+
+    # Inject category into transaction context for risk scoring
+    transaction_with_category = {**transaction, "category": category}
+
+    # Step 2: Score for risk (uses category context)
+    assessment = await _analyzer_pipeline.assess(transaction_with_category)
+    logger.info(
+        f"📊 Scored transaction: risk={assessment.riskScore:.2f}, "
+        f"flags={assessment.flags}, explanation={assessment.explanation[:80]}"
+    )
 
     scored_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
@@ -688,6 +705,8 @@ async def score_and_store_transaction(transaction: dict) -> ScoredTransaction:
         type=transaction.get("type", ""),
         description=transaction.get("description", ""),
         category=category,
+        categoryConfidence=cat_result.confidence,
+        categoryReasoning=cat_result.reasoning,
         riskScore=assessment.riskScore,
         explanation=assessment.explanation,
         flags=assessment.flags,
@@ -1102,9 +1121,16 @@ async def rescore_transaction(tx_id: str):
         "category": existing.get("category", ""),
     }
 
+    # Re-categorize first, then re-score
+    cat_result = await _analyzer_pipeline.categorize(transaction)
+    transaction["category"] = cat_result.category
+
     assessment = await _analyzer_pipeline.assess(transaction)
     now = datetime.now(timezone.utc)
 
+    existing["category"] = cat_result.category
+    existing["categoryConfidence"] = cat_result.confidence
+    existing["categoryReasoning"] = cat_result.reasoning
     existing["riskScore"] = assessment.riskScore
     existing["explanation"] = assessment.explanation
     existing["flags"] = assessment.flags
