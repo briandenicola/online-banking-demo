@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -106,5 +107,43 @@ public class InMemoryUserService : IUserService
             return false;
 
         return BC.Verify(password, user.PasswordHash);
+    }
+
+    public async Task<bool> ChangePasswordAsync(string userId, string currentPassword, string newPassword)
+    {
+        var user = await GetUserByIdAsync(userId);
+        if (user == null) return false;
+
+        if (!BC.Verify(currentPassword, user.PasswordHash))
+            return false;
+
+        user.PasswordHash = BC.HashPassword(newPassword);
+        return true;
+    }
+
+    public async Task<string?> GetAvatarAsync(string userId)
+    {
+        var user = await GetUserByIdAsync(userId);
+        return user?.AvatarBase64;
+    }
+
+    public async Task SetAvatarAsync(string userId, string avatarBase64)
+    {
+        var user = await GetUserByIdAsync(userId);
+        if (user == null) throw new InvalidOperationException("User not found");
+        user.AvatarBase64 = avatarBase64;
+    }
+
+    public async Task<List<string>> GetCategoryPreferencesAsync(string userId)
+    {
+        var user = await GetUserByIdAsync(userId);
+        return user?.CategoryPreferences ?? new List<string>();
+    }
+
+    public async Task SetCategoryPreferencesAsync(string userId, List<string> categories)
+    {
+        var user = await GetUserByIdAsync(userId);
+        if (user == null) throw new InvalidOperationException("User not found");
+        user.CategoryPreferences = categories;
     }
 }

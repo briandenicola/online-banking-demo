@@ -134,6 +134,7 @@ public class TransactionService : ITransactionService
                 {
                     id = transaction.Id,
                     accountId = transaction.AccountId,
+                    userId = transaction.UserId,
                     amount = transaction.Amount,
                     type = transaction.Type,
                     description = transaction.Description,

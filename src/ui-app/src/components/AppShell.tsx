@@ -50,6 +50,18 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    const loadAvatar = async () => {
+      try {
+        const { default: apiClient } = await import('../api/client');
+        const res = await apiClient.get('/users/me/avatar');
+        if (res.data.avatar) setAvatarSrc(res.data.avatar);
+      } catch { /* no avatar */ }
+    };
+    if (user) loadAvatar();
+  }, [user]);
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget);
@@ -136,6 +148,7 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
           {/* User Menu */}
           <IconButton onClick={handleMenuOpen} sx={{ ml: 1 }}>
             <Avatar
+              src={avatarSrc || undefined}
               sx={{
                 width: 36,
                 height: 36,
@@ -144,7 +157,7 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
                 fontWeight: 600,
               }}
             >
-              {user?.firstName?.[0] || user?.email?.[0]?.toUpperCase() || 'U'}
+              {!avatarSrc && (user?.firstName?.[0] || user?.email?.[0]?.toUpperCase() || 'U')}
             </Avatar>
           </IconButton>
           <Menu
@@ -164,9 +177,9 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
               </Typography>
             </Box>
             <Divider />
-            <MenuItem onClick={() => { handleMenuClose(); navigate('/'); }}>
+            <MenuItem onClick={() => { handleMenuClose(); navigate('/settings'); }}>
               <ListItemIcon><PersonIcon fontSize="small" /></ListItemIcon>
-              <ListItemText>Profile</ListItemText>
+              <ListItemText>Settings</ListItemText>
             </MenuItem>
             <MenuItem onClick={handleLogout}>
               <ListItemIcon><LogoutIcon fontSize="small" /></ListItemIcon>

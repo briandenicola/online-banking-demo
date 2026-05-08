@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
@@ -111,6 +112,14 @@ public class UsersController : ControllerBase
         });
     }
 
+    [HttpGet("{userId}/categories")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetUserCategoryPreferences(string userId)
+    {
+        var categories = await _userService.GetCategoryPreferencesAsync(userId);
+        return Ok(new { Categories = categories });
+    }
+
     [HttpGet("me")]
     public async Task<IActionResult> GetCurrentUser()
     {
@@ -133,9 +142,73 @@ public class UsersController : ControllerBase
             user.Email,
             user.FirstName,
             user.LastName,
+            user.Role,
             user.CreatedAt,
             user.IsActive
         });
+    }
+
+    [HttpPut("me/password")]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
+    {
+        var userId = User.FindFirst("userId")?.Value;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized();
+
+        var success = await _userService.ChangePasswordAsync(userId, request.CurrentPassword, request.NewPassword);
+        if (!success)
+            return BadRequest(new { Message = "Current password is incorrect" });
+
+        return Ok(new { Message = "Password changed successfully" });
+    }
+
+    [HttpGet("me/avatar")]
+    public async Task<IActionResult> GetAvatar()
+    {
+        var userId = User.FindFirst("userId")?.Value;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized();
+
+        var avatar = await _userService.GetAvatarAsync(userId);
+        return Ok(new { Avatar = avatar });
+    }
+
+    [HttpPut("me/avatar")]
+    public async Task<IActionResult> SetAvatar([FromBody] SetAvatarRequest request)
+    {
+        var userId = User.FindFirst("userId")?.Value;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized();
+
+        // Limit avatar size to ~500KB base64
+        if (request.AvatarBase64?.Length > 700_000)
+            return BadRequest(new { Message = "Avatar too large. Max 500KB." });
+
+        await _userService.SetAvatarAsync(userId, request.AvatarBase64);
+        return Ok(new { Message = "Avatar updated" });
+    }
+
+    [HttpGet("me/categories")]
+    public async Task<IActionResult> GetCategoryPreferences()
+    {
+        var userId = User.FindFirst("userId")?.Value;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized();
+
+        var categories = await _userService.GetCategoryPreferencesAsync(userId);
+        return Ok(new { Categories = categories });
+    }
+
+    [HttpPut("me/categories")]
+    public async Task<IActionResult> SetCategoryPreferences([FromBody] SetCategoryPreferencesRequest request)
+    {
+        var userId = User.FindFirst("userId")?.Value;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized();
+
+        await _userService.SetCategoryPreferencesAsync(userId, request.Categories ?? new List<string>());
+        var categories = await _userService.GetCategoryPreferencesAsync(userId);
+        return Ok(new { Categories = categories });
     }
 
     private async Task ProvisionDefaultAccountAsync(string userId)
@@ -177,4 +250,20 @@ public class UsersController : ControllerBase
             _logger.LogWarning(ex, "Error provisioning default account for user {UserId}", userId);
         }
     }
+}
+
+public class ChangePasswordRequest
+{
+    public string CurrentPassword { get; set; } = null!;
+    public string NewPassword { get; set; } = null!;
+}
+
+public class SetAvatarRequest
+{
+    public string? AvatarBase64 { get; set; }
+}
+
+public class SetCategoryPreferencesRequest
+{
+    public List<string>? Categories { get; set; }
 }

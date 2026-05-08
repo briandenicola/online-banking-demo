@@ -137,6 +137,7 @@ class ScoredTransaction(BaseModel):
     id: str
     transactionId: str
     accountId: str
+    userId: str = ""
     amount: float
     type: str
     description: str
@@ -667,13 +668,34 @@ async def _create_redis_client():
 # Scoring & Storage
 # ============================================================
 
+USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://user-service:8080")
+
+async def _fetch_user_category_hints(user_id: str | None) -> list[str]:
+    """Fetch user-defined category preferences from user-service."""
+    if not user_id:
+        return []
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{USER_SERVICE_URL}/api/users/{user_id}/categories")
+            if resp.status_code == 200:
+                data = resp.json()
+                hints = data.get("categories", [])
+                if hints:
+                    logger.info(f"📋 Loaded {len(hints)} category hints for user {user_id}")
+                return hints
+    except Exception as e:
+        logger.warning(f"Failed to fetch category hints for user {user_id}: {e}")
+    return []
+
 async def score_and_store_transaction(transaction: dict) -> ScoredTransaction:
     """Categorize and score a transaction, then store results."""
 
     # Step 1: Categorize first (separate concern from risk)
     existing_category = transaction.get("category", "")
     if not existing_category or existing_category == "Uncategorized":
-        cat_result = await _analyzer_pipeline.categorize(transaction)
+        user_hints = await _fetch_user_category_hints(transaction.get("userId"))
+        cat_result = await _analyzer_pipeline.categorize(transaction, hints=user_hints or None)
         category = cat_result.category
         logger.info(
             f"🏷️ Categorized transaction: {category} "
@@ -701,6 +723,7 @@ async def score_and_store_transaction(transaction: dict) -> ScoredTransaction:
         id=scored_id,
         transactionId=transaction.get("transactionId", transaction.get("id", "")),
         accountId=transaction.get("accountId", ""),
+        userId=transaction.get("userId", ""),
         amount=transaction.get("amount", 0),
         type=transaction.get("type", ""),
         description=transaction.get("description", ""),
@@ -1122,7 +1145,8 @@ async def rescore_transaction(tx_id: str):
     }
 
     # Re-categorize first, then re-score
-    cat_result = await _analyzer_pipeline.categorize(transaction)
+    user_hints = await _fetch_user_category_hints(existing.get("userId") or transaction.get("userId"))
+    cat_result = await _analyzer_pipeline.categorize(transaction, hints=user_hints or None)
     transaction["category"] = cat_result.category
 
     assessment = await _analyzer_pipeline.assess(transaction)
