@@ -1,29 +1,26 @@
 # Online Banking Demo
 
-A microservices-based online banking application demonstrating agentic capabilities with .NET, Python, Go, and cloud-native Azure services.
+A microservices-based online banking application demonstrating agentic AI capabilities with .NET 9, Python, Go, React, and cloud-native Azure services deployed on AKS with Istio service mesh.
 
 ## Quick Start
 
 ### Prerequisites
 - Docker & Docker Compose
+- [go-task](https://taskfile.dev/) (Taskfile runner)
 - Git, Node.js 18+ (for UI development)
 - 8GB RAM, 10GB disk space
 
 ### Running Locally
 
 ```bash
-# Clone the repository
 git clone https://github.com/briandenicola/online-banking-demo.git
 cd online-banking-demo
+cp .env.example .env
 
 # Start all services
-docker-compose up -d --build
-
-# Check services are running
-docker-compose ps
+task local:up
 
 # Seed demo data (optional)
-chmod +x scripts/seed-data.sh
 ./scripts/seed-data.sh
 ```
 
@@ -32,264 +29,193 @@ chmod +x scripts/seed-data.sh
 - **React UI**: http://localhost:3000/
 - **API Gateway**: http://localhost/
 - **Health Check**: http://localhost/health
-- **Demo Credentials**: demo@banking-demo.com / password123 (after seed)
 
 ## Documentation
 
-Comprehensive guides for local development and cloud deployment:
-
-- **[Local Development Deployment](docs/deployment-local.md)** — Quick start guide for Docker Compose setup, environment variables, service ports, troubleshooting, and development workflows (hot reload)
-
-- **[Azure Cloud Deployment](docs/deployment-azure.md)** — Production deployment guide with Terraform infrastructure provisioning, AKS setup, Flux GitOps, secrets management, CI/CD pipeline, and cost considerations
-
-- **[System Architecture](docs/architecture.md)** — Detailed architecture documentation with service map, communication patterns, authentication flow, event pipeline, scaling considerations, security, and monitoring
+- **[Local Development](docs/deployment-local.md)** — Docker Compose setup, environment variables, hot reload workflows
+- **[Azure Cloud Deployment](docs/deployment-azure.md)** — Terraform provisioning, AKS + Istio, Taskfile-driven deployment
+- **[System Architecture](docs/architecture.md)** — Service map, communication patterns, authentication, event pipeline
+- **[Testing Guide](docs/testing.md)** — Playwright E2E test suite (4 phases, 195+ specs)
 
 ## Architecture
 
-The Online Banking Demo showcases a modern microservices architecture with cloud-native patterns and agentic AI capabilities.
-
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                    External Users / Clients                  │
-└───────────────────┬────────────────────────────────────────┘
-                    │
-        ┌───────────▼─────────────┐
-        │   NGINX API Gateway     │
-        │  (Port 80, Port 3000)   │
-        └───────────┬─────────────┘
-                    │
-     ┌──────────────┼──────────────┐
-     │              │              │
-┌────▼────┐   ┌────▼────┐   ┌────▼────┐
-│ React   │   │  .NET   │   │ Python  │
-│   UI    │   │  Core   │   │ Agents  │
-│ (3000)  │   │Services │   │Services │
-└─────────┘   │(6001-   │   │(8001-  │
-              │ 6004)   │   │ 8003)   │
-              └────┬────┘   └────┬────┘
-                   │            │
-                   └────┬───────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                      External Users / Clients                    │
+└───────────────────────┬──────────────────────────────────────────┘
                         │
-        ┌───────────────┼───────────────┐
-        │               │               │
-    ┌───▼───┐     ┌────▼────┐   ┌────▼────┐
-    │ Redis │     │Cosmos DB│   │Event    │
-    │Streams│     │  (SQL)  │   │Processor│
-    │(6380) │     │         │   │         │
-    └───────┘     └─────────┘   └─────────┘
+            ┌───────────▼────────────────┐
+            │   Istio Ingress Gateway    │
+            │  (HTTP/HTTPS, envsubst)    │
+            └───────────┬────────────────┘
+                        │
+       ┌────────────────┼────────────────┐
+       │                │                │
+  ┌────▼────┐     ┌─────▼─────┐    ┌────▼─────┐
+  │ React   │     │  .NET 9   │    │  Python  │
+  │ UI App  │     │ Services  │    │  Agents  │
+  └─────────┘     └─────┬─────┘    └────┬─────┘
+                        │               │
+                        └───────┬───────┘
+                                │
+          ┌─────────────────────┼─────────────────────┐
+          │                     │                     │
+     ┌────▼────┐          ┌────▼─────┐         ┌────▼─────┐
+     │  Redis  │          │ Cosmos DB│         │  Azure   │
+     │ Streams │          │ (Entra)  │         │ AI Foundry│
+     └─────────┘          └──────────┘         └──────────┘
 ```
 
-### Services (9 Total)
+### Services (10+)
 
-**Core .NET Microservices** (REST/HTTP, JWT-authenticated):
-- **User Service** (6001) — Authentication, JWT token generation, user profiles
-- **Account Service** (6002) — Account lifecycle, balance queries
-- **Transaction Service** (6003) — Transaction history, event publishing
-- **Transfer Service** (6004) — Money transfer orchestration, inter-service calls
+**Core .NET 9 Microservices** (REST/HTTP, JWT-authenticated):
+- **User Service** — Authentication, JWT token generation, user profiles
+- **Account Service** — Account lifecycle, balance tracking
+- **Transaction Service** — Transaction history, event publishing to Redis Streams
+- **Transfer Service** — Money transfer orchestration, inter-service calls with JWT forwarding
 
-**Python Agent Services** (FastAPI, AI-powered):
-- **Chatbot Service** (8001) — AI financial advisor powered by Azure OpenAI
-- **Anomaly Service** (8002) — Real-time fraud detection and risk scoring
-- **Budget Service** (8003) — Spending analysis and financial health insights
+**Python Agent Services** (FastAPI, AI-powered via Azure AI Foundry):
+- **Chatbot Service** — AI financial advisor with Agent Framework, Cosmos chat persistence, account/transaction tools
+- **AI Service** — Risk scoring, transaction categorization via Foundry agents
+- **Budget Service** — Spending analysis and financial health insights
 
-**Infrastructure Services**:
+**Infrastructure & Admin Services**:
 - **Event Processor** (Go) — Redis Streams consumer, async event routing
-- **API Gateway** (NGINX, Port 80) — Request routing, load balancing
-- **UI Application** (React, Port 3000) — Web interface
-- **Redis** (Port 6380) — Cache, session store, event streaming (banking-events stream)
+- **Prompt Eval Service** (.NET) — AI prompt evaluation with admin UI
+- **UI Application** (React 18 + MUI v9) — Web frontend with admin panel
 
 ### Key Features
 
 - **Event-Driven**: Redis Streams (`banking-events`) for inter-service communication
-- **JWT Authentication**: Tokens issued by User Service, validated across services
-- **Agentic AI**: Chatbot, anomaly detection, budget analysis powered by Azure OpenAI
-- **Cloud-Ready**: Designed for Azure AKS with Flux GitOps and Terraform IaC
-- **Microservices**: Clear separation of concerns with independent deployment
+- **JWT Authentication**: Tokens issued by User Service, validated across all services
+- **Agentic AI**: Chatbot with real data tools, anomaly detection, budget analysis via Azure AI Foundry
+- **Chat Persistence**: Cosmos DB-backed chat history with 30-day TTL
+- **Cloud-Native**: AKS with Istio service mesh, Workload Identity, KeyVault CSI driver
+- **Infrastructure as Code**: Terraform with AzureRM + AzAPI providers
+- **Observability**: OpenTelemetry SDK + Application Insights
 
-## API Documentation
+## Taskfile Commands
 
-Access Swagger/OpenAPI documentation:
+All operations are managed via [go-task](https://taskfile.dev/):
 
-- **User Service**: http://localhost/api/users/swagger/index.html
-- **Account Service**: http://localhost/api/accounts/swagger/index.html
-- **Transaction Service**: http://localhost/api/transactions/swagger/index.html
-- **Transfer Service**: http://localhost/api/transfers/swagger/index.html
-- **Chatbot Service**: http://localhost/api/chat/docs (FastAPI)
-- **Anomaly Service**: http://localhost/api/anomaly/docs (FastAPI)
-- **Budget Service**: http://localhost/api/budget/docs (FastAPI)
-
-### API Authentication
-
-All protected endpoints require a JWT token:
-
-```bash
-# Get token
-TOKEN=$(curl -s -X POST http://localhost/api/users/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"demo","password":"password123"}' | jq -r '.token')
-
-# Use token in requests
-curl http://localhost/api/accounts/ \
-  -H "Authorization: Bearer $TOKEN"
-```
+| Command | Description |
+|---------|-------------|
+| **Local Development** | |
+| `task local:up` | Start all services with Docker Compose |
+| `task local:down` | Stop all services |
+| **Cloud Deployment** | |
+| `task cloud:up` | Full Azure environment (Terraform + AKS config) |
+| `task cloud:infra:config` | One-time AKS setup (creds, namespaces, secrets, CSI) |
+| `task cloud:build` | Build all container images via ACR |
+| `task cloud:deploy` | Deploy manifests to AKS (repeatable) |
+| `task cloud:infra:tls` | Install cert-manager + configure TLS |
+| `task cloud:infra:tls:status` | Check certificate status |
+| `task cloud:down` | Destroy all Azure resources |
+| **Testing** | |
+| `task e2e:run` | Run all Playwright E2E tests |
+| `task e2e:ui` | Interactive Playwright UI mode |
 
 ## Project Structure
 
 ```
 online-banking-demo/
-├── docs/
-│   ├── deployment-local.md      # Local Docker Compose deployment guide
-│   ├── deployment-azure.md      # Azure AKS + Flux GitOps deployment guide
-│   └── architecture.md          # Detailed system architecture documentation
-├── deploy/
-│   ├── flux/                    # GitOps configuration (Flux CD)
-│   │   ├── kustomization.yaml  # Kustomization reconciliation config
-│   │   └── repository.yaml     # Git source repository for Flux
-│   └── kustomize/              # Kubernetes manifests (base + overlays)
-│       └── base/
-│           └── app.yaml        # Service deployments, ConfigMaps, Secrets
-├── infra/
-│   ├── cloud/                   # Azure infrastructure as code (Terraform)
-│   │   ├── main.tf             # Resource definitions (AKS, Cosmos DB, etc.)
-│   │   ├── variables.tf        # Input variables
-│   │   └── outputs.tf          # Output values
-│   └── local/                   # Local development infrastructure
+├── docs/                        # Documentation
+│   ├── deployment-local.md      # Local Docker Compose guide
+│   ├── deployment-azure.md      # Azure AKS deployment guide
+│   ├── architecture.md          # System architecture
+│   └── testing.md               # E2E testing guide
+├── cluster-config/              # Kubernetes cluster configuration
+│   ├── cert-manager/            # TLS certificates (ClusterIssuer, Certificate)
+│   └── istio/gateway/           # Istio ingress gateway configuration
+├── deploy/kustomize/            # Kubernetes manifests
+│   ├── base/                    # Service deployments, ConfigMap, SecretProviderClass
+│   └── observability/           # OTEL collector, monitoring
+├── infra/cloud/                 # Terraform (AKS, Cosmos DB, Redis, AI Foundry, KeyVault)
 ├── src/
-│   ├── user-service/           # .NET 9 Authentication service
-│   ├── account-service/        # .NET 9 Account management
-│   ├── transaction-service/    # .NET 9 Transaction history
-│   ├── transfer-service/       # .NET 9 Money transfer service
-│   ├── chatbot-service/        # Python AI financial advisor
-│   ├── ai-service/        # Python AI services (risk scoring, categorization)
-│   ├── budget-service/         # Python budget analysis agent
-│   ├── event-processor/        # Go event streaming processor
-│   └── ui-app/                 # React web frontend
-├── scripts/
-│   └── seed-data.sh            # Demo data population script
-├── nginx.conf                   # API Gateway configuration
-├── docker-compose.yml          # Local services orchestration
-├── .env.example                # Environment variables template
-└── README.md                   # This file
-```
-
-## Agentic Capabilities
-
-### AI Chatbot Assistant
-The chatbot service provides:
-- Financial advice and insights
-- Transaction categorization
-- Budget recommendations
-- Natural language queries
-
-### Anomaly Detection
-Real-time fraud detection:
-- Unusual transaction patterns
-- Velocity analysis
-- Merchant behavior analysis
-
-### Budget Analysis
-Automated budget insights:
-- Spending categorization
-- Budget variance tracking
-- Savings recommendations
-- Financial health scoring
-
-## Development
-
-### Prerequisites for Local Development
-
-- **.NET 9 SDK**: For building/running .NET services locally
-- **Python 3.11+**: For running Python agent services
-- **Go 1.22+**: For event processor
-- **Node.js 18+**: For React UI development
-
-### Running Individual Services (Hot Reload)
-
-```bash
-# Terminal 1: Keep Docker services running
-docker-compose up -d
-
-# Terminal 2: .NET service with hot reload
-cd src/user-service
-dotnet watch run
-
-# Terminal 3: Python service with auto-reload
-cd src/chatbot-service
-pip install -r requirements.txt
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
-
-# Terminal 4: React UI development server
-cd src/ui-app
-npm install
-npm start
+│   ├── user-service/            # .NET 9 — Authentication
+│   ├── account-service/         # .NET 9 — Account management
+│   ├── transaction-service/     # .NET 9 — Transaction history
+│   ├── transfer-service/        # .NET 9 — Money transfers
+│   ├── chatbot-service/         # Python — AI financial advisor (Agent Framework)
+│   ├── ai-service/              # Python — Risk scoring, categorization
+│   ├── budget-service/          # Python — Budget analysis
+│   ├── event-processor/         # Go — Redis Streams consumer
+│   ├── prompt-eval-service/     # .NET 9 — AI prompt evaluation
+│   └── ui-app/                  # React 18 + MUI v9 — Web frontend
+├── tests/e2e/                   # Playwright E2E test suite
+├── Taskfile.yml                 # Root Taskfile (includes cloud, local, e2e)
+├── Taskfile.cloud.yml           # Azure deployment tasks
+├── Taskfile.local.yml           # Local development tasks
+├── Taskfile.e2e.yml             # E2E testing tasks
+├── docker-compose.yml           # Local services orchestration
+└── .env.example                 # Environment variables template
 ```
 
 ## Azure Deployment
 
-Designed for deployment to Azure cloud services:
-- **AKS** - Container orchestration
-- **Cosmos DB** - Managed NoSQL database
-- **Redis Cache** - Managed distributed caching
-- **Azure OpenAI** - AI services
-- **Application Insights** - Monitoring and logging
-- **Key Vault** - Secrets management
-- **Flux CD** - GitOps continuous deployment
+Deployed to Azure using Terraform and Taskfile:
 
-See `docs/deployment-azure.md` for complete Azure deployment instructions.
-
-## Environment Variables
-
-Key variables for local development (see `.env.example` for full list):
+| Resource | Purpose |
+|----------|---------|
+| **AKS** | Kubernetes with Istio service mesh |
+| **Cosmos DB** | Primary database (Entra RBAC auth) |
+| **Azure Managed Redis** | Cache + event streaming (Balanced B0, port 10000/TLS) |
+| **Azure AI Foundry** | AI agents + OpenAI models |
+| **Application Insights** | Observability (OTEL SDK) |
+| **Key Vault** | Secrets (synced to K8s via CSI driver) |
+| **Container Registry** | Image storage (ACR) |
 
 ```bash
-# Authentication
-Jwt__Key=YourSuperSecretKeyForJWTTokenGeneration12345
-Jwt__Issuer=user-service
+# Full deployment workflow
+task cloud:up           # Terraform + AKS configuration
+task cloud:build        # Build all images to ACR
+task cloud:deploy       # Deploy manifests to AKS
 
-# Database (in-memory for local development)
-UseInMemoryDatabase=true
+# Optional TLS
+task cloud:infra:tls    # cert-manager + Let's Encrypt
+```
 
-# Azure Services (optional)
-AZURE_OPENAI_ENDPOINT=
-AZURE_OPENAI_MODEL=gpt-4o-mini
-AZURE_CLIENT_ID=
-AZURE_TENANT_ID=
-AZURE_CLIENT_SECRET=
+See [docs/deployment-azure.md](docs/deployment-azure.md) for the complete guide.
 
-# Redis
-REDIS__CONNECTIONSTRING=redis:6379
+## Development
 
-# Inter-service Communication
-Services__AccountService=http://account-service:8080
-Services__TransactionService=http://transaction-service:8080
+### Prerequisites
+
+- **.NET 9 SDK**: .NET services
+- **Python 3.11+**: AI agent services
+- **Go 1.22+**: Event processor
+- **Node.js 18+**: React UI
+
+### Hot Reload
+
+```bash
+# Keep infrastructure running
+docker-compose up -d
+
+# .NET service
+cd src/user-service && dotnet watch run
+
+# Python service
+cd src/chatbot-service && uvicorn app.main:app --reload --port 8001
+
+# React UI
+cd src/ui-app && npm start
 ```
 
 ## Troubleshooting
 
-### Services won't start
-- Increase Docker Desktop memory to 8GB+
-- Check port conflicts: `sudo lsof -i :80`
-- View logs: `docker-compose logs -f`
+- **Services won't start**: Increase Docker memory to 8GB+, check ports with `sudo lsof -i :80`
+- **Redis errors**: `docker-compose down -v && docker-compose up -d redis`
+- **JWT 401 errors**: Clear browser localStorage, re-login for fresh token
+- **Azure 401s**: Verify Workload Identity annotation on service account, check Entra RBAC roles
 
-### Redis connection failed
-```bash
-docker-compose ps redis  # Should show "healthy"
-docker-compose down -v
-docker-compose up -d redis
-```
-
-### JWT authentication errors
-- Clear browser localStorage: DevTools → Application → Clear All
-- Re-login to get fresh token
-- Verify JWT key consistency across services
-
-See `docs/deployment-local.md` for more troubleshooting steps.
+See [docs/deployment-local.md](docs/deployment-local.md) for more troubleshooting.
 
 ## License
 
-MIT License - see LICENSE file for details.
+MIT License — see LICENSE file for details.
 
 ---
 
-**Last Updated**: May 2024  
+**Last Updated**: May 2026
 **Repository**: https://github.com/briandenicola/online-banking-demo

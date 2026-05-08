@@ -2,43 +2,43 @@
 
 ## Overview
 
-The Online Banking Demo is a microservices-based banking platform built on .NET, Python, and Go, designed to showcase modern cloud-native patterns with agentic AI capabilities. The system follows a distributed architecture with clear separation of concerns, event-driven communication, and cloud-optimized deployment strategies.
+The Online Banking Demo is a microservices-based banking platform built on .NET 9, Python 3.11+, Go 1.22+, and React 18, designed to showcase modern cloud-native patterns with agentic AI capabilities. The system follows a distributed architecture with clear separation of concerns, event-driven communication via Redis Streams, and cloud-optimized deployment on Azure AKS with Istio service mesh.
 
 ## Service Map
 
-### Core .NET Microservices
+### Core .NET 9 Microservices
 
-| Service | Port | Responsibility | Communication | Dependencies |
-|---------|------|-----------------|----------------|--------------|
-| **User Service** | 6001 | Authentication (JWT tokens), user registration, profile management | REST/HTTP | Redis (health check) |
-| **Account Service** | 6002 | Account lifecycle management, balance tracking | REST/HTTP | Redis (health check) |
-| **Transaction Service** | 6003 | Transaction history, query, logging | REST/HTTP | Redis (event streaming), Account Service |
-| **Transfer Service** | 6004 | Money transfer orchestration, cross-account operations | REST/HTTP | Account Service, Transaction Service, Redis |
+| Service | Responsibility | Communication | Dependencies |
+|---------|-----------------|----------------|--------------|
+| **User Service** | Authentication (JWT tokens), user registration, profile management | REST/HTTP | Cosmos DB, Redis |
+| **Account Service** | Account lifecycle management, balance tracking | REST/HTTP | Cosmos DB, Redis |
+| **Transaction Service** | Transaction history, event publishing to Redis Streams | REST/HTTP | Cosmos DB, Redis, Account Service |
+| **Transfer Service** | Money transfer orchestration, JWT forwarding to downstream | REST/HTTP | Account Service, Transaction Service, Cosmos DB, Redis |
 
 ### Python Agent Services
 
-| Service | Port | Responsibility | Communication | Dependencies |
-|---------|------|-----------------|----------------|--------------|
-| **Chatbot Service** | 8001 | AI financial assistant, natural language queries, financial advice | REST/HTTP (FastAPI) | Azure OpenAI API, User Service |
-| **Anomaly Service** | 8002 | Real-time fraud detection, transaction anomalies, risk scoring | REST/HTTP (FastAPI) | Azure OpenAI Endpoint, Redis (event streaming) |
-| **Budget Service** | 8003 | Budget analysis, spending insights, financial health scoring | REST/HTTP (FastAPI) | Transaction Service, Azure OpenAI Endpoint |
+| Service | Responsibility | Communication | Dependencies |
+|---------|-----------------|----------------|--------------|
+| **Chatbot Service** | AI financial advisor with Agent Framework, account/transaction data tools, Cosmos chat persistence | REST/HTTP (FastAPI) | Azure AI Foundry, Cosmos DB, Account Service, Transaction Service |
+| **AI Service** | Risk scoring, transaction categorization via Foundry agents | REST/HTTP (FastAPI) | Azure AI Foundry |
+| **Budget Service** | Budget analysis, spending insights, financial health scoring | REST/HTTP (FastAPI) | Transaction Service, Azure AI Foundry |
 
-### Infrastructure Services
+### Infrastructure & Admin Services
 
-| Service | Port | Responsibility | Communication | Usage |
-|---------|------|-----------------|----------------|-------|
-| **Event Processor** | - | Redis Streams consumer, audit routing, event fan-out | Redis Streams, gRPC | Subscribes to banking-events stream |
-| **API Gateway (NGINX)** | 80 | Request routing, load balancing, protocol translation | HTTP, REST proxy | Routes all external requests to services |
-| **UI Application** | 3000 | React frontend, user interface, API client | HTTP, REST | Consumes gateway (port 80) |
-| **Redis** | 6380 | Cache, session store, event streaming (Redis Streams) | Redis protocol | Shared by Transaction, Transfer, Anomaly services |
+| Service | Responsibility | Communication | Dependencies |
+|---------|-----------------|----------------|--------------|
+| **Event Processor** (Go) | Redis Streams consumer, audit routing, event fan-out | Redis Streams | Subscribes to banking-events stream |
+| **Prompt Eval Service** (.NET 9) | AI prompt evaluation, admin evaluation UI | REST/HTTP | Azure AI Foundry, Cosmos DB |
+| **UI Application** (React 18 + MUI v9) | Web frontend, admin panel, chat UI | HTTP, REST | Consumes Istio gateway |
+| **Redis** | Cache, event streaming (Redis Streams) | Redis protocol | Shared by all services |
 
 ## Communication Patterns
 
 ### Synchronous (Request-Response)
 
-- **External clients** → API Gateway (port 80) → Service via nginx routing
-- **Frontend** → API Gateway → Services
-- **Service-to-service**: Direct internal HTTP calls (e.g., Transfer → Account, Transfer → Transaction)
+- **External clients** → Istio Ingress Gateway (HTTP/HTTPS) → Service via virtual service routing
+- **Frontend** → Istio Gateway → Services
+- **Service-to-service**: Direct internal HTTP calls with JWT forwarding (e.g., Transfer → Account, Transfer → Transaction)
 - **Swagger documentation**: Accessible through gateway at `/api/{service}/swagger/index.html`
 
 ### Asynchronous (Event-Driven)
@@ -136,22 +136,27 @@ Budget Service:
 
 ```
 Azure Resource Group
-├─ AKS Cluster (Kubernetes)
+├─ AKS Cluster (Kubernetes + Istio service mesh)
 │  ├─ Namespace: banking-demo
-│  ├─ Deployments (2 replicas each)
-│  ├─ Services (ClusterIP, LoadBalancer)
-│  ├─ ConfigMaps & Secrets (banking-secrets)
+│  ├─ Deployments (all services)
+│  ├─ Services (ClusterIP)
+│  ├─ Istio Ingress Gateway (HTTP/HTTPS)
+│  ├─ ConfigMaps & Secrets (banking-secrets via CSI)
+│  ├─ SecretProviderClass (KeyVault CSI driver)
+│  └─ Workload Identity (Entra ID)
 │
-├─ Cosmos DB (managed database)
-├─ Azure Cache for Redis (managed Redis)
-├─ Container Registry (ghcr.io)
-├─ Azure OpenAI (AI endpoint)
-├─ Application Insights (logging)
-├─ Key Vault (secrets)
+├─ Cosmos DB (Entra RBAC auth, BankingDemo database)
+│  ├─ Users, Accounts, Transactions, Transfers, ChatSessions
+│
+├─ Azure Managed Redis (Balanced B0, port 10000/TLS, Entra auth)
+├─ Azure Container Registry (ACR)
+├─ Azure AI Foundry (OpenAI models + agents)
+├─ Application Insights (OTEL SDK)
+├─ Key Vault (secrets synced to K8s via CSI driver)
 └─ Log Analytics Workspace (diagnostics)
 ```
 
-**GitOps**: Flux CD watches GitHub repo (`deploy/flux/` and `deploy/kustomize/`)
+**Deployment**: Taskfile-driven (`task cloud:up`, `task cloud:build`, `task cloud:deploy`)
 
 ## Scaling Considerations
 
@@ -172,27 +177,29 @@ Azure Resource Group
 
 ### Network Security
 
+- **Istio service mesh** manages traffic routing, mTLS between pods
 - **Services isolated** within K8s network namespace in production
-- **NGINX Gateway** validates all external requests
-- **Service-to-service** calls use internal service names
+- **Istio Ingress Gateway** handles all external traffic (HTTP/HTTPS)
+- **Service-to-service** calls use internal K8s DNS names with JWT forwarding
 
 ### Data Security
 
-- **In-transit**: TLS/SSL for all external communication
-- **At-rest**: Cosmos DB encryption, Redis TLS in production
-- **Secrets**: K8s Secrets (backed by Azure Key Vault in production)
+- **In-transit**: TLS/SSL for all external communication, cert-manager + Let's Encrypt for HTTPS
+- **At-rest**: Cosmos DB encryption, Redis TLS (port 10000) in production
+- **Secrets**: Key Vault CSI driver syncs secrets to K8s (SecretProviderClass)
 
 ### Identity & Access
 
-- **JWT tokens** for API authentication
-- **Service accounts** for pod-to-pod communication
+- **JWT tokens** for API authentication (HS256, shared key)
+- **Workload Identity** for Azure resource access (Cosmos DB, Redis, AI Foundry)
+- **Entra RBAC** for Cosmos DB and Redis (no connection string keys)
 - **RBAC**: Namespace isolation (banking-demo separate from system)
 
 ## Monitoring & Observability
 
 ### Logging
 
-- **Application Insights**: Instrumented via `APPLICATIONINSIGHTS_CONNECTION_STRING`
+- **Application Insights**: Instrumented via OTEL SDK + `APPLICATIONINSIGHTS_CONNECTION_STRING`
 - **Local dev**: Logs to stdout/stderr (captured by Docker)
 
 ### Metrics
@@ -227,5 +234,5 @@ Azure Resource Group
 
 ---
 
-**Last Updated**: May 2024  
-**Architecture Version**: 2.0
+**Last Updated**: May 2026  
+**Architecture Version**: 3.0

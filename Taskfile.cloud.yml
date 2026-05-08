@@ -22,6 +22,7 @@ tasks:
     cmds:
       - task: _init
       - task: apply
+      - task: infra:config
 
   apply:
     desc: Apply Terraform infrastructure
@@ -98,17 +99,27 @@ tasks:
   deploy:
     desc: Deploy application to Kubernetes cluster (updates image refs then applies)
     cmds:
+      - task: _images:update
+      - kubectl apply -k deploy/kustomize/observability/
+      - kubectl apply -k deploy/kustomize/base/
+      - envsubst < cluster-config/istio/gateway/istio-ingress-gateway.yaml | kubectl apply -f -
+
+  # === One-time infra configuration ===
+  # Run after Terraform creates AKS. Sets up credentials, namespaces, secrets,
+  # configmap values, secret-provider-class, and optionally TLS via cert-manager.
+  # DNS SETUP: Create a DNS A record pointing CUSTOM_DOMAIN to the Istio ingress
+  # gateway external IP. Get the IP with: kubectl get svc -n aks-istio-ingress
+
+  infra:config:
+    desc: One-time AKS configuration (credentials, namespaces, secrets, configmap, CSI, TLS)
+    cmds:
       - az aks get-credentials --resource-group {{.RG_NAME}} --name {{.AKS_NAME}} --overwrite-existing
       - sed -i s/devicecode/azurecli/g ~/.kube/config
       - task: _secrets:create
-      - task: _images:update
       - sed -i "s|REPLACE_WITH_COSMOS_ENDPOINT|{{.COSMOS_ENDPOINT}}|g" deploy/kustomize/base/configmap.yaml
       - sed -i "s|REPLACE_WITH_KEYVAULT_NAME|{{.KEYVAULT_NAME}}|g" deploy/kustomize/base/secret-provider-class.yaml
       - sed -i "s|REPLACE_WITH_TENANT_ID|{{.TENANT_ID}}|g" deploy/kustomize/base/secret-provider-class.yaml
       - sed -i "s|REPLACE_WITH_AZURE_CLIENT_ID|{{.AZURE_CLIENT_ID}}|g" deploy/kustomize/base/secret-provider-class.yaml
-      - kubectl apply -k deploy/kustomize/observability/
-      - kubectl apply -k deploy/kustomize/base/
-      - envsubst < cluster-config/istio/gateway/istio-ingress-gateway.yaml | kubectl apply -f -
       - git checkout deploy/kustomize/base/configmap.yaml
       - git checkout deploy/kustomize/base/secret-provider-class.yaml
     vars:
@@ -125,25 +136,16 @@ tasks:
       AZURE_CLIENT_ID:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw banking_services_client_id
 
-  # === TLS / cert-manager tasks ===
-  # DNS SETUP: Create a DNS A record pointing CUSTOM_DOMAIN to the Istio ingress
-  # gateway external IP. Get the IP with: kubectl get svc -n aks-istio-ingress
-
-  tls:install-cert-manager:
-    desc: Install cert-manager via Helm (namespace cert-manager, CRDs included)
+  infra:tls:
+    desc: Install cert-manager and configure TLS certificates
     cmds:
       - helm repo add jetstack https://charts.jetstack.io
       - helm repo update
-      - helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true
-
-  tls:setup:
-    desc: Apply cert-manager ClusterIssuer, Certificate, and updated Istio gateway
-    cmds:
+      - helm upgrade --install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true
       - envsubst < cluster-config/cert-manager/certificate.yaml | kubectl apply -f -
       - kubectl apply -f cluster-config/cert-manager/clusterissuer.yaml
-      - envsubst < cluster-config/istio/gateway/istio-ingress-gateway.yaml | kubectl apply -f -
 
-  tls:status:
+  infra:tls:status:
     desc: Check TLS certificate status
     cmds:
       - kubectl get certificate -n aks-istio-ingress
