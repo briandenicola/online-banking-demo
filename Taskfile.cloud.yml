@@ -100,9 +100,12 @@ tasks:
     desc: Deploy application to Kubernetes cluster (updates image refs then applies)
     cmds:
       - task: _images:update
+      - task: _configmap:update
+      - task: _secretproviderclass:update
       - kubectl apply -k deploy/kustomize/observability/
       - kubectl apply -k deploy/kustomize/base/
-      - envsubst < cluster-config/istio/gateway/istio-ingress-gateway.yaml | kubectl apply -f -
+      - kubectl apply -f cluster-config/istio/gateway/istio-ingress-gateway.yaml
+      - kubectl apply -f cluster-config/istio/gateway/default-ingress.yaml
 
   # === One-time infra configuration ===
   # Run after Terraform creates AKS. Sets up credentials, namespaces, secrets,
@@ -115,41 +118,111 @@ tasks:
     cmds:
       - az aks get-credentials --resource-group {{.RG_NAME}} --name {{.AKS_NAME}} --overwrite-existing
       - sed -i s/devicecode/azurecli/g ~/.kube/config
+      - task: infra:tls
       - task: _secrets:create
-      - sed -i "s|REPLACE_WITH_COSMOS_ENDPOINT|{{.COSMOS_ENDPOINT}}|g" deploy/kustomize/base/configmap.yaml
-      - sed -i "s|REPLACE_WITH_KEYVAULT_NAME|{{.KEYVAULT_NAME}}|g" deploy/kustomize/base/secret-provider-class.yaml
-      - sed -i "s|REPLACE_WITH_TENANT_ID|{{.TENANT_ID}}|g" deploy/kustomize/base/secret-provider-class.yaml
-      - sed -i "s|REPLACE_WITH_AZURE_CLIENT_ID|{{.AZURE_CLIENT_ID}}|g" deploy/kustomize/base/secret-provider-class.yaml
-      - git checkout deploy/kustomize/base/configmap.yaml
-      - git checkout deploy/kustomize/base/secret-provider-class.yaml
+      - task: _configmap:update
+      - task: _secretproviderclass:update
     vars:
       RG_NAME:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw resource_group_name
       AKS_NAME:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw aks_name
-      COSMOS_ENDPOINT:
-        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw cosmos_db_endpoint
-      KEYVAULT_NAME:
-        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw key_vault_name
-      TENANT_ID:
-        sh: az account show --query tenantId -o tsv
-      AZURE_CLIENT_ID:
-        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw banking_services_client_id
 
   infra:tls:
-    desc: Install cert-manager and configure TLS certificates
+    desc: Install cert-manager, issue Let's Encrypt cert, and enable HTTPS gateway
+    preconditions:
+      - sh: '[ -n "$CUSTOM_DOMAIN" ]'
+        msg: "CUSTOM_DOMAIN must be set in .env before running infra:tls"
     cmds:
-      - helm repo add jetstack https://charts.jetstack.io
-      - helm repo update
-      - helm upgrade --install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true
-      - envsubst < cluster-config/cert-manager/certificate.yaml | kubectl apply -f -
+      # 1. Install cert-manager
+      - helm repo add jetstack https://charts.jetstack.io --force-update
+      - helm upgrade --install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true --wait
+      # 2. Ensure HTTP-only gateway is active (no HTTPS redirect during challenge)
+      - kubectl apply -f cluster-config/istio/gateway/istio-ingress-gateway.yaml
+      # 3. Apply ClusterIssuer and Certificate
       - kubectl apply -f cluster-config/cert-manager/clusterissuer.yaml
+      - envsubst < cluster-config/cert-manager/certificate.yaml | kubectl apply -f -
+      # 4. Wait for ACME solver pod, then route challenge traffic to it
+      - task: _tls:wait-for-solver
+      - task: _tls:route-solver
+      # 5. Wait for certificate to be issued
+      - task: _tls:wait-for-cert
+      # 6. Clean up solver route and apply TLS gateway
+      - kubectl delete virtualservice acme-solver -n aks-istio-ingress --ignore-not-found
+      - envsubst < cluster-config/istio/gateway/istio-ingress-gateway-tls.yaml | kubectl apply -f -
+      - echo "✅ TLS enabled for $CUSTOM_DOMAIN"
+
+  _tls:wait-for-solver:
+    internal: true
+    desc: Wait for cert-manager ACME HTTP solver pod to appear
+    cmds:
+      - |
+        echo "Waiting for ACME solver pod..."
+        for i in $(seq 1 30); do
+          SVC=$(kubectl get svc -n aks-istio-ingress -l "acme.cert-manager.io/http01-solver=true" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -n "$SVC" ]; then
+            echo "Solver service found: $SVC"
+            break
+          fi
+          sleep 5
+        done
+        if [ -z "$SVC" ]; then
+          echo "ERROR: ACME solver service not found after 150s"
+          exit 1
+        fi
+
+  _tls:route-solver:
+    internal: true
+    desc: Create VirtualService to route ACME challenge to solver pod
+    cmds:
+      - |
+        SVC=$(kubectl get svc -n aks-istio-ingress -l "acme.cert-manager.io/http01-solver=true" -o jsonpath='{.items[0].metadata.name}')
+        cat <<EOF | kubectl apply -f -
+        apiVersion: networking.istio.io/v1beta1
+        kind: VirtualService
+        metadata:
+          name: acme-solver
+          namespace: aks-istio-ingress
+        spec:
+          hosts:
+          - "$CUSTOM_DOMAIN"
+          gateways:
+          - banking-demo-gateway
+          http:
+          - match:
+            - uri:
+                prefix: /.well-known/acme-challenge/
+            route:
+            - destination:
+                host: ${SVC}.aks-istio-ingress.svc.cluster.local
+                port:
+                  number: 8089
+        EOF
+
+  _tls:wait-for-cert:
+    internal: true
+    desc: Wait for certificate to be issued (up to 5 minutes)
+    cmds:
+      - |
+        echo "Waiting for certificate to be issued..."
+        for i in $(seq 1 60); do
+          READY=$(kubectl get certificate banking-demo-tls -n aks-istio-ingress -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
+          if [ "$READY" = "True" ]; then
+            echo "✅ Certificate issued successfully"
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "ERROR: Certificate not ready after 5 minutes"
+        kubectl describe certificate banking-demo-tls -n aks-istio-ingress
+        exit 1
 
   infra:tls:status:
     desc: Check TLS certificate status
     cmds:
       - kubectl get certificate -n aks-istio-ingress
       - kubectl get certificaterequest -n aks-istio-ingress
+      - kubectl get challenges -n aks-istio-ingress 2>/dev/null || true
 
   # === Internal tasks ===
   _secrets:create:
@@ -196,6 +269,34 @@ tasks:
       - kustomize edit set image ghcr.io/banking-demo/event-processor={{.ACR_LOGIN_SERVER}}/event-processor:{{.TAG}}
       - kustomize edit set image ghcr.io/banking-demo/ui-app={{.ACR_LOGIN_SERVER}}/ui-app:{{.TAG}}
       - kustomize edit set image ghcr.io/banking-demo/prompt-eval-service={{.ACR_LOGIN_SERVER}}/prompt-eval-service:{{.TAG}}
+
+  _configmap:update:
+    internal: true
+    desc: Substitute Cosmos endpoint in configmap, apply, then restore
+    cmds:
+      - sed -i "s|REPLACE_WITH_COSMOS_ENDPOINT|{{.COSMOS_ENDPOINT}}|g" deploy/kustomize/base/configmap.yaml
+      - kubectl apply -f deploy/kustomize/base/configmap.yaml -n banking-demo
+      - git checkout deploy/kustomize/base/configmap.yaml
+    vars:
+      COSMOS_ENDPOINT:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw cosmos_db_endpoint
+
+  _secretproviderclass:update:
+    internal: true
+    desc: Substitute KV/identity values in SecretProviderClass, apply, then restore
+    cmds:
+      - sed -i "s|REPLACE_WITH_KEYVAULT_NAME|{{.KEYVAULT_NAME}}|g" deploy/kustomize/base/secret-provider-class.yaml
+      - sed -i "s|REPLACE_WITH_TENANT_ID|{{.TENANT_ID}}|g" deploy/kustomize/base/secret-provider-class.yaml
+      - sed -i "s|REPLACE_WITH_AZURE_CLIENT_ID|{{.AZURE_CLIENT_ID}}|g" deploy/kustomize/base/secret-provider-class.yaml
+      - kubectl apply -f deploy/kustomize/base/secret-provider-class.yaml -n banking-demo
+      - git checkout deploy/kustomize/base/secret-provider-class.yaml
+    vars:
+      KEYVAULT_NAME:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw key_vault_name
+      TENANT_ID:
+        sh: az account show --query tenantId -o tsv
+      AZURE_CLIENT_ID:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw banking_services_client_id
 
   _init:
     internal: true
