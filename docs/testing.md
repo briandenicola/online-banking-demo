@@ -1,5 +1,7 @@
 # Testing Guide — Online Banking Demo
 
+[← Azure Auth](azure-auth.md) | [Home](README.md)
+
 ## Overview
 
 The E2E test suite uses [Playwright](https://playwright.dev/) with TypeScript. Tests are organized in 4 phases covering authentication, core banking, transfers/budgets, and admin/AI features.
@@ -159,3 +161,7 @@ Tests run in GitHub Actions via `.github/workflows/ci.yml`. In CI:
 - Single worker (sequential execution)
 - 1 retry on failure
 - HTML report + trace artifacts uploaded
+
+---
+
+[← Azure Auth](azure-auth.md) | [Home](README.md)

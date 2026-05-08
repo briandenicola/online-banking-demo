@@ -1,5 +1,7 @@
 # Local Development Deployment Guide
 
+[← Architecture](architecture.md) | [Home](README.md) | [Next: Azure Deployment →](deployment-azure.md)
+
 ## Quick Start
 
 ### 1. Prerequisites
@@ -289,5 +291,9 @@ docker rmi $(docker images | grep banking | awk '{print $3}')
 
 ---
 
-**Last Updated**: May 2024  
+**Last Updated**: May 2026  
 **Tested On**: Docker 25+, Docker Compose 2.0+
+
+---
+
+[← Architecture](architecture.md) | [Home](README.md) | [Next: Azure Deployment →](deployment-azure.md)

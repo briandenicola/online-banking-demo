@@ -1,5 +1,7 @@
 # System Architecture
 
+[← Home](README.md) | [Next: Local Development →](deployment-local.md)
+
 ## Overview
 
 The Online Banking Demo is a microservices-based banking platform built on .NET 9, Python 3.11+, Go 1.22+, and React 18, designed to showcase modern cloud-native patterns with agentic AI capabilities. The system follows a distributed architecture with clear separation of concerns, event-driven communication via Redis Streams, and cloud-optimized deployment on Azure AKS with Istio service mesh.
@@ -20,7 +22,7 @@ The Online Banking Demo is a microservices-based banking platform built on .NET 
 | Service | Responsibility | Communication | Dependencies |
 |---------|-----------------|----------------|--------------|
 | **Chatbot Service** | AI financial advisor with Agent Framework, account/transaction data tools, Cosmos chat persistence | REST/HTTP (FastAPI) | Azure AI Foundry, Cosmos DB, Account Service, Transaction Service |
-| **AI Service** | Risk scoring, transaction categorization via Foundry agents | REST/HTTP (FastAPI) | Azure AI Foundry |
+| **AI Service** | Risk scoring, transaction categorization via Foundry agents, Redis Stream consumer | REST/HTTP (FastAPI) | Azure AI Foundry, Redis Streams |
 | **Budget Service** | Budget analysis, spending insights, financial health scoring | REST/HTTP (FastAPI) | Transaction Service, Azure AI Foundry |
 
 ### Infrastructure & Admin Services
@@ -30,7 +32,7 @@ The Online Banking Demo is a microservices-based banking platform built on .NET 
 | **Event Processor** (Go) | Redis Streams consumer, audit routing, event fan-out | Redis Streams | Subscribes to banking-events stream |
 | **Prompt Eval Service** (.NET 9) | AI prompt evaluation, admin evaluation UI | REST/HTTP | Azure AI Foundry, Cosmos DB |
 | **UI Application** (React 18 + MUI v9) | Web frontend, admin panel, chat UI | HTTP, REST | Consumes Istio gateway |
-| **Redis** | Cache, event streaming (Redis Streams) | Redis protocol | Shared by all services |
+| **Redis** | Event streaming (Redis Streams as event bus) | Redis protocol | Shared by producer/consumer services |
 
 ## Communication Patterns
 
@@ -97,7 +99,7 @@ Event Processor (subscribes to banking-events):
   └─ Updates consumer group offset
 
 Anomaly Service:
-  ├─ Analyzes transaction patterns
+  ├─ AI Service analyzes transaction patterns
   ├─ Publishes anomaly.detected if suspicious
   └─ Returns risk score
 
@@ -236,3 +238,7 @@ Azure Resource Group
 
 **Last Updated**: May 2026  
 **Architecture Version**: 3.0
+
+---
+
+[← Home](README.md) | [Next: Local Development →](deployment-local.md)

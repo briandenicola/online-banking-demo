@@ -1,5 +1,7 @@
 # Azure Deployment Guide
 
+[← Local Development](deployment-local.md) | [Home](README.md) | [Next: Azure Auth →](azure-auth.md)
+
 ## Architecture Overview
 
 The Online Banking Demo deploys to Azure Kubernetes Service (AKS) using Terraform for infrastructure and [go-task](https://taskfile.dev/) (Taskfile) for orchestrating build and deploy workflows. Ingress is handled by the Istio service mesh addon, secrets are synced from Azure Key Vault via the CSI driver, and container images are built directly in Azure Container Registry (ACR).
@@ -414,3 +416,7 @@ kubectl describe certificate banking-demo-tls -n aks-istio-ingress
 **Last Updated**: May 2026
 **Architecture**: AKS + Istio + Key Vault CSI + ACR + Workload Identity
 **Tested On**: Azure CLI 2.50+, kubectl 1.28+, Terraform 1.5+, go-task 3.x
+
+---
+
+[← Local Development](deployment-local.md) | [Home](README.md) | [Next: Azure Auth →](azure-auth.md)

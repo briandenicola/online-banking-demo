@@ -1,5 +1,7 @@
 # Azure Authentication in Docker
 
+[← Azure Deployment](deployment-azure.md) | [Home](README.md) | [Next: Testing →](testing.md)
+
 The Python services (ai-service, budget-service, chatbot-service) use `DefaultAzureCredential` from the `azure-identity` SDK to authenticate with Azure AI services. This document explains how credentials are provided when running inside Docker containers.
 
 ## How DefaultAzureCredential Works
@@ -142,3 +144,7 @@ Response when credentials are missing or invalid:
 - The `~/.azure` volume is mounted **read-only** (`:ro`) — containers cannot modify your local credentials.
 - Never commit `.env` files containing `AZURE_CLIENT_SECRET` to source control.
 - In production Kubernetes deployments, prefer Workload Identity over service principal secrets.
+
+---
+
+[← Azure Deployment](deployment-azure.md) | [Home](README.md) | [Next: Testing →](testing.md)
