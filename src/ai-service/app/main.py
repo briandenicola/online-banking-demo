@@ -629,7 +629,7 @@ async def _create_redis_client():
         oid = _extract_oid_from_token(token.token)
         logger.info(f"Using Entra ID token for Redis authentication (OID: {oid})")
 
-        client = redis.asyncio.RedisCluster(
+        client = redis.RedisCluster(
             host=parsed["host"],
             port=parsed["port"],
             username=oid,
