@@ -7,6 +7,7 @@ namespace: banking-demo
 resources:
 - namespace.yaml
 - configmap.yaml
+- secret-provider-class.yaml
 - user-service.yaml
 - account-service.yaml
 - transaction-service.yaml
@@ -16,6 +17,7 @@ resources:
 - chatbot-service.yaml
 - event-processor.yaml
 - ui-app.yaml
+- prompt-eval-service.yaml
 images:
 - name: ghcr.io/banking-demo/account-service
   newName: leadingterrier26956acr.azurecr.io/account-service
@@ -31,6 +33,9 @@ images:
   newTag: latest
 - name: ghcr.io/banking-demo/event-processor
   newName: leadingterrier26956acr.azurecr.io/event-processor
+  newTag: latest
+- name: ghcr.io/banking-demo/prompt-eval-service
+  newName: leadingterrier26956acr.azurecr.io/prompt-eval-service
   newTag: latest
 - name: ghcr.io/banking-demo/transaction-service
   newName: leadingterrier26956acr.azurecr.io/transaction-service

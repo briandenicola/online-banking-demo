@@ -77,6 +77,14 @@ spec:
           number: 80
   - match:
     - uri:
+        prefix: /api/evaluations
+    route:
+    - destination:
+        host: prompt-eval-service
+        port:
+          number: 80
+  - match:
+    - uri:
         prefix: /api/admin
     route:
     - destination:

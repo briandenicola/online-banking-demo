@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: chatbot-service
+  name: prompt-eval-service
   namespace: banking-demo
   labels:
-    app: chatbot-service
+    app: prompt-eval-service
     app.kubernetes.io/part-of: banking-demo
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: chatbot-service
+      app: prompt-eval-service
   template:
     metadata:
       labels:
-        app: chatbot-service
+        app: prompt-eval-service
         azure.workload.identity/use: "true"
     spec:
       serviceAccountName: banking-workload-identity
@@ -24,13 +24,23 @@ spec:
         runAsGroup: 1000
         fsGroup: 1000
       containers:
-      - name: chatbot-service
-        image: ghcr.io/banking-demo/chatbot-service:1.0.0
+      - name: prompt-eval-service
+        image: ghcr.io/banking-demo/prompt-eval-service:1.0.0
         imagePullPolicy: Always
         ports:
-        - containerPort: 8001
+        - containerPort: 8080
           protocol: TCP
         env:
+        - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: appinsights-connection-string
+        - name: Jwt__Key
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: jwt-key
         - name: FOUNDRY_PROJECT_ENDPOINT
           valueFrom:
             secretKeyRef:
@@ -38,6 +48,8 @@ spec:
               key: openai-endpoint
         - name: FOUNDRY_MODEL
           value: "gpt-5.4-mini"
+        - name: AI_SERVICE_URL
+          value: "http://ai-service:80"
         envFrom:
         - configMapRef:
             name: banking-demo-config
@@ -51,13 +63,13 @@ spec:
         livenessProbe:
           httpGet:
             path: /healthz
-            port: 8001
+            port: 8080
           initialDelaySeconds: 10
           periodSeconds: 30
         readinessProbe:
           httpGet:
             path: /readyz
-            port: 8001
+            port: 8080
           initialDelaySeconds: 5
           periodSeconds: 10
         volumeMounts:
@@ -78,15 +90,15 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: chatbot-service
+  name: prompt-eval-service
   namespace: banking-demo
   labels:
-    app: chatbot-service
+    app: prompt-eval-service
 spec:
   type: ClusterIP
   selector:
-    app: chatbot-service
+    app: prompt-eval-service
   ports:
   - port: 80
-    targetPort: 8001
+    targetPort: 8080
     protocol: TCP

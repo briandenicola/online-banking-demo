@@ -45,6 +45,10 @@ output "openai_endpoint" {
   sensitive = false
 }
 
+output "key_vault_name" {
+  value = azurerm_key_vault.main.name
+}
+
 output "acr_name" {
   value = azurerm_container_registry.main.name
 }
