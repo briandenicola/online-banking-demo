@@ -11,6 +11,11 @@ vars:
     sh: terraform -chdir=./{{.INFRA_DIR}} output -raw acr_login_server
   TAG: '{{default "latest" .CLI_ARGS}}'
 
+includes:
+  build:
+    taskfile: ./Taskfile.build.yml
+    internal: false
+
 tasks:
   default:
     desc: Show available tasks
@@ -67,35 +72,6 @@ tasks:
     cmds:
       - rm -rf src/**/bin src/**/obj
       - rm -rf node_modules dist
-
-  build:
-    desc: Build all container images using Azure ACR
-    cmds:
-      - task: build:dotnet
-      - task: build:python
-      - task: build:ui
-
-  build:dotnet:
-    desc: Build all .NET service images
-    cmds:
-      - az acr build --registry {{.ACR_NAME}} --image user-service:{{.TAG}} -f ./src/user-service/Dockerfile .
-      - az acr build --registry {{.ACR_NAME}} --image account-service:{{.TAG}} -f ./src/account-service/Dockerfile .
-      - az acr build --registry {{.ACR_NAME}} --image transaction-service:{{.TAG}} -f ./src/transaction-service/Dockerfile .
-      - az acr build --registry {{.ACR_NAME}} --image transfer-service:{{.TAG}} -f ./src/transfer-service/Dockerfile .
-      - az acr build --registry {{.ACR_NAME}} --image prompt-eval-service:{{.TAG}} -f ./src/prompt-eval-service/Dockerfile .
-
-  build:python:
-    desc: Build all Python service images
-    cmds:
-      - az acr build --registry {{.ACR_NAME}} --image chatbot-service:{{.TAG}} ./src/chatbot-service/
-      - az acr build --registry {{.ACR_NAME}} --image budget-service:{{.TAG}} ./src/budget-service/
-      - az acr build --registry {{.ACR_NAME}} --image ai-service:{{.TAG}} ./src/ai-service/
-      - az acr build --registry {{.ACR_NAME}} --image event-processor:{{.TAG}} ./src/event-processor/
-
-  build:ui:
-    desc: Build UI application image
-    cmds:
-      - az acr build --registry {{.ACR_NAME}} --image ui-app:{{.TAG}} ./src/ui-app/
 
   deploy:
     desc: Deploy application to Kubernetes cluster (updates image refs then applies)
