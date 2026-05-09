@@ -14,6 +14,7 @@ vars:
 includes:
   build:
     taskfile: ./Taskfile.build.yml
+    dir: '{{.ROOT_DIR}}'
     internal: false
 
 tasks:
