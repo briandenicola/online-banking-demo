@@ -47,6 +47,19 @@ As a platform architect, I need comprehensive security and code quality audits a
 
 **Scope:** Dependency vulnerability scanning (SBOM, Trivy enhanced), secret management patterns review, authentication/authorization audit, API security assessment, input validation coverage, OWASP compliance verification, code quality metrics collection, test coverage analysis, error handling and logging patterns review, CI/CD security posture, container image security hardening, and network security configuration assessment across all services (C#/.NET, Python/FastAPI, Go, React/TypeScript) and infrastructure.
 
+### US12: Entra ID & GitHub OAuth Multi-Provider Authentication
+As a platform engineer, I need users to authenticate via Entra ID (Azure AD) and GitHub OAuth in addition to local accounts so the application supports enterprise SSO and federated identity patterns while maintaining backward compatibility with existing username/password authentication.
+
+**Scope:** 
+- **Identity Provider Integration:** Add Entra ID (Azure AD) and GitHub OAuth as supported authentication providers alongside local username/password accounts
+- **User-Service Backend:** Extend user-service to accept and validate tokens from multiple issuers; implement provider discovery and routing
+- **Identity Linking:** Support account linking/merging by email address across providers (same email = same user profile regardless of sign-in provider)
+- **Token Validation:** Implement dual token validation pipelines (local JWT vs. Entra/GitHub tokens) with issuer verification
+- **Frontend UI:** Add login page options for each provider (Entra, GitHub, local) with clear provider selection
+- **User Profile Management:** Store provider metadata (provider ID, email, display name) and support provider re-authentication/linking flows
+- **Configuration & Secrets:** Leverage KeyVault for OAuth client IDs/secrets; support environment-based provider configuration
+- **Testing:** E2E tests covering sign-up, sign-in, and account linking across all three providers
+
 ## Acceptance Criteria
 
 - All 9 services deploy and pass health checks on AKS
