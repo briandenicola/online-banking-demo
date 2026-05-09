@@ -1608,3 +1608,50 @@ The architecture is ready — we just don't need it yet.
 
 ---
 
+# Decision: Add WorkIQ/FabricIQ to Future AI Capabilities
+
+**Date:** 2026-05-08  
+**Author:** Danny (Lead/Architect)  
+**Priority:** P3  
+**Status:** Proposed  
+**Requested by:** Brian
+
+## Context
+
+The existing `docs/future-ai-capabilities.md` spike covers multi-agent orchestration, Agent365, MCP/A2A, and AI red teaming. Microsoft's WorkIQ (M365 intelligence) and FabricIQ (Fabric intelligence) represent the next evolution — giving AI agents contextual awareness of users, workflows, and business data beyond raw API access.
+
+## Decision
+
+1. **Added Section 5** to `docs/future-ai-capabilities.md` covering WorkIQ/FabricIQ integration opportunities with four concrete banking demo use cases:
+   - Teams Banking Assistant with WorkIQ user context (extends Agent365)
+   - FabricIQ Data Agents for business analytics over transaction data
+   - FabricIQ Operations Agents for autonomous banking ops
+   - Unified context pipeline combining WorkIQ + FabricIQ + FoundryIQ
+
+2. **Updated Priority Recommendation table** — split Agent365 into "Agent365 + WorkIQ" track, added FabricIQ Data Agent and Ops Agent as separate priorities with dependency ordering.
+
+3. **Updated `specs/001-backlog-implementation-plan/spec.md`**:
+   - Marked US1-US8 as complete (✅)
+   - Added US9: Future AI & Agentic Capabilities (references docs/future-ai-capabilities.md)
+   - Added US10: Private Networking & Advanced AKS/Istio
+
+## Rationale
+
+- WorkIQ/FabricIQ complete the "intelligence trifecta" (user context + data context + AI context) that makes the banking demo a comprehensive enterprise AI showcase
+- FabricIQ Data Agents are the most self-contained starting point (Cosmos DB data already exists)
+- Implementation is phased — each phase delivers independent value
+- Connects cleanly to existing sections (Agent365, MCP, multi-agent orchestration)
+
+## Risks
+
+- **Licensing:** Fabric and M365 Copilot require specific SKUs; not available in all dev/demo environments
+- **Effort:** High overall; mitigated by phased approach
+- **Maturity:** WorkIQ/FabricIQ APIs are evolving; implementation details may shift
+
+## Files Changed
+
+- `docs/future-ai-capabilities.md` — Added Section 5 (WorkIQ/FabricIQ), updated priority table and intro
+- `specs/001-backlog-implementation-plan/spec.md` — Marked US1-US8 complete, added US9 and US10
+
+---
+

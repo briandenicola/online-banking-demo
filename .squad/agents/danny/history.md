@@ -427,3 +427,11 @@ Basher implemented the Redis architecture decision:
 **Artifacts Created:**
 - `docs/eshop-analysis.md` — Full analysis with gap tables and pattern comparisons
 - `docs/secure-deployment-plan.md` — Layer 5 appended with 23 backlog items
+
+### WorkIQ/FabricIQ Addition (2026-05-08)
+- **Backlog evolution:** US1-US8 marked complete; US9 (Future AI & Agentic) and US10 (Private Networking & AKS/Istio) added to spec
+- **WorkIQ/FabricIQ:** Added as Section 5 to `docs/future-ai-capabilities.md` — four banking use cases covering Teams assistant enrichment, Data Agents for analytics, Operations Agents for autonomous ops, and unified context pipeline
+- **Architecture pattern:** WorkIQ + FabricIQ + FoundryIQ form "intelligence trifecta" — user context, data context, AI context. FabricIQ Data Agent is the best entry point (Cosmos DB data already exists).
+- **Key files:** `docs/future-ai-capabilities.md`, `specs/001-backlog-implementation-plan/spec.md`
+- **Decision:** `.squad/decisions/inbox/danny-workiq-fabriciq.md`
+- **Brian preference:** Wants backlog to reflect actual project state (completed items marked, future items tracked as user stories)
