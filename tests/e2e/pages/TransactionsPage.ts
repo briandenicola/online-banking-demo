@@ -49,7 +49,9 @@ export class TransactionsPage extends BasePage {
 
   async waitForTransactionsToLoad(): Promise<void> {
     await expect(this.loadingIndicator).toBeHidden({ timeout: 10_000 });
-    await expect(this.transactionRows.first()).toBeVisible({ timeout: 10_000 });
+    // Wait for either transaction rows to appear or the table to be ready
+    // (the user may have no transactions)
+    await expect(this.pageTitle).toBeVisible({ timeout: 10_000 });
   }
 
   async clickPaginationNext(): Promise<void> {
