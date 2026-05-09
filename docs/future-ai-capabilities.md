@@ -6,7 +6,7 @@
 > **Status**: Draft  
 > **Goal**: Evaluate emerging AI patterns for integration into the Online Banking Demo
 
-This document explores potential enhancements to the application's AI capabilities, focusing on multi-agent orchestration, Microsoft Agent365, MCP/A2A protocols, and AI red teaming.
+This document explores potential enhancements to the application's AI capabilities, focusing on multi-agent orchestration, Microsoft Agent365, MCP/A2A protocols, AI red teaming, and WorkIQ/FabricIQ enterprise intelligence layers.
 
 ---
 
@@ -234,6 +234,96 @@ Medium — the SDK and infrastructure exist. Main work is designing attack scena
 
 ---
 
+## 5. WorkIQ & FabricIQ — Enterprise Intelligence Layers
+
+### What Are They?
+
+Microsoft's intelligence layers provide contextual grounding for AI agents beyond what raw data and prompts offer:
+
+- **WorkIQ** (Microsoft 365 intelligence) — Exposes user and workflow context: emails, calendar, chats, collaboration patterns, and personal memory. It makes agents aware of *how people work*, not just what data exists.
+- **FabricIQ** (Microsoft Fabric intelligence) — Exposes data and analytics context: KPIs, business entities, semantic models, and data lineage. Includes two agent archetypes:
+  - **Data Agents** — Virtual analysts that answer business questions over structured data
+  - **Operations Agents** — Autonomous monitors that detect anomalies and take corrective action
+- **FoundryIQ** (Azure AI Foundry) — Already partially in our stack via Foundry agents for risk scoring and chatbot.
+
+Together these form a **unified context brain** — agents don't just have tools, they have situational awareness of users, workflows, and business data.
+
+### Banking Demo Use Cases
+
+#### Use Case 1: Teams-Integrated Banking Assistant (WorkIQ + Agent365)
+
+Extends the existing Agent365 Banking Assistant (Section 2) with WorkIQ context:
+
+- Agent knows the user's role, recent meetings, and communication patterns
+- A relationship manager asking "show me high-risk accounts" gets results filtered to *their* portfolio, surfaced with context from recent client emails
+- Proactive nudges: "You have a meeting with Client X in 30 minutes — their account flagged a large withdrawal yesterday"
+- **Connects to:** Section 2 (Agent365), Section 1 (Multi-Agent — orchestrator routes WorkIQ context to risk/compliance agents)
+
+#### Use Case 2: FabricIQ Data Agents — Business Analytics
+
+A Data Agent built on a Fabric semantic model over Cosmos DB transaction data:
+
+- Natural language queries: "What are the top 5 spending categories across all users this quarter?"
+- Trend analysis: "Show me month-over-month anomaly detection rates and false-positive trends"
+- Portfolio insights: "Which accounts have the highest transaction velocity but lowest risk scores?" (potential under-monitored accounts)
+- **Connects to:** Section 3 (MCP) — Data Agent could consume banking MCP servers as data sources, making it interoperable with other AI clients
+
+#### Use Case 3: FabricIQ Operations Agents — Autonomous Banking Ops
+
+Operations Agents that monitor business metrics and take autonomous action:
+
+- **Risk threshold tuning:** Agent monitors false-positive rates in anomaly detection; if FP rate exceeds 15%, automatically adjusts risk scoring thresholds and notifies admin via Teams (ties into Agent365)
+- **Compliance drift detection:** Agent continuously validates transaction patterns against regulatory baselines; flags deviations before audit
+- **Capacity management:** Agent monitors transaction volume trends; triggers auto-scaling policies or alerts when volume forecasts exceed current capacity
+- **Connects to:** Section 4 (AI Red Teaming) — Operations Agents themselves become red team targets (can an adversary manipulate the data to trigger incorrect autonomous actions?)
+
+#### Use Case 4: Unified Agent Context Pipeline
+
+The highest-value integration — combining all three IQ layers:
+
+```
+User asks in Teams: "Should I approve this $50K transfer for Client ABC?"
+
+WorkIQ  → User is a Senior RM, has 3 recent emails from Client ABC about investment rebalancing
+FabricIQ → Client ABC's account shows consistent investment pattern; $50K is within 1σ of normal
+FoundryIQ → Risk score: 0.3 (low), Compliance: clear, Category: Investment Transfer
+
+Agent response: "Based on Client ABC's investment rebalancing discussion (3 emails this week),
+their historical pattern (avg $42K/month in investment transfers), and low risk score (0.3),
+this transfer appears routine. Recommend: Approve."
+```
+
+### Implementation Path
+
+1. **Phase 1 — FabricIQ Data Agent (start here)**
+   - Create a Fabric workspace with a semantic model over Cosmos DB transaction/account data
+   - Build a Data Agent for business analytics queries
+   - Expose via MCP server for interoperability with existing agents
+   - *Dependencies:* Cosmos DB data pipeline, Fabric workspace provisioning
+
+2. **Phase 2 — WorkIQ + Agent365 Integration**
+   - Extend existing Agent365 Banking Assistant with WorkIQ Graph context
+   - Add Microsoft Graph API calls for user context (calendar, emails, org)
+   - Enrich agent responses with collaboration context
+   - *Dependencies:* M365 tenant with Copilot licenses, Graph API permissions
+
+3. **Phase 3 — FabricIQ Operations Agent**
+   - Build an Operations Agent monitoring anomaly detection metrics
+   - Implement autonomous threshold adjustment with human-approval gate
+   - Add Teams notification integration for operational alerts
+   - *Dependencies:* Phase 1 semantic model, Agent365 for notifications
+
+4. **Phase 4 — Unified Context Pipeline**
+   - Wire WorkIQ + FabricIQ + FoundryIQ context into the multi-agent orchestrator (Section 1)
+   - Implement context aggregation layer that merges user, data, and AI contexts
+   - *Dependencies:* Phases 1-3, Multi-Agent Orchestration (Section 1)
+
+### Effort Estimate
+
+High — requires Microsoft Fabric workspace, M365 Copilot licensing, Graph API integration, and semantic model design. Phases are independently valuable and can be delivered incrementally. Phase 1 (Data Agent) is the most self-contained starting point.
+
+---
+
 ## Priority Recommendation
 
 | Initiative | Value | Effort | Recommendation |
@@ -241,8 +331,10 @@ Medium — the SDK and infrastructure exist. Main work is designing attack scena
 | **AI Red Teaming** | 🔴 High (security) | Medium | **Start here** — foundational safety for existing AI features |
 | **MCP Servers** | 🟡 Medium (interop) | Medium | **Next** — makes banking data accessible to any AI client |
 | **Multi-Agent** | 🟡 Medium (UX) | Medium | **After MCP** — builds on MCP for data, adds orchestration |
+| **FabricIQ Data Agent** | 🟡 Medium (analytics) | Medium-High | **After MCP** — business analytics over transaction data; pairs with MCP servers |
+| **Agent365 + WorkIQ** | 🟡 Medium (reach) | Medium | **Parallel** — extends Agent365 with user context; independent of other initiatives |
+| **FabricIQ Ops Agent** | 🟢 Low-Medium (ops) | High | **Later** — requires Data Agent and operational baselines first |
 | **A2A Protocol** | 🟢 Low (emerging) | High | **Watch** — protocol still maturing, wait for GA |
-| **Agent365** | 🟡 Medium (reach) | Medium-Low | **Parallel** — independent of other initiatives, good demo value |
 
 ---
 

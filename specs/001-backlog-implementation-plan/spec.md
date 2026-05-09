@@ -10,29 +10,37 @@ Implement the prioritized backlog (22 items, P0–P5) for the online-banking-dem
 
 ## User Stories
 
-### US1 (P0): Operational Readiness
+### US1 (P0): Operational Readiness ✅
 As a developer, I need all containers rebuilt and infrastructure applied so the current codebase runs correctly on AKS.
 
-### US2 (P1): Security Hardening
+### US2 (P1): Security Hardening ✅
 As a platform engineer, I need Kubernetes hardened with Istio mTLS, network policies, KeyVault CSI driver, and verified Redis Entra auth so that the application meets the constitutional security principles.
 
-### US3 (P1): User Roles & RBAC
+### US3 (P1): User Roles & RBAC ✅
 As a product owner, I need Admin and User roles with fine-grained access control so different personas have appropriate permissions.
 
-### US4 (P2): Observability & Testing
+### US4 (P2): Observability & Testing ✅
 As a developer, I need OTEL documentation, Playwright E2E tests, and Trivy scanning so the platform is observable, tested, and secure by default.
 
-### US5 (P3): AI Admin Portal
+### US5 (P3): AI Admin Portal ✅
 As an admin, I need a prompt testing UI integrated with Azure AI Foundry Evals/Red teaming SDK so I can iterate on AI service prompts with built-in evaluation.
 
-### US6 (P4): Developer Experience
+### US6 (P4): Developer Experience ✅
 As a new contributor, I need DevContainer, workshop-style docs, architecture diagrams, and a ToC hub so I can go from clone to running in 15 minutes.
 
-### US7 (P4): Infrastructure Modernization
+### US7 (P4): Infrastructure Modernization ✅
 As a platform engineer, I need Terraform modularized, enhanced Taskfile, and chaos engineering so infrastructure is maintainable and resilient.
 
-### US8 (P5): Agentic Showcase
+### US8 (P5): Agentic Showcase ✅
 As a showcase viewer, I need Squad documentation, Copilot integration guide, and ADRs so the project demonstrates agentic development practices.
+
+### US9: Future AI & Agentic Capabilities
+As a platform engineer, I need the application to evolve with emerging AI patterns — multi-agent orchestration, Microsoft Agent365, MCP/A2A protocols, AI red teaming, and WorkIQ/FabricIQ integration — so the banking demo remains a cutting-edge showcase of enterprise AI capabilities.
+
+**Reference:** [docs/future-ai-capabilities.md](../../docs/future-ai-capabilities.md)
+
+### US10: Private Networking & Advanced AKS/Istio
+As a platform engineer, I need private endpoints for all Azure PaaS services (Cosmos DB, Redis, Key Vault, AI Foundry), AKS with authorized IP ranges, and advanced Istio service mesh configuration (AuthorizationPolicy, PeerAuthentication, traffic management) so the application has zero public-facing attack surface beyond the ingress gateway.
 
 ## Acceptance Criteria
 
