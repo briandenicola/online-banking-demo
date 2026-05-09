@@ -42,6 +42,11 @@ As a platform engineer, I need the application to evolve with emerging AI patter
 ### US10: Private Networking & Advanced AKS/Istio
 As a platform engineer, I need private endpoints for all Azure PaaS services (Cosmos DB, Redis, Key Vault, AI Foundry), AKS with authorized IP ranges, and advanced Istio service mesh configuration (AuthorizationPolicy, PeerAuthentication, traffic management) so the application has zero public-facing attack surface beyond the ingress gateway.
 
+### US11: Security Audit & Engineering Best Practices Review
+As a platform architect, I need comprehensive security and code quality audits across the entire application stack so the project maintains production-grade standards and serves as a reference implementation.
+
+**Scope:** Dependency vulnerability scanning (SBOM, Trivy enhanced), secret management patterns review, authentication/authorization audit, API security assessment, input validation coverage, OWASP compliance verification, code quality metrics collection, test coverage analysis, error handling and logging patterns review, CI/CD security posture, container image security hardening, and network security configuration assessment across all services (C#/.NET, Python/FastAPI, Go, React/TypeScript) and infrastructure.
+
 ## Acceptance Criteria
 
 - All 9 services deploy and pass health checks on AKS
