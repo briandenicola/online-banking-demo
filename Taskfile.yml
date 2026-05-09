@@ -7,14 +7,14 @@ env:
   DEFAULT_REGION: canadacentral
 
 includes:
-  local: 
-    taskfile: ./Taskfile.local.yml
+  local:
+    taskfile: ./tasks/Taskfile.local.yml
     internal: false
 
-  cloud: 
-    taskfile: ./Taskfile.cloud.yml
+  cloud:
+    taskfile: ./tasks/Taskfile.cloud.yml
     internal: false
 
   e2e:
-    taskfile: ./Taskfile.e2e.yml
+    taskfile: ./tasks/Taskfile.e2e.yml
     internal: false
