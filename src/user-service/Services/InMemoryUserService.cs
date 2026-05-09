@@ -13,6 +13,7 @@ namespace UserService.Services;
 public class InMemoryUserService : IUserService
 {
     private readonly ConcurrentDictionary<string, User> _users = new();
+    private readonly ConcurrentBag<LoginAudit> _loginAudits = new();
     private readonly ILogger<InMemoryUserService> _logger;
 
     public InMemoryUserService(ILogger<InMemoryUserService> logger)
@@ -145,5 +146,57 @@ public class InMemoryUserService : IUserService
         var user = await GetUserByIdAsync(userId);
         if (user == null) throw new InvalidOperationException("User not found");
         user.CategoryPreferences = categories;
+    }
+
+    public Task<List<User>> GetAllUsersAsync()
+    {
+        return Task.FromResult(_users.Values.ToList());
+    }
+
+    public async Task<bool> LockUserAsync(string userId)
+    {
+        var user = await GetUserByIdAsync(userId);
+        if (user == null) return false;
+        user.IsLocked = true;
+        return true;
+    }
+
+    public async Task<bool> UnlockUserAsync(string userId)
+    {
+        var user = await GetUserByIdAsync(userId);
+        if (user == null) return false;
+        user.IsLocked = false;
+        return true;
+    }
+
+    public async Task<bool> ResetUserPasswordAsync(string userId, string newPassword)
+    {
+        var user = await GetUserByIdAsync(userId);
+        if (user == null) return false;
+        user.PasswordHash = BC.HashPassword(newPassword);
+        return true;
+    }
+
+    public async Task<bool> DeleteUserAsync(string userId)
+    {
+        var user = await GetUserByIdAsync(userId);
+        if (user == null) return false;
+        return _users.TryRemove(userId, out _);
+    }
+
+    public Task LogLoginAuditAsync(LoginAudit audit)
+    {
+        _loginAudits.Add(audit);
+        _logger.LogInformation("Login audit: {Username} at {Timestamp} - Success: {Success}", audit.Username, audit.Timestamp, audit.Success);
+        return Task.CompletedTask;
+    }
+
+    public Task<List<LoginAudit>> GetLoginAuditsAsync(int limit = 100)
+    {
+        var audits = _loginAudits
+            .OrderByDescending(a => a.Timestamp)
+            .Take(limit)
+            .ToList();
+        return Task.FromResult(audits);
     }
 }
