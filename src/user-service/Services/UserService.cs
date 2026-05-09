@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Azure.Cosmos;
@@ -185,6 +186,114 @@ public class UserService : IUserService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to publish UserRegistered event — non-critical");
+        }
+    }
+
+    // Admin methods
+    public async Task<List<UserModel>> GetAllUsersAsync()
+    {
+        var query = new QueryDefinition("SELECT * FROM c ORDER BY c.CreatedAt DESC");
+        var iterator = _container.GetItemQueryIterator<UserModel>(query);
+        var users = new List<UserModel>();
+
+        while (iterator.HasMoreResults)
+        {
+            var response = await iterator.ReadNextAsync();
+            users.AddRange(response);
+        }
+
+        return users;
+    }
+
+    public async Task<bool> LockUserAsync(string userId)
+    {
+        var user = await GetUserByIdAsync(userId);
+        if (user == null) return false;
+
+        user.IsLocked = true;
+        await _container.ReplaceItemAsync(user, user.Id, new PartitionKey(user.Id));
+        _logger.LogInformation("User {UserId} locked", userId);
+        return true;
+    }
+
+    public async Task<bool> UnlockUserAsync(string userId)
+    {
+        var user = await GetUserByIdAsync(userId);
+        if (user == null) return false;
+
+        user.IsLocked = false;
+        await _container.ReplaceItemAsync(user, user.Id, new PartitionKey(user.Id));
+        _logger.LogInformation("User {UserId} unlocked", userId);
+        return true;
+    }
+
+    public async Task<bool> ResetUserPasswordAsync(string userId, string newPassword)
+    {
+        var user = await GetUserByIdAsync(userId);
+        if (user == null) return false;
+
+        user.PasswordHash = BC.HashPassword(newPassword);
+        await _container.ReplaceItemAsync(user, user.Id, new PartitionKey(user.Id));
+        _logger.LogInformation("Password reset for user {UserId}", userId);
+        return true;
+    }
+
+    public async Task<bool> DeleteUserAsync(string userId)
+    {
+        try
+        {
+            await _container.DeleteItemAsync<UserModel>(userId, new PartitionKey(userId));
+            _logger.LogInformation("User {UserId} deleted", userId);
+            return true;
+        }
+        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return false;
+        }
+    }
+
+    public async Task LogLoginAuditAsync(Models.LoginAudit audit)
+    {
+        try
+        {
+            // Store in a separate container (login-audits)
+            var auditContainerName = _configuration["CosmosDb:LoginAuditContainerName"] ?? "login-audits";
+            var databaseName = _configuration["CosmosDb:DatabaseName"];
+            var auditContainer = _container.Database.GetContainer(auditContainerName);
+
+            await auditContainer.CreateItemAsync(audit, new PartitionKey(audit.UserId));
+            _logger.LogInformation("Login audit logged for user {UserId}", audit.UserId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to log login audit for user {UserId}", audit.UserId);
+        }
+    }
+
+    public async Task<List<Models.LoginAudit>> GetLoginAuditsAsync(int limit = 100)
+    {
+        try
+        {
+            var auditContainerName = _configuration["CosmosDb:LoginAuditContainerName"] ?? "login-audits";
+            var databaseName = _configuration["CosmosDb:DatabaseName"];
+            var auditContainer = _container.Database.GetContainer(auditContainerName);
+
+            var query = new QueryDefinition($"SELECT TOP {limit} * FROM c ORDER BY c.Timestamp DESC");
+            var iterator = auditContainer.GetItemQueryIterator<Models.LoginAudit>(query);
+            var audits = new List<Models.LoginAudit>();
+
+            while (iterator.HasMoreResults)
+            {
+                var response = await iterator.ReadNextAsync();
+                audits.AddRange(response);
+            }
+
+            return audits;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to retrieve login audits");
+            return new List<Models.LoginAudit>();
         }
     }
 }
