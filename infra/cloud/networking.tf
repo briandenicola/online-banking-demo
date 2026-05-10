@@ -57,3 +57,22 @@ resource "azurerm_subnet_network_security_group_association" "aks" {
   subnet_id                 = azurerm_subnet.aks.id
   network_security_group_id = azurerm_network_security_group.aks.id
 }
+
+resource "azurerm_subnet" "agents" {
+  name                 = "agents"
+  resource_group_name  = azurerm_resource_group.this.name
+  virtual_network_name = azurerm_virtual_network.main.name
+  address_prefixes     = [local.agent_subnet_cidr]
+
+  delegation {
+    name = "agent-delegation"
+    service_delegation {
+      name = "Microsoft.App/environments"
+    }
+  }
+}
+
+resource "azurerm_subnet_network_security_group_association" "agents" {
+  subnet_id                 = azurerm_subnet.agents.id
+  network_security_group_id = azurerm_network_security_group.aks.id
+}
