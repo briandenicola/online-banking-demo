@@ -6,8 +6,9 @@ resource "azurerm_container_registry" "main" {
   name                = local.acr_name
   resource_group_name = azurerm_resource_group.this.name
   location            = azurerm_resource_group.this.location
-  sku                 = "Basic"
-  admin_enabled       = false
+  sku                           = "Premium"
+  admin_enabled                 = false
+  public_network_access_enabled = true
 
   tags = {
     AppName = local.resource_name

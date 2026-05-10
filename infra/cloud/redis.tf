@@ -10,6 +10,8 @@ resource "azurerm_managed_redis" "main" {
   default_database {
     access_keys_authentication_enabled = false
   }
+  # Public access is disabled; traffic flows through private endpoint only
+  public_network_access = "Disabled"
   tags = {
     AppName = local.resource_name
   }
