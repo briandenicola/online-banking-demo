@@ -93,3 +93,60 @@
 **Alternatives considered**:
 - No delegation: Blocks Agent Service deployment
 - `Microsoft.Web/serverFarms`: Wrong provider for Container Apps-based agents
+
+## R12: Private DNS Zone Names (Azure-Canonical)
+
+**Decision**: Use Azure's canonical private DNS zone names for each service:
+
+| Service | Private DNS Zone | Sub-resource |
+|---------|-----------------|--------------|
+| Key Vault | `privatelink.vaultcore.azure.net` | `vault` |
+| Cosmos DB (SQL) | `privatelink.documents.azure.com` | `Sql` |
+| Azure Managed Redis | `privatelink.redisenterprise.cache.azure.net` | `redisEnterprise` |
+| ACR | `privatelink.azurecr.io` | `registry` |
+| AI Services (Cognitive) | `privatelink.cognitiveservices.azure.com` | `account` |
+| Storage Account (blob) | `privatelink.blob.core.windows.net` | `blob` |
+
+**Rationale**: These are the Azure-documented canonical zone names. Using non-standard names breaks automatic DNS resolution. Each zone must be linked to the VNet for resolution to work from AKS pods.
+**Alternatives considered**:
+- Azure DNS Private Resolver: Overkill for single-VNet topology
+- Custom CoreDNS forwarding in AKS: Fragile, harder to maintain
+
+## R13: Key Vault Deployer Access (Chicken-and-Egg)
+
+**Decision**: Keep existing `var.deployer_ip` mechanism in `keyvault.tf`. The `network_acls` block allows the deployer's public IP via `ip_rules`, `bypass = "AzureServices"` ensures managed identities work. The private endpoint provides runtime connectivity for AKS pods.
+**Rationale**: The deployer runs `terraform apply` from CI/CD or a developer machine outside the VNet. The IP allowlist is the standard Azure pattern — `default_action = "Deny"` blocks all other public traffic.
+**Alternatives considered**:
+- Self-hosted runner inside VNet: Circular dependency (AKS must be up first)
+- Disabling firewall during apply then re-enabling: Race condition, not idempotent
+- VPN/ExpressRoute: Overkill for a demo project
+
+## R14: ACR Public Access Retention
+
+**Decision**: Keep `public_network_access_enabled = true` on ACR. Add private endpoint so AKS pulls images privately. SKU is already `Premium` (required for PE support).
+**Rationale**: GitHub Actions CI/CD pushes images from outside the VNet. AKS kubelet pulls via the private endpoint (faster, no egress charges). Azure-recommended pattern for CI/CD workflows.
+**Alternatives considered**:
+- Disable public + use self-hosted runner: Adds complexity, not worth it for demo
+- ACR Tasks (build inside ACR): Requires rearchitecting CI/CD pipeline
+
+## R15: AI Services Private Endpoint via AzAPI
+
+**Decision**: Use `azurerm_private_endpoint` targeting `azapi_resource.this.id`. Sub-resource type is `account`.
+**Rationale**: Private endpoints are ARM-level. PE doesn't care whether target was created via `azurerm` or `azapi` — it just needs the resource ID.
+**Alternatives considered**:
+- Creating PE via `azapi_resource`: Unnecessary complexity, `azurerm_private_endpoint` works fine
+
+## R16: Azure Managed Redis PE Sub-Resource Type
+
+**Decision**: Use `redisEnterprise` as the sub-resource name. DNS zone is `privatelink.redisenterprise.cache.azure.net`.
+**Rationale**: Azure Managed Redis uses `Microsoft.Cache/redisEnterprise` resource provider. The sub-resource is `redisEnterprise`, NOT `redisCache` (which is for classic Azure Cache for Redis Basic/Standard/Premium).
+**Alternatives considered**:
+- `redisCache`: Wrong resource provider type
+
+## R17: Storage Account Sub-Resource Scope
+
+**Decision**: Create PE for `blob` only.
+**Rationale**: The storage account is used by AI Foundry for model artifacts and project data — blob only. The project doesn't use Table, Queue, or File storage.
+**Alternatives considered**:
+- PE for all four sub-resources: Over-provisioning, increases Terraform complexity
+- PE for blob + table: Table not currently used

@@ -101,6 +101,7 @@ This project was built using AI-assisted development practices:
 - **Agentic AI**: Chatbot with real data tools, anomaly detection, budget analysis via Azure AI Foundry
 - **Chat Persistence**: Cosmos DB-backed chat history with 30-day TTL
 - **Cloud-Native**: AKS with Istio service mesh, Workload Identity, KeyVault CSI driver
+- **Private Networking**: All PaaS services accessed via private endpoints with private DNS zones
 - **Infrastructure as Code**: Terraform with AzureRM + AzAPI providers
 - **Observability**: OpenTelemetry SDK + Application Insights
 
@@ -141,6 +142,8 @@ online-banking-demo/
 │   ├── base/                    # Service deployments, ConfigMap, SecretProviderClass
 │   └── observability/           # OTEL collector, monitoring
 ├── infra/cloud/                 # Terraform (AKS, Cosmos DB, Redis, AI Foundry, KeyVault)
+│   ├── private-endpoints.tf     # Private endpoints + DNS zones for all PaaS services
+│   └── ai-connections.tf        # AI Foundry project connections + App Insights link
 ├── src/
 │   ├── user-service/            # .NET 9 — Authentication
 │   ├── account-service/         # .NET 9 — Account management
@@ -173,7 +176,8 @@ Deployed to Azure using Terraform and Taskfile:
 | **Azure AI Foundry** | AI agents + OpenAI models |
 | **Application Insights** | Observability (OTEL SDK) |
 | **Key Vault** | Secrets (synced to K8s via CSI driver) |
-| **Container Registry** | Image storage (ACR) |
+| **Container Registry** | Image storage (ACR, Premium SKU) |
+| **Private Endpoints** | Private networking for all PaaS services (9 endpoints, 10 DNS zones) |
 
 ```bash
 # Full deployment workflow

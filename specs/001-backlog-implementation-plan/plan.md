@@ -1,49 +1,38 @@
-# Implementation Plan: Backlog Implementation Plan
+# Implementation Plan: Azure Private Endpoints
 
-**Branch**: `001-backlog-implementation-plan` | **Date**: 2026-05-07 | **Spec**: [spec.md](./spec.md)
-**Input**: Feature specification from `/specs/001-backlog-implementation-plan/spec.md`
+**Branch**: `001-azure-private-endpoints` | **Date**: 2026-05-09 | **Spec**: [spec.md](spec.md)
+**Input**: Feature specification from `/specs/001-backlog-implementation-plan/spec.md` (US10: Private Networking)
 
 ## Summary
 
-Implement the prioritized backlog (22 items, P0–P5) to evolve the online-banking-demo from a working demo into a production-grade showcase. The work spans 6 parallel tracks: operational readiness (rebuild/deploy), security hardening (Istio mTLS, KeyVault CSI, network policies), user roles/RBAC, observability & testing, AI admin portal, and developer experience. Research (R1–R11) has resolved all technical decisions. Infrastructure is currently being reprovisioned after an environment deletion.
+Add Azure Private Endpoints with Private DNS Zones for all six PaaS services (Key Vault, Cosmos DB, Azure Managed Redis, ACR, AI Services, Storage Account) so that AKS workloads communicate exclusively over private networks. A new `/24` private-endpoint subnet is added to the existing VNet at CIDR offset 4. Public network access is already disabled on 5 of 6 services; ACR retains public access for CI/CD image pushes. The deployer IP firewall rule on Key Vault resolves the Terraform chicken-and-egg problem for writing secrets during `terraform apply`.
 
 ## Technical Context
 
-**Language/Version**: .NET 8 (C#), Go 1.22+, Python 3.11+ (FastAPI), React 18 (TypeScript), Terraform 1.5+
-**Primary Dependencies**: ASP.NET Core, Cosmos DB SDK 3.x (Newtonsoft), StackExchange.Redis, Azure.Identity, FastAPI, MUI v9, Playwright, OTEL SDK, azure-ai-evaluation
-**Storage**: Azure Cosmos DB (Entra RBAC auth, Newtonsoft serialization), Azure Managed Redis (Balanced B0, port 10000/TLS, Entra auth)
-**Testing**: `dotnet test` (.NET), `pytest` (Python), `CI=true npx react-scripts test` (React), Playwright (E2E)
-**Target Platform**: AKS with Istio service mesh (AKS addon), Workload Identity, KeyVault CSI Driver
-**Project Type**: Cloud-native microservices web application
-**Performance Goals**: All services respond <500ms p95, E2E deploy <10 minutes from clean state
-**Constraints**: Zero secrets in K8s Secrets (KeyVault CSI only), no public endpoints except Istio ingress, mTLS between all pods
-**Scale/Scope**: 9 services, 1 frontend, ~15k LOC, workshop documentation target
+**Language/Version**: Terraform HCL (AzureRM ~> 4, AzAPI ~> 2, Random ~> 3)
+**Primary Dependencies**: `azurerm_private_endpoint`, `azurerm_private_dns_zone`, `azurerm_private_dns_zone_virtual_network_link`, `azapi_resource` (for AI Services PE)
+**Storage**: N/A (infrastructure-only change)
+**Testing**: `terraform validate`, `terraform plan` (dry-run), post-apply connectivity verification from AKS pods
+**Target Platform**: Azure (eastus default)
+**Project Type**: Infrastructure-as-Code (Terraform)
+**Performance Goals**: Private endpoint DNS resolution < 10ms within VNet
+**Constraints**: All services must be reachable from AKS pods via private IP; deployer must reach Key Vault via IP allowlist during apply
+**Scale/Scope**: 6 private endpoints, 6 private DNS zones, 6 VNet links, 1 new subnet
 
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| I. Security by Design | ✅ PASS | JWT auth on all endpoints, KeyVault CSI for secrets, Trivy scanning planned, input validation present |
-| II. Private Networking | ✅ PASS | Private endpoints for Azure resources, Istio mTLS, only ingress gateway exposed. NSG on subnets. |
-| III. Entra ID Auth | ✅ PASS | Workload Identity for all services, dual-mode (AZURE_CLIENT_ID presence), RBAC role assignments in Terraform |
-| IV. Coding Best Practices | ✅ PASS | DI, async/await, structured logging, proper error handling (transfer-service fix committed) |
-| V. Convention over Config | ✅ PASS | resource_name derives all names, AZURE_CLIENT_ID triggers auth mode, Kustomize overlays for env |
-| VI. Observability First | ⚠️ PARTIAL | OTEL Collector deployed but restarting (R7 fix pending). Health endpoints exist. App Insights connected. |
+| Principle | Status | Evidence |
+|-----------|--------|----------|
+| **I. Security by Design** | ✅ PASS | All PaaS services moved behind private endpoints; no new public attack surface |
+| **II. Private Networking Always** | ✅ PASS | This feature directly implements this principle — PE + Private DNS for every service |
+| **III. Entra ID for Service Authentication** | ✅ PASS | No auth changes; existing Workload Identity / RBAC roles preserved |
+| **IV. Coding Best Practices** | ✅ PASS | Terraform follows established patterns in the repo (resource naming from `local.resource_name`) |
+| **V. Convention over Configuration** | ✅ PASS | PE subnet CIDR derived from existing `local.pe_subnet_cidr` convention; DNS zone names follow Azure standards |
+| **VI. Observability First** | ✅ PASS | No telemetry changes; existing App Insights / OTEL pipeline unaffected |
 
-**Gate Result**: PASS (Observability fix is tracked in backlog, not a blocker)
-
-### Post-Design Re-evaluation
-
-| Principle | Status | Design Impact |
-|-----------|--------|---------------|
-| I. Security by Design | ✅ PASS | Admin role enforcement via JWT claims. Prompt eval API requires Admin role. |
-| II. Private Networking | ✅ PASS | No new public endpoints. Prompt eval runs in-cluster. |
-| III. Entra ID Auth | ✅ PASS | AI Foundry uses Azure AI Developer role (R4). No new key-based auth. |
-| IV. Coding Best Practices | ✅ PASS | Data model follows existing patterns. New service uses FastAPI (existing pattern). |
-| V. Convention over Config | ✅ PASS | Role field added to existing User entity (no new collection). |
-| VI. Observability First | ✅ PASS | New services include OTEL instrumentation. OTEL Collector fix in backlog (R7). |
+**Gate Result**: ✅ All principles satisfied. Proceeding to Phase 0.
 
 ## Project Structure
 
@@ -52,57 +41,32 @@ Implement the prioritized backlog (22 items, P0–P5) to evolve the online-banki
 ```text
 specs/001-backlog-implementation-plan/
 ├── plan.md              # This file
-├── research.md          # Phase 0 output (complete — R1 through R11)
-├── data-model.md        # Phase 1 output (UserRole, PromptEvaluation entities)
-├── quickstart.md        # Phase 1 output (local + cloud quickstart)
-├── contracts/           # Phase 1 output (prompt-eval-api.md, user roles API)
-└── tasks.md             # Phase 2 output (generated by /speckit.tasks)
+├── research.md          # Phase 0: Private endpoint research & decisions
+├── data-model.md        # Phase 1: Terraform resource model
+├── quickstart.md        # Phase 1: Quick-start deployment guide
+├── contracts/           # Phase 1: Terraform interface contracts
+└── tasks.md             # Phase 2: Implementation tasks (via /speckit.tasks)
 ```
 
 ### Source Code (repository root)
 
 ```text
-src/
-├── user-service/           # .NET 8 — Auth, user CRUD, roles (existing)
-├── account-service/        # .NET 8 — Account CRUD (existing)
-├── transaction-service/    # .NET 8 — Transaction history (existing)
-├── transfer-service/       # .NET 8 — Fund transfers (existing)
-├── event-processor/        # Go 1.22 — Redis Streams consumer (existing)
-├── chatbot-service/        # Python/FastAPI — AI chatbot (existing)
-├── ai-service/        # Python/FastAPI — Anomaly detection (existing)
-├── budget-service/         # Python/FastAPI — Budget analysis (existing)
-├── ui-app/                 # React/TypeScript/MUI — Frontend SPA (existing)
-└── shared/                 # .NET shared models/DTOs (existing)
-
-infra/
-├── cloud/                  # Terraform (to be modularized per R6)
-│   ├── main.tf
-│   ├── identity.tf
-│   ├── networking.tf
-│   └── modules/            # NEW: aks, redis, cosmos, keyvault, ai-foundry
-└── local/                  # docker-compose support
-
-deploy/
-├── kustomize/
-│   ├── base/               # Service manifests, configmap, secrets
-│   └── overlays/
-│       └── azure/          # Azure-specific overrides
-└── otel/                   # OTEL Collector config
-
-cluster-config/
-├── istio/                  # Gateway, VirtualService, PeerAuthentication
-└── network-policies/       # NEW: Cilium network policies
-
-tests/
-└── e2e/                    # Playwright E2E tests (existing scaffold)
-
-docs/                       # NEW: Workshop-style documentation (R8 pattern)
+infra/cloud/
+├── locals.tf            # MODIFY: pe_subnet_cidr already defined (no change needed)
+├── networking.tf        # MODIFY: Add pe-subnet + NSG
+├── private-endpoints.tf # NEW: All 6 private endpoints + DNS zone groups
+├── private-dns.tf       # NEW: All 6 private DNS zones + VNet links
+├── keyvault.tf          # EXISTING: Already has public_network_access_enabled = false + network_acls
+├── cosmos.tf            # EXISTING: Already has public_network_access_enabled = false
+├── redis.tf             # EXISTING: Already has public_network_access = "Disabled"
+├── acr.tf               # EXISTING: Premium SKU, public_network_access_enabled = true (keep)
+├── ai.tf                # EXISTING: publicNetworkAccess = "Disabled"
+├── storage.tf           # EXISTING: public_network_access_enabled = false
+└── variables.tf         # EXISTING: deployer_ip already defined
 ```
 
-**Structure Decision**: Multi-service microservices layout with per-service directories under `src/`. Infrastructure in `infra/cloud/` (Terraform modules per R6). Kustomize for K8s manifests. Istio config in `cluster-config/`. This matches the existing repository layout — no restructuring needed.
+**Structure Decision**: Infrastructure-only change. Two new Terraform files (`private-dns.tf`, `private-endpoints.tf`) added to `infra/cloud/`. One existing file modified (`networking.tf` for the PE subnet). All other files already have correct public access settings.
 
 ## Complexity Tracking
 
-| Violation | Why Needed | Simpler Alternative Rejected Because |
-|-----------|------------|-------------------------------------|
-| None | N/A | N/A |
+No constitution violations. No complexity justifications required.

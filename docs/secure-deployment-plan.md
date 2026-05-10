@@ -4,6 +4,8 @@
 
 ## Current State
 
+> **Note:** This section describes the pre-implementation state. Private endpoints and network isolation have since been implemented on branch `001-azure-private-endpoints`.
+
 | Component | Resource | Location |
 |-----------|----------|----------|
 | AKS | `${resource_name}-aks` (Cilium CNI + overlay, KEDA, Azure Policy) | `infra/cloud/main.tf` |

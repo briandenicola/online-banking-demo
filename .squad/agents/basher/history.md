@@ -694,3 +694,30 @@ the hostname, not the child project name. The project name only appears in the `
 - `.env.example` — Added `CUSTOM_DOMAIN` variable
 
 **Pattern:** For managed AKS Istio, TLS certs must be in `aks-istio-ingress` namespace. The `credentialName` on the Gateway server references the cert-manager Secret name directly. HTTP-01 solver class `istio` works without DNS configuration.
+
+### 2026-05 — Private Endpoints for All Azure Services
+
+**Problem:** Subscription policy blocks public endpoints. Key Vault returned "Forbidden — Public network access is disabled" for the managed identity. All 6 Azure services needed private endpoints.
+
+**Changes made:**
+1. Created `infra/cloud/private-endpoints.tf` — new PE subnet (`cidrsubnet(local.vnet_cidr, 8, 4)`), 7 private DNS zones, VNet links, and 6 private endpoints (Key Vault, Cosmos DB, Redis, ACR, AI Services, Storage)
+2. Modified 6 existing resource files to disable public network access:
+   - `keyvault.tf` — `public_network_access_enabled = false` + `network_acls { bypass = "AzureServices", default_action = "Deny" }` + optional deployer IP
+   - `cosmos.tf` — `public_network_access_enabled = false`
+   - `redis.tf` — `public_network_access = "Disabled"` (different attribute name for azurerm_managed_redis)
+   - `acr.tf` — SKU upgraded `Basic` → `Premium` (required for PE), public access kept enabled
+   - `ai.tf` — `publicNetworkAccess = "Disabled"` in azapi body properties
+   - `storage.tf` — `public_network_access_enabled = false`
+3. Added `pe_subnet_cidr` to `locals.tf`, `deployer_ip` variable to `variables.tf`
+
+**Key decisions:**
+- ACR keeps public access enabled (push from CI/CD) but also gets a PE for in-VNet pulls
+- Key Vault `network_acls.bypass = "AzureServices"` lets managed identities access it via PE
+- `deployer_ip` variable (defaults to empty) lets Brian allow Terraform through KV firewall during apply
+- AI Services gets two DNS zones: `privatelink.cognitiveservices.azure.com` and `privatelink.openai.azure.com`
+- Redis uses `public_network_access` (not `public_network_access_enabled`) — different attribute name for azurerm_managed_redis
+
+**Key files:**
+- `infra/cloud/private-endpoints.tf` — all PE infrastructure
+- `infra/cloud/variables.tf` — `deployer_ip` variable
+- `infra/cloud/locals.tf` — `pe_subnet_cidr`

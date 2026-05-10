@@ -123,3 +123,60 @@ User (1) ──── creates ────▶ (N) PromptEvaluation
 User (1) ──── creates ────▶ (N) PromptTemplate
 PromptTemplate (1) ── runs as ──▶ (N) PromptEvaluation
 ```
+
+---
+
+## Private Endpoints Infrastructure (US10)
+
+**Date**: 2026-05-09
+**Scope**: 6 private endpoints, 6 DNS zones, 1 PE subnet
+
+### Entity: Private Endpoint Subnet
+
+**Resource**: `azurerm_subnet.private_endpoints` in `networking.tf`
+
+| Field | Value |
+|-------|-------|
+| `name` | `"private-endpoints"` |
+| `address_prefixes` | `[local.pe_subnet_cidr]` — `/24` at offset 4 |
+
+### Entity: Private DNS Zones (×6)
+
+**Resource**: `azurerm_private_dns_zone.<service>` in `private-dns.tf`
+
+| Instance | Zone Name |
+|----------|-----------|
+| `keyvault` | `privatelink.vaultcore.azure.net` |
+| `cosmos` | `privatelink.documents.azure.com` |
+| `redis` | `privatelink.redisenterprise.cache.azure.net` |
+| `acr` | `privatelink.azurecr.io` |
+| `ai` | `privatelink.cognitiveservices.azure.com` |
+| `storage` | `privatelink.blob.core.windows.net` |
+
+Each zone has one VNet link (`azurerm_private_dns_zone_virtual_network_link`).
+
+### Entity: Private Endpoints (×6)
+
+**Resource**: `azurerm_private_endpoint.<service>` in `private-endpoints.tf`
+
+| Instance | Target Resource | Sub-resource |
+|----------|----------------|--------------|
+| `keyvault` | `azurerm_key_vault.main.id` | `vault` |
+| `cosmos` | `azurerm_cosmosdb_account.main.id` | `Sql` |
+| `redis` | `azurerm_managed_redis.main.id` | `redisEnterprise` |
+| `acr` | `azurerm_container_registry.main.id` | `registry` |
+| `ai` | `azapi_resource.this.id` | `account` |
+| `storage` | `azurerm_storage_account.main.id` | `blob` |
+
+Each PE includes a `private_dns_zone_group` linking to its corresponding DNS zone.
+
+### Dependency Graph
+
+```
+VNet → PE Subnet → Private Endpoints (×6) → Target Resources
+                                          → DNS Zone Groups → DNS Zones → VNet Links
+```
+
+### Existing Resources — No Modifications Required
+
+All 6 services already have correct public access settings. No changes to existing `.tf` files needed.

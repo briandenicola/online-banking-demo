@@ -3,7 +3,7 @@
 #############################################
 
 resource "azapi_resource" "this" {
-  type                      = "Microsoft.CognitiveServices/accounts@2025-10-01-preview"
+  type                      = "Microsoft.CognitiveServices/accounts@2025-04-01-preview"
   name                      = local.openai_name
   parent_id                 = azurerm_resource_group.this.id
   location                  = azurerm_resource_group.this.location
@@ -21,14 +21,7 @@ resource "azapi_resource" "this" {
       disableLocalAuth       = true
       allowProjectManagement = true
       customSubDomainName    = local.openai_name
-      publicNetworkAccess    = "Disabled"
-      networkInjections = [
-        {
-          scenario                   = "agent"
-          subnetArmId                = azurerm_subnet.agents.id
-          useMicrosoftManagedNetwork = false
-        }
-      ]
+      publicNetworkAccess = "Disabled"
       userOwnedStorageAccounts = [
         {
           id = azurerm_storage_account.main.id
