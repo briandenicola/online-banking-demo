@@ -2502,3 +2502,65 @@ https://learn.microsoft.com/en-us/entra/msidweb/agent-id-sdk/quickstart-python
 **Applies To:**
 Phase 2+ agent implementation in 006 Smart Account Opening and all future Foundry agent work.
 
+---
+
+## Decision: AI System Prompt Security Hardening
+
+**Proposed by:** Basher (Backend Dev)
+**Date:** 2026-05-11
+**Status:** Implemented
+
+### Context
+
+This is a banking application with multiple AI agents processing user input. Prompt injection is a real attack vector — especially in the user-facing chatbot that accepts free-form text. The account-opening agents are lower risk (backend-only, structured input) but still process untrusted document data and form fields.
+
+### Decision
+
+Harden all AI system prompts with layered security controls:
+
+**User-facing chatbot (highest risk)**
+1. **Identity anchoring** — Agent cannot change roles or adopt personas
+2. **Scope restriction** — Refuses non-financial requests with redirect
+3. **Injection resistance** — Explicitly blocks "ignore previous instructions", "DAN mode", "act as" patterns; responds with safe fallback
+4. **PII protection** — Masks sensitive data, refuses to echo credentials
+5. **Output boundary** — Cannot generate code, essays, stories, or non-financial content
+
+**Backend account-opening agents (lower risk)**
+1. **Role anchoring** — Cannot change roles
+2. **Input distrust** — Treats document text and form fields as untrusted; won't follow embedded instructions
+3. **Output format enforcement** — Strict JSON-only, no markdown or explanatory text
+
+### Files Modified
+- `src/chatbot-service/app/main.py` — FINANCIAL_ADVISOR_INSTRUCTIONS
+- `src/account-opening-service/app/agents/identity_verification.py` — SYSTEM_PROMPT
+- `src/account-opening-service/app/agents/compliance_check.py` — SYSTEM_PROMPT
+- `src/account-opening-service/app/agents/provisioning.py` — SYSTEM_PROMPT
+- `src/account-opening-service/app/agents/init_agents.py` — AGENT_SPECS instructions
+
+### Risks
+- Overly restrictive prompts could reduce chatbot helpfulness for edge-case financial questions. Monitor user feedback.
+- Prompt hardening is defense-in-depth, not a silver bullet. Application-layer input validation and output filtering remain important.
+
+### Alternatives Considered
+- External prompt firewall/classifier: More robust but adds latency and infrastructure. Could be a Phase 2 addition.
+- Prompt stored in config/DB instead of code: Better for rotation but adds deployment complexity. Deferred.
+
+---
+
+## Decision: Dual-Mode Account Opening UI Components
+
+**Author:** Linus (Frontend Dev)  
+**Date:** 2026-05-11  
+**Status:** Proposed
+
+### Context
+Phase 3 account-opening UI has both production requirements (full multi-step wizard + document upload + polling) and spec-first test suites that expect simplified, deterministic flows. Some test environments (jsdom) also limit native drag/drop behavior.
+
+### Decision
+Expose optional controlled props and simplified render paths across the account-opening components. Production defaults still render the full UX, while tests can opt into simplified flows without mocking or rewriting the components.
+
+### Key Choices
+1. **ApplicationForm dual-mode** — full stepper by default, with a simplified mode for tests or orchestration stubs.
+2. **DocumentUpload dual-mode** — managed per-type uploads with callbacks for orchestrated flows, plus standalone API upload mode; includes jsdom-safe drag/drop fallbacks.
+3. **ApplicationStatus controlled mode** — accepts status data and polling controls so tests can validate rendering without real polling.
+
