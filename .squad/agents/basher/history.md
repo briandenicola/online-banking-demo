@@ -915,3 +915,8 @@ Using `create_session()` + `run("ping")` is lightest real connectivity test:
 - Admin panel uses these endpoints to display Foundry service health in System Health tab
 - Smoke tests can hit these endpoints to monitor Foundry availability without failing on transient issues
 - Graceful degradation: Services operate in "degraded" mode when agents unavailable
+
+### 2026-05 — Account Opening Phase 1 Skeleton
+- Added FastAPI account-opening-service scaffolding at `src/account-opening-service/` (models, repository, state machine, Redis events/consumer base, worker entrypoint).
+- Deployment assets: `deploy/kustomize/base/account-opening-service.yaml` + kustomization image mapping; docker-compose adds account-opening-service + worker.
+- API gateway routing updated: `nginx.conf` now forwards `/api/account-opening` to `account-opening-service:8004`.

@@ -227,3 +227,23 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 ### Test Execution
 - Committed realistic transaction smoke test (5 tx): 98c4f1e
 - Committed account lifecycle smoke test ($500k savings, $150k transfer, $75k purchase): dcd219f
+
+## 006 Smart Account Opening — Phase 1 Unit Tests (2026-05-11)
+
+### Created
+- `src/account-opening-service/tests/` — 6 test files, ~55 test cases total
+- **conftest.py**: Shared fixtures — app_client (httpx AsyncClient), sample_application, auth_token/admin_token (JWT via python-jose matching user-service HS256 key), mock_redis
+- **test_models.py** (18 tests): ApplicationCreate validation (required fields, email format, SSN 4-digit), ApplicationStatus enum (7 values), AgentResult confidence 0-1, DocumentMetadata type constraint, AuditEntry serialization
+- **test_state_machine.py** (22 tests): 8 valid transitions (submitted→document_extraction→identity_verification→compliance_check→approved/rejected/pending_review, plus pending_review→approved/rejected), 7 invalid transitions (skip steps, go backwards, self-transition, terminal states), 6 audit trail checks (timestamp, agent, action, previousState, newState)
+- **test_api.py** (12 tests): POST 201/401/422, GET by ID 200/404, GET list admin 200/non-admin 403, PATCH review admin/non-admin, GET audit admin/non-admin
+- **test_events.py** (6 tests): Correct stream name, payload contains applicationId/eventType/timestamp, graceful Redis failure handling, document_uploaded schema
+- **test_consumer.py** (6 tests): XGROUP CREATE on setup, group-already-exists handling, process_event dispatch, ACK after success, no crash on failure, no ACK on failure
+
+### Design Decisions
+- Tests written spec-first — no dependency on Basher's implementation details
+- Imports from `app.models`, `app.state_machine`, `app.events`, `app.consumer`, `app.main`
+- JWT tokens use same secret/algorithm/issuer/audience as user-service (HS256, "YourSuperSecretKeyForJWTTokenGeneration12345")
+- State machine tests validate transition() returns a result object with `new_state` and `audit_entry`
+- Consumer tests expect AgentConsumer base class with `setup()`, `process_one()`, and abstract `process_event()`
+- Event publisher tests are flexible on payload format (JSON string or flat dict)
+- Test deps needed in pyproject.toml: pytest, pytest-asyncio, httpx, python-jose[cryptography]
