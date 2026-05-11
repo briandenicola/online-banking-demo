@@ -889,3 +889,29 @@ the hostname, not the child project name. The project name only appears in the `
 **Findings:** On reconnection, the ai-service pod was already Running (2/2 containers). The `provision-agents` init container completed successfully (exit code 0). The `ai-service:latest` image exists in ACR. The `init_agents.py` entry point exists at `src/ai-service/app/init_agents.py`. No rebuild or restart was needed — the fix from the previous session had already taken effect.
 
 **Lesson:** Always verify pod state before rebuilding. A previous fix may have already propagated during the crash window.
+
+## Foundry Status Endpoint Patterns (2026-05-11)
+
+### Implementation Details
+- **ai-service:** Implements `GET /api/admin/foundry-status` endpoint
+  - Looks up `foundry-risk` and `foundry-categorizer` agents from analyzer pipeline
+  - Sends minimal "ping" prompt via `create_session()` + `run()` to each agent
+  - Returns per-agent status (`ok`/`error`) with overall system status (`ok`/`degraded`/`error`)
+  - All exceptions caught — never crashes on degraded services
+
+- **chatbot-service:** Implements `GET /api/admin/foundry-status` endpoint
+  - Tests single `FinancialAdvisor` agent
+  - Checks SDK availability and agent readiness before connectivity test
+  - Returns agent name, status, and message
+
+### Key Pattern
+Using `create_session()` + `run("ping")` is lightest real connectivity test:
+- Validates Azure credential
+- Validates endpoint reachability
+- Validates agent reachability
+- No real data processing required
+
+### Integration
+- Admin panel uses these endpoints to display Foundry service health in System Health tab
+- Smoke tests can hit these endpoints to monitor Foundry availability without failing on transient issues
+- Graceful degradation: Services operate in "degraded" mode when agents unavailable

@@ -213,3 +213,17 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 - Transaction-service owns balance side effects; after POST /api/transactions the balance is updated automatically via internal call to account-service
 - Transfer service also updates balances automatically on both accounts
 - Use negative amounts for debit/purchase transactions (e.g., -75000 for a $75k car purchase)
+
+## Smoke Test Patterns (2026-05-11)
+
+### Account Creation Responses
+- Account creation returns HTTP 200 (not 201) with `id` and `accountNumber` fields
+- Both fields required for subsequent transfers and operations
+
+### Transfer Operations
+- Requires all four identifiers: `FromAccountId`, `ToAccountId`, `FromAccountNumber`, `ToAccountNumber`
+- Cannot transfer using only account IDs or only account numbers
+
+### Test Execution
+- Committed realistic transaction smoke test (5 tx): 98c4f1e
+- Committed account lifecycle smoke test ($500k savings, $150k transfer, $75k purchase): dcd219f
