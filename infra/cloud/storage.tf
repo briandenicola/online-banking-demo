@@ -16,4 +16,6 @@ resource "azurerm_storage_container" "account_opening_documents" {
   name                  = "account-opening-documents"
   storage_account_name  = azurerm_storage_account.main.name
   container_access_type = "private"
+
+  depends_on = [azurerm_role_assignment.banking_storage_blob_data_contributor]
 }
