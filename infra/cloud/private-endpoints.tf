@@ -19,8 +19,9 @@ locals {
     cosmos      = "privatelink.documents.azure.com"
     redis       = "privatelink.redis.azure.net"
     acr         = "privatelink.azurecr.io"
-    cogservices = "privatelink.cognitiveservices.azure.com"
-    openai      = "privatelink.openai.azure.com"
+    cogservices  = "privatelink.cognitiveservices.azure.com"
+    openai       = "privatelink.openai.azure.com"
+    services_ai  = "privatelink.services.ai.azure.com"
     blob        = "privatelink.blob.core.windows.net"
     queue       = "privatelink.queue.core.windows.net"
     table       = "privatelink.table.core.windows.net"
@@ -174,6 +175,7 @@ resource "azurerm_private_endpoint" "ai" {
     private_dns_zone_ids = [
       azurerm_private_dns_zone.zones["cogservices"].id,
       azurerm_private_dns_zone.zones["openai"].id,
+      azurerm_private_dns_zone.zones["services_ai"].id,
     ]
   }
 
