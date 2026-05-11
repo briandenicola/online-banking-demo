@@ -247,3 +247,25 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 - Consumer tests expect AgentConsumer base class with `setup()`, `process_one()`, and abstract `process_event()`
 - Event publisher tests are flexible on payload format (JSON string or flat dict)
 - Test deps needed in pyproject.toml: pytest, pytest-asyncio, httpx, python-jose[cryptography]
+
+## 006 Smart Account Opening — Phase 2 Agent Pipeline Tests (2026-05-11)
+
+### Created
+- **test_document_extraction.py** (14 tests): CUS mock calls, event publishing, state transition submitted→document_extraction, audit trail, photo_id/proof_of_address model selection, low-confidence flagging, CUS unavailability error propagation
+- **test_identity_verification.py** (18 tests): Name/address/expiry matching logic, flag collection (name_mismatch, expired_document, address_mismatch), multiple mismatches, Foundry agent mock, state transition document_extraction→identity_verification, event schema validation
+- **test_compliance_check.py** (14 tests): Risk tier evaluation (low/medium/high), kycStatus (approved/review/rejected), flag escalation, Foundry agent mock, state transition identity_verification→compliance_check, event reasoning
+- **test_provisioning.py** (17 tests): Auto-approve path (user-service + account-service calls), review path (flags/risk routing), reject path, service call failure propagation, state transitions to approved/rejected/pending_review, event schema
+- **test_worker.py** (5 tests): Worker startup, signal handling (SIGTERM/SIGINT), graceful shutdown, foundry import check
+
+### Design Decisions
+- Tests use stub consumer implementations in each test file that mirror expected Basher behavior — validates the *contract* from the spec
+- Each stub extends the real `AgentConsumer` base class from `app.consumer`
+- External deps (CUS, Foundry, user-service, account-service) mocked with `AsyncMock`
+- Tests verify errors propagate (not swallowed) when external services fail
+- State machine and repository use real implementations (InMemoryApplicationRepository, ApplicationStateMachine)
+- Event publishing tested via mock_redis.xadd assertions on payload structure
+- Naive datetime expiry strings need timezone normalization before comparing to UTC-aware now()
+
+### Test Count
+- Phase 2: 68 new tests
+- Total (Phase 1 + Phase 2): 136 passing tests
