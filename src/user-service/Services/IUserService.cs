@@ -19,6 +19,8 @@ public interface IUserService
     Task SetCategoryPreferencesAsync(string userId, List<string> categories);
 
     // Admin methods
+    Task<User> PromoteToAdminAsync(string userId);
+    Task<int> GetAdminCountAsync();
     Task<List<User>> GetAllUsersAsync();
     Task<bool> LockUserAsync(string userId);
     Task<bool> UnlockUserAsync(string userId);

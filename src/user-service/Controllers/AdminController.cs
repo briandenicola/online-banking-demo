@@ -23,6 +23,74 @@ public class AdminController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>
+    /// Promotes a user to admin by email or userId.
+    /// Bootstrap escape hatch: if there are zero admins in the system, this endpoint
+    /// allows any authenticated user to self-promote, bypassing the admin role check.
+    /// This handles the chicken-and-egg problem when the first user was created before
+    /// auto-promotion logic existed.
+    /// </summary>
+    [HttpPost("promote")]
+    [AllowAnonymous]
+    public async Task<IActionResult> PromoteToAdmin([FromBody] PromoteRequest request)
+    {
+        // Bootstrap check: if no admins exist, allow any authenticated user to promote.
+        // Once at least one admin exists, require the caller to be an admin.
+        var adminCount = await _userService.GetAdminCountAsync();
+        var isBootstrap = adminCount == 0;
+
+        if (!isBootstrap)
+        {
+            // Normal path: require admin role
+            if (User.Identity?.IsAuthenticated != true || !User.IsInRole("admin"))
+                return Forbid();
+        }
+
+        // Resolve target user by email or userId
+        UserService.Models.User? targetUser = null;
+        if (!string.IsNullOrWhiteSpace(request.Email))
+        {
+            targetUser = await _userService.GetUserByEmailAsync(request.Email);
+        }
+        else if (!string.IsNullOrWhiteSpace(request.UserId))
+        {
+            targetUser = await _userService.GetUserByIdAsync(request.UserId);
+        }
+        else
+        {
+            return BadRequest(new { Message = "Either 'email' or 'userId' must be provided" });
+        }
+
+        if (targetUser == null)
+            return NotFound(new { Message = "User not found" });
+
+        try
+        {
+            var promoted = await _userService.PromoteToAdminAsync(targetUser.Id);
+
+            var promotedBy = isBootstrap
+                ? "BOOTSTRAP (no admins existed)"
+                : User.FindFirst("userId")?.Value ?? "unknown";
+
+            _logger.LogWarning(
+                "ADMIN PROMOTION: User {TargetUserId} ({TargetEmail}) promoted to admin by {PromotedBy}",
+                promoted.Id, promoted.Email, promotedBy);
+
+            return Ok(new
+            {
+                promoted.Id,
+                promoted.Username,
+                promoted.Email,
+                promoted.Role,
+                PromotedBy = promotedBy
+            });
+        }
+        catch (InvalidOperationException)
+        {
+            return Conflict(new { Message = $"User '{targetUser.Email}' is already an admin" });
+        }
+    }
+
     [HttpGet("users")]
     public async Task<IActionResult> GetAllUsers()
     {
@@ -112,4 +180,10 @@ public class ResetPasswordRequest
     [Required]
     [MinLength(8)]
     public string NewPassword { get; set; } = null!;
+}
+
+public class PromoteRequest
+{
+    public string? Email { get; set; }
+    public string? UserId { get; set; }
 }

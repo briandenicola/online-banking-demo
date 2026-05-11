@@ -206,6 +206,29 @@ public class UserService : IUserService
         }
     }
 
+    public async Task<UserModel> PromoteToAdminAsync(string userId)
+    {
+        var user = await GetUserByIdAsync(userId);
+        if (user == null)
+            throw new KeyNotFoundException($"User {userId} not found");
+
+        if (user.Role == "admin")
+            throw new InvalidOperationException($"User {userId} is already an admin");
+
+        user.Role = "admin";
+        await _container.ReplaceItemAsync(user, user.Id, new PartitionKey(user.Id));
+        _logger.LogInformation("User {UserId} ({Email}) promoted to admin", user.Id, user.Email);
+        return user;
+    }
+
+    public async Task<int> GetAdminCountAsync()
+    {
+        var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.Role = 'admin'");
+        var iterator = _container.GetItemQueryIterator<int>(query);
+        var response = await iterator.ReadNextAsync();
+        return response.FirstOrDefault();
+    }
+
     // Admin methods
     public async Task<List<UserModel>> GetAllUsersAsync()
     {

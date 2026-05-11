@@ -157,6 +157,25 @@ public class InMemoryUserService : IUserService
         user.CategoryPreferences = categories;
     }
 
+    public Task<User> PromoteToAdminAsync(string userId)
+    {
+        if (!_users.TryGetValue(userId, out var user))
+            throw new KeyNotFoundException($"User {userId} not found");
+
+        if (user.Role == "admin")
+            throw new InvalidOperationException($"User {userId} is already an admin");
+
+        user.Role = "admin";
+        _logger.LogInformation("User {UserId} ({Email}) promoted to admin", user.Id, user.Email);
+        return Task.FromResult(user);
+    }
+
+    public Task<int> GetAdminCountAsync()
+    {
+        var count = _users.Values.Count(u => u.Role == "admin");
+        return Task.FromResult(count);
+    }
+
     public Task<List<User>> GetAllUsersAsync()
     {
         return Task.FromResult(_users.Values.ToList());
