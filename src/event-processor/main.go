@@ -35,8 +35,9 @@ const (
 
 // EventProcessor handles Redis Stream messages
 type EventProcessor struct {
-	tracer trace.Tracer
-	client redis.Cmdable
+	tracer    trace.Tracer
+	client    redis.Cmdable
+	redisReady bool
 }
 
 // BankingEvent represents an incoming banking event
@@ -73,31 +74,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create Redis client: %v", err)
 	}
-
-	// Verify Redis connectivity with retry
-	for i := 0; i < 10; i++ {
-		if err := rdb.Ping(ctx).Err(); err == nil {
-			log.Println("✅ Redis connectivity verified")
-			break
-		} else if i == 9 {
-			log.Fatalf("Failed to connect to Redis after retries: %v", err)
-		} else {
-			log.Printf("Redis not ready, retrying in %ds...", i+1)
-			time.Sleep(time.Duration(i+1) * time.Second)
-		}
-	}
 	defer func() {
 		if c, ok := rdb.(interface{ Close() error }); ok {
 			c.Close()
 		}
 	}()
-
-	// Create consumer group (idempotent)
-	err = rdb.XGroupCreateMkStream(ctx, streamName, consumerGroup, "0").Err()
-	if err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
-		log.Fatalf("Failed to create consumer group: %v", err)
-	}
-	log.Printf("Consumer group '%s' ready on stream '%s'", consumerGroup, streamName)
 
 	processor := &EventProcessor{
 		tracer: tracer,
@@ -108,9 +89,8 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	go processor.consumeEvents(ctx)
-
-	// Start health probe HTTP server
+	// Start health probe HTTP server BEFORE Redis connectivity check
+	// so that probes can report status while Redis is connecting
 	go func() {
 		mux := http.NewServeMux()
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -119,13 +99,43 @@ func main() {
 		})
 		mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"status":"ready"}`)
+			if processor.redisReady {
+				fmt.Fprint(w, `{"status":"ready"}`)
+			} else {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				fmt.Fprint(w, `{"status":"not_ready","reason":"redis_connecting"}`)
+			}
 		})
 		log.Println("Health probe server listening on :8080")
 		if err := http.ListenAndServe(":8080", mux); err != nil {
 			log.Printf("Health server error: %v", err)
 		}
 	}()
+
+	// Verify Redis connectivity with retry (no fatal on failure — keep trying)
+	for i := 0; ; i++ {
+		if err := rdb.Ping(ctx).Err(); err == nil {
+			log.Println("✅ Redis connectivity verified")
+			processor.redisReady = true
+			break
+		} else {
+			backoff := time.Duration(i+1) * time.Second
+			if backoff > 30*time.Second {
+				backoff = 30 * time.Second
+			}
+			log.Printf("Redis not ready (attempt %d): %v — retrying in %v...", i+1, err, backoff)
+			time.Sleep(backoff)
+		}
+	}
+
+	// Create consumer group (idempotent)
+	err = rdb.XGroupCreateMkStream(ctx, streamName, consumerGroup, "0").Err()
+	if err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
+		log.Fatalf("Failed to create consumer group: %v", err)
+	}
+	log.Printf("Consumer group '%s' ready on stream '%s'", consumerGroup, streamName)
+
+	go processor.consumeEvents(ctx)
 
 	log.Println("Event processor started — consuming from Redis Stream")
 

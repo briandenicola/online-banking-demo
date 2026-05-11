@@ -13,6 +13,8 @@ spec:
       app: transfer-service
   template:
     metadata:
+      annotations:
+        traffic.sidecar.istio.io/excludeOutboundPorts: "10000"
       labels:
         app: transfer-service
         azure.workload.identity/use: "true"

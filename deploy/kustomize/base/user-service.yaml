@@ -13,6 +13,8 @@ spec:
       app: user-service
   template:
     metadata:
+      annotations:
+        traffic.sidecar.istio.io/excludeOutboundPorts: "10000"
       labels:
         app: user-service
         azure.workload.identity/use: "true"

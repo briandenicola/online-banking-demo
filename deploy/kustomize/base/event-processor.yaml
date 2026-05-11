@@ -13,6 +13,8 @@ spec:
       app: event-processor
   template:
     metadata:
+      annotations:
+        traffic.sidecar.istio.io/excludeOutboundPorts: "10000"
       labels:
         app: event-processor
         azure.workload.identity/use: "true"
@@ -52,12 +54,14 @@ spec:
             port: 8080
           initialDelaySeconds: 10
           periodSeconds: 30
+          failureThreshold: 5
         readinessProbe:
           httpGet:
             path: /readyz
             port: 8080
           initialDelaySeconds: 5
           periodSeconds: 10
+          failureThreshold: 12
         volumeMounts:
         - name: secrets-store
           mountPath: "/mnt/secrets-store"
