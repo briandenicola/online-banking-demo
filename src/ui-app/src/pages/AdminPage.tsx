@@ -37,6 +37,8 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 import ReplayIcon from '@mui/icons-material/Replay';
 import apiClient from '../api/client';
 import AdminEvalTab from '../components/AdminEvalTab';
+import AdminUserManagementTab from '../components/AdminUserManagementTab';
+import AdminLoginAuditTab from '../components/AdminLoginAuditTab';
 
 interface AdminStats {
   totalFlagged: number;
@@ -345,6 +347,8 @@ const AdminPage: React.FC = () => {
           <Tab label="Flagged Transactions" />
           <Tab label="All Transactions" />
           <Tab label="AI Evaluation" />
+          <Tab label="User Management" />
+          <Tab label="Login Audit" />
         </Tabs>
       </Box>
 
@@ -686,6 +690,12 @@ const AdminPage: React.FC = () => {
 
       {/* AI Evaluation Tab */}
       {activeTab === 2 && <AdminEvalTab />}
+
+      {/* User Management Tab */}
+      {activeTab === 3 && <AdminUserManagementTab />}
+
+      {/* Login Audit Tab */}
+      {activeTab === 4 && <AdminLoginAuditTab />}
     </Box>
   );
 };
