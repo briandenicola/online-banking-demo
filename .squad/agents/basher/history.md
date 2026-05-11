@@ -8,6 +8,18 @@
 
 ## Learnings
 
+### 2026-05 — Account-opening agent pipeline (Foundry + Content Understanding)
+
+**Pattern:** Account-opening worker runs four Redis-stream consumers (document extraction, identity verification, compliance check, provisioning). Foundry agents are provisioned via init container (`app.agents.init_agents`) using `AIProjectClient.create_version`, while runtime uses `FoundryAgent` only. Content Understanding uses `ContentUnderstandingClient` with analyzer `prebuilt-documentSearch` and `update_defaults()` at startup.
+
+**Key files:**
+- `src/account-opening-service/app/agents/document_extraction.py` — CUS extraction + `document_extracted` events
+- `src/account-opening-service/app/agents/identity_verification.py` — Foundry identity checks
+- `src/account-opening-service/app/agents/compliance_check.py` — Foundry KYC assessment
+- `src/account-opening-service/app/agents/provisioning.py` — Foundry decision + user/account provisioning
+- `src/account-opening-service/app/worker.py` — worker wiring, Foundry connectivity check, signal handling
+- `deploy/kustomize/base/account-opening-service.yaml` — init container + CUS/Foundry env vars
+
 ### 2026-05 — Duplicate email registration TOCTOU fix (email lookup document pattern)
 
 **Problem:** Concurrent registration requests could bypass the email uniqueness check because Cosmos DB has no unique constraint on non-PK fields. The check-then-create pattern allowed two requests to both pass the email query before either wrote.
