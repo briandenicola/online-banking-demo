@@ -113,6 +113,7 @@ tasks:
 
   _infra:cert-manager:
     internal: true
+    silent: true
     desc: Install cert-manager, apply ClusterIssuer and HTTP gateway, output ingress IP
     cmds:
       # 1. Install cert-manager via Helm
@@ -145,17 +146,16 @@ tasks:
 
   tls:enable:
     desc: "Phase 3: Issue Let's Encrypt cert via HTTP-01 and enable HTTPS gateway"
+    silent: true
     preconditions:
       - sh: '[ -n "$CUSTOM_DOMAIN" ]'
         msg: "CUSTOM_DOMAIN must be set in .env before running tls:enable"
     cmds:
       # 1. Apply Certificate resource to trigger ACME flow
       - envsubst < cluster-config/cert-manager/certificate.yaml | kubectl apply -f -
-      # 2. Wait for ACME solver service, route challenge traffic, wait for cert
-      - task: _tls:wait-for-solver
-      - task: _tls:route-solver
-      - task: _tls:wait-for-cert
-      # 3. Clean up solver VirtualService
+      # 2. Check if cert is already issued; skip solver dance if so
+      - task: _tls:wait-for-cert-or-solver
+      # 3. Clean up solver VirtualService (no-op if it doesn't exist)
       - task: _tls:cleanup-solver
       # 4. Apply TLS gateway (HTTPS + HTTP redirect)
       - envsubst < cluster-config/istio/gateway/istio-ingress-gateway-tls.yaml | kubectl apply -f -
@@ -165,30 +165,35 @@ tasks:
         echo "   HTTPS is now active — HTTP requests will redirect to HTTPS."
         echo ""
 
-  _tls:wait-for-solver:
+  _tls:wait-for-cert-or-solver:
     internal: true
-    desc: Wait for ACME HTTP-01 solver service to appear (up to 5 minutes)
+    silent: true
+    desc: If cert already issued skip solver; otherwise wait for solver, route, and wait for cert
     cmds:
       - |
+        READY=$(kubectl get certificate banking-demo-tls -n aks-istio-ingress -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
+        if [ "$READY" = "True" ]; then
+          echo "✅ Certificate already issued — skipping ACME solver flow"
+          exit 0
+        fi
+
         echo "Waiting for ACME HTTP-01 solver service..."
+        SOLVER_SVC=""
         for i in $(seq 1 60); do
           SOLVER_SVC=$(kubectl get svc -n aks-istio-ingress -l "acme.cert-manager.io/http01-solver=true" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
           if [ -n "$SOLVER_SVC" ]; then
             echo "✅ Solver service found: $SOLVER_SVC"
-            exit 0
+            break
           fi
           sleep 5
         done
-        echo "ERROR: ACME solver service not found after 5 minutes."
-        echo "Check challenge status: kubectl get challenges -n aks-istio-ingress"
-        exit 1
 
-  _tls:route-solver:
-    internal: true
-    desc: Create VirtualService to route ACME challenge traffic to solver
-    cmds:
-      - |
-        SOLVER_SVC=$(kubectl get svc -n aks-istio-ingress -l "acme.cert-manager.io/http01-solver=true" -o jsonpath='{.items[0].metadata.name}')
+        if [ -z "$SOLVER_SVC" ]; then
+          echo "ERROR: ACME solver service not found after 5 minutes."
+          echo "Check: kubectl get challenges -n aks-istio-ingress"
+          exit 1
+        fi
+
         SOLVER_PORT=$(kubectl get svc -n aks-istio-ingress "$SOLVER_SVC" -o jsonpath='{.spec.ports[0].port}')
         cat <<EOF | kubectl apply -f -
         apiVersion: networking.istio.io/v1beta1
@@ -213,11 +218,6 @@ tasks:
         EOF
         echo "✅ ACME solver VirtualService applied"
 
-  _tls:wait-for-cert:
-    internal: true
-    desc: Wait for certificate to be issued (up to 5 minutes)
-    cmds:
-      - |
         echo "Waiting for certificate to be issued..."
         for i in $(seq 1 60); do
           READY=$(kubectl get certificate banking-demo-tls -n aks-istio-ingress -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
@@ -233,6 +233,7 @@ tasks:
 
   _tls:cleanup-solver:
     internal: true
+    silent: true
     desc: Remove ACME solver VirtualService after cert is issued
     cmds:
       - kubectl delete virtualservice acme-solver-route -n aks-istio-ingress --ignore-not-found
