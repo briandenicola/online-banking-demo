@@ -357,7 +357,7 @@ public class UserService : IUserService
             var databaseName = _configuration["CosmosDb:DatabaseName"];
             var auditContainer = _container.Database.GetContainer(auditContainerName);
 
-            await auditContainer.CreateItemAsync(audit, new PartitionKey(audit.UserId));
+            await auditContainer.CreateItemAsync(audit, new PartitionKey(audit.Id));
             _logger.LogInformation("Login audit logged for user {UserId}", audit.UserId);
         }
         catch (Exception ex)

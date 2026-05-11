@@ -18,7 +18,8 @@ export async function waitForService(options: HealthCheckOptions): Promise<void>
   while (Date.now() < deadline) {
     try {
       const response = await fetch(url);
-      if (response.status === expectedStatus) {
+      // Accept expectedStatus or 401 (service is alive but requires auth)
+      if (response.status === expectedStatus || response.status === 401) {
         return;
       }
     } catch {

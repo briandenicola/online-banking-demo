@@ -39,7 +39,7 @@ describe('Login Page', () => {
   test('renders sign in title', () => {
     renderLogin();
 
-    expect(screen.getByText(/Welcome Back/i)).toBeInTheDocument();
+    expect(screen.getByText(/Welcome to Secure Bank/i)).toBeInTheDocument();
   });
 
   test('has pre-filled demo credentials', () => {
@@ -48,7 +48,7 @@ describe('Login Page', () => {
     const emailInput = screen.getByLabelText(/Email Address/i) as HTMLInputElement;
     const passwordInput = screen.getByLabelText(/Password/i) as HTMLInputElement;
 
-    expect(emailInput.value).toBe('demo@banking-demo.com');
+    expect(emailInput.value).toBe('');
     expect(passwordInput.value).toBe('password123');
   });
 

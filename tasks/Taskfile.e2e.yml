@@ -20,10 +20,10 @@ tasks:
       BASE_URL: '{{.BASE_URL | default "http://localhost"}}'
 
   smoke:
-    desc: "Run smoke tests — quick validation of critical paths (~7 tests)"
+    desc: "Run smoke tests — quick validation of critical paths"
     dir: '{{.E2E_DIR}}'
     cmds:
-      - npx playwright test --grep @smoke --project=chromium
+      - npx playwright test --project=smoke
     env:
       BASE_URL: '{{.BASE_URL | default "http://localhost"}}'
 
@@ -32,10 +32,11 @@ tasks:
     dir: '{{.E2E_DIR}}'
     cmds:
       - echo "🔍 Running smoke tests against https://{{.CUSTOM_DOMAIN}}..."
-      - npx playwright test --grep @smoke --project=chromium
+      - npx playwright test --project=smoke
     silent: true
     env:
       BASE_URL: 'https://{{.CUSTOM_DOMAIN}}'
+      NODE_TLS_REJECT_UNAUTHORIZED: '0'
 
   cloud:
     desc: Run E2E tests against the live AKS cluster

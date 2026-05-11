@@ -16,8 +16,8 @@ import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 
 const Login: React.FC = () => {
-  const [email, setEmail] = useState('demo@banking-demo.com');
-  const [password, setPassword] = useState('password123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const { login } = useAuthContext();
   const navigate = useNavigate();
@@ -81,7 +81,7 @@ const Login: React.FC = () => {
               <LockOutlinedIcon sx={{ color: 'white', fontSize: 28 }} />
             </Box>
             <Typography component="h1" variant="h5" sx={{ fontWeight: 700, color: 'primary.dark' }}>
-              Welcome Back
+              Welcome to Secure Bank
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
               Sign in to access your accounts securely
@@ -139,10 +139,6 @@ const Login: React.FC = () => {
             >
               Sign In
             </Button>
-
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', mb: 2 }}>
-              Demo credentials: demo@banking-demo.com / password123
-            </Typography>
 
             <Divider sx={{ my: 2 }}>
               <Typography variant="caption" color="text.secondary">

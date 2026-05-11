@@ -83,6 +83,32 @@ spec:
         host: prompt-eval-service
         port:
           number: 80
+  # User-service admin routes (more specific, must come before generic /api/admin)
+  - match:
+    - uri:
+        prefix: /api/admin/users
+    route:
+    - destination:
+        host: user-service
+        port:
+          number: 80
+  - match:
+    - uri:
+        prefix: /api/admin/login-audits
+    route:
+    - destination:
+        host: user-service
+        port:
+          number: 80
+  - match:
+    - uri:
+        prefix: /api/admin/promote
+    route:
+    - destination:
+        host: user-service
+        port:
+          number: 80
+  # AI-service admin routes (flagged-transactions, stats, scored-transactions)
   - match:
     - uri:
         prefix: /api/admin

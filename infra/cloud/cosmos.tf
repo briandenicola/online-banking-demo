@@ -66,6 +66,14 @@ resource "azurerm_cosmosdb_sql_container" "transfers" {
   partition_key_paths = ["/id"]
 }
 
+resource "azurerm_cosmosdb_sql_container" "login_audits" {
+  name                = "login-audits"
+  resource_group_name = azurerm_resource_group.this.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  database_name       = azurerm_cosmosdb_sql_database.banking.name
+  partition_key_paths = ["/id"]
+}
+
 resource "azurerm_cosmosdb_sql_container" "chat_sessions" {
   name                = "ChatSessions"
   resource_group_name = azurerm_resource_group.this.name
