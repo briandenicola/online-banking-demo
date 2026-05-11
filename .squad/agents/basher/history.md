@@ -881,3 +881,11 @@ the hostname, not the child project name. The project name only appears in the `
 **Key files:**
 - `src/ai-service/app/main.py` — `foundry_status()` endpoint at `/api/admin/foundry-status`
 - `src/chatbot-service/app/main.py` — `foundry_status()` endpoint at `/api/admin/foundry-status`
+
+### 2026-05-11 — ai-service init container recovery verification
+
+**Context:** System crashed during a previous session fixing ai-service ImagePullBackOff. The init container YAML had already been updated with the correct ACR image reference (`loyalmoose4702acr.azurecr.io/ai-service:latest`).
+
+**Findings:** On reconnection, the ai-service pod was already Running (2/2 containers). The `provision-agents` init container completed successfully (exit code 0). The `ai-service:latest` image exists in ACR. The `init_agents.py` entry point exists at `src/ai-service/app/init_agents.py`. No rebuild or restart was needed — the fix from the previous session had already taken effect.
+
+**Lesson:** Always verify pod state before rebuilding. A previous fix may have already propagated during the crash window.
