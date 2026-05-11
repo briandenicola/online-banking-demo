@@ -13,6 +13,7 @@ namespace UserService.Services;
 public class InMemoryUserService : IUserService
 {
     private readonly ConcurrentDictionary<string, User> _users = new();
+    private readonly ConcurrentDictionary<string, string> _emailIndex = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentBag<LoginAudit> _loginAudits = new();
     private readonly ILogger<InMemoryUserService> _logger;
 
@@ -33,6 +34,7 @@ public class InMemoryUserService : IUserService
             Salt = "" // No longer needed with bcrypt
         };
         _users[defaultUser.Id] = defaultUser;
+        _emailIndex[defaultUser.Email] = defaultUser.Id;
 
         // Seed a demo user
         var demoPasswordHash = BC.HashPassword("password123");
@@ -48,6 +50,7 @@ public class InMemoryUserService : IUserService
             Salt = ""
         };
         _users[demoUser.Id] = demoUser;
+        _emailIndex[demoUser.Email] = demoUser.Id;
     }
 
     public Task<User?> GetUserByIdAsync(string id)
@@ -76,12 +79,6 @@ public class InMemoryUserService : IUserService
             throw new InvalidOperationException("Username already exists");
         }
 
-        var existingEmail = await GetUserByEmailAsync(request.Email);
-        if (existingEmail != null)
-        {
-            throw new InvalidOperationException("Email already exists");
-        }
-
         var passwordHash = BC.HashPassword(request.Password);
 
         // Check if this is the first user in the system — auto-promote to admin
@@ -98,6 +95,12 @@ public class InMemoryUserService : IUserService
             Salt = "",
             Role = isFirstUser ? "admin" : "user"
         };
+
+        // Atomic email uniqueness check — prevents TOCTOU race
+        if (!_emailIndex.TryAdd(request.Email, user.Id))
+        {
+            throw new InvalidOperationException("Email already exists");
+        }
 
         if (isFirstUser)
         {
@@ -209,7 +212,13 @@ public class InMemoryUserService : IUserService
     {
         var user = await GetUserByIdAsync(userId);
         if (user == null) return false;
-        return _users.TryRemove(userId, out _);
+
+        if (_users.TryRemove(userId, out _))
+        {
+            _emailIndex.TryRemove(user.Email, out _);
+            return true;
+        }
+        return false;
     }
 
     public Task LogLoginAuditAsync(LoginAudit audit)

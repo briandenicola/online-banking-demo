@@ -61,8 +61,9 @@ public class UserService : IUserService
 
     public async Task<UserModel?> GetUserByEmailAsync(string email)
     {
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.Email = @email")
-            .WithParameter("@email", email);
+        var normalizedEmail = email.ToLowerInvariant();
+        var query = new QueryDefinition("SELECT * FROM c WHERE LOWER(c.Email) = @email")
+            .WithParameter("@email", normalizedEmail);
 
         var iterator = _container.GetItemQueryIterator<UserModel>(query);
         var results = await iterator.ReadNextAsync();
@@ -105,11 +106,48 @@ public class UserService : IUserService
             _logger.LogInformation("First user {Username} ({Email}) auto-promoted to admin role", user.Username, user.Email);
         }
 
-        var response = await _container.CreateItemAsync(user, new PartitionKey(user.Id));
-        
-        await PublishUserRegisteredEvent(user);
+        // Create email lookup document first to prevent race conditions (TOCTOU).
+        // The deterministic ID ensures Cosmos returns 409 on duplicate emails.
+        var emailLookupId = $"email-lookup:{request.Email.ToLowerInvariant()}";
+        var emailLookupDoc = new
+        {
+            id = emailLookupId,
+            type = "email-lookup",
+            userId = user.Id,
+            email = request.Email
+        };
 
-        return response;
+        try
+        {
+            await _container.CreateItemAsync(emailLookupDoc, new PartitionKey(emailLookupId));
+        }
+        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            throw new InvalidOperationException("Email already exists");
+        }
+
+        // Create the actual user document. If this fails, clean up the lookup doc.
+        try
+        {
+            var response = await _container.CreateItemAsync(user, new PartitionKey(user.Id));
+
+            await PublishUserRegisteredEvent(user);
+
+            return response;
+        }
+        catch
+        {
+            // Best-effort cleanup of the lookup document
+            try
+            {
+                await _container.DeleteItemAsync<object>(emailLookupId, new PartitionKey(emailLookupId));
+            }
+            catch (Exception cleanupEx)
+            {
+                _logger.LogWarning(cleanupEx, "Failed to clean up email lookup document {LookupId}", emailLookupId);
+            }
+            throw;
+        }
     }
 
     public async Task<bool> ValidateCredentialsAsync(string username, string password)
@@ -169,7 +207,7 @@ public class UserService : IUserService
 
     private async Task<bool> IsContainerEmptyAsync()
     {
-        var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c");
+        var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE NOT STARTSWITH(c.id, 'email-lookup:')");
         var iterator = _container.GetItemQueryIterator<int>(query);
         var response = await iterator.ReadNextAsync();
         return response.FirstOrDefault() == 0;
@@ -232,7 +270,7 @@ public class UserService : IUserService
     // Admin methods
     public async Task<List<UserModel>> GetAllUsersAsync()
     {
-        var query = new QueryDefinition("SELECT * FROM c ORDER BY c.CreatedAt DESC");
+        var query = new QueryDefinition("SELECT * FROM c WHERE NOT STARTSWITH(c.id, 'email-lookup:') ORDER BY c.CreatedAt DESC");
         var iterator = _container.GetItemQueryIterator<UserModel>(query);
         var users = new List<UserModel>();
 
@@ -282,8 +320,26 @@ public class UserService : IUserService
     {
         try
         {
+            // Fetch user first to get email for lookup doc cleanup
+            var user = await GetUserByIdAsync(userId);
+
             await _container.DeleteItemAsync<UserModel>(userId, new PartitionKey(userId));
             _logger.LogInformation("User {UserId} deleted", userId);
+
+            // Best-effort cleanup of the email lookup document
+            if (user?.Email != null)
+            {
+                try
+                {
+                    var emailLookupId = $"email-lookup:{user.Email.ToLowerInvariant()}";
+                    await _container.DeleteItemAsync<object>(emailLookupId, new PartitionKey(emailLookupId));
+                }
+                catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    // Lookup doc may not exist for users created before this fix
+                }
+            }
+
             return true;
         }
         catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)

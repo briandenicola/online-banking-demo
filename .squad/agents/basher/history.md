@@ -8,6 +8,16 @@
 
 ## Learnings
 
+### 2026-05 — Duplicate email registration TOCTOU fix (email lookup document pattern)
+
+**Problem:** Concurrent registration requests could bypass the email uniqueness check because Cosmos DB has no unique constraint on non-PK fields. The check-then-create pattern allowed two requests to both pass the email query before either wrote.
+
+**Fix:** Introduced an "email lookup document" pattern. Before creating the user document, we create a deterministic lookup document with `id = "email-lookup:{email.ToLowerInvariant()}"`. Since `id` is the partition key, Cosmos returns 409 Conflict on duplicates — this is atomic and race-proof. If the subsequent user document creation fails, we clean up the lookup doc. `DeleteUserAsync` also removes the lookup doc. `GetAllUsersAsync` and `IsContainerEmptyAsync` queries now exclude `email-lookup:` documents. `GetUserByEmailAsync` query is now case-insensitive via `LOWER()`. `InMemoryUserService` uses a `ConcurrentDictionary<string, string>` keyed by email (case-insensitive) with atomic `TryAdd`.
+
+**Key files:**
+- `src/user-service/Services/UserService.cs` — lookup doc create/cleanup in `CreateUserAsync`, cleanup in `DeleteUserAsync`, query exclusions
+- `src/user-service/Services/InMemoryUserService.cs` — `_emailIndex` ConcurrentDictionary with `TryAdd`
+
 ### 2026-05 — Istio sidecar blocks Azure Managed Redis TLS (port 10000)
 
 **Problem:** All services using Redis were failing to connect on AKS. The Istio Envoy sidecar intercepts all outbound traffic and can't handle Redis's TLS protocol on port 10000, causing ECONNRESET during TLS handshake. The event-processor (Go) crashed in a loop; .NET services degraded but stayed alive.
@@ -809,3 +819,22 @@ the hostname, not the child project name. The project name only appears in the `
 - `src/user-service/Services/InMemoryUserService.cs` — in-memory path
 
 **Pattern:** First-user-is-admin is a simple count check, no config flags needed. Always log role escalation.
+
+### 2026-05 — Admin promotion endpoint with bootstrap escape hatch
+
+**Problem:** brian@sample.com was created before the first-user-is-admin auto-promotion logic, so they were stuck as `role: "user"` with no way to become admin.
+
+**Solution:** Added `POST /api/admin/promote` endpoint to AdminController:
+- Accepts `{ "email": "..." }` or `{ "userId": "..." }`
+- Bootstrap escape hatch: if zero admins exist in DB, allows unauthenticated promotion
+- Once admins exist, requires `[Authorize(Roles = "admin")]`
+- Returns 404/409/403 as appropriate
+- Logs promotions at Warning level
+
+**Key files:**
+- `src/user-service/Controllers/AdminController.cs` — promote endpoint
+- `src/user-service/Services/IUserService.cs` — PromoteToAdminAsync, GetAdminCountAsync
+- `src/user-service/Services/UserService.cs` — Cosmos DB implementation
+- `src/user-service/Services/InMemoryUserService.cs` — in-memory fallback
+
+**Pattern:** Bootstrap escape hatches should be self-closing — once the first admin exists, the permissive path is permanently locked out.
