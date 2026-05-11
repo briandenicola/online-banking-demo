@@ -435,3 +435,12 @@ Basher implemented the Redis architecture decision:
 - **Key files:** `docs/future-ai-capabilities.md`, `specs/001-backlog-implementation-plan/spec.md`
 - **Decision:** `.squad/decisions/inbox/danny-workiq-fabriciq.md`
 - **Brian preference:** Wants backlog to reflect actual project state (completed items marked, future items tracked as user stories)
+
+### Documentation Audit & TLS Task Name Fix (2026-05-11)
+- **Issue:** Documentation referenced old Taskfile task names `cloud:infra:tls` and `cloud:infra:tls:status`
+- **Reality:** Actual task names are `cloud:tls:enable` and `cloud:tls:status`
+- **Changes:** Fixed all references in README.md, docs/deployment-azure.md, and .env.example
+- **Enhancement:** Updated descriptions to note that TLS enable is idempotent (safe to re-run)
+- **Removed:** "Phase 3" language from user-facing docs; kept descriptions simple and clear
+- **Commit:** 4281bb7 — "docs: fix TLS task name references across documentation"
+- **Impact:** Documentation now accurately reflects actual Taskfile commands; users won't encounter command-not-found errors when following deployment guides

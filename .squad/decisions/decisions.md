@@ -1130,3 +1130,57 @@ All mutation functions in context providers must persist via API before updating
 - `src/ui-app/src/pages/Accounts.tsx`
 - `src/ui-app/src/pages/Transactions.tsx`
 
+
+---
+
+# Decision: Documentation TLS Task Name Alignment
+
+**Date:** 2026-05-11  
+**Author:** Danny (Lead/Architect)  
+**Status:** Implemented  
+**Commit:** 4281bb7
+
+## Context
+
+Documentation referenced Taskfile task names that didn't match the actual implementation:
+- Docs said: `task cloud:infra:tls` and `task cloud:infra:tls:status`
+- Actual tasks: `task cloud:tls:enable` and `task cloud:tls:status`
+
+This caused deployment guide users to encounter "task not found" errors when following step-by-step instructions.
+
+## Decision
+
+Fixed all documentation references to match actual Taskfile commands across:
+- README.md (Taskfile command table + deployment example)
+- docs/deployment-azure.md (TLS section + command reference table + troubleshooting)
+- .env.example (CUSTOM_DOMAIN setup comment)
+
+## Enhancement: Idempotency Documentation
+
+The TLS setup (`task cloud:tls:enable`) now runs cert-manager + Let's Encrypt with pre-checks. The task is **idempotent** — safe to re-run if the certificate already exists.
+
+Updated descriptions to clarify this:
+- README.md: `| task cloud:tls:enable | Install cert-manager + configure TLS (idempotent) |`
+- docs/deployment-azure.md: `"TLS is handled by cert-manager with Let's Encrypt... The setup is idempotent — safe to re-run if needed."`
+
+## Removed Language
+
+Removed "Phase 3" internal reference language from user-facing docs. Kept descriptions simple and direct.
+
+## Impact
+
+- Documentation is now **accurate and testable** — users can follow guides without encountering command errors
+- Deployment guides are **easier to use** — clear descriptions of idempotent operations
+- **User experience:** Less friction, fewer debugging loops, higher confidence in the guides
+
+## Files Modified
+
+| File | Changes |
+|------|---------|
+| README.md | Taskfile commands table (lines 122–123), deployment example (line 189) |
+| docs/deployment-azure.md | TLS section (lines 234–237), troubleshooting (line 400), command reference (lines 417–418) |
+| .env.example | CUSTOM_DOMAIN setup comment (line 10) |
+
+---
+
+**Next Steps:** Monitor deployment guide usage; gather feedback from new users testing cloud deployment workflow.
