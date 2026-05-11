@@ -1,0 +1,188 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import uuid
+from contextlib import asynccontextmanager
+from datetime import datetime
+
+import redis.asyncio as redis
+import structlog
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+from .repository import InMemoryApplicationRepository
+from .routes import router as account_opening_router
+
+
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.JSONRenderer(),
+    ],
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=True,
+)
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = structlog.get_logger("account-opening-service")
+
+
+class CorrelationIdMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers") or [])
+        correlation_id = headers.get(b"x-correlation-id")
+        correlation_value = correlation_id.decode() if correlation_id else uuid.uuid4().hex
+
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(correlation_id=correlation_value)
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                response_headers = list(message.get("headers", []))
+                response_headers.append((b"x-correlation-id", correlation_value.encode()))
+                message["headers"] = response_headers
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
+
+
+def init_telemetry() -> None:
+    otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+    if not otlp_endpoint:
+        return
+    exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
+    provider = TracerProvider(resource=Resource.create({"service.name": "account-opening-service"}))
+    provider.add_span_processor(BatchSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+
+
+init_telemetry()
+
+
+def _parse_redis_connection_string(conn_str: str) -> dict:
+    result = {"host": "redis", "port": 6379, "ssl": False, "password": None}
+    parts = [p.strip() for p in conn_str.split(",") if p.strip()]
+    for index, part in enumerate(parts):
+        if index == 0:
+            if ":" in part and "=" not in part:
+                host, port_str = part.rsplit(":", 1)
+                result["host"] = host
+                if port_str.isdigit():
+                    result["port"] = int(port_str)
+            else:
+                result["host"] = part
+            continue
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        key = key.strip().lower()
+        value = value.strip()
+        if key == "ssl" and value.lower() == "true":
+            result["ssl"] = True
+        if key == "password":
+            result["password"] = value
+    return result
+
+
+async def _create_redis_client():
+    conn_str = os.getenv("REDIS__CONNECTIONSTRING", "redis:6379")
+    parsed = _parse_redis_connection_string(conn_str)
+    kwargs = {
+        "host": parsed["host"],
+        "port": parsed["port"],
+        "decode_responses": True,
+    }
+    if parsed["password"]:
+        kwargs["password"] = parsed["password"]
+    if parsed["ssl"]:
+        kwargs["ssl"] = True
+        kwargs["ssl_cert_reqs"] = None
+
+    client = redis.Redis(**kwargs)
+    try:
+        await client.ping()
+        logger.info("Connected to Redis", host=parsed["host"], port=parsed["port"])
+        return client
+    except Exception as exc:
+        logger.warning("Redis unavailable", error=str(exc))
+        return None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    use_in_memory = os.getenv("USE_IN_MEMORY_DB", "true").lower() == "true"
+    if not use_in_memory:
+        logger.error("Cosmos DB repository not yet implemented")
+        raise RuntimeError("Cosmos DB repository not yet implemented")
+    app.state.repository = InMemoryApplicationRepository()
+    app.state.redis = await _create_redis_client()
+    yield
+    redis_client = app.state.redis
+    if redis_client:
+        close_result = redis_client.close()
+        if asyncio.iscoroutine(close_result):
+            await close_result
+
+
+app = FastAPI(title="Account Opening Service", version="1.0.0", lifespan=lifespan)
+if os.getenv("USE_IN_MEMORY_DB", "true").lower() == "true":
+    app.state.repository = InMemoryApplicationRepository()
+else:
+    app.state.repository = None
+app.state.redis = None
+
+app.add_middleware(CorrelationIdMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+if os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"):
+    FastAPIInstrumentor.instrument_app(app)
+    HTTPXClientInstrumentor().instrument()
+
+app.include_router(account_opening_router)
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"status": "healthy"}
+
+
+@app.get("/readyz")
+async def readyz():
+    redis_client = app.state.redis
+    if not redis_client:
+        return {"status": "unavailable", "reason": "redis"}, 503
+    try:
+        await redis_client.ping()
+    except Exception as exc:
+        return {"status": "unavailable", "reason": "redis", "error": str(exc)}, 503
+    return {"status": "ready", "timestamp": datetime.utcnow().isoformat()}

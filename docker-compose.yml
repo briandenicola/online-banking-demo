@@ -147,6 +147,46 @@ services:
       redis:
         condition: service_healthy
 
+  # Account Opening Service
+  account-opening-service:
+    build:
+      context: ./src/account-opening-service
+      dockerfile: Dockerfile
+    container_name: banking-account-opening-service
+    ports:
+      - "6005:8004"
+    environment:
+      - USE_IN_MEMORY_DB=true
+      - Jwt__Key=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
+      - Jwt__Issuer=${JWT_ISSUER:-user-service}
+      - Jwt__Audience=${JWT_AUDIENCE:-banking-demo}
+      - REDIS__CONNECTIONSTRING=redis:6379
+      - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_SERVICE_NAME=account-opening-service
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  account-opening-worker:
+    build:
+      context: ./src/account-opening-service
+      dockerfile: Dockerfile
+    container_name: banking-account-opening-worker
+    command: ["python", "-m", "app.worker"]
+    environment:
+      - USE_IN_MEMORY_DB=true
+      - Jwt__Key=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
+      - Jwt__Issuer=${JWT_ISSUER:-user-service}
+      - Jwt__Audience=${JWT_AUDIENCE:-banking-demo}
+      - REDIS__CONNECTIONSTRING=redis:6379
+      - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_SERVICE_NAME=account-opening-worker
+    depends_on:
+      redis:
+        condition: service_healthy
+
   # Budget Service
   budget-service:
     build:
