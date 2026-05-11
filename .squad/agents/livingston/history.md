@@ -158,3 +158,16 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 - **Basher (Backend):** Implemented admin promote bootstrap + email lookup pattern + admin endpoints — smoke tests now cover admin tabs
 - **Linus (Frontend):** Created AdminUserManagementTab.tsx and AdminLoginAuditTab.tsx — smoke tests verify new tabs are accessible
 - **Turk (Infrastructure):** Fixed AI Services PE DNS zones (now 3 zones) — smoke tests verify service health through PE
+
+## Foundry Agent Health Smoke Tests (2026-05-11 17:38 UTC)
+
+### Assignment
+- **Reason:** Brian reported AI categorization/risk-scoring failing (Foundry agents returning 404)
+- **Task:** Add Foundry agent health smoke tests to smoke.spec.ts
+- **Goal:** Validate Foundry agent status and availability in test suite
+- **Status:** 🔄 In Progress
+
+### Planning
+- Extending smoke.spec.ts with Foundry-specific health checks
+- Target endpoints: Agent availability, connectivity, response validation
+- Integration: Tests added to smoke project (`@smoke` tag)
