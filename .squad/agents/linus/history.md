@@ -164,3 +164,20 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 - **Fix:** Extract `err.response?.data?.message` from the axios error; fall back to "Unable to connect" only on network errors (no response at all)
 - **Tests:** Split the old "shows error on failed login" test into two: one verifying server-provided messages render, one verifying the network-error fallback
 - **Pattern:** Global interceptors should always exempt auth endpoints — callers need to handle their own auth errors for UX
+
+### 2026-05-11 — Admin User Management & Login Audit Tabs
+- Added two new tabs (4 & 5) to AdminPage.tsx consuming user-service admin APIs
+- **Components created:**
+  - `src/ui-app/src/components/AdminUserManagementTab.tsx` — user table with lock/unlock, reset password (dialog), delete (confirmation dialog)
+  - `src/ui-app/src/components/AdminLoginAuditTab.tsx` — audit log table with success/failure chips, limit selector, timestamp sorting
+- **Pattern:** Extract each admin tab into its own component file (following AdminEvalTab pattern) to keep AdminPage.tsx manageable
+- **MUI v9 gotcha:** Box component requires `sx` prop for layout props (`display`, `justifyContent`, `gap`, etc.) — direct props cause TS errors
+- **Self-delete prevention:** Reads `currentUser.id` from AuthContext and disables lock/delete buttons when row matches current admin
+- **API endpoints consumed:** `GET /admin/users`, `PUT /admin/users/{id}/lock|unlock|reset-password`, `DELETE /admin/users/{id}`, `GET /admin/login-audits?limit=N`
+
+## Cross-Agent Coordination (2026-05-11)
+
+### Related Team Updates
+- **Basher (Backend):** Implemented admin promote bootstrap escape hatch + email lookup document pattern + admin APIs (users, login audit) — endpoints ready for new tabs
+- **Livingston (QA):** Created smoke test suite (15 total @smoke tests) — now included in e2e CI gates
+- **Turk (Infrastructure):** Fixed AI Services PE DNS zones (now 3 zones) — all AI Foundry services resolve through PE

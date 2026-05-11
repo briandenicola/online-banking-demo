@@ -838,3 +838,10 @@ the hostname, not the child project name. The project name only appears in the `
 - `src/user-service/Services/InMemoryUserService.cs` — in-memory fallback
 
 **Pattern:** Bootstrap escape hatches should be self-closing — once the first admin exists, the permissive path is permanently locked out.
+
+## Cross-Agent Coordination (2026-05-11)
+
+### Related Team Updates
+- **Linus (Frontend):** Created AdminUserManagementTab.tsx for user lock/unlock/reset-password — requires Basher's admin endpoints (`/api/admin/users`, `PUT /api/admin/users/{id}/lock|unlock|reset-password`, `DELETE /api/admin/users/{id}`)
+- **Livingston (QA):** Created smoke test suite (15 total @smoke tests) — now post-deployment verification gate
+- **Turk (Infrastructure):** Fixed AI Services PE DNS zones (now 3 zones) — all AI Foundry services resolve through PE

@@ -2212,3 +2212,127 @@ Auth endpoints (`/auth/login`, `/auth/register`, `/users/login`) are now exempte
 **Commits:**
 - dfedc24 — Interceptor exemption implementation
 - 7230b29 — Error handling and test coverage
+
+---
+
+## Session: 2026-05-11 (Admin Bootstrap, Email Uniqueness, Admin Tabs, Smoke Tests, AI PE DNS)
+
+### Decision: Admin Promote Bootstrap Escape Hatch
+
+**Date:** 2026-05-11
+**Author:** Basher (Backend Dev)
+**Status:** Implemented
+
+**Context:**
+The first-user-is-admin auto-promotion was deployed, but `brian@sample.com` already existed as `role: "user"`. No admin could promote them since no admin existed.
+
+**Decision:**
+`POST /api/admin/promote` uses a bootstrap escape hatch: if `GetAdminCountAsync() == 0`, the endpoint allows unauthenticated promotion. Once at least one admin exists, full `[Authorize(Roles = "admin")]` is enforced.
+
+**Security Note:**
+This is intentionally self-closing. After the first admin is created, the permissive path is locked. The endpoint is marked `[AllowAnonymous]` at the method level (overriding the controller's `[Authorize]`), but the handler code enforces admin auth when admins exist. All promotions are logged at Warning level.
+
+**Impact:**
+- User-service only
+- No DB schema changes (uses existing `Role` property)
+- No breaking changes to existing endpoints
+
+---
+
+### Decision: Email Lookup Document Pattern for Uniqueness
+
+**Date:** 2026-05-11
+**Author:** Basher
+**Status:** Implemented
+**Priority:** P1
+
+**Context:**
+Cosmos DB has no unique constraint on non-partition-key fields. The user-service container uses `id` as partition key. Email uniqueness was enforced via check-then-create, which is vulnerable to TOCTOU race conditions under concurrent requests.
+
+**Decision:**
+Use a "lookup document" pattern: before creating a user, atomically create a document with `id = "email-lookup:{normalizedEmail}"` in the same container. Cosmos's built-in PK uniqueness guarantee (409 Conflict) prevents duplicates. This is a well-known Cosmos DB pattern for enforcing uniqueness on non-PK fields.
+
+**Implications:**
+- All queries that enumerate user documents (GetAllUsers, IsContainerEmpty, admin count) must filter out `email-lookup:` documents using `NOT STARTSWITH(c.id, 'email-lookup:')`.
+- `DeleteUserAsync` must clean up the corresponding lookup document.
+- If new fields need uniqueness in the future (e.g., phone number), the same pattern applies with a different prefix.
+- Existing users created before this fix won't have lookup docs. The soft email check (`GetUserByEmailAsync`) still runs first and catches most cases; the lookup doc is a race-condition safety net.
+
+---
+
+### Decision: Admin Tabs — Component Extraction Pattern
+
+**Date:** 2026-05-11
+**Author:** Linus (Frontend)
+**Status:** Implemented
+
+**Context:**
+AdminPage.tsx was already ~690 lines with 3 tabs. Adding User Management and Login Audit inline would push it past 1000 lines.
+
+**Decision:**
+Extract each admin tab into its own component file in `src/ui-app/src/components/`:
+- `AdminEvalTab.tsx` (existing)
+- `AdminUserManagementTab.tsx` (new)
+- `AdminLoginAuditTab.tsx` (new)
+
+AdminPage.tsx owns the tab navigation, stats cards, and the two original inline transaction tabs. New tabs are lazy-rendered via `{activeTab === N && <Component />}`.
+
+**Rationale:**
+- Keeps each file focused and under 350 lines
+- Each tab manages its own state, loading, and error handling independently
+- Follows the pattern already established by AdminEvalTab
+- Tab components can be tested in isolation
+
+**Impact:**
+- Future admin tabs should follow this same pattern: create `Admin*Tab.tsx`, import in AdminPage, add a `<Tab>` and conditional render
+
+---
+
+### Decision: Dedicated Smoke Test Suite
+
+**Date:** 2026-05-11
+**Author:** Livingston (Tester/QA)
+**Status:** Implemented
+
+**Context:**
+Post-deployment verification needed a fast, reliable signal. The existing E2E suite (72+ tests) is too slow for deployment gates.
+
+**Decision:**
+Created a `smoke` Playwright project that greps for `@smoke`-tagged tests. A dedicated `tests/e2e/specs/smoke/smoke.spec.ts` file contains 8 independent tests covering the critical happy path: health checks → login → dashboard → accounts → transactions → registration → admin → logout. The smoke project also picks up 7 pre-existing `@smoke` tests from other spec files (15 total).
+
+**Rationale:**
+- **Speed:** Chromium-only, no parallelism overhead, minimal assertions — targets < 60s
+- **Independence:** Each test stands alone; no shared state or ordering dependency
+- **Reuse:** Uses existing page objects and auth fixtures — no new abstractions
+- **Convention:** `@smoke` tag in test name is the contract; any future test can opt in
+
+**Impact:**
+- New file: `tests/e2e/specs/smoke/smoke.spec.ts`
+- Modified: `playwright.config.ts` (added `smoke` project)
+- Modified: `package.json` (`test:smoke` script updated to use `--project=smoke`)
+- Run with: `npm run test:smoke`
+
+---
+
+### Decision: AI Services PE requires three private DNS zones
+
+**Date:** 2026-05-11
+**Author:** Turk (Backend Dev)
+**Status:** Applied
+
+**Context:**
+The AI Services private endpoint was configured with two DNS zones (`privatelink.cognitiveservices.azure.com` and `privatelink.openai.azure.com`), but Azure AI Foundry endpoints use a third domain (`services.ai.azure.com`) that requires its own zone.
+
+**Decision:**
+The AI PE's DNS zone group in `private-endpoints.tf` now includes all three zones:
+1. `privatelink.cognitiveservices.azure.com`
+2. `privatelink.openai.azure.com`
+3. `privatelink.services.ai.azure.com`
+
+**Rationale:**
+Without the third zone, any service using the AI Foundry endpoint URL (e.g., chatbot-service) resolves to a public IP, bypassing the private endpoint entirely. This is a silent failure — the connection may work if public access is enabled, but breaks network isolation.
+
+**Impact:**
+- `infra/cloud/private-endpoints.tf` updated (commit da6e714)
+- Live infra patched via az CLI
+- All services using AI Foundry URLs now resolve through PE

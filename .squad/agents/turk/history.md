@@ -94,3 +94,28 @@
 - Azure Managed Redis (new, `azurerm_managed_redis`): `privatelink.redis.azure.net` ← This one
 
 Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com/en-us/azure/private-link/private-endpoint-dns).
+
+### 2026-05-11 — AI Foundry Private Endpoint DNS Zone Fix
+
+**Issue:** chatbot-service couldn't resolve `loyal-moose-4702-foundry.services.ai.azure.com` to PE private IP. DNS returned public IP (20.48.193.198) instead of PE IP (10.220.4.14).
+
+**Root cause:** Missing `privatelink.services.ai.azure.com` private DNS zone. Azure AI Foundry uses the `services.ai.azure.com` domain (not `cognitiveservices.azure.com` or `openai.azure.com`), which requires its own dedicated private DNS zone for the CNAME chain to resolve through the PE.
+
+**Fix:**
+1. az CLI: Created `privatelink.services.ai.azure.com` zone, linked to VNet, added A record, added to AI PE's DNS zone group
+2. Terraform: Added `services_ai` key to `private_dns_zones` map and included it in the AI PE's `private_dns_zone_ids` (now 3 zones: cogservices, openai, services_ai)
+3. Verified from chatbot-service pod: DNS now resolves to private IP in PE subnet
+
+**Key learning:** Azure AI Foundry / AI Services PEs need THREE private DNS zones:
+- `privatelink.cognitiveservices.azure.com` — for `cognitiveservices.azure.com` domain
+- `privatelink.openai.azure.com` — for `openai.azure.com` domain
+- `privatelink.services.ai.azure.com` — for `services.ai.azure.com` domain (AI Foundry endpoints)
+
+**Commit:** da6e714
+
+## Cross-Agent Coordination (2026-05-11)
+
+### Related Team Updates
+- **Basher (Backend):** Implemented admin promote bootstrap escape hatch + email lookup document pattern for uniqueness — user-service now self-healing for initial admin
+- **Linus (Frontend):** Created AdminUserManagementTab.tsx and AdminLoginAuditTab.tsx — new admin tabs ready
+- **Livingston (QA):** Created smoke test suite (15 total @smoke tests) — post-deployment gates now enabled

@@ -129,3 +129,32 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 - Registration's email field is `type="email"` — HTML5 validation fires BEFORE React's custom `validate()`. Email format test must check `input.validity.valid` instead of MUI helperText.
 - Registration client-side validation (password length, mismatch) shows errors in MUI helperText (`.MuiFormHelperText-root`), NOT in `[role="alert"]`. Only `serverError` uses `<Alert>`.
 - Error message locator `[role="alert"], .MuiAlert-message` causes strict mode violations because both match the same Alert component. Use `[role="alert"]` alone.
+
+## Smoke Test Suite (2026-05-11)
+
+### Created
+- `tests/e2e/specs/smoke/smoke.spec.ts` — 8 dedicated smoke tests covering health checks, login, dashboard, accounts, transactions, registration, admin access, and logout
+- Added `smoke` project to `playwright.config.ts` using `grep: /@smoke/` — picks up all `@smoke`-tagged tests across the suite (15 total: 8 new + 7 pre-existing)
+- Updated `package.json` script: `npm run test:smoke` runs `npx playwright test --project=smoke`
+
+### How to run
+- `cd tests/e2e && npm run test:smoke`
+- Or: `npx playwright test --project=smoke`
+- All tests run chromium-only for speed; designed to complete in < 60s
+
+### Coverage
+1. Health checks (user, account, transaction APIs)
+2. Login with JWT verification
+3. Dashboard loads with account data
+4. Accounts page renders
+5. Transactions page renders
+6. Registration with unique timestamp email
+7. Admin/login audit page access
+8. Logout with token cleanup
+
+## Cross-Agent Coordination (2026-05-11)
+
+### Related Team Updates
+- **Basher (Backend):** Implemented admin promote bootstrap + email lookup pattern + admin endpoints — smoke tests now cover admin tabs
+- **Linus (Frontend):** Created AdminUserManagementTab.tsx and AdminLoginAuditTab.tsx — smoke tests verify new tabs are accessible
+- **Turk (Infrastructure):** Fixed AI Services PE DNS zones (now 3 zones) — smoke tests verify service health through PE
