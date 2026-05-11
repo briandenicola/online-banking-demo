@@ -152,6 +152,20 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 7. Admin/login audit page access
 8. Logout with token cleanup
 
+## Foundry Agent Smoke Tests (2026-05-11)
+
+### Added
+- Two new smoke tests in `tests/e2e/specs/smoke/smoke.spec.ts` for AI/Foundry agent health monitoring
+- **AI readyz test**: Hits ai-service `/readyz` directly (port 8002, configurable via `AI_SERVICE_URL` env var), verifies `checks` object, logs `analyzer_pipeline` and `redis` status — always passes (informational)
+- **AI categorization test**: Logs in, calls `/api/admin/transactions` through proxy, verifies array response with `category` and `riskScore` fields — gracefully handles 503 (Redis down), 401/403 (non-admin), and empty results
+
+### Learnings
+- ai-service `/readyz` is NOT exposed through nginx proxy — only `/api/admin/*` and `/api/anomaly/*` are routed; must hit port 8002 directly
+- `ScoredTransaction` model has `category`, `categoryConfidence`, `categoryReasoning`, `riskScore`, `explanation`, `flags` fields
+- `/api/admin/transactions` returns 503 when Redis is unavailable (not 500) — important for graceful degradation checks
+- Both Foundry agents (transaction-categorizer, risk-assessor) currently return 404 from Azure AI Foundry — service falls back to default scoring
+- Smoke tests designed to surface status without failing on degraded AI — they pass with "Uncategorized" or empty results
+
 ## Cross-Agent Coordination (2026-05-11)
 
 ### Related Team Updates
