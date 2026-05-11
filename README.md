@@ -119,8 +119,8 @@ All operations are managed via [go-task](https://taskfile.dev/):
 | `task cloud:infra:config` | One-time AKS setup (creds, namespaces, secrets, CSI) |
 | `task cloud:build` | Build all container images via ACR |
 | `task cloud:deploy` | Deploy manifests to AKS (repeatable) |
-| `task cloud:infra:tls` | Install cert-manager + configure TLS |
-| `task cloud:infra:tls:status` | Check certificate status |
+| `task cloud:tls:enable` | Install cert-manager + configure TLS (idempotent) |
+| `task cloud:tls:status` | Check certificate status |
 | `task cloud:down` | Destroy all Azure resources |
 | **Testing** | |
 | `task e2e:run` | Run all Playwright E2E tests |
@@ -186,7 +186,7 @@ task cloud:build        # Build all images to ACR
 task cloud:deploy       # Deploy manifests to AKS
 
 # Optional TLS
-task cloud:infra:tls    # cert-manager + Let's Encrypt
+task cloud:tls:enable     # cert-manager + Let's Encrypt (idempotent)
 ```
 
 See [docs/deployment-azure.md](docs/deployment-azure.md) for the complete guide.

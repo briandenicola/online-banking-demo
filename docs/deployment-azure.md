@@ -227,14 +227,14 @@ The Istio VirtualService (`cluster-config/istio/gateway/default-ingress.yaml`) r
 
 ## TLS Configuration (Optional)
 
-TLS is handled by cert-manager with Let's Encrypt. Requires `CUSTOM_DOMAIN` set in `.env`.
+TLS is handled by cert-manager with Let's Encrypt. Requires `CUSTOM_DOMAIN` set in `.env`. The setup is idempotent — safe to re-run if needed.
 
 ```bash
 # Install cert-manager + apply ClusterIssuer and Certificate
-task cloud:infra:tls
+task cloud:tls:enable
 
 # Check certificate status
-task cloud:infra:tls:status
+task cloud:tls:status
 ```
 
 This sets up:
@@ -397,7 +397,7 @@ kubectl get endpoints -n banking-demo
 
 ```bash
 # Check certificate status
-task cloud:infra:tls:status
+task cloud:tls:status
 
 # Manual check
 kubectl get certificate -n aks-istio-ingress
@@ -414,8 +414,8 @@ kubectl describe certificate banking-demo-tls -n aks-istio-ingress
 | `task cloud:infra:config` | One-time AKS post-provisioning setup |
 | `task cloud:build` | Build all container images in ACR |
 | `task cloud:deploy` | Deploy all services to AKS (repeatable) |
-| `task cloud:infra:tls` | Install cert-manager + TLS certificate |
-| `task cloud:infra:tls:status` | Check TLS certificate status |
+| `task cloud:tls:enable` | Install cert-manager + TLS certificate (idempotent) |
+| `task cloud:tls:status` | Check TLS certificate status |
 | `task cloud:down` | Tear down all Azure resources |
 
 ---
