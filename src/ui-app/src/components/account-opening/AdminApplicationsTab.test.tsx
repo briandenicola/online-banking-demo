@@ -21,12 +21,12 @@ jest.mock('../../api/client', () => ({
   },
 }));
 
-import { listApplications, reviewApplication, getAuditTrail } from '../../api/accountOpening';
+import { listApplications, reviewApplication, getAuditTrail, ApplicationResponse } from '../../api/accountOpening';
 
 const mockListApplications = listApplications as jest.MockedFunction<typeof listApplications>;
 const mockReviewApplication = reviewApplication as jest.MockedFunction<typeof reviewApplication>;
 
-const sampleApplications = [
+const sampleApplications: ApplicationResponse[] = [
   {
     id: 'app-1',
     firstName: 'Jane',
@@ -287,7 +287,7 @@ describe('AdminApplicationsTab', () => {
     });
 
     test('clicking Approve calls reviewApplication API', async () => {
-      mockReviewApplication.mockResolvedValueOnce({ id: 'app-1', status: 'approved' });
+      mockReviewApplication.mockResolvedValueOnce({ id: 'app-1', status: 'approved', createdAt: '2026-05-01T10:00:00Z' } as ApplicationResponse);
 
       renderAdmin();
 
@@ -311,7 +311,7 @@ describe('AdminApplicationsTab', () => {
     });
 
     test('clicking Reject calls reviewApplication API', async () => {
-      mockReviewApplication.mockResolvedValueOnce({ id: 'app-1', status: 'rejected' });
+      mockReviewApplication.mockResolvedValueOnce({ id: 'app-1', status: 'rejected', createdAt: '2026-05-01T10:00:00Z' } as ApplicationResponse);
 
       renderAdmin();
 
@@ -335,7 +335,7 @@ describe('AdminApplicationsTab', () => {
     });
 
     test('refreshes list after approve action', async () => {
-      mockReviewApplication.mockResolvedValueOnce({ id: 'app-1', status: 'approved' });
+      mockReviewApplication.mockResolvedValueOnce({ id: 'app-1', status: 'approved', createdAt: '2026-05-01T10:00:00Z' } as ApplicationResponse);
 
       renderAdmin();
 

@@ -214,7 +214,6 @@ const AdminApplicationsTab: React.FC<AdminApplicationsTabProps> = ({
         maxWidth="sm"
         fullWidth
         transitionDuration={0}
-        TransitionProps={{ timeout: 0 }}
       >
         <DialogTitle>Application Details</DialogTitle>
         <DialogContent>

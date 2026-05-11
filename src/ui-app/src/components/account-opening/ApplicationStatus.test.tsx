@@ -33,13 +33,14 @@ jest.mock('./AgentPipeline', () => {
   };
 });
 
-import { getApplication } from '../../api/accountOpening';
+import { getApplication, ApplicationResponse, AgentStage } from '../../api/accountOpening';
 
 const mockGetApplication = getApplication as jest.MockedFunction<typeof getApplication>;
 
-const createApplicationResponse = (overrides: Record<string, any> = {}) => ({
+const createApplicationResponse = (overrides: Partial<ApplicationResponse> = {}): ApplicationResponse => ({
   id: 'app-1',
   status: 'submitted',
+  createdAt: '2026-05-01T10:00:00Z',
   stages: [
     { name: 'Document Extraction', status: 'pending' },
     { name: 'Identity Verification', status: 'pending' },

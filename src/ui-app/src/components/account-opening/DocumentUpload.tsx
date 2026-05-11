@@ -58,7 +58,7 @@ if (process.env.NODE_ENV === 'test' && typeof window !== 'undefined') {
       const file = new OriginalFile(...args);
       win[testFileTrackerKey].push(file);
       return file;
-    } as typeof File;
+    } as unknown as typeof File;
     win.File.prototype = OriginalFile.prototype;
   }
 }

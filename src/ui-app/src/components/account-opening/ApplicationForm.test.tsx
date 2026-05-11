@@ -291,7 +291,7 @@ describe('ApplicationForm', () => {
 
     test('calls createApplication API on submit', async () => {
       const onApplicationCreated = jest.fn();
-      mockCreateApplication.mockResolvedValueOnce({ id: 'app-1', status: 'submitted' });
+      mockCreateApplication.mockResolvedValueOnce({ id: 'app-1', status: 'submitted' as const, createdAt: '2026-05-01T10:00:00Z' });
 
       render(
         <ApplicationForm
@@ -317,7 +317,7 @@ describe('ApplicationForm', () => {
 
     test('calls onApplicationCreated callback on success', async () => {
       const onApplicationCreated = jest.fn();
-      mockCreateApplication.mockResolvedValueOnce({ id: 'app-1', status: 'submitted' });
+      mockCreateApplication.mockResolvedValueOnce({ id: 'app-1', status: 'submitted' as const, createdAt: '2026-05-01T10:00:00Z' });
 
       render(
         <ApplicationForm
