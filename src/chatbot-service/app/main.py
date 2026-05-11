@@ -482,6 +482,41 @@ async def ready():
     return {"status": status, "checks": checks}
 
 
+@app.get("/api/chat/admin/foundry-status")
+async def foundry_status():
+    """Validate Foundry connectivity for the chat agent's model backend."""
+    agent_name = "FinancialAdvisor"
+    if not AGENT_FRAMEWORK_AVAILABLE:
+        return {
+            "status": "error",
+            "agents": {agent_name: {"status": "error", "error": "agent-framework SDK not installed"}},
+        }
+
+    if not agent_ready or not financial_agent:
+        return {
+            "status": "error",
+            "agents": {agent_name: {"status": "error", "error": "Agent not initialized — check FOUNDRY_PROJECT_ENDPOINT"}},
+        }
+
+    try:
+        session = financial_agent.create_session()
+        response = await financial_agent.run("ping", session=session)
+        if response is not None:
+            return {
+                "status": "ok",
+                "agents": {agent_name: {"status": "ok"}},
+            }
+        return {
+            "status": "error",
+            "agents": {agent_name: {"status": "error", "error": "Agent returned empty response"}},
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "agents": {agent_name: {"status": "error", "error": f"Connectivity check failed: {str(e)[:200]}"}},
+        }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)

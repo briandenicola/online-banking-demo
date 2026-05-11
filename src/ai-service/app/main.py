@@ -1023,6 +1023,51 @@ async def detect(request: Request):
     return await _analyzer_pipeline.assess(body)
 
 
+@app.get("/api/admin/foundry-status")
+async def foundry_status():
+    """Validate Foundry connectivity for transaction-categorizer and risk-assessor agents."""
+    agents_status = {}
+
+    async def _check_agent(label: str, agent_obj) -> dict:
+        """Run a minimal test call against a FoundryAgent to verify connectivity."""
+        if agent_obj is None or not agent_obj._ready:
+            return {"status": "error", "error": "Agent not initialized"}
+        try:
+            session = agent_obj._agent.create_session()
+            response = await agent_obj._agent.run("ping", session=session)
+            if response is not None:
+                return {"status": "ok"}
+            return {"status": "error", "error": "Agent returned empty response"}
+        except Exception as e:
+            return {"status": "error", "error": f"Connectivity check failed: {str(e)[:200]}"}
+
+    # Find the risk analyzer and categorizer from the pipeline
+    risk_analyzer = None
+    categorizer = None
+    if _analyzer_pipeline:
+        for a in _analyzer_pipeline.analyzers:
+            if a.name == "foundry-risk":
+                risk_analyzer = a
+                break
+        for c in _analyzer_pipeline.categorizers:
+            if c.name == "foundry-categorizer":
+                categorizer = c
+                break
+
+    agents_status["transaction-categorizer"] = await _check_agent("transaction-categorizer", categorizer)
+    agents_status["risk-assessor"] = await _check_agent("risk-assessor", risk_analyzer)
+
+    statuses = [v["status"] for v in agents_status.values()]
+    if all(s == "ok" for s in statuses):
+        overall = "ok"
+    elif any(s == "ok" for s in statuses):
+        overall = "degraded"
+    else:
+        overall = "error"
+
+    return {"status": overall, "agents": agents_status}
+
+
 # ============================================================
 # Admin API Endpoints
 # ============================================================
