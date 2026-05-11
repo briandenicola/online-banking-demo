@@ -2336,3 +2336,76 @@ Without the third zone, any service using the AI Foundry endpoint URL (e.g., cha
 - `infra/cloud/private-endpoints.tf` updated (commit da6e714)
 - Live infra patched via az CLI
 - All services using AI Foundry URLs now resolve through PE
+
+---
+
+## 2026-05-11 Inbox Merge — 5 Directives
+
+### Decision: 006 Smart Account Opening — Phased Build Plan
+
+**Date:** 2026-05-11
+**Author:** Danny (Lead/Architect)
+**Status:** Proposed
+**Spec:** `specs/006-smart-account-opening/spec.md` (commit `56fbc97`)
+**Branch:** `006-smart-account-opening`
+
+The 006 spec describes a multi-agent KYC pipeline for account opening — 4 AI agents coordinating via Redis Streams, document upload/extraction, Cosmos DB state, admin review, and a React UI wizard. Decomposed into **4 sequential phases**, each independently demoable.
+
+**Phase 1:** Service Skeleton + Application State Machine (2-3 days) — Basher builds, Livingston tests
+**Phase 2:** Agent Pipeline + Mock Document Extraction (3-4 days) — Basher builds, Livingston writes integration tests  
+**Phase 3:** React UI Wizard + Admin Review (3-4 days) — Linus builds UI
+**Phase 4:** Azure Integration + AKS Deployment (2-3 days) — Turk infra, Basher adapters, Livingston cloud tests
+
+Total estimate: 10-14 days. See `danny-006-phases.md` for full deliverables, dependencies, and risk mitigation.
+
+---
+
+### Directive: Always Use Foundry for AI Agent Work
+
+**Date:** 2026-05-11
+**Author:** Brian Denicola (via Copilot)
+**Status:** Active
+
+Always use Foundry agents for all AI agent work. Never use mock or rule-based fallbacks. If Foundry is not working, error or alert — do not silently degrade to mocks.
+
+**Applies to:** 006 Smart Account Opening and all future agent work.
+
+---
+
+### Directive: Separate Containers for Account Opening
+
+**Date:** 2026-05-11
+**Author:** Brian Denicola (via Copilot)
+**Status:** Active
+
+Account-opening API server and agent workers must run as separate containers/deployments — not combined in the same pod.
+
+**Impacts:** docker-compose service design and Kustomize manifest structure for 006 Smart Account Opening.
+
+---
+
+### Directive: Use Azure AI Content Understanding Service
+
+**Date:** 2026-05-11
+**Author:** Brian Denicola (via Copilot)
+**Status:** Active
+
+Phase 2 Agent 1 (Document Extraction) must use **Azure AI Content Understanding Service** — NOT Azure AI Document Intelligence. Content Understanding is only available in West US, so a private endpoint projection into the deployment VNet is required regardless of region.
+
+**SDK:** https://learn.microsoft.com/en-us/azure/ai-services/content-understanding/  
+**Reference:** https://github.com/briandenicola/content-understanding-demo
+
+**Replaces:** Previous decision to use Document Intelligence for document extraction.
+
+---
+
+### Directive: AKS First, Docker-Compose Second
+
+**Date:** 2026-05-11
+**Author:** Brian Denicola (via Copilot)
+**Status:** Active
+
+Focus on Cloud deployment (AKS) first, then local (docker-compose). AKS/Kustomize manifests are the primary deployment target — docker-compose is secondary/convenience.
+
+**Impacts:** Phase 1 and Phase 4 deployment work priorities.
+

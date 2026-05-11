@@ -554,3 +554,25 @@ Basher implemented the Redis architecture decision:
 6. Add Istio VirtualService route `/api/account-opening`
 7. Build React UI: `AccountOpeningPage.tsx`, `AgentPipeline.tsx`, admin review tab
 8. Add Playwright E2E tests for full pipeline (submit → upload → agents → decision)
+
+### 2026-05-11 — 006 Smart Account Opening Phase Decomposition
+
+**Spec:** `specs/006-smart-account-opening/spec.md` (commit `56fbc97`, branch `006-smart-account-opening`)
+**Output:** `.squad/decisions/inbox/danny-006-phases.md`
+
+**Scope:** Multi-agent KYC pipeline — 4 AI agents via Redis Streams, document extraction, Cosmos DB state, admin review, React wizard UI.
+
+**Decomposition:** 4 phases:
+1. **Service Skeleton** — FastAPI service, API endpoints, state machine, Redis Streams plumbing, docker-compose entry
+2. **Agent Pipeline + Mock Extraction** — All 4 agents with rule-based/mock logic (no Azure AI dependency for local dev)
+3. **React UI** — Application wizard, document upload, pipeline progress stepper, admin review queue
+4. **Azure Integration + AKS** — Blob Storage, Document Intelligence, Foundry agents, Terraform, Kustomize, CI
+
+**Key Decisions:**
+- Mock-first agents: rule-based fallback for local dev, Foundry opt-in via `USE_FOUNDRY_AGENTS` env var
+- Separate worker container for agent consumers (not in API process)
+- Adapter pattern: in-memory → Cosmos DB, local files → Blob Storage (mirrors .NET `UseInMemoryDatabase` pattern)
+- **Spec correction flagged:** Partition key should be `/id` not `/userId` (userId is null for submitted applications)
+- Agent assignments: Basher (backend/Python), Linus (React UI), Turk (Terraform/Kustomize/CI), Livingston (tests)
+
+**Estimated total:** ~10-14 days across all agents
