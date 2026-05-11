@@ -185,3 +185,17 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 - Extending smoke.spec.ts with Foundry-specific health checks
 - Target endpoints: Agent availability, connectivity, response validation
 - Integration: Tests added to smoke project (`@smoke` tag)
+
+## Transaction Creation Smoke Test (2026-05-11)
+
+### Added
+- New `@smoke Create transactions` test in `tests/e2e/specs/smoke/smoke.spec.ts` — creates 5 realistic banking transactions via API and verifies them
+- Transactions: Starbucks debit ($5.75), Amazon payment ($67.99), Payroll credit ($3,250), Electric bill payment ($142.30), ATM withdrawal ($200)
+- Uses `apiLogin` → `GET /api/accounts` → `POST /api/transactions` (×5) → `GET /api/transactions` verification flow
+- All existing smoke tests preserved; new test inserted before the Logout test
+
+### Learnings
+- Transaction creation uses `POST /api/transactions` with PascalCase DTO fields (`AccountId`, `Amount`, `Type`, `Description`) but API returns camelCase (`id`, `description`, `amount`)
+- Set `AutoCategorize: false` to avoid dependency on AI/Foundry agent availability during smoke tests
+- Transaction list response may be array or paginated object — test handles both `txList` as array and `txList.items`/`txList.transactions` shapes
+- Realistic transaction types: "debit", "credit", "payment", "withdrawal" — matches the `Type` field (max 50 chars) in CreateTransactionRequest DTO
