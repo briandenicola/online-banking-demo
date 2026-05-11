@@ -2409,3 +2409,96 @@ Focus on Cloud deployment (AKS) first, then local (docker-compose). AKS/Kustomiz
 
 **Impacts:** Phase 1 and Phase 4 deployment work priorities.
 
+
+---
+
+## 2026-05-11 Phase 1 Skeleton Decisions
+
+### Decision: Admin Review Override
+
+**Date:** 2026-05-11  
+**Author:** Basher (Backend Dev)  
+**Status:** Implemented
+
+**Context:**
+Phase 1 tests and manual review flows need to approve or reject newly submitted applications without waiting for downstream agents. The core state machine enforces strict transitions for automated agents.
+
+**Decision:**
+The admin review endpoint (`POST /applications/{id}/admin-review`) is allowed to override the state machine when an application is still in an early status (e.g., `submitted`). If the standard transition is invalid, the endpoint applies the decision and records an audit entry instead of failing the request.
+
+**Rationale:**
+Provides a controlled override path with audit logging, enabling manual testing and review workflows while keeping the core state machine strict for automated agents.
+
+**Impact:**
+- `app/main.py` — Admin review route with override logic
+- `app/state_machine.py` — Transition validation with audit trail
+- Tests validate both standard and override paths
+
+---
+
+### Decision: Form Data Compatibility
+
+**Date:** 2026-05-11  
+**Author:** Basher (Backend Dev)  
+**Status:** Implemented
+
+**Context:**
+Existing fixtures and early integrations send flat form fields (e.g., `address` as string, `employment` as string), while the new spec requires structured models (nested objects).
+
+**Decision:**
+Accept both structured and legacy flat fields for application form data during Phase 1. The API will normalize flat fields to structured models internally.
+
+**Rationale:**
+Ensures backward compatibility with existing integrations without blocking newer clients that send properly structured data.
+
+**Impact:**
+- `app/models.py` — ApplicationCreate with flexible field parsing
+- Form processing logic handles both formats
+- Tests verify compatibility with both field styles
+
+---
+
+### Decision: Phase 1 Test Conventions for account-opening-service
+
+**Date:** 2026-05-11  
+**Author:** Livingston (Tester/QA)  
+**Status:** Proposed
+
+**Context:**
+Deliverable 1.11 of 006 Smart Account Opening Phase 1. Tests establish interface contracts and module layout expectations that guide Basher's implementation.
+
+**Decision:**
+Establish standardized test conventions and explicit interface contracts covering:
+- **Module Layout:** app.models, app.state_machine, app.events, app.consumer, app.main
+- **State Machine Interface:** transition() returns object with .new_state and .audit_entry
+- **Consumer Interface:** AgentConsumer base class with setup(), process_one(), async process_event()
+- **Test Dependencies:** pytest, pytest-asyncio, httpx, python-jose with cryptography
+
+**Rationale:**
+Tests define expected behavior before implementation exists, enabling Basher to code against clear contracts. Interfaces are explicit and testable.
+
+**Impact:**
+- 7 test files cover all Phase 1 modules
+- 68 unit tests passing
+- Interface contracts enable smooth Phase 2 integration
+
+---
+
+### Directive: Entra Agent ID SDK for Foundry Agents
+
+**Date:** 2026-05-11  
+**Author:** Brian Denicola (via Copilot)  
+**Status:** Active
+
+**What:**
+Use Microsoft Entra Agent ID SDK (containerized auth sidecar from `mcr.microsoft.com/entra-sdk/auth-sidecar`) for any agents running in Foundry. This replaces manual token management.
+
+**Why:**
+User directive for centralized identity management for AI agent workloads. The sidecar pattern aligns with existing architecture (separate containers per directive) and provides delegated + application permissions via Entra ID.
+
+**Reference:**
+https://learn.microsoft.com/en-us/entra/msidweb/agent-id-sdk/quickstart-python
+
+**Applies To:**
+Phase 2+ agent implementation in 006 Smart Account Opening and all future Foundry agent work.
+
