@@ -17,7 +17,7 @@ locals {
   private_dns_zones = {
     keyvault    = "privatelink.vaultcore.azure.net"
     cosmos      = "privatelink.documents.azure.com"
-    redis       = "privatelink.redisenterprise.cache.azure.net"
+    redis       = "privatelink.redis.azure.net"
     acr         = "privatelink.azurecr.io"
     cogservices = "privatelink.cognitiveservices.azure.com"
     openai      = "privatelink.openai.azure.com"
