@@ -9,12 +9,12 @@ resource "azurerm_storage_account" "main" {
   account_tier                  = "Standard"
   account_replication_type      = "LRS"
   shared_access_key_enabled     = false
-  public_network_access_enabled = false
+  public_network_access_enabled = true
 }
 
 resource "azurerm_storage_container" "account_opening_documents" {
   name                  = "account-opening-documents"
-  storage_account_name  = azurerm_storage_account.main.name
+  storage_account_id    = azurerm_storage_account.main.id
   container_access_type = "private"
 
   depends_on = [azurerm_role_assignment.banking_storage_blob_data_contributor]
