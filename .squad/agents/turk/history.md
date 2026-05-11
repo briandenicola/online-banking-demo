@@ -29,6 +29,7 @@
 - Placeholder pattern for secret-provider-class.yaml: REPLACE_WITH_KEYVAULT_NAME, REPLACE_WITH_TENANT_ID, REPLACE_WITH_AZURE_CLIENT_ID (sed + git checkout, same as configmap.yaml)
 - Observability namespace keeps kubectl create for its single appinsights-connection-string secret (simpler than a second SecretProviderClass)
 - key_vault_name output added to infra/cloud/outputs.tf for Taskfile consumption
+- Content Understanding Service uses the same three AI private DNS zones (cogservices/openai/services.ai) even when deployed cross-region with a local PE
 
 ### 2026-05-08 — KeyVault CSI Driver Secrets Migration
 

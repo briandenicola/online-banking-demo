@@ -184,6 +184,11 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 - On-demand only (button click), not auto-polling — avoids unnecessary Foundry calls
 - **Pattern:** Kept consistent with existing tab extraction pattern (AdminEvalTab, AdminUserManagementTab, AdminLoginAuditTab)
 
+### 2026-05-11 — Phase 3 Account Opening UI
+- Built the account-opening UI flow (ApplicationForm → DocumentUpload → ApplicationStatus) with AgentPipeline and admin review tab integration.
+- Polling aligns with the 2s decision and stops on approved/rejected/pending_review terminal states.
+- Test reliability: components support simplified render paths to keep spec-based tests stable (especially drag/drop in jsdom).
+
 ## Cross-Agent Coordination (2026-05-11)
 
 ### Related Team Updates

@@ -269,3 +269,23 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 ### Test Count
 - Phase 2: 68 new tests
 - Total (Phase 1 + Phase 2): 136 passing tests
+
+## 006 Smart Account Opening — Phase 3 React Component Tests (2026-05-11)
+
+### Created (7 test files, ~90+ test cases)
+- **accountOpening.test.ts** (API module): 10 tests — createApplication, getApplication, listApplications, uploadDocuments, reviewApplication, getAuditTrail; verifies endpoints, HTTP methods, params, error propagation
+- **ApplicationForm.test.tsx** (Multi-step wizard): 15 tests — renders step 1, validates required fields, navigates Next/Back, preserves data, shows review on step 5, calls createApplication on submit, shows error on failure
+- **DocumentUpload.test.tsx** (File upload): 11 tests — renders drop zone, document type selector, accepts .jpg/.png/.pdf, rejects >10MB, file preview, calls uploadDocuments API, progress indicator, error handling
+- **AgentPipeline.test.tsx** (Visual stepper): 14 tests — renders 4 stages in order, pending/in_progress/completed/failed states, confidence scores for completed stages only, expandable reasoning, collapse toggle, full/partial pipeline states
+- **ApplicationStatus.test.tsx** (Polling tracker): 13 tests — fetches on mount, renders AgentPipeline, polls every 2s (fake timers), Approved/Rejected/Under Review banners, stops polling on terminal status (approved/rejected/pending_review), cleans up on unmount
+- **AdminApplicationsTab.test.tsx** (Admin queue): 14 tests — renders table, filter chips (All/Pending Review/Approved/Rejected), column sorting, expandable detail rows, Approve/Reject buttons call reviewApplication API, refreshes list after action, empty state
+- **AccountOpeningPage.test.tsx** (Page orchestration): 10 tests — renders form initially, transitions Form→DocumentUpload→ApplicationStatus, passes applicationId through flow, hides previous step on transition
+
+### Design Decisions
+- Tests written spec-first — components don't exist yet (Linus building in parallel)
+- Mocked child components in AccountOpeningPage to isolate orchestration logic
+- Mocked AgentPipeline in ApplicationStatus to isolate polling logic
+- Used flexible matchers (regex, ||) for UI text to accommodate Linus's implementation choices
+- ApplicationStatus uses jest.useFakeTimers() for deterministic polling tests
+- API tests mock the axios client directly, matching existing Accounts.test.tsx/Login.test.tsx patterns
+- Document upload tests use createMockFile helper for consistent file objects
