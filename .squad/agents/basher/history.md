@@ -8,25 +8,36 @@
 
 ## Learnings
 
-### 2026-05 — TLS on Istio Ingress with cert-manager
+### 2026-05 — TLS on Istio Ingress with cert-manager (3-phase flow)
 
-**Setup:** Added TLS termination to the Istio ingress gateway using cert-manager + Let's Encrypt.
+**Setup:** TLS termination on Istio ingress gateway using cert-manager + Let's Encrypt HTTP-01.
 
-**Architecture decisions:**
+**3-Phase Architecture (Brian's explicit preference):**
+- **Phase 1** (`infra:config` → `_infra:cert-manager`): Install cert-manager via Helm, apply ClusterIssuer (HTTP-01), apply HTTP-only gateway, output ingress IP for DNS.
+- **Phase 2** (MANUAL): User creates DNS A record pointing `$CUSTOM_DOMAIN` → ingress IP.
+- **Phase 3** (`tls:enable`): Apply Certificate, wait for ACME solver, route challenge traffic via VirtualService hack, wait for cert, cleanup solver VS, apply TLS gateway.
+
+**Key decisions:**
+- HTTP-01 solver with `class: istio` — Brian explicitly rejected DNS-01 and Gateway API
+- VirtualService routing hack for ACME challenge traffic is intentional (managed Istio limitation)
+- No `infra:tls:identity` needed — HTTP-01 doesn't require managed identity/workload identity
+- ClusterIssuer YAML no longer uses `envsubst` (no env vars needed for HTTP-01)
+- `CUSTOM_DOMAIN` only needed at Phase 3 (`tls:enable`)
 - cert-manager installed via Helm (Taskfile tasks), not Terraform — operational tooling stays in Taskfile
-- ClusterIssuer uses HTTP-01 challenge with `class: istio` solver for managed AKS Istio
 - TLS secret (`banking-demo-tls`) lives in `aks-istio-ingress` namespace (required for managed Istio)
-- Gateway keeps HTTP (port 80) with `httpsRedirect: true`, adds HTTPS (port 443) with SIMPLE TLS mode
-- `CUSTOM_DOMAIN` env var drives domain configuration via `envsubst` in `tls:setup` task
 
 **Key files:**
-- `cluster-config/cert-manager/clusterissuer.yaml` — Let's Encrypt production ClusterIssuer
+- `cluster-config/cert-manager/clusterissuer.yaml` — HTTP-01 ClusterIssuer (class: istio)
 - `cluster-config/cert-manager/certificate.yaml` — Certificate resource (uses `${CUSTOM_DOMAIN}`)
-- `cluster-config/istio/gateway/istio-ingress-gateway.yaml` — Updated Gateway with HTTPS server
-- `Taskfile.cloud.yml` — `tls:install-cert-manager`, `tls:setup`, `tls:status` tasks
-- `.env.example` — `CUSTOM_DOMAIN` variable added
+- `cluster-config/istio/gateway/istio-ingress-gateway.yaml` — HTTP-only gateway
+- `cluster-config/istio/gateway/istio-ingress-gateway-tls.yaml` — TLS gateway (HTTPS + redirect)
+- `tasks/Taskfile.cloud.yml` — `_infra:cert-manager`, `tls:enable`, `tls:status`, `_tls:*` internal tasks
 
 **Pattern:** For managed AKS Istio, TLS certs must be in `aks-istio-ingress` namespace. The `credentialName` on the Gateway server references the cert-manager Secret name directly.
+
+**Pattern:** For managed AKS Istio, TLS certs must be in `aks-istio-ingress` namespace. The `credentialName` on the Gateway server references the cert-manager Secret name directly.
+
+**Why DNS-01 over HTTP-01:** HTTP-01 requires DNS already pointing to the gateway AND a VirtualService hack to route `.well-known/acme-challenge/` traffic through Istio to the solver pod. DNS-01 creates a TXT record in Azure DNS — no HTTP traffic, no solver routing, works day-0.
 
 ### 2026-05 — Chatbot SDK Migration: v2.x azure-ai-projects (final)
 
@@ -694,3 +705,54 @@ the hostname, not the child project name. The project name only appears in the `
 - `.env.example` — Added `CUSTOM_DOMAIN` variable
 
 **Pattern:** For managed AKS Istio, TLS certs must be in `aks-istio-ingress` namespace. The `credentialName` on the Gateway server references the cert-manager Secret name directly. HTTP-01 solver class `istio` works without DNS configuration.
+
+### 2026-05 — Private Endpoints for All Azure Services
+
+**Problem:** Subscription policy blocks public endpoints. Key Vault returned "Forbidden — Public network access is disabled" for the managed identity. All 6 Azure services needed private endpoints.
+
+**Changes made:**
+1. Created `infra/cloud/private-endpoints.tf` — new PE subnet (`cidrsubnet(local.vnet_cidr, 8, 4)`), 7 private DNS zones, VNet links, and 6 private endpoints (Key Vault, Cosmos DB, Redis, ACR, AI Services, Storage)
+2. Modified 6 existing resource files to disable public network access:
+   - `keyvault.tf` — `public_network_access_enabled = false` + `network_acls { bypass = "AzureServices", default_action = "Deny" }` + optional deployer IP
+   - `cosmos.tf` — `public_network_access_enabled = false`
+   - `redis.tf` — `public_network_access = "Disabled"` (different attribute name for azurerm_managed_redis)
+   - `acr.tf` — SKU upgraded `Basic` → `Premium` (required for PE), public access kept enabled
+   - `ai.tf` — `publicNetworkAccess = "Disabled"` in azapi body properties
+   - `storage.tf` — `public_network_access_enabled = false`
+3. Added `pe_subnet_cidr` to `locals.tf`, `deployer_ip` variable to `variables.tf`
+
+**Key decisions:**
+- ACR keeps public access enabled (push from CI/CD) but also gets a PE for in-VNet pulls
+- Key Vault `network_acls.bypass = "AzureServices"` lets managed identities access it via PE
+- `deployer_ip` variable (defaults to empty) lets Brian allow Terraform through KV firewall during apply
+- AI Services gets two DNS zones: `privatelink.cognitiveservices.azure.com` and `privatelink.openai.azure.com`
+- Redis uses `public_network_access` (not `public_network_access_enabled`) — different attribute name for azurerm_managed_redis
+
+**Key files:**
+- `infra/cloud/private-endpoints.tf` — all PE infrastructure
+- `infra/cloud/variables.tf` — `deployer_ip` variable
+- `infra/cloud/locals.tf` — `pe_subnet_cidr`
+
+### 2026-05-10 — TLS Architecture Revision: DNS-01 → HTTP-01 3-Phase Flow
+
+**Problem:** DNS-01 ACME approach (previous decision) required external Azure DNS zone dependency + managed identity + workload identity federation. Brian explicitly requested simpler HTTP-01 approach with clear operational phases.
+
+**Changes made:**
+1. Restructured TLS into 3-phase flow:
+   - **Phase 1 (`infra:config`):** cert-manager installed, HTTP-01 ClusterIssuer applied, HTTP-only gateway deployed, ingress IP output for user
+   - **Phase 2 (Manual):** User creates DNS A record pointing domain to ingress IP
+   - **Phase 3 (`tls:enable`):** Certificate applied, ACME challenge routed via VirtualService hack, waits for validation, cleanup, TLS gateway applied
+
+2. Reverted `clusterissuer.yaml`: Changed from `dns01.azureDNS` solver back to `http01` with `class: istio`
+
+3. Updated `Taskfile.cloud.yml`:
+   - Removed `infra:tls` (monolithic task) and `infra:tls:identity` (DNS-01 specific)
+   - Added `_infra:cert-manager` (Phase 1), `tls:enable` (Phase 3)
+   - Added helper tasks: `_tls:wait-for-solver`, `_tls:route-solver`, `_tls:cleanup-solver`
+
+4. Removed env vars: `AZURE_SUBSCRIPTION_ID`, `DNS_ZONE_RG`, `DNS_ZONE_NAME`, `CERT_MANAGER_CLIENT_ID` (no longer needed)
+
+**Key insight:** HTTP-01 is operationally simpler for initial deployments (no external DNS zone), but requires VirtualService routing trick for managed Istio because default Istio behavior doesn't auto-forward `.well-known/acme-challenge` traffic to solver pods. The 3-phase flow explicitly separates infra concerns from DNS/cert concerns, improving debugging and user understanding.
+
+**Pattern:** For any ACME setup on managed Istio without pre-configured DNS, HTTP-01 + manual DNS phase is lower-friction than DNS-01 + external zone dependency. VirtualService solver routing is a standard workaround.
+

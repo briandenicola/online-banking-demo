@@ -3,6 +3,8 @@
 #############################################
 
 resource "azurerm_kubernetes_cluster" "main" {
+  depends_on = [azurerm_subnet_network_security_group_association.aks]
+
   lifecycle {
     ignore_changes = [
       default_node_pool[0].node_count,
@@ -84,6 +86,10 @@ resource "azurerm_kubernetes_cluster" "main" {
   }
 
   monitor_metrics {}
+
+  api_server_access_profile {
+    authorized_ip_ranges = ["${chomp(data.http.myip.response_body)}/32"]
+  }
 
   service_mesh_profile {
     mode                             = "Istio"

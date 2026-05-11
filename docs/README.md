@@ -94,6 +94,8 @@ online-banking-demo/
 
 - **Zero secrets in Kubernetes** — all via Azure KeyVault CSI driver
 - **Entra ID everywhere** — Cosmos DB, Redis, AI Foundry (no keys)
+- **Private endpoints** — all PaaS services accessed via private endpoints (9 endpoints, public access disabled except ACR)
+- **Private DNS zones** — 10 zones for private endpoint name resolution within the VNet
 - **Istio mTLS** — service-to-service encryption
 - **JWT authentication** — HS256 tokens with role claims (User/Admin)
 

@@ -6,8 +6,9 @@ resource "azurerm_cosmosdb_account" "main" {
   name                = local.cosmos_name
   location            = azurerm_resource_group.this.location
   resource_group_name = azurerm_resource_group.this.name
-  offer_type          = "Standard"
-  kind                = "GlobalDocumentDB"
+  offer_type                    = "Standard"
+  kind                          = "GlobalDocumentDB"
+  public_network_access_enabled = false
 
   consistency_policy {
     consistency_level = "Session"

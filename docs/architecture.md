@@ -151,11 +151,17 @@ Azure Resource Group
 │  ├─ Users, Accounts, Transactions, Transfers, ChatSessions
 │
 ├─ Azure Managed Redis (Balanced B0, port 10000/TLS, Entra auth)
-├─ Azure Container Registry (ACR)
+├─ Azure Container Registry (ACR, Premium SKU)
 ├─ Azure AI Foundry (OpenAI models + agents)
 ├─ Application Insights (OTEL SDK)
 ├─ Key Vault (secrets synced to K8s via CSI driver)
-└─ Log Analytics Workspace (diagnostics)
+├─ Log Analytics Workspace (diagnostics)
+├─ VNet (/16) with 3 subnets:
+│  ├─ AKS subnet (/24, offset 3)
+│  ├─ Private Endpoints subnet (/24, offset 4)
+│  └─ Agents subnet (/24, offset 5, Microsoft.App/environments delegation)
+├─ 9 Private Endpoints (Key Vault, Cosmos DB, Redis, ACR, AI Services, Storage ×4)
+└─ 10 Private DNS Zones (name resolution for all private endpoints)
 ```
 
 **Deployment**: Taskfile-driven (`task cloud:up`, `task cloud:build`, `task cloud:deploy`)
@@ -183,6 +189,9 @@ Azure Resource Group
 - **Services isolated** within K8s network namespace in production
 - **Istio Ingress Gateway** handles all external traffic (HTTP/HTTPS)
 - **Service-to-service** calls use internal K8s DNS names with JWT forwarding
+- **Private endpoints** for all PaaS services — traffic stays on the Azure backbone (public access disabled except ACR)
+- **10 private DNS zones** for name resolution: Key Vault, Cosmos DB, Redis, ACR, Cognitive Services, OpenAI, Storage (blob, queue, table, file)
+- **Agent subnet** with `Microsoft.App/environments` delegation for AI Foundry agent compute
 
 ### Data Security
 

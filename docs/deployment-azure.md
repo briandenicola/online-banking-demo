@@ -44,9 +44,11 @@ Azure Resource Group
 | **Cosmos DB** | Primary database | Entra RBAC auth, 5 containers |
 | **Azure Managed Redis** | Caching & events | Balanced_B0, port 10000/TLS, Entra ID auth |
 | **Azure AI Foundry** | AI services | gpt-5.4-mini deployment, agent framework |
-| **ACR** | Container registry | AKS has AcrPull role, `az acr build` |
+| **ACR** | Container registry | Premium SKU (required for PE), AKS has AcrPull role, `az acr build` |
 | **Key Vault** | Secrets management | RBAC-protected, CSI driver syncs to K8s |
 | **Application Insights** | Monitoring | Workspace-based, OTEL SDK integration |
+| **Private Endpoints** | Network isolation | 9 endpoints for all PaaS services (public access disabled except ACR) |
+| **Private DNS Zones** | Name resolution | 10 zones linked to VNet for private endpoint resolution |
 
 ### Cosmos DB Containers
 
@@ -131,8 +133,12 @@ Terraform provisions all Azure resources defined in `infra/cloud/`:
 - Azure Managed Redis (Balanced_B0)
 - Azure AI Foundry project + gpt-5.4-mini deployment
 - Key Vault with secrets (see `infra/cloud/keyvault-secrets.tf`)
-- ACR with AcrPull role for AKS
-- VNet, subnet, NSG (ports 80/443 inbound)
+- ACR with AcrPull role for AKS (Premium SKU for private endpoint support)
+- VNet (/16) with 3 subnets: AKS (/24, offset 3), Private Endpoints (/24, offset 4), Agents (/24, offset 5 with `Microsoft.App/environments` delegation)
+- NSG (ports 80/443 inbound)
+- 9 private endpoints (Key Vault, Cosmos DB, Redis, ACR, AI Services, Storage blob/queue/table/file)
+- 10 private DNS zones for endpoint name resolution
+- Deployer IP auto-detected via `data "http" "myip"` (checkip.amazonaws.com) for Key Vault network ACLs
 - Log Analytics + Application Insights
 - User-assigned managed identity with federated credentials
 
@@ -313,8 +319,9 @@ kubectl logs <pod-name> --previous -n banking-demo
 | Azure Managed Redis | Balanced_B0 | $50–100 |
 | Application Insights | 1 GB ingestion | $50–100 |
 | Azure AI Foundry | gpt-5.4-mini usage | $50–100 |
-| ACR | Basic tier | $5 |
-| **Total** | | **~$755–1,105** |
+| ACR | Premium | $50 |
+| Private Endpoints | 9 × ~$7.30/month | ~$66 |
+| **Total** | | **~$821–1,171** |
 
 ### Optimization Tips
 

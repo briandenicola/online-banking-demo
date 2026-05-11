@@ -3,6 +3,10 @@
 #############################################
 data "azurerm_client_config" "current" {}
 
+data "http" "myip" {
+  url = "http://checkip.amazonaws.com/"
+}
+
 locals {
   location            = var.region
   resource_name       = "${random_pet.this.id}-${random_id.this.dec}"
@@ -12,6 +16,8 @@ locals {
   vnet_name           = "${local.resource_name}-vnet"
   vnet_cidr           = cidrsubnet("10.0.0.0/8", 8, random_integer.vnet_cidr.result)
   nodes_subnet_cidr   = cidrsubnet(local.vnet_cidr, 8, 3)
+  pe_subnet_cidr      = cidrsubnet(local.vnet_cidr, 8, 4)
+  agent_subnet_cidr   = cidrsubnet(local.vnet_cidr, 8, 5)
   storage_name        = "${substr(replace(random_uuid.guid.result, "-", ""), 0, 22)}sa"
   cosmos_name         = "${local.resource_name}-cosmos"
   openai_name         = "${local.resource_name}-foundry"

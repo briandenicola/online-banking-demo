@@ -87,16 +87,21 @@ tasks:
 
   # === One-time infra configuration ===
   # Run after Terraform creates AKS. Sets up credentials, namespaces, secrets,
-  # configmap values, secret-provider-class, and optionally TLS via cert-manager.
-  # DNS SETUP: Create a DNS A record pointing CUSTOM_DOMAIN to the Istio ingress
-  # gateway external IP. Get the IP with: kubectl get svc -n aks-istio-ingress
+  # configmap values, secret-provider-class, and cert-manager.
+  #
+  # TLS SETUP (3-phase flow):
+  #   Phase 1: `infra:config` — installs cert-manager, ClusterIssuer, HTTP gateway,
+  #            outputs the ingress IP for DNS configuration.
+  #   Phase 2: MANUAL — point your DNS A record to the ingress IP.
+  #   Phase 3: `tls:enable` — requests certificate via HTTP-01, routes ACME challenge,
+  #            waits for issuance, applies TLS gateway.
 
   infra:config:
-    desc: One-time AKS configuration (credentials, namespaces, secrets, configmap, CSI, TLS)
+    desc: One-time AKS configuration (credentials, namespaces, secrets, configmap, CSI, cert-manager)
     cmds:
       - az aks get-credentials --resource-group {{.RG_NAME}} --name {{.AKS_NAME}} --overwrite-existing
       - sed -i s/devicecode/azurecli/g ~/.kube/config
-      - task: infra:tls
+      - task: _infra:cert-manager
       - task: _secrets:create
       - task: _configmap:update
       - task: _secretproviderclass:update
@@ -106,60 +111,90 @@ tasks:
       AKS_NAME:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw aks_name
 
-  infra:tls:
-    desc: Install cert-manager, issue Let's Encrypt cert, and enable HTTPS gateway
-    preconditions:
-      - sh: '[ -n "$CUSTOM_DOMAIN" ]'
-        msg: "CUSTOM_DOMAIN must be set in .env before running infra:tls"
+  _infra:cert-manager:
+    internal: true
+    desc: Install cert-manager, apply ClusterIssuer and HTTP gateway, output ingress IP
     cmds:
-      # 1. Install cert-manager
+      # 1. Install cert-manager via Helm
       - helm repo add jetstack https://charts.jetstack.io --force-update
       - helm upgrade --install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true --wait
-      # 2. Ensure HTTP-only gateway is active (no HTTPS redirect during challenge)
-      - kubectl apply -f cluster-config/istio/gateway/istio-ingress-gateway.yaml
-      # 3. Apply ClusterIssuer and Certificate
+      # 2. Apply ClusterIssuer (HTTP-01 with ingress class istio)
       - kubectl apply -f cluster-config/cert-manager/clusterissuer.yaml
+      # 3. Apply HTTP-only gateway
+      - kubectl apply -f cluster-config/istio/gateway/istio-ingress-gateway.yaml
+      # 4. Output the external IP for DNS configuration
+      - |
+        echo ""
+        echo "============================================================"
+        echo "  PHASE 1 COMPLETE — cert-manager and HTTP gateway ready"
+        echo "============================================================"
+        echo ""
+        INGRESS_IP=$(kubectl get svc -n aks-istio-ingress -l istio=aks-istio-ingressgateway-external -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+        if [ -n "$INGRESS_IP" ]; then
+          echo "  ➡  Point your DNS for $CUSTOM_DOMAIN to this IP: $INGRESS_IP"
+        else
+          echo "  ⚠  Ingress IP not yet assigned. Run this to check later:"
+          echo "     kubectl get svc -n aks-istio-ingress -l istio=aks-istio-ingressgateway-external"
+        fi
+        echo ""
+        echo "  NEXT STEPS:"
+        echo "    1. Create a DNS A record: $CUSTOM_DOMAIN → $INGRESS_IP"
+        echo "    2. Wait for DNS to propagate (verify with: dig $CUSTOM_DOMAIN)"
+        echo "    3. Run: task cloud:tls:enable"
+        echo ""
+
+  tls:enable:
+    desc: "Phase 3: Issue Let's Encrypt cert via HTTP-01 and enable HTTPS gateway"
+    preconditions:
+      - sh: '[ -n "$CUSTOM_DOMAIN" ]'
+        msg: "CUSTOM_DOMAIN must be set in .env before running tls:enable"
+    cmds:
+      # 1. Apply Certificate resource to trigger ACME flow
       - envsubst < cluster-config/cert-manager/certificate.yaml | kubectl apply -f -
-      # 4. Wait for ACME solver pod, then route challenge traffic to it
+      # 2. Wait for ACME solver service, route challenge traffic, wait for cert
       - task: _tls:wait-for-solver
       - task: _tls:route-solver
-      # 5. Wait for certificate to be issued
       - task: _tls:wait-for-cert
-      # 6. Clean up solver route and apply TLS gateway
-      - kubectl delete virtualservice acme-solver -n aks-istio-ingress --ignore-not-found
+      # 3. Clean up solver VirtualService
+      - task: _tls:cleanup-solver
+      # 4. Apply TLS gateway (HTTPS + HTTP redirect)
       - envsubst < cluster-config/istio/gateway/istio-ingress-gateway-tls.yaml | kubectl apply -f -
-      - echo "✅ TLS enabled for $CUSTOM_DOMAIN"
+      - |
+        echo ""
+        echo "✅ TLS enabled for $CUSTOM_DOMAIN"
+        echo "   HTTPS is now active — HTTP requests will redirect to HTTPS."
+        echo ""
 
   _tls:wait-for-solver:
     internal: true
-    desc: Wait for cert-manager ACME HTTP solver pod to appear
+    desc: Wait for ACME HTTP-01 solver service to appear (up to 5 minutes)
     cmds:
       - |
-        echo "Waiting for ACME solver pod..."
-        for i in $(seq 1 30); do
-          SVC=$(kubectl get svc -n aks-istio-ingress -l "acme.cert-manager.io/http01-solver=true" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-          if [ -n "$SVC" ]; then
-            echo "Solver service found: $SVC"
-            break
+        echo "Waiting for ACME HTTP-01 solver service..."
+        for i in $(seq 1 60); do
+          SOLVER_SVC=$(kubectl get svc -n aks-istio-ingress -l "acme.cert-manager.io/http01-solver=true" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -n "$SOLVER_SVC" ]; then
+            echo "✅ Solver service found: $SOLVER_SVC"
+            exit 0
           fi
           sleep 5
         done
-        if [ -z "$SVC" ]; then
-          echo "ERROR: ACME solver service not found after 150s"
-          exit 1
-        fi
+        echo "ERROR: ACME solver service not found after 5 minutes."
+        echo "Check challenge status: kubectl get challenges -n aks-istio-ingress"
+        exit 1
 
   _tls:route-solver:
     internal: true
-    desc: Create VirtualService to route ACME challenge to solver pod
+    desc: Create VirtualService to route ACME challenge traffic to solver
     cmds:
       - |
-        SVC=$(kubectl get svc -n aks-istio-ingress -l "acme.cert-manager.io/http01-solver=true" -o jsonpath='{.items[0].metadata.name}')
+        SOLVER_SVC=$(kubectl get svc -n aks-istio-ingress -l "acme.cert-manager.io/http01-solver=true" -o jsonpath='{.items[0].metadata.name}')
+        SOLVER_PORT=$(kubectl get svc -n aks-istio-ingress "$SOLVER_SVC" -o jsonpath='{.spec.ports[0].port}')
         cat <<EOF | kubectl apply -f -
         apiVersion: networking.istio.io/v1beta1
         kind: VirtualService
         metadata:
-          name: acme-solver
+          name: acme-solver-route
           namespace: aks-istio-ingress
         spec:
           hosts:
@@ -172,10 +207,11 @@ tasks:
                 prefix: /.well-known/acme-challenge/
             route:
             - destination:
-                host: ${SVC}.aks-istio-ingress.svc.cluster.local
+                host: ${SOLVER_SVC}.aks-istio-ingress.svc.cluster.local
                 port:
-                  number: 8089
+                  number: ${SOLVER_PORT}
         EOF
+        echo "✅ ACME solver VirtualService applied"
 
   _tls:wait-for-cert:
     internal: true
@@ -195,12 +231,20 @@ tasks:
         kubectl describe certificate banking-demo-tls -n aks-istio-ingress
         exit 1
 
-  infra:tls:status:
-    desc: Check TLS certificate status
+  _tls:cleanup-solver:
+    internal: true
+    desc: Remove ACME solver VirtualService after cert is issued
+    cmds:
+      - kubectl delete virtualservice acme-solver-route -n aks-istio-ingress --ignore-not-found
+      - echo "✅ Solver VirtualService cleaned up"
+
+  tls:status:
+    desc: Check TLS certificate and HTTP-01 challenge status
     cmds:
       - kubectl get certificate -n aks-istio-ingress
       - kubectl get certificaterequest -n aks-istio-ingress
-      - kubectl get challenges -n aks-istio-ingress 2>/dev/null || true
+      - kubectl get challenges --all-namespaces 2>/dev/null || true
+      - kubectl get orders --all-namespaces 2>/dev/null || true
 
   # === Internal tasks ===
   _secrets:create:

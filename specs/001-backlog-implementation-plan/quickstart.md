@@ -34,7 +34,8 @@ curl http://localhost:3000                      # UI (React dev server)
 ## Cloud Deployment (AKS)
 
 ```bash
-# 1. Provision infrastructure
+# 1. Provision infrastructure (including private endpoints)
+#    Deployer IP is auto-detected for Key Vault firewall access
 task -t Taskfile.cloud.yml up
 
 # 2. Build and push containers
@@ -49,6 +50,32 @@ task -t Taskfile.cloud.yml deploy
 # 5. Verify
 kubectl get pods -n banking-demo  # All should show Running 2/2
 ```
+
+### Verifying Private Endpoints
+
+```bash
+# From inside AKS — DNS should resolve to private 10.x.4.x addresses
+KV_NAME=$(cd infra/cloud && terraform output -raw key_vault_name)
+kubectl run dns-test --rm -it --image=busybox --restart=Never -- \
+  nslookup "${KV_NAME}.vault.azure.net"
+# Expected: 10.x.4.x (PE subnet), NOT a public IP
+
+# Test Key Vault connectivity from a workload identity pod
+kubectl run kv-test --rm -it \
+  --image=mcr.microsoft.com/azure-cli \
+  --serviceaccount=banking-workload-identity \
+  --namespace=banking-demo \
+  --restart=Never -- \
+  az keyvault secret list --vault-name "$KV_NAME"
+```
+
+### Private Endpoint Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `Forbidden — Public network access disabled` during `terraform apply` | Deployer IP is auto-detected; check that `checkip.amazonaws.com` is reachable |
+| DNS resolves to public IP inside AKS | Check VNet link exists; wait 1-2 min for propagation |
+| Redis connection timeout | Verify `redisEnterprise` sub-resource (not `redisCache`) |
 
 ## Running Tests
 

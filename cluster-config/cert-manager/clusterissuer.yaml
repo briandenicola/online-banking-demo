@@ -4,7 +4,6 @@ metadata:
   name: letsencrypt-production
 spec:
   acme:
-    # Replace with your actual email address
     email: brian@bjdazure.tech
     server: https://acme-v02.api.letsencrypt.org/directory
     privateKeySecretRef:
