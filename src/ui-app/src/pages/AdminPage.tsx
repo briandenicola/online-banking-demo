@@ -39,6 +39,7 @@ import apiClient from '../api/client';
 import AdminEvalTab from '../components/AdminEvalTab';
 import AdminUserManagementTab from '../components/AdminUserManagementTab';
 import AdminLoginAuditTab from '../components/AdminLoginAuditTab';
+import AdminFoundryStatusTab from '../components/AdminFoundryStatusTab';
 
 interface AdminStats {
   totalFlagged: number;
@@ -349,6 +350,7 @@ const AdminPage: React.FC = () => {
           <Tab label="AI Evaluation" />
           <Tab label="User Management" />
           <Tab label="Login Audit" />
+          <Tab label="System Health" />
         </Tabs>
       </Box>
 
@@ -696,6 +698,9 @@ const AdminPage: React.FC = () => {
 
       {/* Login Audit Tab */}
       {activeTab === 4 && <AdminLoginAuditTab />}
+
+      {/* System Health Tab */}
+      {activeTab === 5 && <AdminFoundryStatusTab />}
     </Box>
   );
 };
