@@ -8,6 +8,25 @@
 
 ## Learnings
 
+### 2026-05 — Istio sidecar blocks Azure Managed Redis TLS (port 10000)
+
+**Problem:** All services using Redis were failing to connect on AKS. The Istio Envoy sidecar intercepts all outbound traffic and can't handle Redis's TLS protocol on port 10000, causing ECONNRESET during TLS handshake. The event-processor (Go) crashed in a loop; .NET services degraded but stayed alive.
+
+**Root cause:** No `traffic.sidecar.istio.io/excludeOutboundPorts` annotation on pod templates. Istio tried to proxy Redis TLS traffic and broke it.
+
+**Fix:**
+- Added `traffic.sidecar.istio.io/excludeOutboundPorts: "10000"` to all 5 Redis-using deployments (event-processor, transaction, user, transfer, ai-service)
+- Restructured event-processor to start health server BEFORE Redis retry loop
+- Readiness probe now returns 503 until Redis is connected
+- Removed `log.Fatalf` crash — retries indefinitely with capped 30s backoff
+- Increased probe failureThresholds
+
+**Key files:**
+- `deploy/kustomize/base/*.yaml` — all 5 deployment manifests updated
+- `src/event-processor/main.go` — startup resilience + health probe fix
+
+**Pattern:** Azure Managed Redis uses port 10000 with TLS. Always exclude port 10000 from Istio sidecar when deploying to AKS with managed Istio.
+
 ### 2026-05 — TLS on Istio Ingress with cert-manager (3-phase flow)
 
 **Setup:** TLS termination on Istio ingress gateway using cert-manager + Let's Encrypt HTTP-01.
@@ -756,3 +775,22 @@ the hostname, not the child project name. The project name only appears in the `
 
 **Pattern:** For any ACME setup on managed Istio without pre-configured DNS, HTTP-01 + manual DNS phase is lower-friction than DNS-01 + external zone dependency. VirtualService solver routing is a standard workaround.
 
+
+### 2026-05-11 — Event Processor Pod Failure: Istio Sidecar Blocking Redis TLS
+
+**Issue:** event-processor pod crash-looping on AKS. All 5 Redis-using services (event-processor, transaction, user, transfer, ai-service) failing to connect to Azure Managed Redis.
+
+**Diagnosis:** Istio Envoy sidecar was intercepting outbound TLS traffic to port 10000 and breaking the Redis TLS handshake. The sidecar attempts to re-encrypt already-encrypted Redis traffic, causing the connection to drop with ECONNRESET.
+
+**Solution:** Added `traffic.sidecar.istio.io/excludeOutboundPorts: "10000"` annotation to all 5 pod templates. This bypasses Istio's Envoy proxy for Redis traffic while keeping all other traffic within the mesh.
+
+**Restructured event-processor health/retry logic:**
+- Start HTTP health server **before** attempting Redis connection (doesn't block startup)
+- Report readiness based on actual Redis state
+- Retry indefinitely instead of crashing after 10 attempts
+- Allows graceful degradation if Redis is temporarily unavailable
+
+**Cross-team note:** Turk identified the root DNS zone issue in parallel. Both fixes required for full Redis connectivity.
+
+**Key files modified:** 5 deployment manifests + `src/event-processor/main.go`
+**Commit:** f2cac3b

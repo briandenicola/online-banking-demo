@@ -51,3 +51,46 @@
 
 **Pattern:** CSI driver uses kubelet identity (not workload identity) — check kubelet service principal in Key Vault RBAC config, not workload identity webhook.
 **Pattern:** JWT key is now stable. Applications that cache secrets at startup will persist across redeploys (feature, not bug).
+
+### 2026-05-11 — Redis Private Endpoint DNS Zone Fix
+
+**Issue:** event-processor (Go) and ai-service (Python) both failing to connect to Azure Managed Redis with "Connection reset by peer" on port 10000. Services successfully acquired Entra ID tokens but TCP connection was refused.
+
+**Root cause:** Wrong private DNS zone in Terraform. `private-endpoints.tf` used `privatelink.redisenterprise.cache.azure.net` (for old Azure Cache for Redis Enterprise) instead of `privatelink.redis.azure.net` (for Azure Managed Redis / `azurerm_managed_redis`). The PE's A record could not auto-register in the wrong zone, so pods resolved to the public IP (4.172.66.86) which has public access disabled → connection reset.
+
+**Fix:**
+1. Changed DNS zone in `private-endpoints.tf` from `privatelink.redisenterprise.cache.azure.net` to `privatelink.redis.azure.net`
+2. Applied incrementally via az CLI: created correct zone, linked VNet, updated PE DNS zone group, cleaned up old zone
+3. Restarted event-processor and ai-service deployments — both confirmed Redis connectivity
+
+**Key learning:** Azure has THREE Redis products with different PE DNS zones:
+- Azure Cache for Redis (standard/premium): `privatelink.redis.cache.windows.net`
+- Azure Cache for Redis Enterprise (old): `privatelink.redisenterprise.cache.azure.net`
+- Azure Managed Redis (new, `azurerm_managed_redis`): `privatelink.redis.azure.net`
+
+**Pattern:** Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com/en-us/azure/private-link/private-endpoint-dns) when adding new private endpoints. The zone name is product-specific and easy to confuse between similar services.
+
+### 2026-05-11 — Redis Private Endpoint DNS Zone Fix
+
+**Issue:** All services connecting to Azure Managed Redis failing with "Connection reset by peer" on port 10000. DNS resolution from inside AKS pods returning public IP instead of PE's private IP (10.220.4.13).
+
+**Root cause:** Wrong private DNS zone in Terraform. `infra/cloud/private-endpoints.tf` used `privatelink.redisenterprise.cache.azure.net` (for old Azure Cache for Redis Enterprise) instead of `privatelink.redis.azure.net` (for Azure Managed Redis / `azurerm_managed_redis`). The PE's A record could not auto-register in the wrong zone, so pods resolved to the public IP (4.172.66.86) which has public access disabled.
+
+**Fix:**
+1. Changed DNS zone in `private-endpoints.tf` from `privatelink.redisenterprise.cache.azure.net` to `privatelink.redis.azure.net`
+2. Applied incrementally via az CLI: created correct zone, linked VNet, updated PE DNS zone group, cleaned up old zone
+3. Restarted event-processor and ai-service deployments
+
+**Verification:** DNS from pod now resolves to PE private IP 10.220.4.13. TCP to port 10000 succeeds. Services confirm Redis connectivity via logs.
+
+**Cross-team note:** Basher worked on the Istio sidecar port exclusion in parallel. Both fixes required for full Redis connectivity.
+
+**Key files modified:** `infra/cloud/private-endpoints.tf` (DNS zone name, line 20)
+**Commit:** 65c7197
+
+**Pattern:** Azure has THREE Redis products with different PE DNS zones:
+- Azure Cache for Redis (standard/premium): `privatelink.redis.cache.windows.net`
+- Azure Cache for Redis Enterprise (old): `privatelink.redisenterprise.cache.azure.net`
+- Azure Managed Redis (new, `azurerm_managed_redis`): `privatelink.redis.azure.net` ← This one
+
+Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com/en-us/azure/private-link/private-endpoint-dns).

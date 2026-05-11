@@ -2117,3 +2117,68 @@ Agent 4: Account Provisioning (Orchestrator, Foundry GPT-5.4-mini)
 **Decision:** Approved by Danny (Lead/Architect)  
 **Awaiting:** Brian review + Basher implementation planning
 
+
+---
+
+## Session: 2026-05-11 (Redis Connectivity & Istio Mesh Traffic)
+
+### Decision: Exclude Redis port 10000 from Istio sidecar interception
+
+**Date:** 2026-05-11  
+**Author:** Basher  
+**Priority:** P0  
+**Status:** Implemented (pending deploy)
+
+**Context:**
+The event-processor pod was crash-looping on AKS. Investigation revealed that ALL 5 Redis-using services (event-processor, transaction, user, transfer, ai-service) were failing to connect to Azure Managed Redis. The Istio Envoy sidecar was intercepting outbound TLS traffic to port 10000 and breaking the Redis TLS handshake (ECONNRESET).
+
+**Decision:**
+1. Add `traffic.sidecar.istio.io/excludeOutboundPorts: "10000"` annotation to all pod templates that connect to Azure Managed Redis. This bypasses Istio's Envoy proxy for Redis traffic while keeping all other traffic within the mesh.
+2. Make event-processor resilient to Redis unavailability: start the HTTP health server before attempting Redis connection, report readiness based on actual Redis state, and retry indefinitely instead of crashing after 10 attempts.
+
+**Impact:**
+- All 5 Redis-using services will need a rolling restart after deploy
+- No behavioral changes to other services — annotation is additive
+- event-processor will no longer crash-loop if Redis is temporarily unavailable
+
+**Alternatives Considered:**
+- **ServiceEntry + DestinationRule for Redis:** More complex, requires maintaining Istio CRDs. Port exclusion is simpler and sufficient since Redis is a single external endpoint.
+- **Disabling Istio sidecar entirely for event-processor:** Too broad — would lose all mesh benefits (mTLS, observability) for intra-cluster traffic.
+
+---
+
+### Decision: Redis Private Endpoint DNS Zone Correction
+
+**Author:** Turk  
+**Date:** 2026-05-11  
+**Priority:** P0  
+**Status:** Applied (Terraform + az CLI)
+
+**Context:**
+All services connecting to Azure Managed Redis were failing with "Connection reset by peer" errors. The private endpoint was provisioned and approved, but DNS resolution from inside AKS pods returned the public IP instead of the PE's private IP (10.220.4.13).
+
+**Root Cause:**
+Changed the Redis private DNS zone in `infra/cloud/private-endpoints.tf` from `privatelink.redisenterprise.cache.azure.net` to `privatelink.redis.azure.net`.
+
+Azure Managed Redis (`azurerm_managed_redis`, hostnames `*.redis.azure.net`) requires the `privatelink.redis.azure.net` zone — distinct from the old Azure Cache for Redis Enterprise zone.
+
+**Changes:**
+- **Terraform:** Updated `private-endpoints.tf` line 20 DNS zone name
+- **Azure (az CLI):** Created new DNS zone, linked VNet, updated PE DNS zone group, deleted old zone
+
+**Verification:**
+- DNS from pod now resolves to PE private IP 10.220.4.13
+- TCP to port 10000 succeeds
+- event-processor and ai-service both log "✅ Redis connectivity verified"
+
+**Impact:**
+All services using Redis via private endpoint are now functional. No application code changes needed.
+
+**Pattern Note:**
+Azure has THREE Redis products with different PE DNS zones:
+- Azure Cache for Redis (standard/premium): `privatelink.redis.cache.windows.net`
+- Azure Cache for Redis Enterprise (old): `privatelink.redisenterprise.cache.azure.net`
+- Azure Managed Redis (new, `azurerm_managed_redis`): `privatelink.redis.azure.net`
+
+Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com/en-us/azure/private-link/private-endpoint-dns) when adding new private endpoints.
+
