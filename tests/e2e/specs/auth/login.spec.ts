@@ -17,7 +17,7 @@ test.describe('E2E-202: User Login Flow', () => {
     await loginPage.navigate();
   });
 
-  test('should successfully login with valid credentials and redirect to dashboard', async ({ page }) => {
+  test('@smoke should successfully login with valid credentials and redirect to dashboard', async ({ page }) => {
     await loginPage.login('e2e-default@banking-demo.com', 'password123');
     await loginPage.expectNavigatedToDashboard();
 

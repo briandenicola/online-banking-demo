@@ -11,14 +11,14 @@ test.describe('E2E-207: Transaction List & Pagination', () => {
     dashboardPage = new DashboardPage(authenticatedPage);
   });
 
-  test('should load transactions page successfully', async ({ authenticatedPage }) => {
+  test('@smoke should load transactions page successfully', async ({ authenticatedPage }) => {
     await transactionsPage.navigate();
     await transactionsPage.expectLoaded();
 
     expect(await authenticatedPage.url()).toContain('/transactions');
   });
 
-  test('should display transactions table', async ({ authenticatedPage }) => {
+  test('@smoke should display transactions table', async ({ authenticatedPage }) => {
     await transactionsPage.navigate();
     await transactionsPage.expectLoaded();
 

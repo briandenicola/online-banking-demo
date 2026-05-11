@@ -11,7 +11,7 @@ test.describe('E2E-205: Dashboard Load & Account Display', () => {
     accountsPage = new AccountsPage(authenticatedPage);
   });
 
-  test('should load dashboard successfully after authentication', async ({ authenticatedPage }) => {
+  test('@smoke should load dashboard successfully after authentication', async ({ authenticatedPage }) => {
     await dashboardPage.navigate();
     await dashboardPage.expectLoaded();
 
@@ -27,7 +27,7 @@ test.describe('E2E-205: Dashboard Load & Account Display', () => {
     expect(welcomeText).toBeTruthy();
   });
 
-  test('should display accounts list on dashboard', async ({ authenticatedPage }) => {
+  test('@smoke should display accounts list on dashboard', async ({ authenticatedPage }) => {
     await dashboardPage.navigate();
     await dashboardPage.expectLoaded();
 

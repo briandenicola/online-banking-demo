@@ -7,6 +7,7 @@
     "test": "playwright test",
     "test:chromium": "playwright test --project=chromium",
     "test:firefox": "playwright test --project=firefox",
+    "test:smoke": "playwright test --grep @smoke --project=chromium",
     "test:debug": "playwright test --debug",
     "test:ui": "playwright test --ui",
     "report": "playwright show-report"

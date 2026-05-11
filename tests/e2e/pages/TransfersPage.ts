@@ -24,7 +24,7 @@ export class TransfersPage extends BasePage {
     this.fromAccountSelect = page.getByLabel(/from account/i);
     this.toAccountSelect = page.getByLabel(/to account/i);
     this.amountInput = page.getByLabel(/amount/i);
-    this.submitButton = page.getByRole('button', { name: /transfer|submit|send/i });
+    this.submitButton = page.getByRole('button', { name: /send transfer|submit/i });
     this.confirmButton = page.getByRole('button', { name: /confirm|yes/i });
     this.cancelButton = page.getByRole('button', { name: /cancel|no/i });
     this.successMessage = page.locator('[role="alert"]').filter({ hasText: /success|completed/i });

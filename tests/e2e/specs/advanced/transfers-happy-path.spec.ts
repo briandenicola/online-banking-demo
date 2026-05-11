@@ -18,14 +18,14 @@ test.describe('E2E-301: Transfer Between Accounts (Happy Path)', () => {
     transactionsPage = new TransactionsPage(authenticatedPage);
   });
 
-  test('should load transfers page successfully', async ({ authenticatedPage }) => {
+  test('@smoke should load transfers page successfully', async ({ authenticatedPage }) => {
     await transfersPage.navigate();
     await transfersPage.expectLoaded();
 
     expect(await authenticatedPage.url()).toContain('/transfers');
   });
 
-  test('should display transfer form with required fields', async ({ authenticatedPage }) => {
+  test('@smoke should display transfer form with required fields', async ({ authenticatedPage }) => {
     await transfersPage.navigate();
     await transfersPage.expectLoaded();
 
