@@ -84,6 +84,9 @@ public class InMemoryUserService : IUserService
 
         var passwordHash = BC.HashPassword(request.Password);
 
+        // Check if this is the first user in the system — auto-promote to admin
+        var isFirstUser = _users.IsEmpty;
+
         var user = new User
         {
             Id = Guid.NewGuid().ToString(),
@@ -92,11 +95,17 @@ public class InMemoryUserService : IUserService
             FirstName = request.FirstName,
             LastName = request.LastName,
             PasswordHash = passwordHash,
-            Salt = ""
+            Salt = "",
+            Role = isFirstUser ? "admin" : "user"
         };
 
+        if (isFirstUser)
+        {
+            _logger.LogInformation("First user {Username} ({Email}) auto-promoted to admin role", user.Username, user.Email);
+        }
+
         _users[user.Id] = user;
-        _logger.LogInformation("Created user {UserId}", user.Id);
+        _logger.LogInformation("Created user {UserId} with role {Role}", user.Id, user.Role);
         
         return await Task.FromResult(user);
     }

@@ -794,3 +794,18 @@ the hostname, not the child project name. The project name only appears in the `
 
 **Key files modified:** 5 deployment manifests + `src/event-processor/main.go`
 **Commit:** f2cac3b
+
+### 2026-05 — First user auto-promoted to admin
+
+**Problem:** `CreateUserAsync` in both `UserService.cs` (Cosmos DB) and `InMemoryUserService.cs` always assigned `Role = "user"` (the model default). The first registered user in a fresh system had no admin privileges, breaking initial setup.
+
+**Fix:**
+- `UserService.cs`: Added `IsContainerEmptyAsync()` — runs `SELECT VALUE COUNT(1) FROM c` before user creation. If count is 0, sets `Role = "admin"`.
+- `InMemoryUserService.cs`: Checks `_users.IsEmpty` before creation. Same admin promotion logic.
+- Both paths log the auto-promotion for auditability.
+
+**Key files:**
+- `src/user-service/Services/UserService.cs` — Cosmos path
+- `src/user-service/Services/InMemoryUserService.cs` — in-memory path
+
+**Pattern:** First-user-is-admin is a simple count check, no config flags needed. Always log role escalation.

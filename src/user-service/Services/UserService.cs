@@ -85,6 +85,9 @@ public class UserService : IUserService
 
         var passwordHash = BC.HashPassword(request.Password);
 
+        // Check if this is the first user in the system — auto-promote to admin
+        var isFirstUser = await IsContainerEmptyAsync();
+
         var user = new UserModel
         {
             Id = Guid.NewGuid().ToString(),
@@ -93,8 +96,14 @@ public class UserService : IUserService
             FirstName = request.FirstName,
             LastName = request.LastName,
             PasswordHash = passwordHash,
-            Salt = ""
+            Salt = "",
+            Role = isFirstUser ? "admin" : "user"
         };
+
+        if (isFirstUser)
+        {
+            _logger.LogInformation("First user {Username} ({Email}) auto-promoted to admin role", user.Username, user.Email);
+        }
 
         var response = await _container.CreateItemAsync(user, new PartitionKey(user.Id));
         
@@ -156,6 +165,14 @@ public class UserService : IUserService
         user.CategoryPreferences = categories;
         await _container.ReplaceItemAsync(user, user.Id, new PartitionKey(user.Id));
         _logger.LogInformation("Category preferences updated for user {UserId}: {Count} categories", userId, categories.Count);
+    }
+
+    private async Task<bool> IsContainerEmptyAsync()
+    {
+        var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c");
+        var iterator = _container.GetItemQueryIterator<int>(query);
+        var response = await iterator.ReadNextAsync();
+        return response.FirstOrDefault() == 0;
     }
 
     private async Task PublishUserRegisteredEvent(UserModel user)
