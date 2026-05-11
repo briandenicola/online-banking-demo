@@ -20,32 +20,32 @@ resources:
 - prompt-eval-service.yaml
 images:
 - name: ghcr.io/banking-demo/account-service
-  newName: selectrooster38476acr.azurecr.io/account-service
+  newName: loyalmoose4702acr.azurecr.io/account-service
   newTag: latest
 - name: ghcr.io/banking-demo/ai-service
-  newName: selectrooster38476acr.azurecr.io/ai-service
+  newName: loyalmoose4702acr.azurecr.io/ai-service
   newTag: latest
 - name: ghcr.io/banking-demo/budget-service
-  newName: selectrooster38476acr.azurecr.io/budget-service
+  newName: loyalmoose4702acr.azurecr.io/budget-service
   newTag: latest
 - name: ghcr.io/banking-demo/chatbot-service
-  newName: selectrooster38476acr.azurecr.io/chatbot-service
+  newName: loyalmoose4702acr.azurecr.io/chatbot-service
   newTag: latest
 - name: ghcr.io/banking-demo/event-processor
-  newName: selectrooster38476acr.azurecr.io/event-processor
+  newName: loyalmoose4702acr.azurecr.io/event-processor
   newTag: latest
 - name: ghcr.io/banking-demo/prompt-eval-service
-  newName: selectrooster38476acr.azurecr.io/prompt-eval-service
+  newName: loyalmoose4702acr.azurecr.io/prompt-eval-service
   newTag: latest
 - name: ghcr.io/banking-demo/transaction-service
-  newName: selectrooster38476acr.azurecr.io/transaction-service
+  newName: loyalmoose4702acr.azurecr.io/transaction-service
   newTag: latest
 - name: ghcr.io/banking-demo/transfer-service
-  newName: selectrooster38476acr.azurecr.io/transfer-service
+  newName: loyalmoose4702acr.azurecr.io/transfer-service
   newTag: latest
 - name: ghcr.io/banking-demo/ui-app
-  newName: selectrooster38476acr.azurecr.io/ui-app
+  newName: loyalmoose4702acr.azurecr.io/ui-app
   newTag: latest
 - name: ghcr.io/banking-demo/user-service
-  newName: selectrooster38476acr.azurecr.io/user-service
+  newName: loyalmoose4702acr.azurecr.io/user-service
   newTag: latest
