@@ -30,8 +30,9 @@ const Login: React.FC = () => {
     try {
       await login(email, password);
       navigate('/');
-    } catch (err) {
-      setError('Login failed. Please check your credentials and try again.');
+    } catch (err: any) {
+      const serverMessage = err.response?.data?.message;
+      setError(serverMessage || 'Unable to connect. Please try again later.');
     }
   };
 

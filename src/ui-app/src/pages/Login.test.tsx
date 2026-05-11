@@ -58,9 +58,11 @@ describe('Login Page', () => {
     expect(screen.getByText(/Demo credentials/i)).toBeInTheDocument();
   });
 
-  test('shows error on failed login', async () => {
+  test('shows server error message on failed login', async () => {
     const apiClient = require('../api/client').default;
-    apiClient.post.mockRejectedValueOnce(new Error('Invalid credentials'));
+    apiClient.post.mockRejectedValueOnce({
+      response: { status: 401, data: { message: 'Invalid credentials' } },
+    });
 
     renderLogin();
 
@@ -68,7 +70,21 @@ describe('Login Page', () => {
     fireEvent.click(button);
 
     await waitFor(() => {
-      expect(screen.getByText(/Login failed/i)).toBeInTheDocument();
+      expect(screen.getByText('Invalid credentials')).toBeInTheDocument();
+    });
+  });
+
+  test('shows fallback error on network failure', async () => {
+    const apiClient = require('../api/client').default;
+    apiClient.post.mockRejectedValueOnce(new Error('Network Error'));
+
+    renderLogin();
+
+    const button = screen.getByRole('button', { name: /Sign In/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Unable to connect/i)).toBeInTheDocument();
     });
   });
 

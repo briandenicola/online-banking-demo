@@ -16,13 +16,21 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
-// Response error handling
+// Response error handling — redirect on 401 unless it's an auth endpoint
+// (login/register failures should propagate to the caller, not redirect)
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('auth_token');
-      window.location.href = '/login';
+      const url = error.config?.url || '';
+      const isAuthEndpoint =
+        url.includes('/auth/login') ||
+        url.includes('/auth/register') ||
+        url.includes('/users/login');
+      if (!isAuthEndpoint) {
+        localStorage.removeItem('auth_token');
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }
