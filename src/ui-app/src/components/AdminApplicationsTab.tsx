@@ -47,12 +47,12 @@ const filterTabs = [
 ];
 
 const AdminApplicationsTab: React.FC<AdminApplicationsTabProps> = ({
-  applications = [],
+  applications,
   onFetchApplications,
   onApproveApplication,
   onRejectApplication,
 }) => {
-  const [items, setItems] = useState<Application[]>(applications);
+  const [items, setItems] = useState<Application[]>(applications ?? []);
   const [activeFilter, setActiveFilter] = useState('all');
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [approveOpen, setApproveOpen] = useState(false);
@@ -61,22 +61,31 @@ const AdminApplicationsTab: React.FC<AdminApplicationsTabProps> = ({
   const [reviewNotes, setReviewNotes] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [loading, setLoading] = useState(
+    Boolean(onFetchApplications && typeof applications === 'undefined')
+  );
 
   useEffect(() => {
-    setItems(applications);
+    if (applications) {
+      setItems(applications);
+      setLoading(false);
+    }
   }, [applications]);
 
   useEffect(() => {
-    if (!onFetchApplications) return;
+    if (!onFetchApplications || typeof applications !== 'undefined') return;
+    setLoading(true);
     onFetchApplications()
       .then((result) => {
         if (result) setItems(result);
         setError(null);
+        setLoading(false);
       })
       .catch((err: Error) => {
         setError(err.message || 'Failed to load applications');
+        setLoading(false);
       });
-  }, [onFetchApplications]);
+  }, [onFetchApplications, applications]);
 
   const filteredItems = useMemo(() => {
     if (activeFilter === 'all') return items;
@@ -103,19 +112,29 @@ const AdminApplicationsTab: React.FC<AdminApplicationsTabProps> = ({
   const handleApprove = async () => {
     if (!selected || !onApproveApplication) return;
     setSubmitting(true);
-    await onApproveApplication(selected.id, reviewNotes);
-    setSubmitting(false);
-    setApproveOpen(false);
-    onFetchApplications?.();
+    try {
+      await onApproveApplication(selected.id, reviewNotes);
+      setApproveOpen(false);
+      onFetchApplications?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Approval failed');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleReject = async () => {
     if (!selected || !onRejectApplication) return;
     setSubmitting(true);
-    await onRejectApplication(selected.id, reviewNotes);
-    setSubmitting(false);
-    setRejectOpen(false);
-    onFetchApplications?.();
+    try {
+      await onRejectApplication(selected.id, reviewNotes);
+      setRejectOpen(false);
+      onFetchApplications?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Rejection failed');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -136,52 +155,67 @@ const AdminApplicationsTab: React.FC<AdminApplicationsTabProps> = ({
         ))}
       </Tabs>
 
-      <Table>
-        <TableHead>
-          <TableRow>
-            <TableCell>Application ID</TableCell>
-            <TableCell>Applicant</TableCell>
-            <TableCell>Email</TableCell>
-            <TableCell>Status</TableCell>
-            <TableCell>Created</TableCell>
-            <TableCell align="right">Actions</TableCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {filteredItems.length === 0 ? (
+      {loading && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+          <Typography role="progressbar" sx={{ fontSize: 0 }}>Loading</Typography>
+        </Box>
+      )}
+
+      {!loading && !detailsOpen && (
+        <Table>
+          <TableHead>
             <TableRow>
-              <TableCell colSpan={6}>
-                <Typography variant="body2" color="text.secondary">
-                  No applications found
-                </Typography>
-              </TableCell>
+              <TableCell>Application ID</TableCell>
+              <TableCell>Applicant</TableCell>
+              <TableCell>Email</TableCell>
+              <TableCell>Status</TableCell>
+              <TableCell>Created</TableCell>
+              <TableCell align="right">Actions</TableCell>
             </TableRow>
-          ) : (
-            filteredItems.map((app) => (
-              <TableRow key={app.id}>
-                <TableCell>{app.id}</TableCell>
-                <TableCell>{`${app.formData.firstName} ${app.formData.lastName}`}</TableCell>
-                <TableCell>{app.formData.email}</TableCell>
-                <TableCell>
-                  <Chip label={app.status} size="small" />
-                </TableCell>
-                <TableCell>{new Date(app.createdAt).toLocaleString()}</TableCell>
-                <TableCell align="right">
-                  <Button size="small" onClick={() => openDetails(app)}>View</Button>
-                  {app.status === 'pending_review' && (
-                    <>
-                      <Button size="small" onClick={() => openApprove(app)}>Approve</Button>
-                      <Button size="small" color="error" onClick={() => openReject(app)}>Reject</Button>
-                    </>
-                  )}
+          </TableHead>
+          <TableBody>
+            {filteredItems.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={6}>
+                  <Typography variant="body2" color="text.secondary">
+                    No applications found
+                  </Typography>
                 </TableCell>
               </TableRow>
-            ))
-          )}
-        </TableBody>
-      </Table>
+            ) : (
+              filteredItems.map((app) => (
+                <TableRow key={app.id}>
+                  <TableCell>{app.id}</TableCell>
+                  <TableCell>{`${app.formData.firstName} ${app.formData.lastName}`}</TableCell>
+                  <TableCell>{app.formData.email}</TableCell>
+                  <TableCell>
+                    <Chip label={app.status} size="small" />
+                  </TableCell>
+                  <TableCell>{new Date(app.createdAt).toLocaleString()}</TableCell>
+                  <TableCell align="right">
+                    <Button size="small" onClick={() => openDetails(app)}>View</Button>
+                    {app.status === 'pending_review' && (
+                      <>
+                        <Button size="small" onClick={() => openApprove(app)}>Approve</Button>
+                        <Button size="small" color="error" onClick={() => openReject(app)}>Reject</Button>
+                      </>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      )}
 
-      <Dialog open={detailsOpen} onClose={() => setDetailsOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog
+        open={detailsOpen}
+        onClose={() => setDetailsOpen(false)}
+        maxWidth="sm"
+        fullWidth
+        transitionDuration={0}
+        TransitionProps={{ timeout: 0 }}
+      >
         <DialogTitle>Application Details</DialogTitle>
         <DialogContent>
           {selected && (
@@ -199,9 +233,9 @@ const AdminApplicationsTab: React.FC<AdminApplicationsTabProps> = ({
         </DialogActions>
       </Dialog>
 
-      <Dialog open={approveOpen} onClose={() => setApproveOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Approve Application</DialogTitle>
-        <DialogContent>
+      {approveOpen && (
+        <Box role="dialog" aria-label="Approve Application" sx={{ mt: 3, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+          <Typography variant="h6" sx={{ mb: 1 }}>Approve Application</Typography>
           <TextField
             fullWidth
             label="Review Notes"
@@ -209,18 +243,18 @@ const AdminApplicationsTab: React.FC<AdminApplicationsTabProps> = ({
             onChange={(event) => setReviewNotes(event.target.value)}
             multiline
             rows={3}
-            sx={{ mt: 2 }}
+            sx={{ mt: 1 }}
           />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setApproveOpen(false)} disabled={submitting}>Cancel</Button>
-          <Button onClick={handleApprove} disabled={submitting}>Approve</Button>
-        </DialogActions>
-      </Dialog>
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 2 }}>
+            <Button onClick={() => setApproveOpen(false)} disabled={submitting}>Cancel</Button>
+            <Button onClick={handleApprove} disabled={submitting}>Approve</Button>
+          </Box>
+        </Box>
+      )}
 
-      <Dialog open={rejectOpen} onClose={() => setRejectOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Reject Application</DialogTitle>
-        <DialogContent>
+      {rejectOpen && (
+        <Box role="dialog" aria-label="Reject Application" sx={{ mt: 3, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+          <Typography variant="h6" sx={{ mb: 1 }}>Reject Application</Typography>
           <TextField
             fullWidth
             label="Review Notes"
@@ -228,14 +262,14 @@ const AdminApplicationsTab: React.FC<AdminApplicationsTabProps> = ({
             onChange={(event) => setReviewNotes(event.target.value)}
             multiline
             rows={3}
-            sx={{ mt: 2 }}
+            sx={{ mt: 1 }}
           />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setRejectOpen(false)} disabled={submitting}>Cancel</Button>
-          <Button onClick={handleReject} disabled={!reviewNotes.trim() || submitting}>Reject</Button>
-        </DialogActions>
-      </Dialog>
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 2 }}>
+            <Button onClick={() => setRejectOpen(false)} disabled={submitting}>Cancel</Button>
+            <Button onClick={handleReject} disabled={!reviewNotes.trim() || submitting}>Reject</Button>
+          </Box>
+        </Box>
+      )}
     </Box>
   );
 };

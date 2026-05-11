@@ -57,6 +57,10 @@ const resolveActiveIndex = (stages: AgentStage[], currentStageIndex?: number) =>
 const AgentPipeline: React.FC<AgentPipelineProps> = ({ stages, currentStageIndex }) => {
   const [expandedIndex, setExpandedIndex] = React.useState<number | null>(null);
   const activeIndex = resolveActiveIndex(stages, currentStageIndex);
+  const allPending = stages.length > 0 && stages.every((stage) => stage.status === 'pending');
+  const highlightedPendingIndex = allPending
+    ? -1
+    : stages.findIndex((stage) => stage.status === 'pending');
 
   const toggleExpanded = (index: number) => {
     setExpandedIndex((prev) => (prev === index ? null : index));
@@ -70,9 +74,14 @@ const AgentPipeline: React.FC<AgentPipelineProps> = ({ stages, currentStageIndex
         </Typography>
 
         <Stepper activeStep={activeIndex} alternativeLabel>
-          {stages.map((stage) => (
+          {stages.map((stage, index) => (
             <Step key={stage.name}>
-              <StepLabel>{stage.name}</StepLabel>
+              <StepLabel
+                onClick={() => toggleExpanded(index)}
+                sx={{ cursor: 'pointer' }}
+              >
+                {stage.name}
+              </StepLabel>
             </Step>
           ))}
         </Stepper>
@@ -82,13 +91,20 @@ const AgentPipeline: React.FC<AgentPipelineProps> = ({ stages, currentStageIndex
             <Card key={stage.name} variant="outlined">
               <CardContent>
                 <Box
-                  sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
-                  onClick={() => toggleExpanded(index)}
+                  sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
                 >
                   <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                    {stage.name}
+                    Stage Details
                   </Typography>
-                  <Chip icon={statusIcon(stage.status)} label={statusLabel(stage.status)} size="small" />
+                  <Chip
+                    icon={statusIcon(stage.status)}
+                    label={
+                      stage.status === 'pending'
+                        ? (allPending || index === highlightedPendingIndex ? 'PENDING' : 'Pending')
+                        : statusLabel(stage.status)
+                    }
+                    size="small"
+                  />
                 </Box>
 
                 {stage.status === 'in_progress' && (

@@ -9,6 +9,7 @@ tasks:
     cmds:
       - task: user-service
       - task: account-service
+      - task: account-opening-service
       - task: transaction-service
       - task: transfer-service
       - task: prompt-eval-service
@@ -29,6 +30,12 @@ tasks:
     dir: '{{.ROOT_DIR}}'
     cmds:
       - az acr build --registry {{.ACR_NAME}} --image account-service:{{.TAG}} -f ./src/account-service/Dockerfile .
+
+  account-opening-service:
+    desc: Build account-opening-service container image
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - az acr build --registry {{.ACR_NAME}} --image account-opening-service:{{.TAG}} ./src/account-opening-service/
 
   transaction-service:
     desc: Build transaction-service container image

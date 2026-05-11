@@ -20,11 +20,11 @@ resources:
 - ui-app.yaml
 - prompt-eval-service.yaml
 images:
-- name: ghcr.io/banking-demo/account-service
-  newName: loyalmoose4702acr.azurecr.io/account-service
-  newTag: latest
 - name: ghcr.io/banking-demo/account-opening-service
   newName: loyalmoose4702acr.azurecr.io/account-opening-service
+  newTag: latest
+- name: ghcr.io/banking-demo/account-service
+  newName: loyalmoose4702acr.azurecr.io/account-service
   newTag: latest
 - name: ghcr.io/banking-demo/ai-service
   newName: loyalmoose4702acr.azurecr.io/ai-service

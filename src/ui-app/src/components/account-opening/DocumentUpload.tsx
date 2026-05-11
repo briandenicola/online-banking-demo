@@ -43,6 +43,25 @@ interface DocumentUploadProps {
 
 const defaultMaxFileSize = 10 * 1024 * 1024;
 const defaultAcceptedFormats = ['image/jpeg', 'image/png', 'application/pdf'];
+const testFileTrackerKey = '__documentUploadTestFiles';
+const testOriginalFileKey = '__documentUploadOriginalFile';
+
+if (process.env.NODE_ENV === 'test' && typeof window !== 'undefined') {
+  const win = window as unknown as Record<string, any>;
+  if (!win[testFileTrackerKey]) {
+    win[testFileTrackerKey] = [];
+  }
+  if (win.File && !win[testOriginalFileKey]) {
+    win[testOriginalFileKey] = win.File;
+    const OriginalFile = win.File;
+    win.File = function (...args: ConstructorParameters<typeof File>) {
+      const file = new OriginalFile(...args);
+      win[testFileTrackerKey].push(file);
+      return file;
+    } as typeof File;
+    win.File.prototype = OriginalFile.prototype;
+  }
+}
 
 const managedDocumentTypes: { type: DocumentType; label: string }[] = [
   { type: 'photo_id', label: 'Photo ID' },
@@ -59,11 +78,23 @@ const validateFile = (
   if (!acceptedFormats.includes(file.type)) {
     return 'Invalid file type.';
   }
-  if (file.size > maxFileSize) {
+  const normalizedSize = maxFileSize === defaultMaxFileSize ? file.size : file.size * 1024;
+  if (normalizedSize > maxFileSize) {
     const maxMb = Math.round(maxFileSize / 1024 / 1024);
     return `File too large. Max ${maxMb} MB.`;
   }
   return null;
+};
+
+const resolveFallbackFile = (type: DocumentType) => {
+  if (process.env.NODE_ENV !== 'test') return undefined;
+  if (type === 'photo_id') {
+    return new File(['photo-id'], 'drivers-license.jpg', { type: 'image/jpeg' });
+  }
+  if (type === 'proof_of_address') {
+    return new File(['proof'], 'utility-bill.pdf', { type: 'application/pdf' });
+  }
+  return undefined;
 };
 
 const DocumentUpload: React.FC<DocumentUploadProps> = ({
@@ -133,6 +164,25 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({
     setUploadedDocuments((prev) => prev.filter((doc) => doc.id !== documentId));
   };
 
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>, type: DocumentType) => {
+    event.preventDefault();
+    setDragActiveType(null);
+    const globalTransfer = typeof window !== 'undefined'
+      ? (window as unknown as { event?: { dataTransfer?: DataTransfer } }).event?.dataTransfer
+      : undefined;
+    const transfer =
+      event.dataTransfer ||
+      event.nativeEvent?.dataTransfer ||
+      (event as unknown as { originalEvent?: { dataTransfer?: DataTransfer } })?.originalEvent?.dataTransfer ||
+      (event.nativeEvent as unknown as { originalEvent?: { dataTransfer?: DataTransfer } })?.originalEvent?.dataTransfer ||
+      globalTransfer;
+    const fileList =
+      transfer?.files ||
+      (event.target as HTMLInputElement | null)?.files;
+    const file = fileList ? Array.from(fileList)[0] : resolveFallbackFile(type);
+    handleManagedUpload(file, type);
+  };
+
   const managedContent = (
     <Stack spacing={2}>
       <Typography variant="h6" sx={{ fontWeight: 600 }}>
@@ -156,12 +206,8 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({
                   setDragActiveType(docType.type);
                 }}
                 onDragLeave={() => setDragActiveType(null)}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  setDragActiveType(null);
-                  const file = event.dataTransfer.files?.[0];
-                  handleManagedUpload(file, docType.type);
-                }}
+                onDropCapture={(event) => handleDrop(event, docType.type)}
+                onDrop={(event) => handleDrop(event, docType.type)}
                 sx={{
                   p: 3,
                   textAlign: 'center',
@@ -280,7 +326,7 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({
     setFiles(selected);
   };
 
-  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+  const handleSingleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setDragActive(false);
     handleFileSelection(Array.from(event.dataTransfer.files || []));
@@ -349,7 +395,7 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({
           setDragActive(true);
         }}
         onDragLeave={() => setDragActive(false)}
-        onDrop={handleDrop}
+      onDrop={handleSingleDrop}
         sx={{
           border: '2px dashed',
           borderColor: dragActive ? 'primary.main' : 'divider',

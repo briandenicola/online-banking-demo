@@ -30,6 +30,7 @@
 - Observability namespace keeps kubectl create for its single appinsights-connection-string secret (simpler than a second SecretProviderClass)
 - key_vault_name output added to infra/cloud/outputs.tf for Taskfile consumption
 - Content Understanding Service uses the same three AI private DNS zones (cogservices/openai/services.ai) even when deployed cross-region with a local PE
+- Taskfile.build.yml builds Python services using service-directory contexts; account-opening-service now follows this pattern.
 
 ### 2026-05-08 — KeyVault CSI Driver Secrets Migration
 

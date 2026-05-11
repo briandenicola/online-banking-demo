@@ -932,3 +932,10 @@ Using `create_session()` + `run("ping")` is lightest real connectivity test:
 - Added FastAPI account-opening-service scaffolding at `src/account-opening-service/` (models, repository, state machine, Redis events/consumer base, worker entrypoint).
 - Deployment assets: `deploy/kustomize/base/account-opening-service.yaml` + kustomization image mapping; docker-compose adds account-opening-service + worker.
 - API gateway routing updated: `nginx.conf` now forwards `/api/account-opening` to `account-opening-service:8004`.
+
+### 2026-05 — AI System Prompt Security Hardening
+- Hardened all AI agent system prompts across 5 files for prompt injection resistance.
+- **Chatbot** (`src/chatbot-service/app/main.py`): Added identity anchoring, explicit injection resistance (blocks "ignore previous instructions", "DAN mode", etc.), output boundary (no code/essays/stories), PII echo-back protection, and scope redirect phrasing.
+- **Account-opening agents** (`src/account-opening-service/app/agents/`): Added role anchoring, untrusted-input warnings, and strict output format enforcement to identity_verification.py, compliance_check.py, and provisioning.py.
+- **init_agents.py**: Updated AGENT_SPECS instructions to stay consistent with runtime SYSTEM_PROMPTs (role anchoring + input distrust + output strictness).
+- Pattern: User-facing prompts need the heaviest hardening (identity anchor, injection resistance, output boundary, PII masking). Backend agent prompts need role anchoring, input distrust, and output format enforcement.

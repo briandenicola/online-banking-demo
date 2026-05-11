@@ -17,7 +17,7 @@ import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState('password123');
   const [error, setError] = useState('');
   const { login } = useAuthContext();
   const navigate = useNavigate();
@@ -28,7 +28,9 @@ const Login: React.FC = () => {
     e.preventDefault();
     setError('');
     try {
-      await login(email, password);
+      const loginEmail = email.trim() || 'demo@banking-demo.com';
+      const loginPassword = password || 'password123';
+      await login(loginEmail, loginPassword);
       navigate('/');
     } catch (err: any) {
       const serverMessage = err.response?.data?.message;
@@ -85,6 +87,9 @@ const Login: React.FC = () => {
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
               Sign in to access your accounts securely
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+              Demo credentials: demo@banking-demo.com / password123
             </Typography>
           </Box>
 

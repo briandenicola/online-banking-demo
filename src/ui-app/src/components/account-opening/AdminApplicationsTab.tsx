@@ -5,6 +5,7 @@ import {
   Button,
   Chip,
   CircularProgress,
+  Collapse,
   Dialog,
   DialogActions,
   DialogContent,
@@ -519,12 +520,14 @@ const ApiAdminApplicationsTab: React.FC = () => {
                     </TableRow>
                     <TableRow>
                       <TableCell colSpan={6} sx={{ py: 0 }}>
-                        <Box sx={{ display: isExpanded ? 'block' : 'none', p: 2 }}>
-                          <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                            Agent Stages
-                          </Typography>
-                          {renderStages(application.stages)}
-                        </Box>
+                        <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+                          <Box sx={{ p: 2 }}>
+                            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                              Agent Stages
+                            </Typography>
+                            {renderStages(application.stages)}
+                          </Box>
+                        </Collapse>
                       </TableCell>
                     </TableRow>
                   </React.Fragment>

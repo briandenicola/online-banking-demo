@@ -5,11 +5,7 @@ import {
   Button,
   Card,
   CardContent,
-  FormControl,
   Grid,
-  InputLabel,
-  MenuItem,
-  Select,
   Step,
   StepLabel,
   Stepper,
@@ -129,7 +125,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
   }, [initialData]);
 
   const handleChange = (field: keyof FormState) =>
-    (event: React.ChangeEvent<HTMLInputElement>) => {
+    (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
       const nextValue = event.target.value;
       setValues((prev) => ({ ...prev, [field]: nextValue }));
       if (errors[field]) {
@@ -302,26 +298,23 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
     setActiveStep((prev) => prev - 1);
   };
 
+  const resolveSubmitError = (error: unknown) =>
+    (error as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.detail ||
+    (error as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.message ||
+    'Failed to submit application. Please try again.';
+
   const handleSubmit = async () => {
     if (!validateStep(activeStep)) return;
     const payload = buildPayload();
-    onSubmit?.(payload);
-
-    if (resolvedMode === 'simple') {
-      return;
-    }
-
     setSubmitting(true);
     setSubmitError(null);
     try {
+      await Promise.resolve(onSubmit?.(payload));
+      if (resolvedMode === 'simple') return;
       const application = await createApplication(payload);
       onApplicationCreated?.(application);
     } catch (error: unknown) {
-      const message =
-        (error as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.detail ||
-        (error as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.message ||
-        'Unable to submit application. Please try again.';
-      setSubmitError(message);
+      setSubmitError(resolveSubmitError(error));
     } finally {
       setSubmitting(false);
     }
@@ -595,24 +588,25 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
                 />
               </Grid>
               <Grid size={{ xs: 12, sm: 6 }}>
-                <FormControl fullWidth error={Boolean(errors.employmentStatus)}>
-                  <InputLabel>Employment Status</InputLabel>
-                  <Select
-                    value={values.employmentStatus}
+                  <TextField
+                    fullWidth
+                    select
                     label="Employment Status"
-                    onChange={(event) =>
-                      setValues((prev) => ({ ...prev, employmentStatus: event.target.value }))
-                    }
-                  >
-                    <MenuItem value="employed">Employed</MenuItem>
-                    <MenuItem value="self-employed">Self-Employed</MenuItem>
-                    <MenuItem value="unemployed">Unemployed</MenuItem>
-                    <MenuItem value="retired">Retired</MenuItem>
-                  </Select>
-                </FormControl>
+                  value={values.employmentStatus}
+                  onChange={handleChange('employmentStatus')}
+                  error={Boolean(errors.employmentStatus)}
+                  helperText={errors.employmentStatus}
+                  slotProps={{ select: { native: true } }}
+                >
+                    <option value="" />
+                    <option value="employed">Employed</option>
+                    <option value="self-employed">Self-Employed</option>
+                    <option value="unemployed">Unemployed</option>
+                    <option value="retired">Retired</option>
+                  </TextField>
+                </Grid>
               </Grid>
-            </Grid>
-          )}
+            )}
 
           {resolvedMode === 'simple' && activeStep === 2 && (
             <Grid container spacing={2}>
@@ -637,23 +631,20 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
                 />
               </Grid>
               <Grid size={{ xs: 12, sm: 6 }}>
-                <FormControl fullWidth error={Boolean(errors.accountType)}>
-                  <InputLabel>Account Type</InputLabel>
-                  <Select
-                    value={values.accountType}
-                    label="Account Type"
-                    onChange={(event) =>
-                      setValues((prev) => ({
-                        ...prev,
-                        accountType: event.target.value as ApplicationFormData['accountType'],
-                      }))
-                    }
-                  >
-                    <MenuItem value="checking">Checking</MenuItem>
-                    <MenuItem value="savings">Savings</MenuItem>
-                    <MenuItem value="both">Checking + Savings</MenuItem>
-                  </Select>
-                </FormControl>
+                <TextField
+                  fullWidth
+                  select
+                  label="Account Type"
+                  value={values.accountType}
+                  onChange={handleChange('accountType')}
+                  error={Boolean(errors.accountType)}
+                  helperText={errors.accountType}
+                  slotProps={{ select: { native: true } }}
+                >
+                  <option value="checking">Checking</option>
+                  <option value="savings">Savings</option>
+                  <option value="both">Checking + Savings</option>
+                </TextField>
               </Grid>
             </Grid>
           )}
@@ -669,10 +660,11 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
                   onChange={handleChange('accountType')}
                   error={Boolean(errors.accountType)}
                   helperText={errors.accountType}
+                  slotProps={{ select: { native: true } }}
                 >
-                  <MenuItem value="checking">Checking</MenuItem>
-                  <MenuItem value="savings">Savings</MenuItem>
-                  <MenuItem value="both">Checking + Savings</MenuItem>
+                  <option value="checking">Checking</option>
+                  <option value="savings">Savings</option>
+                  <option value="both">Checking + Savings</option>
                 </TextField>
               </Grid>
               <Grid size={{ xs: 12, sm: 6 }}>

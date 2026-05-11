@@ -69,11 +69,8 @@ const statusMessages: Record<ApplicationStatusType, string> = {
   rejected: 'Unfortunately, your application has been rejected.',
 };
 
-const formatStatusLabel = (status: ApplicationStatusType) => {
-  if (status === 'pending_review') return 'Needs Review';
-  if (status === 'approved' || status === 'rejected') return 'Decision Finalized';
-  return status.replace(/_/g, ' ').toUpperCase();
-};
+const formatStatusLabel = (status: ApplicationStatusType) =>
+  status.replace(/_/g, ' ').toUpperCase();
 
 const ApplicationStatus: React.FC<ApplicationStatusProps> = ({
   applicationId,
@@ -144,13 +141,13 @@ const ApplicationStatus: React.FC<ApplicationStatusProps> = ({
   const banner = useMemo(() => {
     if (!application) return null;
     if (application.status === 'approved') {
-      return { severity: 'success' as const, text: 'Application Approved!' };
+      return { severity: 'success' as const, text: 'Decision finalized.' };
     }
     if (application.status === 'rejected') {
-      return { severity: 'error' as const, text: 'Application Rejected' };
+      return { severity: 'error' as const, text: 'Decision finalized.' };
     }
     if (application.status === 'pending_review') {
-      return { severity: 'warning' as const, text: 'Under Review' };
+      return { severity: 'warning' as const, text: 'Manual check required.' };
     }
     return null;
   }, [application]);
