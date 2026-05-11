@@ -2182,3 +2182,33 @@ Azure has THREE Redis products with different PE DNS zones:
 
 Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com/en-us/azure/private-link/private-endpoint-dns) when adding new private endpoints.
 
+
+---
+
+### Decision: 401 Interceptor Exempts Auth Endpoints
+
+**Author:** Linus (Frontend)  
+**Date:** 2026-05-11  
+**Priority:** P1  
+**Status:** Implemented
+
+**Context:**
+The global axios 401 interceptor in `client.ts` was catching login/register failures and redirecting to `/login` before the UI could display error messages. This prevented proper error messaging for authentication failures.
+
+**Decision:**
+Auth endpoints (`/auth/login`, `/auth/register`, `/users/login`) are now exempted from the 401 redirect interceptor. Errors from these endpoints propagate to the calling component for proper UX handling.
+
+**Implementation:**
+- Updated `src/ui-app/src/api/client.ts` to maintain an exemption list
+- Auth endpoints in the list bypass the 401 redirect logic
+- Login component (`Login.tsx`) extracts and displays server error messages
+- Test coverage added (7/7 passing)
+
+**Impact:**
+- Users now see meaningful error messages on login failure
+- Any new auth-related endpoints must be added to the exemption list in `client.ts`
+- Backend team: if you add new auth routes, flag them so frontend can update the interceptor
+
+**Commits:**
+- dfedc24 — Interceptor exemption implementation
+- 7230b29 — Error handling and test coverage
