@@ -238,6 +238,74 @@ test.describe('Smoke Tests', () => {
     console.log(`[Smoke TX] All ${transactions.length} transactions verified in transaction list`);
   });
 
+  test('@smoke Account lifecycle — savings, transfer, and car purchase', async ({ request }) => {
+    const auth = await apiLogin(request);
+    const headers = { Authorization: `Bearer ${auth.token}` };
+
+    // 1. Create savings account with $500,000
+    const savingsRes = await request.post('/api/accounts', {
+      headers,
+      data: { AccountType: 'savings', InitialBalance: 500000, Currency: 'USD' },
+    });
+    expect(savingsRes.status(), `Create savings failed: ${savingsRes.status()}`).toBe(200);
+    const savings = await savingsRes.json();
+    expect(savings.balance).toBe(500000);
+    console.log(`[Lifecycle] Savings created: id=${savings.id} acct#=${savings.accountNumber} balance=$${savings.balance}`);
+
+    // 2. Create checking account with $0
+    const checkingRes = await request.post('/api/accounts', {
+      headers,
+      data: { AccountType: 'checking', InitialBalance: 0, Currency: 'USD' },
+    });
+    expect(checkingRes.status(), `Create checking failed: ${checkingRes.status()}`).toBe(200);
+    const checking = await checkingRes.json();
+    expect(checking.balance).toBe(0);
+    console.log(`[Lifecycle] Checking created: id=${checking.id} acct#=${checking.accountNumber} balance=$${checking.balance}`);
+
+    // 3. Transfer $150,000 from savings to checking
+    const transferRes = await request.post('/api/transfers', {
+      headers,
+      data: {
+        FromAccountId: savings.id,
+        ToAccountId: checking.id,
+        FromAccountNumber: savings.accountNumber,
+        ToAccountNumber: checking.accountNumber,
+        Amount: 150000,
+        Description: 'Fund checking from savings',
+      },
+    });
+    expect(transferRes.status(), `Transfer failed: ${transferRes.status()}`).toBe(201);
+    console.log('[Lifecycle] Transfer $150,000 savings → checking completed');
+
+    // 4. Create car purchase transaction on checking ($75,000 debit)
+    const txRes = await request.post('/api/transactions', {
+      headers,
+      data: {
+        AccountId: checking.id,
+        Amount: -75000,
+        Type: 'debit',
+        Description: '2014 Kia Optima',
+        Currency: 'USD',
+        AutoCategorize: false,
+      },
+    });
+    expect(txRes.status(), `Transaction failed: ${txRes.status()}`).toBe(201);
+    console.log('[Lifecycle] Transaction "2014 Kia Optima" -$75,000 on checking created');
+
+    // 5. Verify final balances
+    const savingsCheck = await request.get(`/api/accounts/${savings.id}`, { headers });
+    expect(savingsCheck.ok(), `GET savings failed: ${savingsCheck.status()}`).toBeTruthy();
+    const savingsFinal = await savingsCheck.json();
+    expect(savingsFinal.balance, `Savings should be $350,000 (500k - 150k transfer)`).toBe(350000);
+
+    const checkingCheck = await request.get(`/api/accounts/${checking.id}`, { headers });
+    expect(checkingCheck.ok(), `GET checking failed: ${checkingCheck.status()}`).toBeTruthy();
+    const checkingFinal = await checkingCheck.json();
+    expect(checkingFinal.balance, `Checking should be $75,000 (0 + 150k transfer - 75k car)`).toBe(75000);
+
+    console.log(`[Lifecycle] Final balances — Savings: $${savingsFinal.balance} | Checking: $${checkingFinal.balance}`);
+  });
+
   test('@smoke Logout — user can log out', async ({ authenticatedPage }) => {
     const dashboard = new DashboardPage(authenticatedPage);
     await dashboard.navigate();

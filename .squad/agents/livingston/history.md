@@ -199,3 +199,17 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 - Set `AutoCategorize: false` to avoid dependency on AI/Foundry agent availability during smoke tests
 - Transaction list response may be array or paginated object — test handles both `txList` as array and `txList.items`/`txList.transactions` shapes
 - Realistic transaction types: "debit", "credit", "payment", "withdrawal" — matches the `Type` field (max 50 chars) in CreateTransactionRequest DTO
+
+## Account Lifecycle Smoke Test (2026-05-11)
+
+### Added
+- New `@smoke Account lifecycle — savings, transfer, and car purchase` test in smoke.spec.ts
+- Exercises full flow: create savings ($500k) → create checking ($0) → transfer $150k → debit $75k car purchase → verify balances
+- Validates savings ends at $350k and checking ends at $75k after all operations
+
+### Learnings
+- Transfer API requires BOTH account IDs and account numbers (`FromAccountId`, `ToAccountId`, `FromAccountNumber`, `ToAccountNumber`)
+- Account creation returns `accountNumber` field alongside `id` — both needed for transfers
+- Transaction-service owns balance side effects; after POST /api/transactions the balance is updated automatically via internal call to account-service
+- Transfer service also updates balances automatically on both accounts
+- Use negative amounts for debit/purchase transactions (e.g., -75000 for a $75k car purchase)
