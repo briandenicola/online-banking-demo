@@ -1340,3 +1340,22 @@ Smoke tests hit the ai-service directly on port 8002 (configurable via `AI_SERVI
 ## Impact
 - Team should be aware that `AI_SERVICE_URL` must be set in CI/deployed environments if ai-service port 8002 is not directly reachable
 - Consider adding an nginx route for `/api/ai/readyz` if proxy-only access is preferred
+
+---
+
+# Decision: Account-opening Provisioning Auth Token
+
+**Author:** Basher
+**Date:** 2026-05-11
+**Status:** Implemented
+
+## Context
+The account-opening worker must call account-service to create accounts after auto-approval. The account-service endpoints are protected by JWT auth and expect the same issuer/audience configured across services.
+
+## Decision
+The provisioning agent will mint a short-lived JWT using the shared `Jwt__Key`, `Jwt__Issuer`, and `Jwt__Audience` environment variables and include it as a Bearer token when calling `POST /api/accounts`, along with the `X-User-Id` header for internal service identification.
+
+## Consequences
+- Account provisioning does not depend on user-service issuing a token.
+- Requires the worker container to have the JWT secret env vars available (already provided in kustomize).
+- If JWT settings change, the worker must be updated to keep tokens aligned.
