@@ -156,3 +156,11 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 - Removed `nextAccountId` state — IDs are server-generated
 - Both callers updated: `Accounts.tsx` (with error Alert) and `Transactions.tsx` (with console.error fallback)
 - Pattern: always use server response for local state hydration, never construct objects client-side with fake IDs
+
+### 2026-05-11 — Login Error Message Fix
+- **Bug 1:** The 401 interceptor in `client.ts` was redirecting to `/login` on ALL 401s, including login failures — user saw a silent refresh instead of an error message
+- **Fix:** Added auth endpoint check (`/auth/login`, `/auth/register`, `/users/login`); interceptor now only redirects for expired-token 401s, letting auth errors propagate to callers
+- **Bug 2:** `Login.tsx` catch block showed a hardcoded generic message, ignoring the backend's specific error messages (`Invalid credentials`, `Account is locked`, etc.)
+- **Fix:** Extract `err.response?.data?.message` from the axios error; fall back to "Unable to connect" only on network errors (no response at all)
+- **Tests:** Split the old "shows error on failed login" test into two: one verifying server-provided messages render, one verifying the network-error fallback
+- **Pattern:** Global interceptors should always exempt auth endpoints — callers need to handle their own auth errors for UX
