@@ -1821,3 +1821,299 @@ Added US12 to the backlog spec as the next planned user story following security
 - Plan US13: Role/permission mapping per provider (e.g., "Entra group → app role")
 - Plan for Session management across providers (e.g., logout from one provider affects user session)
 
+---
+
+# Session: 2026-05-11 (Smart Account Opening KYC Spec)
+
+---
+
+# Decision: Spec 006 — Smart Account Opening Multi-Agent KYC Pipeline
+
+**Date:** 2026-05-11  
+**Author:** Danny (Lead/Architect)  
+**Priority:** P1  
+**Status:** Spec Complete — Awaiting Implementation
+
+---
+
+## Context
+
+Brian requested a comprehensive feature spec for "a cool feature that can showcase a multi-agent workflow that leverages maybe Content Understanding and Fabric with FabricIQ or at least a couple agents with tools." He approved the Smart Account Opening (KYC) pipeline concept from `docs/future-ai-capabilities.md` Section 1.
+
+The goal is to create a showcase feature demonstrating:
+- Azure AI Content Understanding for document processing
+- Multi-agent orchestration with event-driven coordination
+- Microsoft Agent Framework (agent-framework-foundry) for AI agents
+- Human-in-the-loop admin review for compliance
+- Real-time UI showing pipeline progress
+
+---
+
+## Decision: Python/FastAPI for account-opening-service
+
+**Decision:** Implement the new service in Python/FastAPI (not C#/.NET).
+
+**Rationale:**
+1. **Team pattern:** All 3 existing AI-heavy services are Python (ai-service, chatbot-service, budget-service)
+2. **SDK ecosystem:** Azure AI Content Understanding has stronger Python SDK support (`azure-ai-documentintelligence`)
+3. **Agent framework:** `agent-framework-foundry` is already proven in chatbot-service and ai-service
+4. **Consistency:** Port range 800x is Python AI agents; 600x is .NET banking services
+5. **Skills distribution:** Basher has demonstrated Python expertise across all AI services
+
+---
+
+## Decision: Event-Driven Multi-Agent Orchestration via Redis Streams
+
+**Decision:** Agents communicate via Redis Streams events (not direct HTTP calls).
+
+**Architectural Pattern:**
+```
+User uploads documents → document_uploaded event
+  ↓
+Agent 1: Document Extraction (Content Understanding)
+  → publishes document_extracted event
+  ↓
+Agent 2: Identity Verification (Foundry GPT-5.4-mini)
+  → publishes identity_verified event
+  ↓
+Agent 3: Compliance/KYC (Foundry GPT-5.4-mini)
+  → publishes compliance_checked event
+  ↓
+Agent 4: Account Provisioning (Orchestrator, Foundry GPT-5.4-mini)
+  → publishes application_decision event
+  → creates user + account if approved
+```
+
+**Rationale:**
+1. **Decoupling:** Agents don't depend on each other's availability; failures don't cascade
+2. **Extensibility:** Adding a 5th agent (e.g., fraud detection) requires no changes to existing agents
+3. **Audit trail:** Every event is persisted in Redis Streams; full pipeline replay possible
+4. **Async by default:** Document extraction can take 5-10 seconds; agents don't block each other
+5. **Existing pattern:** ai-service already uses Redis Streams for transaction events (`banking-events` stream)
+
+**Trade-offs:**
+- **Eventual consistency:** Application state advances asynchronously (acceptable; UI polls for status)
+- **Debugging complexity:** Distributed tracing required to follow event flow (OTEL already in place)
+- **No immediate RPC response:** Can't return final decision in single HTTP call (mitigated by polling API)
+
+---
+
+## Decision: Azure AI Content Understanding for Document Extraction
+
+**Decision:** Use Azure AI Document Intelligence (Content Understanding) for document processing, not custom OCR models.
+
+**Rationale:**
+1. **Prebuilt models:** `prebuilt-idDocument` handles driver's licenses, passports, IDs without training
+2. **Structured output:** Returns JSON with name, DOB, address, expiry, document number fields
+3. **High accuracy:** Microsoft-trained models on millions of documents
+4. **Zero training cost:** No need to collect/label training data
+5. **Future-proof:** Model improvements from Microsoft benefit us automatically
+
+**Models used:**
+- `prebuilt-idDocument` — Photo ID (driver's license, passport, national ID)
+- `prebuilt-layout` — Proof of address (utility bill, bank statement)
+
+**Fallback strategy:** If extraction confidence < 80%, flag application for human review (admin manually verifies documents).
+
+---
+
+## Decision: Microsoft Agent Framework (agent-framework-foundry) for AI Agents
+
+**Decision:** Use `agent-framework-foundry` package (NOT `azure-ai-projects` SDK directly).
+
+**Rationale:**
+1. **Team standard:** All existing AI agents use agent-framework-foundry (chatbot-service, ai-service)
+2. **Consistency:** Same API surface, same model access pattern (`FoundryChatClient`)
+3. **Structured output:** JSON mode ensures parseable, consistent agent responses
+4. **Already proven:** chatbot-service migration (2026-05-07) validated the v2.x API pattern
+
+**Agent responsibilities:**
+- **Identity Verification Agent:** Cross-reference extracted data vs. form data, flag mismatches
+- **Compliance/KYC Agent:** Risk tier assessment (low/medium/high), simulated sanctions screening
+- **Account Provisioning Agent:** Final decision orchestrator, creates user + account on approval
+
+**Model:** `gpt-5.4-mini` (same as chatbot/ai-service; faster + cheaper than gpt-4o)
+
+---
+
+## Decision: Human-in-the-Loop via Admin Review Queue
+
+**Decision:** Applications flagged by agents (mismatched data, medium/high risk) route to admin review queue; auto-approve only low-risk, fully verified applications.
+
+**Rationale:**
+1. **Trust building:** Users trust AI decisions more when humans review edge cases
+2. **Regulatory compliance:** KYC regulations often require human oversight for high-risk accounts
+3. **Gradual automation:** Start with conservative auto-approval rules; expand over time as confidence grows
+4. **Existing infrastructure:** Admin panel already exists (AdminPage.tsx); just add new tab
+
+**Auto-approval criteria (ALL must be true):**
+- `identity_verified = true` (confidence ≥ 0.8)
+- `kycStatus = 'approved'`
+- `riskTier = 'low'`
+- No flags from any agent
+
+**Route to review if:**
+- Any agent flags a concern
+- `riskTier = 'medium' | 'high'`
+- `kycStatus = 'review'`
+- Identity verification confidence < 0.8
+
+**Auto-reject if:**
+- `identity_verified = false` (name/DOB/address mismatch)
+- `kycStatus = 'rejected'` (compliance violation)
+
+---
+
+## Decision: Cosmos DB Schema — Partition Key `/userId`
+
+**Decision:** Use `/userId` as partition key for `account-applications` container.
+
+**Rationale:**
+1. **Query pattern:** Admin queries by userId ("show me all applications for user X")
+2. **Audit trail:** User-centric compliance (retrieve all applications + decisions for regulatory audit)
+3. **Scalability:** Even distribution if users open accounts at similar rates
+
+**Trade-off:** Submitted applications (userId=null) require a placeholder partition key or separate container. 
+
+**Mitigation:** Use `id` as partition key value until userId assigned (on approval), then update. Cosmos DB supports partition key updates via cross-partition copy.
+
+---
+
+## Decision: Real-Time UI via Polling (not WebSocket)
+
+**Decision:** React UI polls `GET /api/account-opening/applications/{id}` every 2 seconds to update agent progress.
+
+**Rationale:**
+1. **Simplicity:** No WebSocket server, no connection management
+2. **Acceptable latency:** Agents take 5-15 seconds each; 2s polling is responsive enough
+3. **Resilience:** Polling self-heals from network errors; WebSocket requires reconnection logic
+4. **Phase 2:** Can migrate to WebSocket or Server-Sent Events for sub-second updates
+
+**Polling strategy:**
+- Start polling when user uploads documents
+- Stop polling when `status = 'approved' | 'rejected' | 'pending_review'`
+- Exponential backoff if 5 consecutive errors
+
+---
+
+## Decision: Audit Trail — Append-Only, Every Agent Decision Logged
+
+**Decision:** Every agent action appends to `auditTrail[]` array in Cosmos DB with timestamp, agent name, action, reasoning.
+
+**Rationale:**
+1. **Regulatory compliance:** KYC regulations require explainability (no black-box decisions)
+2. **Debugging:** Trace why application was approved/rejected/flagged
+3. **Analytics:** Measure agent accuracy (false positives, false negatives)
+4. **Immutability:** Append-only ensures audit trail can't be tampered with
+
+**Schema:**
+```json
+{
+  "timestamp": "2026-05-11T10:15:23Z",
+  "agent": "identity-verification",
+  "action": "verified",
+  "details": {
+    "extractedName": "John Doe",
+    "formName": "John Doe",
+    "match": true,
+    "confidence": 0.95,
+    "reasoning": "Name matches exactly, DOB matches, address matches with minor formatting differences"
+  }
+}
+```
+
+---
+
+## Decision: Phase 2 — FabricIQ Data Agent Integration
+
+**Decision:** Defer FabricIQ Data Agent to Phase 2 (post-MVP).
+
+**Rationale:**
+1. **Focus:** MVP demonstrates multi-agent orchestration + Content Understanding (Brian's request)
+2. **Dependencies:** Fabric workspace provisioning + semantic model design is non-trivial
+3. **Value:** Analytics layer adds value after we have real application data (not just synthetic)
+
+**Phase 2 scope:**
+- Microsoft Fabric semantic model over `account-applications` Cosmos container
+- Data Agent for natural language queries ("What's the auto-approval rate by risk tier?")
+- Operations Agent to monitor false positive rates, auto-tune risk thresholds
+- MCP server for agent interoperability
+
+---
+
+## Infrastructure Requirements
+
+**New Terraform resources:**
+1. Azure Blob Storage (Standard LRS) with `account-opening-documents` container
+2. Azure AI Document Intelligence (S0)
+3. Cosmos DB container `account-applications` (400 RU/s autoscale)
+4. Managed Identity `account-opening-workload-identity` with roles:
+   - `Storage Blob Data Contributor`
+   - `Cognitive Services User`
+   - `Cosmos DB Built-in Data Contributor`
+   - `Cognitive Services OpenAI User`
+5. AKS Federated Identity Credential for `account-opening-sa` ServiceAccount
+
+**Existing infrastructure reused:**
+- Redis Streams (for event-driven orchestration)
+- Foundry endpoint + `gpt-5.4-mini` model (already provisioned)
+- Istio VirtualService (add `/api/account-opening` route)
+- JWT authentication (existing middleware)
+- Admin panel (AdminPage.tsx — add new tab)
+
+---
+
+## Success Metrics
+
+- **Auto-approval rate:** >70% of applications auto-approved without human review
+- **False positive rate:** <10% of auto-approved applications flagged retroactively
+- **Pipeline latency:** 95th percentile <30 seconds from upload to decision
+- **Document extraction accuracy:** >95% confidence on structured fields (name, DOB, address)
+- **Admin review efficiency:** 50% reduction in manual data entry (pre-filled from extraction)
+
+---
+
+## Risk Mitigation
+
+| Risk | Mitigation |
+|------|-----------|
+| **Document extraction failure** | Graceful degradation: flag for manual review, retry with exponential backoff |
+| **Agent hallucination** | Structured output (JSON mode), confidence thresholds (reject if <0.8) |
+| **Redis Stream lag** | Consumer group tracking, dead-letter queue for failed events, monitoring |
+| **Blob Storage outage** | Retry logic, fallback to admin manual upload, status page notification |
+| **Compliance drift** | Periodic rule reviews, A/B testing via prompt-eval-service, red teaming (Phase 2) |
+
+---
+
+## Related Decisions
+
+- `.squad/decisions.md` line 694-729: Chatbot SDK migration to azure-ai-projects 2.x (establishes agent-framework-foundry pattern)
+- `.squad/decisions.md` line 78-86: Redis Streams migration (establishes event-driven pattern for inter-service communication)
+- `docs/adr/005-foundry-agents-over-direct-openai.md` line 13: Use Azure AI Foundry agents via agent-framework-foundry (project standard)
+
+---
+
+## Next Steps
+
+1. **Spec review:** Brian reviews `specs/006-smart-account-opening/spec.md`
+2. **Implementation planning:** Basher creates tasks.md with T1-T15 breakdown
+3. **Infrastructure:** Add Terraform resources (Blob Storage, Document Intelligence, Cosmos container)
+4. **Service scaffold:** Create `src/account-opening-service/` with FastAPI + agent-framework-foundry
+5. **Agent implementation:** 4 agents (Document Extraction, Identity Verification, Compliance, Provisioning)
+6. **React UI:** `AccountOpeningPage.tsx`, `AgentPipeline.tsx`, admin review tab
+7. **E2E testing:** Playwright tests for full pipeline (via Livingston)
+8. **Phase 2:** FabricIQ Data Agent integration (post-MVP)
+
+---
+
+## Files Created
+
+- `specs/006-smart-account-opening/spec.md` (24KB, 500+ lines)
+- `.squad/agents/danny/history.md` (appended learning entry)
+- `.squad/decisions/inbox/danny-kyc-spec.md` (this decision)
+
+---
+
+**Decision:** Approved by Danny (Lead/Architect)  
+**Awaiting:** Brian review + Basher implementation planning
+
