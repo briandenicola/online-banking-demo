@@ -1655,3 +1655,169 @@ The existing `docs/future-ai-capabilities.md` spike covers multi-agent orchestra
 
 ---
 
+
+# Decision: Switch cert-manager from HTTP-01 to DNS-01 (Azure DNS)
+
+**Date:** 2026-05-10  
+**Author:** Basher  
+**Status:** Implemented  
+
+## Context
+HTTP-01 ACME challenges require DNS already pointing to the Istio ingress gateway AND a VirtualService hack to route solver pod traffic through managed Istio. This creates a chicken-and-egg problem during fresh provisioning.
+
+## Decision
+Switch to DNS-01 challenges via Azure DNS. cert-manager creates a TXT record in the Azure DNS zone to prove domain ownership — no HTTP traffic required.
+
+## Implementation
+- ClusterIssuer uses `dns01.azureDNS` with workload identity
+- Dedicated managed identity (`{aks-name}-certmgr-mi`) with `DNS Zone Contributor` role on the DNS zone
+- Federated credential binds to `system:serviceaccount:cert-manager:cert-manager`
+- New Taskfile task `infra:tls:identity` bootstraps the identity (run once)
+- Removed `_tls:wait-for-solver` and `_tls:route-solver` tasks
+- New env vars: `DNS_ZONE_NAME`, `DNS_ZONE_RG`, `AZURE_SUBSCRIPTION_ID`, `CERT_MANAGER_CLIENT_ID`
+
+## Trade-offs
+- **Pro:** Works before DNS is pointed, no VirtualService hack, simpler flow
+- **Pro:** No dependency on Istio routing for cert issuance
+- **Con:** Requires Azure DNS zone to exist (external dependency, not in Terraform)
+- **Con:** Additional managed identity + RBAC setup (one-time via `infra:tls:identity`)
+
+## Impact
+- `tasks/Taskfile.cloud.yml` — simplified `infra:tls`, new `infra:tls:identity`
+- `cluster-config/cert-manager/clusterissuer.yaml` — dns01 solver
+- `.env.example` — 4 new variables
+
+---
+
+# Decision: TLS Setup — 3-Phase Flow (HTTP-01 Restored)
+
+**Date:** 2026-05-10  
+**Author:** Basher  
+**Status:** Implemented  
+
+## Context
+The TLS setup was a monolithic `infra:tls` task that used DNS-01 validation (requiring Azure DNS zone, managed identity, workload identity federation). Brian explicitly rejected DNS-01 and requested a clean 3-phase separation using HTTP-01.
+
+## Decision
+Restructured TLS into 3 phases:
+
+1. **Phase 1 — `infra:config` (via `_infra:cert-manager`):** Installs cert-manager, applies HTTP-01 ClusterIssuer, applies HTTP-only gateway, outputs ingress IP.
+2. **Phase 2 — Manual DNS:** User creates A record pointing domain to ingress IP.
+3. **Phase 3 — `tls:enable`:** Applies Certificate, waits for ACME solver, routes challenge traffic via VirtualService, waits for issuance, cleans up, applies TLS gateway.
+
+## Changes
+- `clusterissuer.yaml`: Changed from DNS-01 (azureDNS) to HTTP-01 (`class: istio`)
+- `Taskfile.cloud.yml`: Removed `infra:tls` (monolithic), `infra:tls:identity` (DNS-01 specific). Added `_infra:cert-manager` (Phase 1), `tls:enable` (Phase 3), `_tls:wait-for-solver`, `_tls:route-solver`, `_tls:cleanup-solver`.
+- No changes to: `certificate.yaml`, gateway YAMLs.
+
+## Rationale
+- Separation of concerns: infra setup, DNS, and cert issuance are independent concerns with different timing
+- HTTP-01 is simpler — no managed identity, no Azure DNS zone permissions, no workload identity federation
+- The ACME solver VirtualService routing hack is needed because managed Istio doesn't auto-route challenge traffic
+
+## Impact
+- Removed env vars: `AZURE_SUBSCRIPTION_ID`, `DNS_ZONE_RG`, `DNS_ZONE_NAME`, `CERT_MANAGER_CLIENT_ID` (no longer needed for TLS)
+- `CUSTOM_DOMAIN` still required (in `.env`)
+- Users must manually configure DNS between Phase 1 and Phase 3
+
+---
+
+# Decision: US11 — Security Audit & Engineering Best Practices Review
+
+**Date:** 2026-05-08  
+**Author:** Danny (Lead/Architect)  
+**Status:** Approved  
+
+## Context
+US11 was requested to be added to the backlog spec as a follow-on to US10 (Private Networking & Advanced AKS/Istio). This story captures the need for comprehensive security and code quality assessments across the entire stack.
+
+## Decision
+Added **US11: Security Audit & Engineering Best Practices Review** to `specs/001-backlog-implementation-plan/spec.md` after US10.
+
+### Story Structure
+- **Actor**: Platform Architect  
+- **Goal**: Comprehensive security and code quality audits across the entire application stack  
+- **Outcome**: Project maintains production-grade standards and serves as a reference implementation  
+
+### Scope Coverage
+The story explicitly calls out:
+- **Security**: Dependency vulnerability scanning (SBOM, Trivy), secret management, auth patterns, API security, input validation, OWASP compliance, container image hardening, network security  
+- **Engineering Best Practices**: Code quality metrics, test coverage, error handling, logging/observability, CI/CD security posture  
+
+### Services In Scope
+- All 4 language stacks: C#/.NET, Python/FastAPI, Go, React/TypeScript  
+- Infrastructure layer (Terraform, Kubernetes/Istio)  
+
+## Rationale
+1. **Logical Progression**: US11 follows US10 as a validation/audit layer — after hardening (US2) and private networking (US10) are in place, a comprehensive security review ensures effectiveness  
+2. **Production Readiness**: A production-grade reference implementation requires both implementation *and* verification — this story formalizes the verification piece  
+3. **Multi-Dimensional Coverage**: The scope balances security (vulnerabilities, authentication, attack surface) with engineering quality (code metrics, test coverage, patterns) — both are non-negotiable for a showcase/reference project  
+4. **Style Consistency**: Mirrors existing US stories — clear actor, SMART goal, measurable outcome, scoped to concrete deliverables  
+
+## Implications
+- This story will likely generate a detailed audit checklist (dependency scan results, code quality baseline, security assessment report)  
+- May surface refactoring work or hardening recommendations  
+- Serves as input for future P3-P5 stories (e.g., specific vulnerability remediation, performance optimization)  
+
+---
+
+# Decision: US12 — Entra ID & GitHub OAuth Multi-Provider Authentication
+
+**Date:** 2026-05-08  
+**Author:** Danny (Lead/Architect)  
+**Status:** Architecture Review Phase  
+
+## Overview
+Added US12 to the backlog spec as the next planned user story following security audit (US11). Focuses on extending the authentication system to support multiple identity providers (Entra ID, GitHub) while maintaining backward compatibility with local accounts.
+
+## Key Architectural Decisions
+
+### 1. Identity Linking Strategy
+**Decision:** Use email address as the canonical identity linker across all providers.
+- **Rationale:** Email is universally present in Entra ID and GitHub profiles, and is a standard claim in OAuth tokens. This supports user convenience (same email = same account) without requiring additional federated identifier tracking.
+- **Implementation:** When a user signs in with a new provider, check for existing user by email. If found, link the new provider identity to that account.
+
+### 2. Token Validation Architecture
+**Decision:** Implement dual-pipeline token validation in user-service:
+- Local JWT tokens (current RSA key rotation)
+- External tokens (Entra ID + GitHub)
+- **Rationale:** Allows coexistence of local and federated auth without architectural refactoring. Token validation chains can be plugged independently.
+- **Issuer Verification:** Each provider token includes issuer (`iss`) claim; validate against registered issuer URIs per provider.
+
+### 3. Frontend Login UI
+**Decision:** Multi-option login page with provider buttons (Entra, GitHub, Local).
+- **Rationale:** Users immediately see all available options; no surprises. Local account path remains unbroken for existing users.
+- **Sign-Up Flow:** Same page offers signup link; local signup continues; OAuth providers auto-register on first login if email not found.
+
+### 4. OAuth Secrets Management
+**Decision:** Store Entra ID and GitHub OAuth client IDs/secrets in Azure KeyVault.
+- **Rationale:** Aligns with constitutional principle (secrets via CSI, never in K8s Secrets). Frontend retrieves config (non-secret: redirect URIs, client IDs public) from environment; backend uses injected secrets.
+
+### 5. Provider Re-Authentication & Linking
+**Decision:** Support user-initiated provider linking from profile settings (e.g., "Link your GitHub account").
+- **Rationale:** Allows users to accumulate multiple login methods over time without losing account context.
+- **Security:** Require email verification when linking new provider to prevent account takeover via email spoofing.
+
+### 6. Testing Scope
+**Decision:** E2E tests using Playwright covering:
+- Sign-up & sign-in per provider (Entra, GitHub, local)
+- Account linking (same email across providers)
+- Provider switching in same session
+- OAuth redirect flows and token exchange
+- **Rationale:** Ensures provider interoperability and edge cases (e.g., email conflict) are handled safely.
+
+## Out of Scope (US12)
+- SAML support (only Entra ID OAuth, not SAML IdP mode)
+- Multi-factor authentication (can be layered separately)
+- Account deprovisioning workflows (user-initiated deletion of provider link)
+- Mobile app OAuth flows (Playwright E2E covers web only)
+
+## Impact on Existing Services
+- **user-service (C#/.NET):** Extend with OAuth validation middleware, provider service layer
+- **frontend (React):** Add provider selection UI, redirect handling, token storage strategy
+- **Infrastructure:** No new Azure resources; OAuth apps registered in Entra ID tenant and GitHub org
+
+## Next Steps (Post-US12)
+- Plan US13: Role/permission mapping per provider (e.g., "Entra group → app role")
+- Plan for Session management across providers (e.g., logout from one provider affects user session)
+
