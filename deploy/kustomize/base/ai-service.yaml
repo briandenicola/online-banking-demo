@@ -27,7 +27,7 @@ spec:
         fsGroup: 1000
       initContainers:
       - name: provision-agents
-        image: ghcr.io/banking-demo/ai-service:1.0.0
+        image: loyalmoose4702acr.azurecr.io/ai-service:latest
         imagePullPolicy: Always
         command: ["python", "-m", "app.init_agents"]
         env:

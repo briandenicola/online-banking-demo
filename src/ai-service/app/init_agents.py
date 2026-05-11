@@ -24,7 +24,7 @@ logging.basicConfig(
 logger = logging.getLogger("init_agents")
 
 API_VERSION = "v1"
-TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"
+TOKEN_SCOPE = "https://ai.azure.com/.default"
 
 # ---------------------------------------------------------------------------
 # Agent definitions (must match what FoundryAgent expects at runtime)
