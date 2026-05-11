@@ -11,3 +11,9 @@ resource "azurerm_storage_account" "main" {
   shared_access_key_enabled     = false
   public_network_access_enabled = false
 }
+
+resource "azurerm_storage_container" "account_opening_documents" {
+  name                  = "account-opening-documents"
+  storage_account_name  = azurerm_storage_account.main.name
+  container_access_type = "private"
+}

@@ -83,3 +83,11 @@ resource "azurerm_cosmosdb_sql_container" "chat_sessions" {
 
   default_ttl = 2592000 # 30 days
 }
+
+resource "azurerm_cosmosdb_sql_container" "account_applications" {
+  name                = "account-applications"
+  resource_group_name = azurerm_resource_group.this.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  database_name       = azurerm_cosmosdb_sql_database.banking.name
+  partition_key_paths = ["/id"]
+}

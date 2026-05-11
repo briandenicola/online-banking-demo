@@ -184,7 +184,37 @@ resource "azurerm_private_endpoint" "ai" {
   }
 }
 
-# 6. Storage Account (blob)
+# 6. Content Understanding Service (cross-region AI Services)
+resource "azurerm_private_endpoint" "content_understanding" {
+  name                = "${local.resource_name}-cus-pe"
+  location            = azurerm_resource_group.this.location
+  resource_group_name = azurerm_resource_group.this.name
+  subnet_id           = azurerm_subnet.private_endpoints.id
+
+  depends_on = [azapi_resource.content_understanding]
+
+  private_service_connection {
+    name                           = "${local.resource_name}-cus-psc"
+    private_connection_resource_id = data.azurerm_cognitive_account.content_understanding.id
+    subresource_names              = ["account"]
+    is_manual_connection           = false
+  }
+
+  private_dns_zone_group {
+    name = "cus-dns"
+    private_dns_zone_ids = [
+      azurerm_private_dns_zone.zones["cogservices"].id,
+      azurerm_private_dns_zone.zones["openai"].id,
+      azurerm_private_dns_zone.zones["services_ai"].id,
+    ]
+  }
+
+  tags = {
+    AppName = local.resource_name
+  }
+}
+
+# 7. Storage Account (blob)
 resource "azurerm_private_endpoint" "storage" {
   name                = "${local.resource_name}-storage-pe"
   location            = azurerm_resource_group.this.location
@@ -208,7 +238,7 @@ resource "azurerm_private_endpoint" "storage" {
   }
 }
 
-# 7. Storage Account (queue)
+# 8. Storage Account (queue)
 resource "azurerm_private_endpoint" "storage_queue" {
   name                = "${local.resource_name}-storage-queue-pe"
   location            = azurerm_resource_group.this.location
@@ -232,7 +262,7 @@ resource "azurerm_private_endpoint" "storage_queue" {
   }
 }
 
-# 8. Storage Account (table)
+# 9. Storage Account (table)
 resource "azurerm_private_endpoint" "storage_table" {
   name                = "${local.resource_name}-storage-table-pe"
   location            = azurerm_resource_group.this.location
@@ -256,7 +286,7 @@ resource "azurerm_private_endpoint" "storage_table" {
   }
 }
 
-# 9. Storage Account (file)
+# 10. Storage Account (file)
 resource "azurerm_private_endpoint" "storage_file" {
   name                = "${local.resource_name}-storage-file-pe"
   location            = azurerm_resource_group.this.location

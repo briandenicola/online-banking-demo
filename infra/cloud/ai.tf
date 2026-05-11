@@ -49,6 +49,46 @@ resource "azurerm_role_assignment" "current_user_cognitive_services_openai_user"
   principal_id         = data.azurerm_client_config.current.object_id
 }
 
+resource "azapi_resource" "content_understanding" {
+  type                      = "Microsoft.CognitiveServices/accounts@2025-04-01-preview"
+  name                      = local.cus_name
+  parent_id                 = azurerm_resource_group.this.id
+  location                  = "westus"
+  schema_validation_enabled = false
+
+  body = {
+    kind = "AIServices"
+    sku = {
+      name = "S0"
+    }
+    identity = {
+      type = "SystemAssigned"
+    }
+    properties = {
+      disableLocalAuth       = true
+      allowProjectManagement = true
+      customSubDomainName    = local.cus_name
+      publicNetworkAccess    = "Disabled"
+      userOwnedStorageAccounts = [
+        {
+          id = azurerm_storage_account.main.id
+        }
+      ]
+    }
+  }
+
+  response_export_values = [
+    "properties.endpoint",
+    "identity.principalId"
+  ]
+}
+
+data "azurerm_cognitive_account" "content_understanding" {
+  depends_on          = [azapi_resource.content_understanding]
+  name                = local.cus_name
+  resource_group_name = azurerm_resource_group.this.name
+}
+
 resource "azapi_resource" "gpt54_mini" {
   type      = "Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview"
   name      = "gpt-5.4-mini"

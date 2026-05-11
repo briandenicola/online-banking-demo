@@ -47,6 +47,13 @@ resource "azurerm_role_assignment" "banking_ai_project_manager" {
   principal_id         = azurerm_user_assigned_identity.banking_services.principal_id
 }
 
+# RBAC: Storage Blob Data Contributor
+resource "azurerm_role_assignment" "banking_storage_blob_data_contributor" {
+  scope                = azurerm_storage_account.main.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azurerm_user_assigned_identity.banking_services.principal_id
+}
+
 # RBAC: Cosmos DB Built-in Data Contributor
 resource "azurerm_cosmosdb_sql_role_assignment" "banking_cosmos_contributor" {
   resource_group_name = azurerm_resource_group.this.name
