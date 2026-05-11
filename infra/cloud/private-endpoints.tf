@@ -156,9 +156,15 @@ resource "azurerm_private_endpoint" "ai" {
   resource_group_name = azurerm_resource_group.this.name
   subnet_id           = azurerm_subnet.private_endpoints.id
 
+  depends_on = [
+    azapi_resource.ai_foundry_project,
+    azapi_resource.gpt54_mini,
+    azapi_resource.text_embedding,
+  ]
+
   private_service_connection {
     name                           = "${local.resource_name}-ai-psc"
-    private_connection_resource_id = azapi_resource.this.id
+    private_connection_resource_id = data.azurerm_cognitive_account.openai.id
     subresource_names              = ["account"]
     is_manual_connection           = false
   }
