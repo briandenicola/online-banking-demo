@@ -29,6 +29,7 @@ import ChatIcon from '@mui/icons-material/Chat';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import LogoutIcon from '@mui/icons-material/Logout';
 import PersonIcon from '@mui/icons-material/Person';
+import AddBusinessIcon from '@mui/icons-material/AddBusiness';
 import { useAuthContext } from '../contexts/AuthContext';
 
 interface AppShellProps {
@@ -41,6 +42,7 @@ const navItems = [
   { label: 'Transfers', path: '/transfers', icon: <SwapHorizIcon /> },
   { label: 'Transactions', path: '/transactions', icon: <ReceiptLongIcon /> },
   { label: 'Chat', path: '/chat', icon: <ChatIcon /> },
+  { label: 'Open Account', path: '/account-opening', icon: <AddBusinessIcon /> },
 ];
 
 const AppShell: React.FC<AppShellProps> = ({ children }) => {

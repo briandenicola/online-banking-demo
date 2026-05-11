@@ -12,6 +12,7 @@ import Transfers from './pages/Transfers';
 import Chat from './pages/Chat';
 import AdminPage from './pages/AdminPage';
 import Settings from './pages/Settings';
+import AccountOpeningPage from './pages/AccountOpeningPage';
 import Login from './pages/Login';
 import RegisterPage from './pages/RegisterPage';
 import AppShell from './components/AppShell';
@@ -40,6 +41,7 @@ const AppContent: React.FC = () => {
         <Route path="/transfers" element={<Transfers />} />
         <Route path="/chat" element={<Chat />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/account-opening" element={<AccountOpeningPage />} />
         {isAdmin && <Route path="/admin" element={<AdminPage />} />}
         <Route path="/login" element={<Navigate to="/" />} />
         <Route path="*" element={<Navigate to="/" />} />
