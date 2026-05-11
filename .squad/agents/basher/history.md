@@ -845,3 +845,25 @@ the hostname, not the child project name. The project name only appears in the `
 - **Linus (Frontend):** Created AdminUserManagementTab.tsx for user lock/unlock/reset-password — requires Basher's admin endpoints (`/api/admin/users`, `PUT /api/admin/users/{id}/lock|unlock|reset-password`, `DELETE /api/admin/users/{id}`)
 - **Livingston (QA):** Created smoke test suite (15 total @smoke tests) — now post-deployment verification gate
 - **Turk (Infrastructure):** Fixed AI Services PE DNS zones (now 3 zones) — all AI Foundry services resolve through PE
+
+### 2026-05-11 — Init container for Foundry agent provisioning
+
+**Problem:** `FoundryAgent` from `agent_framework_foundry` requires agents to be pre-registered in Azure AI Foundry. The `risk-assessor` and `transaction-categorizer` agents were returning 404.
+
+**Fix:** Created a K8s init container that provisions both prompt agents before the main ai-service starts.
+
+**Approach:**
+- `src/ai-service/app/init_agents.py` — standalone script using `httpx` + `DefaultAzureCredential` to call Foundry REST API directly
+- REST API pattern: GET `/agents/{name}/versions/{version}?api-version=v1` (check), POST `/agents/{name}/versions?api-version=v1` (create)
+- Uses `PromptAgentDefinition` body with `kind: "prompt"`, model, and instructions
+- Idempotent: check-then-create, safe to re-run
+- `deploy/kustomize/base/ai-service.yaml` — added `provision-agents` init container with same image, env vars, service account, and secrets-store volume
+
+**Key decisions:**
+- Used REST API via `httpx` instead of `azure-ai-projects` SDK (per project directive: only agent-framework packages)
+- System prompts duplicated in init script to keep it standalone — the main container loads them from class constants
+- Init container shares workload identity for seamless Entra auth
+
+**Key files:**
+- `src/ai-service/app/init_agents.py`
+- `deploy/kustomize/base/ai-service.yaml`
