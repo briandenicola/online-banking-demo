@@ -175,6 +175,15 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 - **Self-delete prevention:** Reads `currentUser.id` from AuthContext and disables lock/delete buttons when row matches current admin
 - **API endpoints consumed:** `GET /admin/users`, `PUT /admin/users/{id}/lock|unlock|reset-password`, `DELETE /admin/users/{id}`, `GET /admin/login-audits?limit=N`
 
+### 2026-05-11 — Foundry Connectivity Status Tab
+- Added "System Health" tab (index 5) to AdminPage with Foundry connectivity checking
+- **Component created:** `src/ui-app/src/components/AdminFoundryStatusTab.tsx`
+- Calls `GET /api/ai/api/admin/foundry-status` (AI service) and `GET /api/chatbot/api/admin/foundry-status` (Chatbot service)
+- Parses `agents` map from response, displays each agent with status chip (ok/error/degraded)
+- Overall status Alert summarizes health; per-agent errors shown inline
+- On-demand only (button click), not auto-polling — avoids unnecessary Foundry calls
+- **Pattern:** Kept consistent with existing tab extraction pattern (AdminEvalTab, AdminUserManagementTab, AdminLoginAuditTab)
+
 ## Cross-Agent Coordination (2026-05-11)
 
 ### Related Team Updates

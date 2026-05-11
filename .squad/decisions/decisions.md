@@ -1216,3 +1216,127 @@ Both `UserService` (Cosmos DB) and `InMemoryUserService` now check if the user s
 
 - `src/user-service/Services/UserService.cs`
 - `src/user-service/Services/InMemoryUserService.cs`
+
+---
+
+# Decision: Foundry Agent Provisioning via Init Container
+
+**Author:** Basher  
+**Date:** 2026-05-11  
+**Status:** Proposed  
+**Scope:** ai-service deployment
+
+## Context
+
+`FoundryAgent` from `agent_framework_foundry` connects to pre-registered agents in Azure AI Foundry. The `risk-assessor` and `transaction-categorizer` agents were failing with 404 because they hadn't been provisioned.
+
+## Decision
+
+Added a Kubernetes init container (`provision-agents`) that runs before the main ai-service container. It uses `httpx` + `DefaultAzureCredential` to call the Foundry REST API directly, checking if each agent version exists and creating it if missing.
+
+### Why REST API instead of SDK
+
+- Project directive prohibits `azure-ai-projects` SDK usage
+- `agent-framework-foundry` (FoundryAgent) only *connects* to agents — it has no creation API
+- The REST API is simple: GET to check, POST to create — `httpx` is already in the Dockerfile
+
+### Why init container instead of startup logic
+
+- Separates provisioning concern from application logic
+- Fails fast — pod won't start if agents can't be provisioned
+- Runs once per deployment, not on every restart
+
+## Impact
+
+- New file: `src/ai-service/app/init_agents.py`
+- Modified: `deploy/kustomize/base/ai-service.yaml` (added initContainers block)
+- No changes to Dockerfile (httpx already installed)
+
+---
+
+# Decision: Foundry connectivity validation uses lightweight "ping" prompt
+
+**Author:** Basher
+**Date:** 2026-05-11
+**Status:** Implemented
+
+## Context
+Admin Panel needs to verify Foundry agent connectivity for both ai-service (transaction-categorizer, risk-assessor) and chatbot-service (FinancialAdvisor).
+
+## Decision
+Both endpoints use `create_session()` + `run("ping")` to test connectivity. This sends a real request through the full Foundry pipeline (credential → endpoint → agent) but with minimal payload. The response content is discarded — we only care that it succeeds.
+
+## Rationale
+- A simple health flag (`agent_ready`) only confirms initialization, not current reachability
+- Checking credentials alone doesn't validate the agent endpoint
+- A "ping" prompt is the lightest call that exercises the full path
+- Both endpoints return 200 with status JSON (never 5xx) so the Admin Panel can always parse the response
+
+## Trade-offs
+- Each check costs one Foundry API call (minimal token usage)
+- ai-service checks two agents sequentially — could parallelize if latency becomes an issue
+
+## Affected services
+- ai-service (`/api/admin/foundry-status`)
+- chatbot-service (`/api/admin/foundry-status`)
+
+---
+
+# User Directive: Exception to "never use azure-ai-projects SDK" rule
+
+**Date:** 2026-05-11T12:44:00Z
+**By:** Brian (via Copilot)
+
+## Directive
+The Foundry agent init container MAY use azure-ai-projects (AIProjectClient) for agent provisioning, since agent-framework-foundry's FoundryAgent can only connect to existing agents, not create them.
+
+## Rationale
+User request — the init container is a one-shot provisioner, not runtime code. The SDK policy applies to application runtime (chatbot, ai-service), not infrastructure bootstrapping.
+
+---
+
+# Decision: Foundry Status Tab Design
+
+**Author:** Linus (Frontend)
+**Date:** 2026-05-11
+**Status:** Implemented
+
+## Context
+Brian requested a "Validate Foundry Connectivity" feature in the Admin Panel to check AI agent health.
+
+## Decision
+- Added as a new "System Health" tab (tab index 5) rather than embedding in an existing tab
+- On-demand checking only (button click) — no auto-polling to avoid unnecessary Foundry API load
+- Created as a standalone component (`AdminFoundryStatusTab.tsx`) consistent with other tab components
+
+## API Contract Assumed
+- `GET /api/ai/api/admin/foundry-status` → `{ status, agents: { "agent-name": { status, error? } } }`
+- `GET /api/chatbot/api/admin/foundry-status` → same shape
+- Backend team should confirm these endpoints exist and match this response shape
+
+## Impact
+- No backend changes required if endpoints already exist
+- If response shape differs, `parseAgents()` in the component has a fallback path
+
+---
+
+# Decision: Foundry Agent Smoke Tests Use Direct Port Access
+
+**Author:** Livingston (Tester/QA)
+**Date:** 2026-05-11
+**Status:** Implemented
+
+## Context
+The ai-service exposes `/readyz` at its root, but nginx only proxies `/api/admin/*` and `/api/anomaly/*` paths to the ai-service. The `/readyz` endpoint is not reachable through the reverse proxy.
+
+## Decision
+Smoke tests hit the ai-service directly on port 8002 (configurable via `AI_SERVICE_URL` env var) for the readyz health check. The `/api/admin/transactions` categorization test goes through the proxy as normal since `/api/admin/*` is routed.
+
+## Rationale
+- Exposing `/readyz` through the proxy would require nginx config changes and isn't needed for production traffic
+- Direct port access is appropriate for infrastructure health checks in smoke tests
+- `AI_SERVICE_URL` env var allows override for deployed environments where port 8002 isn't directly reachable
+
+## Impact
+- Team should be aware that `AI_SERVICE_URL` must be set in CI/deployed environments if ai-service port 8002 is not directly reachable
+- Consider adding an nginx route for `/api/ai/readyz` if proxy-only access is preferred

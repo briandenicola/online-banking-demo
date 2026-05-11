@@ -867,3 +867,17 @@ the hostname, not the child project name. The project name only appears in the `
 **Key files:**
 - `src/ai-service/app/init_agents.py`
 - `deploy/kustomize/base/ai-service.yaml`
+
+### 2026-05 — Foundry connectivity validation endpoints
+
+**Task:** Added `GET /api/admin/foundry-status` endpoints to ai-service and chatbot-service for Admin Panel Foundry connectivity checks.
+
+**ai-service approach:** Endpoint looks up `foundry-risk` and `foundry-categorizer` from `_analyzer_pipeline`, sends a minimal "ping" prompt via `create_session()` + `run()` to each FoundryAgent. Returns per-agent status (`ok`/`error`) with overall status (`ok`/`degraded`/`error`). Never crashes — all exceptions caught and reported.
+
+**chatbot-service approach:** Same pattern but for the single `FinancialAdvisor` agent. Checks SDK availability and agent readiness before attempting connectivity test. Returns agent name, status, and message.
+
+**Key pattern:** Using `create_session()` + `run("ping")` is the lightest real connectivity test — it validates credential, endpoint, and agent reachability without processing real data.
+
+**Key files:**
+- `src/ai-service/app/main.py` — `foundry_status()` endpoint at `/api/admin/foundry-status`
+- `src/chatbot-service/app/main.py` — `foundry_status()` endpoint at `/api/admin/foundry-status`
