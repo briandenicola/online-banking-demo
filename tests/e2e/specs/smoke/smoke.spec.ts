@@ -421,7 +421,7 @@ test.describe('Smoke Tests', () => {
       const application = await createResponse.json();
 
       // Upload photo ID document
-      const pdfPath = path.resolve(__dirname, '../../../../fixtures/sample-documents/john-smith/photo_id.pdf');
+      const pdfPath = path.resolve(__dirname, '../../../fixtures/sample-documents/john-smith/photo_id.pdf');
       const pdfBuffer = fs.readFileSync(pdfPath);
 
       const uploadEndpoint = `${baseEndpoint}/${application.id}/documents`;
