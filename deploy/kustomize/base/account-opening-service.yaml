@@ -220,8 +220,7 @@ spec:
         - configMapRef:
             name: banking-demo-config
         readinessProbe:
-          httpGet:
-            path: /healthz
+          tcpSocket:
             port: 5000
           initialDelaySeconds: 5
           periodSeconds: 10
