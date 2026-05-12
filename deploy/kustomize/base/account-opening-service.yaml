@@ -88,8 +88,6 @@ spec:
         - name: secrets-store
           mountPath: "/mnt/secrets-store"
           readOnly: true
-        - name: upload-data
-          mountPath: "/app/data"
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: false
@@ -100,8 +98,6 @@ spec:
           readOnly: true
           volumeAttributes:
             secretProviderClass: banking-secrets-provider
-      - name: upload-data
-        emptyDir: {}
 ---
 apiVersion: apps/v1
 kind: Deployment
