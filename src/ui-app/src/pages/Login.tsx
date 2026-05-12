@@ -15,27 +15,48 @@ import {
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 
+const isDemoMode = process.env.REACT_APP_DEMO_MODE === 'true';
+
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('password123');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
   const { login } = useAuthContext();
   const navigate = useNavigate();
   const location = useLocation();
   const successMessage = (location.state as any)?.message || '';
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const validate = (): boolean => {
+    const errors: { email?: string; password?: string } = {};
+    if (!email.trim()) errors.email = 'Email is required';
+    if (!password) errors.password = 'Password is required';
+    setFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const performLogin = async (loginEmail: string, loginPassword: string) => {
     setError('');
+    setFieldErrors({});
     try {
-      const loginEmail = email.trim() || 'demo@banking-demo.com';
-      const loginPassword = password || 'password123';
       await login(loginEmail, loginPassword);
       navigate('/');
     } catch (err: any) {
       const serverMessage = err.response?.data?.message;
       setError(serverMessage || 'Unable to connect. Please try again later.');
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!validate()) return;
+    await performLogin(email.trim(), password);
+  };
+
+  const handleDemoLogin = async () => {
+    setEmail('demo@banking-demo.com');
+    setPassword('password123');
+    await performLogin('demo@banking-demo.com', 'password123');
   };
 
   return (
@@ -88,9 +109,11 @@ const Login: React.FC = () => {
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
               Sign in to access your accounts securely
             </Typography>
-            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-              Demo credentials: demo@banking-demo.com / password123
-            </Typography>
+            {isDemoMode && (
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                Demo mode: use the Demo Login button below
+              </Typography>
+            )}
           </Box>
 
           <Box component="form" onSubmit={handleSubmit}>
@@ -107,10 +130,12 @@ const Login: React.FC = () => {
               fullWidth
               label="Email Address"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => { setEmail(e.target.value); setFieldErrors((prev) => ({ ...prev, email: undefined })); }}
               autoComplete="email"
               autoFocus
               variant="outlined"
+              error={!!fieldErrors.email}
+              helperText={fieldErrors.email}
             />
             <TextField
               margin="normal"
@@ -119,9 +144,11 @@ const Login: React.FC = () => {
               label="Password"
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => { setPassword(e.target.value); setFieldErrors((prev) => ({ ...prev, password: undefined })); }}
               autoComplete="current-password"
               variant="outlined"
+              error={!!fieldErrors.password}
+              helperText={fieldErrors.password}
             />
 
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
@@ -144,6 +171,18 @@ const Login: React.FC = () => {
             >
               Sign In
             </Button>
+
+            {isDemoMode && (
+              <Button
+                fullWidth
+                variant="outlined"
+                size="small"
+                onClick={handleDemoLogin}
+                sx={{ mb: 2, py: 1, color: 'text.secondary', borderColor: 'divider' }}
+              >
+                Demo Login
+              </Button>
+            )}
 
             <Divider sx={{ my: 2 }}>
               <Typography variant="caption" color="text.secondary">

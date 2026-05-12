@@ -42,20 +42,33 @@ describe('Login Page', () => {
     expect(screen.getByText(/Welcome to Secure Bank/i)).toBeInTheDocument();
   });
 
-  test('has pre-filled demo credentials', () => {
+  test('initializes with empty fields', () => {
     renderLogin();
 
     const emailInput = screen.getByLabelText(/Email Address/i) as HTMLInputElement;
     const passwordInput = screen.getByLabelText(/Password/i) as HTMLInputElement;
 
     expect(emailInput.value).toBe('');
-    expect(passwordInput.value).toBe('password123');
+    expect(passwordInput.value).toBe('');
   });
 
-  test('shows demo credentials hint', () => {
+  test('shows validation errors when submitting empty form', async () => {
     renderLogin();
 
-    expect(screen.getByText(/Demo credentials/i)).toBeInTheDocument();
+    const button = screen.getByRole('button', { name: /Sign In/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(screen.getByText('Email is required')).toBeInTheDocument();
+      expect(screen.getByText('Password is required')).toBeInTheDocument();
+    });
+  });
+
+  test('does not show demo hint when REACT_APP_DEMO_MODE is not set', () => {
+    renderLogin();
+
+    expect(screen.queryByText(/Demo mode/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Demo Login/i })).not.toBeInTheDocument();
   });
 
   test('shows server error message on failed login', async () => {
@@ -65,6 +78,9 @@ describe('Login Page', () => {
     });
 
     renderLogin();
+
+    fireEvent.change(screen.getByLabelText(/Email Address/i), { target: { value: 'bad@example.com' } });
+    fireEvent.change(screen.getByLabelText(/Password/i), { target: { value: 'wrongpass' } });
 
     const button = screen.getByRole('button', { name: /Sign In/i });
     fireEvent.click(button);
@@ -80,6 +96,9 @@ describe('Login Page', () => {
 
     renderLogin();
 
+    fireEvent.change(screen.getByLabelText(/Email Address/i), { target: { value: 'user@example.com' } });
+    fireEvent.change(screen.getByLabelText(/Password/i), { target: { value: 'somepass' } });
+
     const button = screen.getByRole('button', { name: /Sign In/i });
     fireEvent.click(button);
 
@@ -88,21 +107,24 @@ describe('Login Page', () => {
     });
   });
 
-  test('calls login API on form submit', async () => {
+  test('calls login API on form submit with entered credentials', async () => {
     const apiClient = require('../api/client').default;
     apiClient.post.mockResolvedValueOnce({
-      data: { token: 'mock-token', userId: '1', username: 'demo@banking-demo.com' }
+      data: { token: 'mock-token', userId: '1', username: 'test@example.com' }
     });
 
     renderLogin();
+
+    fireEvent.change(screen.getByLabelText(/Email Address/i), { target: { value: 'test@example.com' } });
+    fireEvent.change(screen.getByLabelText(/Password/i), { target: { value: 'mypassword' } });
 
     const button = screen.getByRole('button', { name: /Sign In/i });
     fireEvent.click(button);
 
     await waitFor(() => {
       expect(apiClient.post).toHaveBeenCalledWith('/auth/login', {
-        username: 'demo@banking-demo.com',
-        password: 'password123'
+        username: 'test@example.com',
+        password: 'mypassword'
       });
     });
   });
