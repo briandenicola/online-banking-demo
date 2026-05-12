@@ -40,6 +40,20 @@ resource "azurerm_role_assignment" "banking_cognitive_services_openai_user" {
   principal_id         = azurerm_user_assigned_identity.banking_services.principal_id
 }
 
+# RBAC: Cognitive Services User on Content Understanding
+resource "azurerm_role_assignment" "banking_cognitive_services_user_cus" {
+  scope                = azapi_resource.content_understanding.id
+  role_definition_name = "Cognitive Services User"
+  principal_id         = azurerm_user_assigned_identity.banking_services.principal_id
+}
+
+# RBAC: CUS system identity needs blob read access for document processing
+resource "azurerm_role_assignment" "cus_storage_blob_reader" {
+  scope                = azurerm_storage_account.main.id
+  role_definition_name = "Storage Blob Data Reader"
+  principal_id         = azapi_resource.content_understanding.output.identity.principalId
+}
+
 # RBAC: Azure AI Project Manager (required for AI Foundry Agents API)
 resource "azurerm_role_assignment" "banking_ai_project_manager" {
   scope                = azapi_resource.ai_foundry_project.id

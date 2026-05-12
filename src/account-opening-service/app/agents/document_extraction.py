@@ -55,9 +55,11 @@ class DocumentExtractionConsumer(AgentConsumer):
             endpoint=cus_endpoint.rstrip("/"),
             credential=self._credential,
         )
-        self._client.update_defaults(
-            model_deployments=model_deployments or {ANALYZER_NAME: ANALYZER_NAME}
-        )
+        if model_deployments:
+            try:
+                self._client.update_defaults(model_deployments=model_deployments)
+            except Exception as exc:
+                logger.warning("Failed to set CUS model deployments", error=str(exc))
 
     async def process_event(self, event_data: dict) -> None:
         if event_data.get("eventType") != "document_uploaded":
