@@ -2703,3 +2703,1108 @@ If you think you're going to fix something — especially something that's been 
 
 **Applies To:** All code changes that challenge existing conventions or patterns.
 
+
+---
+
+# Security Audit Session — 2026-05-12T18:41
+
+## Overview
+Full-team security audit covering infrastructure, .NET services, Python/Go services, frontend, and dependencies. 136 total findings (16 CRITICAL, 37 HIGH, 46 MEDIUM, 25 LOW, 12 INFO) with 25 GitHub issues created (#25–#49) for critical and high-priority items.
+
+**Session Log:** `.squad/log/2026-05-12T18-41-security-audit.md`
+
+---
+
+# Infrastructure Security Audit — Decision Record
+
+**Date:** 2026-05-12
+**Author:** Danny (Lead/Architect)
+**Issue:** #18 — Deep Security & Best Practice Analysis
+**Domain:** Infrastructure
+
+## Summary
+
+Comprehensive infrastructure security audit of the online-banking-demo project across Terraform, Kubernetes, Istio, Docker, CI/CD, and secrets management. Total findings: **27** (3 CRITICAL, 7 HIGH, 10 MEDIUM, 5 LOW, 2 INFO).
+
+---
+
+## CRITICAL Findings (3)
+
+### [CRITICAL] Hardcoded JWT Secret in docker-compose.yml
+**File:** docker-compose.yml:28,48,67,89,160,179
+**Issue:** The JWT signing key `YourSuperSecretKeyForJWTTokenGeneration12345` is hardcoded as a default fallback value across 6 service definitions via `${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}`.
+**Risk:** If `.env` is missing or `JWT_KEY` is unset, all services use a publicly-known secret. Anyone reading this repo can forge valid JWTs and authenticate as any user. This is a banking application — token forgery means full account takeover.
+**Recommendation:** Remove the default fallback entirely. Require `JWT_KEY` to be set explicitly. Add a startup check or compose `required` constraint. Move to a generated secret in `.env` that is never committed.
+
+### [CRITICAL] No Istio PeerAuthentication — mTLS Not Enforced
+**File:** cluster-config/istio/ (missing file)
+**Issue:** No `PeerAuthentication` resource exists anywhere in the cluster-config or deploy directories. Without an explicit STRICT mTLS policy, Istio defaults to PERMISSIVE mode, meaning services accept both plaintext and mTLS traffic.
+**Risk:** An attacker with pod access can intercept service-to-service traffic in plaintext. In a banking app, this exposes JWT tokens, transaction data, and PII in transit within the cluster.
+**Recommendation:** Create a mesh-wide `PeerAuthentication` with `mtls.mode: STRICT` in the `istio-system` namespace, and a namespace-level policy in `banking-demo`.
+
+### [CRITICAL] No Istio AuthorizationPolicy — No Service-Level Access Control
+**File:** cluster-config/istio/ (missing file)
+**Issue:** No `AuthorizationPolicy` resources exist. Every service can call every other service without restriction.
+**Risk:** Lateral movement: if any pod is compromised, the attacker can reach all services (user-service, transaction-service, etc.) with no barriers. Banking services should only accept calls from authorized sources.
+**Recommendation:** Create deny-by-default `AuthorizationPolicy` per service, allowing only expected callers (e.g., only transfer-service → account-service, only ui-app → user-service via gateway).
+
+---
+
+## HIGH Findings (7)
+
+### [HIGH] NSG Allows Inbound 0.0.0.0/0 on HTTP/HTTPS
+**File:** infra/cloud/networking.tf:27-49
+**Issue:** The AKS NSG has two rules allowing inbound traffic from `source_address_prefix = "*"` (all IPs) on ports 80 and 443. The same NSG is also associated with the agents subnet (line 75-78).
+**Risk:** The AKS and agents subnets are open to the entire internet. For a banking app, ingress should be restricted to known IP ranges, an Application Gateway, or Azure Front Door.
+**Recommendation:** Replace `"*"` source with specific IP ranges, an Azure Front Door service tag, or an Application Gateway subnet. Add a DenyAllInbound rule as the final rule.
+
+### [HIGH] Key Vault Public Network Access Enabled
+**File:** infra/cloud/keyvault.tf:12
+**Issue:** `public_network_access_enabled = true`. Although network_acls default to Deny with an IP allowlist, public access should be fully disabled when private endpoints exist.
+**Risk:** Key Vault is accessible over the public internet (gated by IP). Misconfigured IP rules or a compromised CI pipeline could expose secrets.
+**Recommendation:** Set `public_network_access_enabled = false`. Access exclusively via private endpoint.
+
+### [HIGH] Storage Account Public Network Access Enabled
+**File:** infra/cloud/storage.tf:12
+**Issue:** `public_network_access_enabled = true` with no network_acls defined. The storage account holding account-opening documents is publicly accessible.
+**Risk:** Account-opening documents (PII: identity documents, addresses) could be exfiltrated if container permissions are misconfigured.
+**Recommendation:** Set `public_network_access_enabled = false`. Use private endpoint and managed identity access only.
+
+### [HIGH] No Kubernetes NetworkPolicies
+**File:** deploy/kustomize/ (missing)
+**Issue:** No `NetworkPolicy` resources exist in any kustomize manifest. All pods can communicate freely at the network level.
+**Risk:** Even with Istio, NetworkPolicies provide defense-in-depth at the CNI level. Without them, a compromised pod has unrestricted network access within the cluster.
+**Recommendation:** Create default-deny NetworkPolicies per namespace, then allow only required ingress/egress per service.
+
+### [HIGH] No PodDisruptionBudgets for Banking Services
+**File:** deploy/kustomize/ (missing)
+**Issue:** No `PodDisruptionBudget` resources exist for any service. All services run with `replicas: 1`.
+**Risk:** During node maintenance or cluster upgrades, all replicas of a service can be evicted simultaneously, causing downtime for a banking application.
+**Recommendation:** Set `replicas: 2+` for critical services and create PDBs with `minAvailable: 1`.
+
+### [HIGH] Azure Client Secret in docker-compose Environment
+**File:** docker-compose.yml:118,139,202
+**Issue:** `AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}` is passed as an environment variable to chatbot-service, ai-service, and budget-service.
+**Risk:** Service principal secrets in environment variables can leak via process listings, container inspection, or crash dumps. Additionally, `.azure` directory is volume-mounted (lines 123,145,207).
+**Recommendation:** For local dev, use `az login` + DefaultAzureCredential without client secrets. For production, use Workload Identity (already configured in K8s manifests).
+
+### [HIGH] readOnlyRootFilesystem: false on 9 Containers
+**File:** deploy/kustomize/base/budget-service.yaml:58, chatbot-service.yaml:69, ai-service.yaml:57,111, ui-app.yaml:31, account-opening-service.yaml:93,158,212, prompt-eval-service.yaml:81
+**Issue:** 9 container security contexts explicitly set `readOnlyRootFilesystem: false`, allowing the container filesystem to be writable.
+**Risk:** Writable filesystems allow attackers to download tools, modify binaries, or persist malware after container compromise.
+**Recommendation:** Set `readOnlyRootFilesystem: true` and use `emptyDir` volumes for temp directories (e.g., `/tmp`, Python `__pycache__`).
+
+---
+
+## MEDIUM Findings (10)
+
+### [MEDIUM] No `capabilities: drop: [ALL]` on Any Container
+**File:** deploy/kustomize/base/*.yaml (all service manifests)
+**Issue:** No container security context includes `capabilities: { drop: [ALL] }`. While `allowPrivilegeEscalation: false` is set, Linux capabilities are not dropped.
+**Risk:** Containers retain default capabilities (e.g., NET_RAW for network sniffing, SYS_CHROOT). Banking containers need zero capabilities.
+**Recommendation:** Add `capabilities: { drop: [ALL] }` to every container securityContext. Add back only specific capabilities if needed.
+
+### [MEDIUM] No seccompProfile on Any Pod/Container
+**File:** deploy/kustomize/base/*.yaml (all service manifests)
+**Issue:** No pod or container sets `seccompProfile: { type: RuntimeDefault }`.
+**Risk:** Without seccomp, containers can make any system call. RuntimeDefault blocks ~50 dangerous syscalls.
+**Recommendation:** Add `seccompProfile: { type: RuntimeDefault }` to all pod security contexts.
+
+### [MEDIUM] ACR Public Network Access Enabled
+**File:** infra/cloud/acr.tf:11
+**Issue:** `public_network_access_enabled = true` on the Premium ACR. Private endpoint exists but public access remains open.
+**Risk:** Container images can be pulled/pushed over the public internet. In a supply-chain attack, a compromised CI pipeline could push malicious images.
+**Recommendation:** Set `public_network_access_enabled = false`. AKS pulls via private endpoint.
+
+### [MEDIUM] Istio Gateway Accepts All Hosts (Wildcard)
+**File:** cluster-config/istio/gateway/istio-ingress-gateway.yaml:14-15
+**Issue:** The non-TLS gateway uses `hosts: ["*"]`, accepting traffic for any hostname.
+**Risk:** Host header attacks, DNS rebinding, and unintended traffic routing. The TLS variant correctly uses `${CUSTOM_DOMAIN}`.
+**Recommendation:** Replace wildcard with the specific domain. Use the TLS gateway exclusively.
+
+### [MEDIUM] VirtualService Wildcard Host
+**File:** cluster-config/istio/gateway/default-ingress.yaml:8-9
+**Issue:** `hosts: ["*"]` on the VirtualService routes all hostnames to banking services.
+**Risk:** Combined with the wildcard gateway, any traffic reaching the ingress is routed to banking services regardless of hostname.
+**Recommendation:** Set `hosts: ["${CUSTOM_DOMAIN}"]` to match only legitimate requests.
+
+### [MEDIUM] No Terraform Remote Backend
+**File:** infra/cloud/providers.tf (missing backend block)
+**Issue:** No `backend {}` block configured. State defaults to local filesystem.
+**Risk:** Local state is unencrypted, not versioned, and has no locking. Multiple developers can corrupt state. State contains secrets (connection strings, keys).
+**Recommendation:** Configure `azurerm` backend with a storage account, encryption at rest, and state locking.
+
+### [MEDIUM] .dockerignore Missing .env Exclusion
+**File:** .dockerignore (entire file)
+**Issue:** `.env` files are not excluded from Docker build context. The `.env` file contains `CUSTOM_DOMAIN` and potentially other secrets.
+**Risk:** `.env` could be copied into container images, leaking secrets into registries.
+**Recommendation:** Add `.env`, `*.env`, `.env.*` to .dockerignore.
+
+### [MEDIUM] event-processor Dockerfile Uses alpine:latest
+**File:** src/event-processor/Dockerfile:16
+**Issue:** The runtime stage uses `alpine:latest` — an unpinned, mutable tag.
+**Risk:** Builds are non-reproducible. A compromised Alpine release could inject malware into production containers.
+**Recommendation:** Pin to a specific version (e.g., `alpine:3.21`).
+
+### [MEDIUM] Provider Version Constraints Too Loose
+**File:** infra/cloud/providers.tf:11,15,19
+**Issue:** Providers use `~> 4`, `~> 2`, `~> 3` — allowing minor version bumps that could introduce breaking changes.
+**Risk:** Automatic minor version updates can break Terraform plans unexpectedly.
+**Recommendation:** Pin to patch level (e.g., `~> 4.14.0`) or use exact versions for production infrastructure.
+
+### [MEDIUM] No Security Headers in Istio VirtualService
+**File:** cluster-config/istio/gateway/default-ingress.yaml
+**Issue:** No response headers configured (HSTS, X-Frame-Options, Content-Security-Policy, X-Content-Type-Options).
+**Risk:** Missing HSTS allows downgrade attacks. Missing CSP enables XSS. Missing X-Frame-Options enables clickjacking. These are required for banking applications.
+**Recommendation:** Add an Istio `EnvoyFilter` or use VirtualService response headers to set HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy.
+
+---
+
+## LOW Findings (5)
+
+### [LOW] CI Workflow Actions Pinned by Tag, Not SHA
+**File:** .github/workflows/squad-heartbeat.yml:32,55,107; squad-issue-assign.yml:17,20; squad-triage.yml:16,19; sync-squad-labels.yml:18,21
+**Issue:** All GitHub Actions use tag references (`@v4`, `@v7`) instead of SHA pinning.
+**Risk:** Tag-based pinning is vulnerable to tag mutation attacks. A compromised action owner could push malicious code to an existing tag.
+**Recommendation:** Pin actions by full SHA (e.g., `actions/checkout@<sha>`). Use Dependabot to auto-update.
+
+### [LOW] Resource Tagging Inconsistent
+**File:** infra/cloud/storage.tf (missing tags), vs. infra/cloud/cosmos.tf (has tags)
+**Issue:** Some resources have `tags = { AppName = local.resource_name }` while others (storage account) have no tags.
+**Risk:** Inconsistent tagging makes cost attribution, compliance auditing, and resource lifecycle management difficult.
+**Recommendation:** Apply consistent tags to all resources via a `default_tags` block in the provider or a local.
+
+### [LOW] OTEL Collector Exposes Diagnostic Endpoints
+**File:** deploy/kustomize/observability/otel-collector.yaml:100-138
+**Issue:** OTEL collector configuration exposes zpages and pprof debug endpoints.
+**Risk:** Debug endpoints leak internal telemetry data and performance profiles. Should be disabled in production.
+**Recommendation:** Remove zpages/pprof extensions in production overlays.
+
+### [LOW] Flux GitSource Uses Placeholder URL
+**File:** deploy/flux/repository.yaml:6-10
+**Issue:** Git repository URL appears to use shell-style placeholders that may not resolve.
+**Risk:** Flux cannot sync if the URL is not properly templated, but this is more of a deployment readiness issue than security.
+**Recommendation:** Ensure Flux GitRepository URL is properly configured during deployment.
+
+### [LOW] prevent_deletion_if_contains_resources = false
+**File:** infra/cloud/providers.tf:26-28
+**Issue:** Resource group deletion protection is disabled.
+**Risk:** Accidental `terraform destroy` could delete the resource group and all banking infrastructure without safeguards.
+**Recommendation:** Set to `true` for production environments.
+
+---
+
+## INFO Findings (2)
+
+### [INFO] All Dockerfiles Use Non-Root Users — Good
+**File:** All 11 Dockerfiles in src/*/Dockerfile
+**Observation:** Every Dockerfile sets a USER directive (appuser, $APP_UID, nobody, nginx). This is excellent practice.
+
+### [INFO] SecretProviderClass Properly Configured
+**File:** deploy/kustomize/base/secret-provider-class.yaml
+**Observation:** KeyVault CSI driver is properly configured with Workload Identity. Secrets (jwt-key, openai-endpoint, redis-connection-string, appinsights-connection-string) are projected as K8s secrets. Services reference them via `secretKeyRef`. This is the correct pattern.
+
+---
+
+## Priority Recommendations
+
+1. **Immediate (CRITICAL):** Remove hardcoded JWT secret default, add PeerAuthentication STRICT, add AuthorizationPolicies
+2. **This Sprint (HIGH):** Disable public access on KeyVault/Storage/ACR, add NetworkPolicies, fix readOnlyRootFilesystem, add PDBs
+3. **Next Sprint (MEDIUM):** Add security headers, capabilities drop ALL, seccomp profiles, remote state backend, pin alpine version
+4. **Backlog (LOW):** SHA-pin CI actions, consistent tagging, remove debug endpoints
+
+---
+
+# .NET Services Security & Code Quality Audit
+
+**Author:** Basher (Backend Dev)  
+**Date:** 2026-05-12  
+**Issue:** #18 — Deep Security & Best Practice Analysis  
+**Scope:** All .NET services (user-service, account-service, transaction-service, transfer-service, shared)
+
+---
+
+## Executive Summary
+
+Audited 6 .NET service directories (30+ `.cs` files). Found **4 CRITICAL**, **12 HIGH**, **15 MEDIUM**, and **12 LOW** severity issues. The most urgent findings are authorization bypasses, fail-open balance validation, exception message leakage to clients, and secret-based authentication fallbacks. No NoSQL injection or dangerous deserialization patterns were found.
+
+---
+
+## CRITICAL Findings
+
+### [CRITICAL] Auth Bypass via X-User-Id Header Forgery
+**File:** `src/account-service/Controllers/AccountsController.cs:28-29`  
+**Issue:** User identity falls back to `X-User-Id` request header when JWT claim is missing. Any client can forge this header to impersonate another user.  
+**Risk:** Complete account takeover — attacker can create accounts, update balances as any user.  
+**Recommendation:** Remove header fallback entirely. Identity must come exclusively from validated JWT claims. If internal service-to-service calls need user context, use mTLS + a service token with explicit delegation.
+
+### [CRITICAL] Unprotected Balance Update Endpoint
+**File:** `src/account-service/Controllers/AccountsController.cs:93-105`  
+**Issue:** `POST /api/accounts/{id}/balance` allows any authenticated user to modify any account's balance with no ownership check.  
+**Risk:** Direct financial manipulation — any authenticated user can credit/debit arbitrary accounts.  
+**Recommendation:** Restrict to service-to-service calls only (via role/policy). Never expose direct balance manipulation to end users. Add ownership verification.
+
+### [CRITICAL] Fail-Open Balance Validation in Transaction Service
+**File:** `src/transaction-service/Services/TransactionService.cs:213-216`  
+**File:** `src/transaction-service/Services/InMemoryTransactionService.cs:209`  
+**Issue:** When balance validation call to account-service fails (network error, timeout, etc.), the transaction proceeds anyway: `"Balance validation failed...allowing transaction to proceed"`.  
+**Risk:** In a banking system, this enables overdrafts and potentially unlimited withdrawals during service disruptions.  
+**Recommendation:** Fail closed. If balance cannot be validated, reject the transaction. Add circuit breaker for repeated failures.
+
+### [CRITICAL] Anonymous Admin Promotion Endpoint
+**File:** `src/user-service/Controllers/AdminController.cs:33-47`  
+**Issue:** `POST /api/admin/promote` is `[AllowAnonymous]`. When `adminCount == 0`, anyone can promote any user to admin without authentication.  
+**Risk:** If admin accounts are deleted or in a fresh deployment, any internet user can grant themselves admin access.  
+**Recommendation:** Remove `[AllowAnonymous]`. Use a one-time setup token, CLI-only bootstrap, or environment-gated provisioning flow.
+
+---
+
+## HIGH Findings
+
+### [HIGH] IDOR — No Ownership Checks on Resource Access
+**Files:**
+- `src/account-service/Controllers/AccountsController.cs:79-90` — `GET /number/{accountNumber}` returns any account
+- `src/transaction-service/Controllers/TransactionsController.cs:48-63` — `GET /{id}` and `GET /account/{accountId}` return any user's data
+- `src/transfer-service/Controllers/TransfersController.cs:43-52` — `GET /{id}` returns any transfer
+**Issue:** Authenticated users can access any other user's accounts, transactions, and transfers by guessing IDs.  
+**Risk:** Complete information disclosure of financial data across all customers.  
+**Recommendation:** Every read endpoint must verify the authenticated user owns the requested resource before returning data.
+
+### [HIGH] Exception Messages Returned to Clients
+**Files:**
+- `src/account-service/Controllers/AccountsController.cs:104` — `return BadRequest(new { Message = ex.Message })`
+- `src/user-service/Controllers/AuthController.cs:38` — `return BadRequest(new { Message = ex.Message })`
+- `src/user-service/Controllers/UsersController.cs:109` — `return Conflict(new { Message = ex.Message })`
+- `src/transaction-service/Controllers/TransactionsController.cs:44` — `return BadRequest(new { message = ex.Message })`
+- `src/transfer-service/Controllers/TransfersController.cs:35-38` — returns full transfer object + failure reason
+- `src/transfer-service/Services/TransferService.cs:89` — persists `ex.Message` in `FailureReason`
+**Issue:** Internal exception messages are returned directly in API responses. These can reveal DB schema, service topology, configuration details.  
+**Risk:** Information disclosure aids further attacks.  
+**Recommendation:** Return generic error messages with correlation IDs. Log details server-side only.
+
+### [HIGH] Cosmos DB Connection String Fallback (All Services)
+**Files:**
+- `src/account-service/Program.cs:99-112`
+- `src/transaction-service/Program.cs:110-119`
+- `src/transfer-service/Program.cs:109-118`
+- `src/user-service/Program.cs:85-94`
+**Issue:** All services fall back to `CosmosDb:ConnectionString` if `CosmosDb:Endpoint` is not set. Connection strings contain master keys with full CRUD access.  
+**Risk:** Leaked connection string = full database compromise.  
+**Recommendation:** Use Entra ID (DefaultAzureCredential) exclusively. Remove connection string fallback. Fail startup if Endpoint is not configured in production.
+
+### [HIGH] JWT Issuer Validation Disabled (Transaction Service)
+**File:** `src/transaction-service/Program.cs:57`  
+**Issue:** `ValidateIssuer = false` while all other services have `ValidateIssuer = true`.  
+**Risk:** Tokens from any issuer are accepted, enabling token forgery from untrusted identity providers.  
+**Recommendation:** Set `ValidateIssuer = true` to match other services.
+
+### [HIGH] Hardcoded Demo Credentials
+**File:** `src/user-service/Services/InMemoryUserService.cs:23-53`  
+**Issue:** Seeds admin and demo users with password `password123`.  
+**Risk:** If in-memory mode is accidentally enabled in production, these credentials are active.  
+**Recommendation:** Remove hardcoded passwords. Use random passwords logged once at startup, or disable seeding entirely outside dev.
+
+### [HIGH] No Transfer Ownership Validation
+**File:** `src/transfer-service/Services/TransferService.cs:57-69`  
+**File:** `src/transfer-service/Services/InMemoryTransferService.cs:47-58`  
+**Issue:** `userId` is passed but never validated against account ownership. Any user can initiate transfers from any account.  
+**Risk:** Direct financial theft.  
+**Recommendation:** Verify `FromAccountId` belongs to the authenticated `userId` before processing.
+
+### [HIGH] InMemoryTransactionService Ignores userId Filter
+**File:** `src/transaction-service/Services/InMemoryTransactionService.cs:144-159`  
+**Issue:** `GetUserTransactionsAsync` ignores the `userId` parameter and returns all transactions.  
+**Risk:** Complete transaction history disclosure.  
+**Recommendation:** Filter by `userId` ownership.
+
+### [HIGH] Redis Hardcoded Fallback
+**Files:**
+- `src/transaction-service/Program.cs:83-93` — `"redis:6379"`
+- `src/transfer-service/Program.cs:85` — `"redis:6379"`
+**Issue:** Default Redis connection to `redis:6379` (no auth, no TLS).  
+**Risk:** Unencrypted, unauthenticated Redis in production.  
+**Recommendation:** Require explicit configuration. Fail startup if Redis config is missing in non-dev environments.
+
+---
+
+## MEDIUM Findings
+
+### [MEDIUM] No Rate Limiting on Auth Endpoints
+**File:** `src/user-service/Controllers/UsersController.cs:37-77`  
+**File:** `src/user-service/Controllers/AuthController.cs`  
+**Issue:** Login endpoints have no rate limiting or account lockout.  
+**Recommendation:** Add rate limiting middleware and progressive lockout after failed attempts.
+
+### [MEDIUM] Missing Request DTO Validation
+**Files:** Controllers across all services accept DTOs without comprehensive validation.  
+**Recommendation:** Add `[StringLength]`, `[Range]`, format constraints to all request DTOs. Validate `ModelState` explicitly in controllers.
+
+### [MEDIUM] No Retry/Circuit Breaker on Service-to-Service Calls
+**Files:**
+- `src/transaction-service/Services/TransactionService.cs:176-185`
+- `src/transfer-service/Services/InMemoryTransferService.cs:110-130`
+- `src/transfer-service/Services/TransferService.cs:117-154`
+**Recommendation:** Add Polly retry policies with exponential backoff, circuit breakers, and timeouts.
+
+### [MEDIUM] PII in Log Messages
+**Files:**
+- `src/user-service/Program.cs:149-166` — logs username and email
+- `src/user-service/Services/UserService.cs:106-107` — logs email on promotion
+- `src/user-service/Controllers/AdminController.cs:88-91` — echoes email in response
+- `src/transaction-service/Services/TransactionService.cs:200-201` — logs account balances
+**Recommendation:** Log only user IDs and correlation IDs. Redact emails and financial data.
+
+### [MEDIUM] OTEL Exporter Endpoint Unvalidated
+**File:** `src/shared/Observability/ObservabilityExtensions.cs:32-47`  
+**Issue:** `OTEL_EXPORTER_OTLP_ENDPOINT` is used without validation; misconfigured endpoint could exfiltrate telemetry.  
+**Recommendation:** Validate against allowlist of approved collector endpoints.
+
+### [MEDIUM] Service-to-Service Token Forwarding
+**File:** `src/transaction-service/Services/TransactionService.cs:178-183`  
+**File:** `src/transfer-service/Services/InMemoryTransferService.cs:36-44`  
+**Issue:** End-user JWT tokens are forwarded blindly to downstream services without audience scoping.  
+**Recommendation:** Use OBO (On-Behalf-Of) flow or service-to-service tokens.
+
+### [MEDIUM] Inconsistent Error Response Format
+**Issue:** Error responses use different shapes across services: `{ Message }`, `{ error, message }`, `{ error }`, `{ error, transfer }`.  
+**Recommendation:** Standardize on RFC 7807 Problem Details format.
+
+### [MEDIUM] Weak Account Number Generation
+**File:** `src/account-service/Services/AccountService.cs:93-97`  
+**File:** `src/account-service/Services/InMemoryAccountService.cs:112-116`  
+**Issue:** Uses `new Random()` — not cryptographically secure, collision-prone.  
+**Recommendation:** Use `RandomNumberGenerator` and enforce uniqueness at the database level.
+
+### [MEDIUM] No JWT Config Startup Validation
+**Files:** All `Program.cs` files accept JWT config without null/empty guards.  
+**Recommendation:** Validate JWT:Key, JWT:Issuer, JWT:Audience at startup; fail fast if missing.
+
+---
+
+## LOW Findings
+
+### [LOW] Health Endpoints Are Shallow
+**Files:** All services' `/healthz` and `/readyz` return static OK without checking dependencies (Cosmos, Redis).  
+**Recommendation:** Add dependency health checks for meaningful readiness probes.
+
+### [LOW] CORS Allows Credentials on Localhost
+**Files:** All `Program.cs` CORS configurations.  
+**Recommendation:** Ensure production config overrides dev origins.
+
+### [LOW] Correlation ID Header Injection
+**File:** `src/shared/Observability/CorrelationIdMiddleware.cs:17-24`  
+**Recommendation:** Validate format/length of caller-supplied correlation IDs.
+
+### [LOW] Login Audit Stores IP/User-Agent
+**File:** `src/user-service/Models/LoginAudit.cs:14-22`  
+**Recommendation:** Apply retention policies and access controls to audit data.
+
+### [LOW] Weak Password Policy
+**File:** `src/user-service/Controllers/AdminController.cs:178-188`  
+**Issue:** Only `[MinLength(8)]` on password reset; no complexity requirements.  
+**Recommendation:** Add complexity validation (uppercase, number, special character).
+
+### [LOW] Raw Models Returned in API Responses
+**File:** `src/account-service/Controllers/AccountsController.cs` — returns `Account` directly.  
+**Recommendation:** Map to response DTOs to control exposed fields.
+
+---
+
+## INFO Observations
+
+- **Cosmos DB queries are parameterized** — no NoSQL injection found across all services ✅
+- **CosmosClient is singleton** — correct lifecycle pattern across all services ✅
+- **No dangerous TypeNameHandling** — Newtonsoft serialization is safe ✅
+- **OTEL instrumentation exists** via shared library ✅
+- **account-opening-service has no .NET code** — it's Python-only ✅
+- **ai-service has no .NET code** — Python-only ✅
+
+---
+
+## Priority Remediation Order
+
+1. **P0 (Week 1):** Fix CRITICALs — X-User-Id bypass, fail-open balance, anonymous admin, unprotected balance update
+2. **P0 (Week 1):** Fix IDOR — add ownership checks to all read endpoints
+3. **P1 (Week 2):** Remove exception message leakage, remove Cosmos connection string fallback, fix transaction-service issuer validation
+4. **P2 (Week 3):** Add rate limiting, DTO validation, retry policies, standardize error format
+5. **P3 (Ongoing):** PII redaction, health check improvements, password policy, response DTOs
+
+---
+
+# Deep Python/Go Services Security & Code Quality Audit
+
+**Author:** Turk (Backend Dev)  
+**Date:** 2026-05-12  
+**Issue:** #18 — Deep Security & Best Practice Analysis  
+**Scope:** budget-service, chatbot-service, ai-service, prompt-eval-service, event-processor
+
+---
+
+## Executive Summary
+
+Audited all 5 backend services (4 Python/FastAPI + 1 Go). Found **3 CRITICAL**, **9 HIGH**, **14 MEDIUM**, **7 LOW**, and **4 INFO** findings. The most serious pattern is **zero authentication on Python service endpoints** — all three FastAPI services (budget, chatbot, ai-service) expose financial data and admin functionality without any auth middleware. Combined with PII flowing into AI prompts/logs and TLS verification disabled on Redis connections, this banking application has significant security gaps that need prioritized remediation.
+
+---
+
+## CRITICAL Findings (3)
+
+### [CRITICAL] No Authentication on Any Budget Service Endpoint
+**File:** `src/budget-service/app/main.py:341-359`  
+**Issue:** `/insights/{userId}` and `/categorize` endpoints have zero auth. No JWT validation, no API key, no Entra ID middleware. Anyone who can reach the service can query any user's spending insights.  
+**Risk:** Direct financial data exposure. In a banking app, unauthenticated access to spending analytics is a regulatory violation (PCI DSS, SOC 2).  
+**Recommendation:** Add FastAPI `Depends()` security dependency with JWT/Bearer validation on all non-health endpoints. Derive user identity from token claims, not path parameters.
+
+### [CRITICAL] No Authentication on AI Service Endpoints Including Admin Routes
+**File:** `src/ai-service/app/main.py:1017-1023, 1026-1042, 1282-1310, 1324-1409`  
+**Issue:** `/detect`, `/api/admin/prompts`, `/api/admin/evaluate`, `/api/admin/foundry-status`, and all flagged-transaction CRUD endpoints are completely unauthenticated. The admin prompts endpoint returns full system prompts. The evaluate endpoint accepts arbitrary system prompts and transaction data.  
+**Risk:** Prompt exfiltration enables targeted prompt injection attacks. Unauthenticated `/detect` allows anyone to score arbitrary transactions. Admin evaluate endpoint is an LLM oracle for attackers.  
+**Recommendation:** Add JWT auth with role-based access control. Admin routes require `admin` role. Remove system prompt disclosure from API responses or restrict heavily.
+
+### [CRITICAL] No Authentication on Chatbot Service — Cross-User Chat History Access
+**File:** `src/chatbot-service/app/main.py:458-526, 563-595`  
+**Issue:** `/api/chat`, `/api/chat/new`, `/api/chat/history/{user_id}`, and `/api/chat/admin/foundry-status` are all unauthenticated. `user_id` is client-supplied. Anyone can read any user's chat history by guessing their user ID.  
+**Risk:** Financial advice chat history contains PII, account details, and spending information. Cross-user access is a severe privacy violation.  
+**Recommendation:** Require JWT auth on all endpoints. Extract user identity from token claims only. Never trust client-supplied `user_id`.
+
+---
+
+## HIGH Findings (9)
+
+### [HIGH] LLM Tool Functions Accept User ID from Model — Identity Confusion
+**File:** `src/chatbot-service/app/main.py:193-219`  
+**Issue:** `get_budget_insights()` and `get_spending_pattern()` tool functions accept `user_id` as an LLM-provided parameter and use it directly in downstream HTTP calls. The LLM can be prompt-injected to request data for arbitrary users.  
+**Risk:** Indirect prompt injection could exfiltrate other users' financial data through the chatbot.  
+**Recommendation:** Remove `user_id` from tool function signatures. Resolve user identity from the server-side auth context only, never from LLM-generated tool arguments.
+
+### [HIGH] Budget Service Insecure User Scoping — Prefix Matching
+**File:** `src/budget-service/app/main.py:347`  
+**Issue:** `accountId.startswith(userId[:8])` — user-to-account mapping uses first 8 characters of userId as a prefix match. This is trivially collisionable.  
+**Risk:** Users can access other users' transaction data through prefix collisions. Even without auth bypass, the scoping logic itself is broken.  
+**Recommendation:** Use exact account ownership lookup from an authoritative data source. Never infer ownership from string prefixes.
+
+### [HIGH] AI Service `/detect` Accepts Raw Unvalidated JSON
+**File:** `src/ai-service/app/main.py:1018-1023`  
+**Issue:** `await request.json()` with no Pydantic model validation. Any JSON body is passed directly to the analyzer pipeline.  
+**Risk:** Malformed/oversized payloads can crash scoring, cause unexpected LLM behavior, or smuggle injection content into prompts.  
+**Recommendation:** Define a strict Pydantic `DetectRequest` model with typed fields, length constraints, and enums for transaction types.
+
+### [HIGH] PII Sent to LLM Prompts — AI Service
+**File:** `src/ai-service/app/main.py:666-685, 1357-1373`  
+**Issue:** Full transaction details (accountId, description, amounts) are formatted directly into LLM prompts for risk scoring and evaluation. Account IDs flow through to model providers.  
+**Risk:** Bank account identifiers and financial details are sent to external AI model endpoints. Data residency and privacy compliance issues.  
+**Recommendation:** Tokenize/pseudonymize account IDs before sending to LLMs. Strip or hash sensitive identifiers. Send only the minimum fields needed for risk assessment.
+
+### [HIGH] Admin Endpoints Expose System Prompts
+**File:** `src/ai-service/app/main.py:1282-1310`  
+**Issue:** `/api/admin/prompts` returns full system prompt text for all analyzers and categorizers. No auth required.  
+**Risk:** System prompts are intellectual property and security controls. Exposing them enables attackers to craft targeted prompt injections that bypass risk detection.  
+**Recommendation:** Remove prompt content from API responses entirely, or require admin authentication and audit logging for access.
+
+### [HIGH] Redis TLS Certificate Verification Disabled — Go Event Processor
+**File:** `src/event-processor/main.go:180-183`  
+**Issue:** `InsecureSkipVerify: true` in TLS config for Redis cluster connections.  
+**Risk:** Man-in-the-middle attacks on Redis connections carrying banking event data.  
+**Recommendation:** Set `ServerName` to the Redis hostname for proper cert validation. The comment about cluster-internal IPs is valid but can be solved with `ServerName` override instead of disabling verification entirely.
+
+### [HIGH] Redis TLS Certificate Verification Disabled — Python AI Service
+**File:** `src/ai-service/app/main.py:638, 654`  
+**Issue:** `ssl_cert_reqs=None` disables certificate validation for both Azure Managed Redis and local Redis connections.  
+**Risk:** Same MITM risk as the Go service, but for the AI anomaly detection pipeline that handles flagged transaction data.  
+**Recommendation:** Use `ssl_cert_reqs="required"` with proper CA bundle for production Redis connections.
+
+### [HIGH] Event Processor ACKs Messages Before Successful Processing
+**File:** `src/event-processor/main.go:289-294`  
+**Issue:** `processMessage()` is called, then the message is ACKed regardless of whether processing succeeded. If `processMessage` fails (unmarshal error, panic), the event is permanently lost.  
+**Risk:** Banking events (TransactionCreated, TransferInitiated, InsufficientFundsAttempt) can be silently dropped. Lost audit trail in a banking system.  
+**Recommendation:** ACK only after successful processing. Route failed messages to a dead-letter stream for investigation.
+
+### [HIGH] Chatbot Error Responses Leak Internal Details
+**File:** `src/chatbot-service/app/main.py:510-512`  
+**Issue:** `raise HTTPException(status_code=500, detail=str(e))` — raw exception message returned to clients.  
+**Risk:** Stack traces, internal service URLs, credential errors, and infrastructure details can leak to attackers.  
+**Recommendation:** Log full exception server-side. Return generic error message to clients: `"An internal error occurred"`.
+
+---
+
+## MEDIUM Findings (14)
+
+### [MEDIUM] Pydantic Models Lack Validation Constraints — Budget Service
+**File:** `src/budget-service/app/main.py:185-201`  
+**Issue:** `TransactionEvent` and `BudgetInsight` models use plain `str`/`float`/`dict` fields with no bounds, enums, or regex constraints.  
+**Risk:** Invalid amounts (negative, extremely large), malformed timestamps, and arbitrary category strings flow through unchecked.  
+**Recommendation:** Add `Field(ge=0, le=...)` for amounts, enum constraints for categories, `constr(pattern=...)` for IDs.
+
+### [MEDIUM] ChatRequest Lacks Input Constraints — Chatbot Service
+**File:** `src/chatbot-service/app/main.py:446-450`  
+**Issue:** `message: str` and `user_id: str` have no length limits. `context: Optional[dict]` is completely untyped.  
+**Risk:** Oversized messages increase LLM costs and can be used for prompt injection. Untyped context could carry unexpected data.  
+**Recommendation:** Add `Field(max_length=4000)` for message, `Field(max_length=128)` for user_id, typed context model.
+
+### [MEDIUM] Budget Service `/categorize` Has No Input Constraints
+**File:** `src/budget-service/app/main.py:355-359`  
+**Issue:** `description: str` query parameter has no length or format validation.  
+**Risk:** Oversized descriptions cause unnecessary embedding API calls and potential prompt injection.  
+**Recommendation:** Add `Query(min_length=1, max_length=500)`.
+
+### [MEDIUM] AI Service EvalRequest Uses Untyped `list[dict]`
+**File:** `src/ai-service/app/main.py:1313-1321`  
+**Issue:** `transactions: list[dict]` — no schema for transaction objects in evaluation requests.  
+**Risk:** Arbitrary data structures flow into LLM prompts during evaluation.  
+**Recommendation:** Define a strict `TransactionInput` Pydantic model.
+
+### [MEDIUM] AI Service ReviewRequest Lacks Constraints
+**File:** `src/ai-service/app/main.py:185-187`  
+**Issue:** `notes` field has no length limit. `tx_id` path parameters are unconstrained strings.  
+**Risk:** Storage bloat, potential injection in stored notes.  
+**Recommendation:** Add `Field(max_length=2000)` for notes, regex pattern for tx_id.
+
+### [MEDIUM] Blocking Sync Calls in Async Endpoints — Budget Service
+**File:** `src/budget-service/app/main.py:137-182, 329-330`  
+**Issue:** `embeddings_client.embed()` and `credential.get_token()` are synchronous calls inside async endpoints.  
+**Risk:** Blocks the event loop, degrading throughput under load.  
+**Recommendation:** Use async SDK methods or wrap in `asyncio.to_thread()`.
+
+### [MEDIUM] Blocking Sync httpx Calls — Chatbot Service Tools
+**File:** `src/chatbot-service/app/main.py:200, 214, 229, 253`  
+**Issue:** Tool functions use synchronous `httpx.get/post` inside an async application.  
+**Risk:** Event loop blocking when tools make downstream HTTP calls.  
+**Recommendation:** Use `httpx.AsyncClient` with `await`.
+
+### [MEDIUM] PII in OTEL Spans — Chatbot Service
+**File:** `src/chatbot-service/app/main.py:478-479`  
+**Issue:** `span.set_attribute("user.id", request.user_id)` and `span.set_attribute("user.message", request.message[:100])` — user messages recorded in telemetry.  
+**Risk:** Financial questions and account references flow into OTEL backend (Application Insights).  
+**Recommendation:** Remove message content from span attributes. Hash or redact user IDs.
+
+### [MEDIUM] PII in Logs — Event Processor
+**File:** `src/event-processor/main.go:324-330`  
+**Issue:** Account IDs, amounts, and full unknown-event payloads are logged.  
+**Risk:** Financial PII in log aggregation systems.  
+**Recommendation:** Mask account IDs (`****1234`), avoid logging raw event payloads.
+
+### [MEDIUM] PII in Logs — AI and Budget Services
+**File:** `src/ai-service/app/main.py:53-69`, `src/budget-service/app/main.py:146, 276, 281`  
+**Issue:** Transaction IDs, descriptions, risk explanations, and exception text logged across services.  
+**Risk:** Sensitive financial data accumulates in log sinks.  
+**Recommendation:** Use structured logging with allowlisted fields only. Redact descriptions and account identifiers.
+
+### [MEDIUM] Error Handling Inconsistent — AI Service
+**File:** `src/ai-service/app/main.py:1041-1042, 1067-1068`  
+**Issue:** Some error responses return raw `str(e)`, others return generic messages. Inconsistent pattern.  
+**Risk:** Internal details leak unpredictably.  
+**Recommendation:** Standardize error responses with generic client messages and structured server-side logging.
+
+### [MEDIUM] Prompt-Eval Service Error Responses Leak Details
+**File:** `src/prompt-eval-service/Controllers/EvaluationsController.cs:61-68`  
+**Issue:** Returns `ex.Message` directly in API responses.  
+**Risk:** Internal identifiers and implementation details exposed.  
+**Recommendation:** Return generic errors; log full exceptions server-side.
+
+### [MEDIUM] Event Processor Shutdown Not Graceful
+**File:** `src/event-processor/main.go:138, 250-298`  
+**Issue:** Consumer goroutine runs without WaitGroup. Shutdown doesn't wait for in-flight message processing to drain.  
+**Risk:** In-flight banking events may be partially processed on pod termination.  
+**Recommendation:** Use `sync.WaitGroup` and graceful drain on context cancellation.
+
+### [MEDIUM] Event Processor Startup Retry Ignores Context
+**File:** `src/event-processor/main.go:115-129`  
+**Issue:** Redis retry loop sleeps without checking `ctx.Done()`.  
+**Risk:** Pod shutdown blocked during Redis outage.  
+**Recommendation:** Use `select` on `ctx.Done()` during backoff sleep.
+
+---
+
+## LOW Findings (7)
+
+### [LOW] Budget Service Readiness Check Is Blocking
+**File:** `src/budget-service/app/main.py:323-338`  
+**Issue:** `/readyz` calls `credential.get_token()` synchronously on each probe and doesn't check downstream dependencies.  
+**Recommendation:** Cache readiness state, use async token acquisition, include Redis/Cosmos connectivity checks.
+
+### [LOW] Chatbot Service Silent Cosmos Degradation
+**File:** `src/chatbot-service/app/main.py:421-423`  
+**Issue:** If Cosmos init fails, service silently falls back to in-memory chat history with no alert.  
+**Recommendation:** Emit structured health degradation alert; expose in readiness probe.
+
+### [LOW] Budget Service In-Memory Transaction Store
+**File:** `src/budget-service/app/main.py:99-100`  
+**Issue:** `user_transactions = defaultdict(list)` — process-local, not durable.  
+**Recommendation:** Replace with Cosmos DB for production persistence.
+
+### [LOW] Health Endpoints Unauthenticated — Event Processor
+**File:** `src/event-processor/main.go:94-113`  
+**Issue:** `/health` and `/readyz` bind to `:8080` with no auth.  
+**Recommendation:** Bind to internal interface only; use network policy to restrict access.
+
+### [LOW] Event Processor Consumer Group Error Check Is Fragile
+**File:** `src/event-processor/main.go:132-135`  
+**Issue:** String comparison for "BUSYGROUP" error detection.  
+**Recommendation:** Use error type assertion if available in the Redis client library.
+
+### [LOW] Prompt-Eval Service HttpClient Has No Retry Policy
+**File:** `src/prompt-eval-service/Services/EvaluationService.cs:79-107`  
+**Issue:** No Polly retry/circuit-breaker on calls to ai-service.  
+**Recommendation:** Add retry with exponential backoff and circuit breaker.
+
+### [LOW] Prompt-Eval Service Cosmos Pagination In-Memory
+**File:** `src/prompt-eval-service/Services/PromptTemplateService.cs:23-33`  
+**Issue:** Reads all documents then pages in memory.  
+**Recommendation:** Use Cosmos continuation tokens for server-side pagination.
+
+---
+
+## INFO Findings (4)
+
+### [INFO] Budget Service CORS Configuration
+**File:** `src/budget-service/app/main.py:88-94`  
+**Issue:** `allow_headers=["*"]`, `allow_methods=["*"]` — fine for local dev, review for production.
+
+### [INFO] Event Processor Hardcoded Environment Label
+**File:** `src/event-processor/main.go:369-395`  
+**Issue:** `deployment.environment` hardcoded to `"production"`. Should derive from env var.
+
+### [INFO] AI Service No Security Tests
+**File:** `src/ai-service/tests/test_detection.py:157-161`  
+**Issue:** Tests verify 503 behavior only; no auth, authorization, or PII redaction tests exist.
+
+### [INFO] Prompt-Eval Service Cosmos Init at Startup
+**File:** `src/prompt-eval-service/Program.cs:77-91`  
+**Issue:** Container creation runs at startup; failures can block boot.
+
+---
+
+## Prioritized Remediation Roadmap
+
+### Phase 1 — Critical Auth (Week 1)
+1. Add JWT/Bearer auth middleware to all three Python FastAPI services
+2. Derive user identity from token claims, never from client-supplied parameters
+3. Add admin role requirement to all `/api/admin/*` endpoints
+4. Remove system prompt disclosure from `/api/admin/prompts` response
+
+### Phase 2 — Data Protection (Week 2)
+5. Pseudonymize account IDs before sending to LLM endpoints
+6. Remove PII from OTEL span attributes and log messages
+7. Fix Redis TLS verification (both Go and Python services)
+8. Fix event processor ACK-before-success pattern
+
+### Phase 3 — Input Hardening (Week 3)
+9. Add strict Pydantic models with constraints across all services
+10. Replace raw `request.json()` with typed models in ai-service
+11. Add length limits to all string inputs
+12. Fix blocking sync calls in async endpoints
+
+### Phase 4 — Resilience (Week 4)
+13. Add graceful shutdown coordination to event processor
+14. Add retry/circuit-breaker patterns to inter-service calls
+15. Improve health/readiness probes
+16. Add security test coverage
+
+---
+
+## Decision
+
+**Proposed:** All Python FastAPI services must implement a shared JWT auth dependency (`Depends(verify_jwt)`) before any new features are added. This is the single highest-impact fix and blocks all three CRITICAL findings. A shared `src/shared/auth.py` module should be created to avoid duplication across budget-service, chatbot-service, and ai-service.
+
+**Status:** Proposed — awaiting team review.
+
+---
+
+# Frontend Security & Code Quality Audit — Linus
+
+**Date:** 2026-05-12
+**Issue:** #18 — Deep Security & Best Practice Analysis
+**Scope:** `src/ui-app/` (React/TypeScript frontend)
+
+---
+
+## Findings Summary
+
+| Severity | Count |
+|----------|-------|
+| CRITICAL | 2 |
+| HIGH     | 5 |
+| MEDIUM   | 5 |
+| LOW      | 4 |
+| INFO     | 3 |
+
+---
+
+## CRITICAL Findings
+
+### [CRITICAL] JWT Token Stored in localStorage — XSS Token Theft Risk
+**File:** `src/ui-app/src/contexts/AuthContext.tsx:68-70`
+**File:** `src/ui-app/src/api/client.ts:12`
+**Issue:** The JWT auth token is stored in `localStorage` and read from there on every API request. If any XSS vulnerability exists (even in a third-party dependency), an attacker can steal the token with `localStorage.getItem('auth_token')` and fully impersonate the user.
+**Risk:** Complete account takeover. localStorage is accessible to any JavaScript running on the page, including injected scripts. In a banking application, this is the most dangerous pattern possible for token storage.
+**Recommendation:** Move to httpOnly cookies set by the backend on login. The browser will automatically include the cookie on same-origin requests. If cookies aren't feasible, store the token in a closure/React state (in-memory only) so it doesn't survive page refresh but is safe from XSS. Add CSRF protection if using cookies.
+
+### [CRITICAL] Hardcoded Demo Credentials in Login Page
+**File:** `src/ui-app/src/pages/Login.tsx:20`
+**File:** `src/ui-app/src/pages/Login.tsx:31-32`
+**Issue:** The password field is initialized with `useState('password123')` and the submit handler falls back to `'demo@banking-demo.com'` / `'password123'` if fields are empty. The UI also displays these credentials in plain text (line 92-93).
+**Risk:** If this code reaches any non-demo environment, valid credentials are exposed in the source bundle. Even in demo mode, this teaches users to ignore credential hygiene. The fallback logic means an empty form submission logs in as the demo user — no interaction required.
+**Recommendation:** Remove hardcoded credentials entirely. Use environment variables or a config flag for demo mode. Never initialize password state with a real value. If demo mode is needed, use a separate "Demo Login" button that clearly indicates it's a demo shortcut.
+
+---
+
+## HIGH Findings
+
+### [HIGH] User Role and Email Stored in localStorage
+**File:** `src/ui-app/src/contexts/AuthContext.tsx:69-70`
+**Issue:** `auth_email` and `auth_role` are stored in localStorage alongside the token. The role is used for admin route gating (`isAdmin` on line 91). An attacker can set `localStorage.setItem('auth_role', 'admin')` in the browser console to access the `/admin` route.
+**Risk:** Client-side admin role bypass. While the backend should reject unauthorized API calls, the admin UI itself (stats, flagged transactions, user management) becomes visible, leaking information about the admin interface structure.
+**Recommendation:** Derive the role exclusively from the JWT claims (already decoded at line 65). Never trust localStorage for authorization decisions. The `decodeJwtPayload` function already exists — use it on mount to restore role from the token.
+
+### [HIGH] No JWT Expiration Checking on Client Side
+**File:** `src/ui-app/src/contexts/AuthContext.tsx:28-35`
+**Issue:** `decodeJwtPayload` extracts claims but never checks the `exp` field. Expired tokens persist in localStorage and continue to be sent with requests until the backend returns a 401. There's no proactive token refresh mechanism.
+**Risk:** Users with expired tokens see confusing failures. No refresh token flow means the app silently breaks until the 401 interceptor kicks in and redirects to login, losing any unsaved work (e.g., mid-transfer).
+**Recommendation:** Check `exp` claim on mount and set a timer for proactive logout/refresh. Implement a token refresh flow or at minimum show a "session expired" dialog before redirecting.
+
+### [HIGH] No Security Headers in nginx.conf
+**File:** `src/ui-app/nginx.conf:22-31`
+**Issue:** The nginx configuration serving the SPA has zero security headers. No `Content-Security-Policy`, `X-Frame-Options`, `X-Content-Type-Options`, `Strict-Transport-Security`, `Referrer-Policy`, or `Permissions-Policy`.
+**Risk:** The application is vulnerable to clickjacking (no X-Frame-Options), MIME-type sniffing attacks, and has no CSP to mitigate XSS. For a banking app, this is a significant gap.
+**Recommendation:** Add these headers to the nginx `server` block:
+```nginx
+add_header X-Frame-Options "DENY" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header X-XSS-Protection "0" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';" always;
+```
+
+### [HIGH] Source Maps Shipped in Production
+**File:** `src/ui-app/Dockerfile:8`
+**Issue:** CRA's `npm run build` generates source maps by default. There's no `GENERATE_SOURCEMAP=false` in the Dockerfile or build step. Source maps are included in the production Docker image.
+**Risk:** Source maps expose the entire TypeScript source code, component structure, API endpoints, auth logic, and admin routes to anyone who opens browser DevTools. This is an information disclosure vulnerability.
+**Recommendation:** Add `ENV GENERATE_SOURCEMAP=false` before the `RUN npm run build` line in the Dockerfile, or add it to the build command: `RUN GENERATE_SOURCEMAP=false npm run build`.
+
+### [HIGH] Account Numbers Displayed Without Masking
+**File:** `src/ui-app/src/pages/Dashboard.tsx:137` — `{account.number}`
+**File:** `src/ui-app/src/pages/Accounts.tsx:58` — `{account.number}`
+**File:** `src/ui-app/src/pages/Transfers.tsx:72` — `({option.number})`
+**Issue:** Full account numbers are displayed in plain text on the Dashboard, Accounts page, and Transfer dropdowns. No masking (e.g., `****1234`) is applied.
+**Risk:** Screen sharing, screenshots, or shoulder surfing expose full account numbers. Banking industry standard is to mask all but the last 4 digits.
+**Recommendation:** Create a utility `maskAccountNumber(num: string) => '••••' + num.slice(-4)` and apply it in all display contexts. Show full numbers only behind a "reveal" toggle if needed.
+
+---
+
+## MEDIUM Findings
+
+### [MEDIUM] No Error Boundary Implementation
+**File:** `src/ui-app/src/App.tsx` (entire file)
+**Issue:** No React Error Boundary exists anywhere in the application. An unhandled runtime error in any component will crash the entire app with a white screen.
+**Risk:** Users lose their session state on any JS error. In a banking app, this could interrupt a transfer or cause confusion about whether a transaction completed. Also, React's default error overlay in development may leak stack traces.
+**Recommendation:** Add an Error Boundary component wrapping `<AppContent />` in App.tsx that shows a user-friendly "Something went wrong" message with a "Return to Dashboard" button.
+
+### [MEDIUM] console.error Calls May Leak Sensitive Data
+**File:** `src/ui-app/src/contexts/AccountContext.tsx:49,96`
+**File:** `src/ui-app/src/pages/Dashboard.tsx:66`
+**File:** `src/ui-app/src/pages/Accounts.tsx:21`
+**File:** `src/ui-app/src/pages/Transactions.tsx:177`
+**Issue:** Five `console.error` calls log caught errors including full error objects which may contain API response data (account details, transaction data, auth tokens in headers).
+**Risk:** Anyone opening browser DevTools can see these logged errors, which may contain PII or internal API details. In production, structured error logging should replace console output.
+**Recommendation:** Replace `console.error` with a no-op in production, or strip console calls during the build. At minimum, log only the error message, not the full error object.
+
+### [MEDIUM] Password Form Fields Missing autocomplete="off"
+**File:** `src/ui-app/src/pages/Settings.tsx:269-290`
+**Issue:** The password change form fields (current password, new password, confirm password) have no `autoComplete` attribute. Browsers may offer to save/fill banking passwords.
+**Risk:** Saved passwords in shared or compromised browsers. Banking apps should prevent password autofill on change-password forms to avoid confusion between old and new passwords.
+**Recommendation:** Add `autoComplete="off"` to the current password field and `autoComplete="new-password"` to the new/confirm password fields.
+
+### [MEDIUM] Admin Route Hidden but Not Server-Validated
+**File:** `src/ui-app/src/App.tsx:45`
+**Issue:** The admin route is conditionally rendered with `{isAdmin && <Route ... />}`, but there's no redirect or "Access Denied" page for non-admin users who navigate to `/admin` directly — they just get redirected to `/` via the catch-all. This is correct, but the `isAdmin` check is based on localStorage-derived role (see HIGH finding above).
+**Risk:** Combined with the localStorage role manipulation, the admin page becomes accessible. The pattern of hiding routes (vs showing "unauthorized") also means there's no audit trail of unauthorized access attempts.
+**Recommendation:** Add server-side admin verification on the admin page mount (e.g., call `/admin/stats` and handle 403). Show an explicit "Unauthorized" page rather than silent redirect.
+
+### [MEDIUM] Dependencies Use Caret Ranges (^)
+**File:** `src/ui-app/package.json:6-24`
+**Issue:** All dependencies use caret (`^`) version ranges. While `package-lock.json` exists, any `npm install` on a new machine could resolve different patch/minor versions.
+**Risk:** Supply chain risk — a compromised minor version update of any dependency could be pulled in automatically. For a banking app, dependency versions should be locked.
+**Recommendation:** Consider using exact versions in package.json or ensure CI always uses `npm ci` (which respects the lockfile). Review and audit the lockfile periodically.
+
+---
+
+## LOW Findings
+
+### [LOW] TypeScript `any` Usage in Production Code
+**File:** `src/ui-app/src/pages/Login.tsx:25` — `(location.state as any)?.message`
+**File:** `src/ui-app/src/pages/Login.tsx:35` — `catch (err: any)`
+**File:** `src/ui-app/src/pages/RegisterPage.tsx:81` — `catch (err: any)`
+**File:** `src/ui-app/src/components/account-opening/DocumentUpload.tsx:50` — `Record<string, any>`
+**Issue:** Four instances of `any` in production code (not counting test files). While tsconfig has `strict: true`, these bypass type safety.
+**Recommendation:** Replace `(location.state as any)` with a typed interface. Replace `catch (err: any)` with `catch (err: unknown)` and use type narrowing (see Settings.tsx:111 for the correct pattern already in the codebase).
+
+### [LOW] Unused Import / Dead CRA Boilerplate
+**File:** `src/ui-app/src/App.css` (if exists), `src/ui-app/public/logo.svg` (if exists)
+**Issue:** Previously identified CRA boilerplate files may still exist. Minor bloat in the production bundle.
+**Recommendation:** Clean up any remaining CRA scaffold files.
+
+### [LOW] Settings Page useEffect Missing Dependency Array
+**File:** `src/ui-app/src/pages/Settings.tsx:66-69`
+**Issue:** `useEffect` calls `loadAvatar()` and `loadCategories()` with an empty dependency array, but these functions are defined outside the effect and aren't wrapped in `useCallback`. React's exhaustive-deps rule would warn about this.
+**Recommendation:** Either move the function bodies inside the useEffect or wrap them in `useCallback`.
+
+### [LOW] window.location.href for Auth Redirect
+**File:** `src/ui-app/src/api/client.ts:32`
+**Issue:** The 401 interceptor uses `window.location.href = '/login'` for hard navigation instead of React Router's navigate. This causes a full page reload, losing all in-memory state.
+**Recommendation:** Use a callback pattern or event emitter to trigger React Router navigation from the interceptor, preserving SPA behavior.
+
+---
+
+## INFO Observations
+
+### [INFO] No CSRF Protection Pattern
+**Issue:** The app uses Bearer token auth (not cookies), so CSRF is not currently a risk vector. However, if the recommendation to move to httpOnly cookies is implemented, CSRF protection (e.g., SameSite cookies + CSRF tokens) must be added simultaneously.
+
+### [INFO] XSS Attack Surface is Low
+**Issue:** No `dangerouslySetInnerHTML` usage found anywhere. All user content is rendered through React's JSX (auto-escaped). The Chat component renders bot responses as text, not HTML. The main XSS risk is through the localStorage token theft vector (CRITICAL finding #1), not through DOM injection.
+
+### [INFO] API Base URL Configuration is Correct
+**File:** `src/ui-app/src/api/client.ts:4`
+**Issue:** API base URL is `/api` (relative path), which means requests go to the same origin. This is the correct pattern for an SPA behind a reverse proxy (Istio handles routing). No hardcoded absolute URLs found.
+
+---
+
+## Prioritized Remediation Order
+
+1. **CRITICAL** — Move JWT to httpOnly cookies or in-memory storage
+2. **CRITICAL** — Remove hardcoded demo credentials from Login.tsx
+3. **HIGH** — Add security headers to nginx.conf
+4. **HIGH** — Disable source maps in production build
+5. **HIGH** — Derive role from JWT claims, not localStorage
+6. **HIGH** — Check JWT expiration on client side
+7. **HIGH** — Mask account numbers in all display contexts
+8. **MEDIUM** — Add React Error Boundary
+9. **MEDIUM** — Strip/replace console.error calls
+10. **MEDIUM** — Fix password form autocomplete attributes
+11. **MEDIUM** — Verify admin access server-side on page load
+12. **MEDIUM** — Lock dependency versions
+
+---
+
+# Security & Supply Chain Audit — Livingston (Tester/QA)
+
+**Date:** 2026-05-12
+**Issue:** #18 — Deep Security & Best Practice Analysis
+**Status:** Complete
+
+---
+
+## Executive Summary
+
+Audited all dependency manifests, Dockerfiles, CI/CD workflows, lockfile hygiene, and test coverage across 11 services (5 .NET, 4 Python, 1 Go, 1 React). Found **4 CRITICAL**, **8 HIGH**, **10 MEDIUM**, **5 LOW**, and **4 INFO** findings. The most urgent issues are: pre-release Cosmos DB SDK in production services, missing lockfiles for all Python services, zero dependency scanning in CI, and a Dockerfile that builds the wrong service.
+
+---
+
+## 1. Dependency Audit
+
+### [CRITICAL] Pre-release Cosmos DB SDK in Production Services
+**File:** src/user-service/user-service.csproj:8, src/account-service/account-service.csproj:8, src/transfer-service/transfer-service.csproj:8, src/transaction-service/transaction-service.csproj:18, src/prompt-eval-service/prompt-eval-service.csproj:8
+**Issue:** `Microsoft.Azure.Cosmos` version `3.59.0-preview.0` is a pre-release package used in 5 production services. Preview packages may have breaking changes, unpatched vulnerabilities, and no support guarantees.
+**Risk:** In a banking application, using unsupported preview SDKs for the primary database layer means no security patches, potential data corruption bugs, and no vendor support if issues arise.
+**Recommendation:** Pin to the latest stable Cosmos SDK release (currently 3.46.x or newer stable). If preview features are required, document which specific features justify the risk and isolate them.
+
+### [HIGH] Unpinned Python Dependencies with Wildcards
+**File:** src/account-opening-service/pyproject.toml:22-25
+**Issue:** Three dependencies use `"*"` (completely unpinned): `agent-framework`, `agent-framework-foundry`, `azure-ai-contentunderstanding`. Other deps use `^` ranges.
+**Risk:** Wildcard dependencies allow arbitrary version upgrades including breaking changes and potentially compromised versions. Supply chain attacks can inject malicious code via version bumps.
+**Recommendation:** Pin all dependencies to exact versions (`==`) or at minimum use `^` ranges. For `agent-framework` and `agent-framework-foundry`, which appear to be internal/custom packages, pin to exact tested versions.
+
+### [HIGH] No Poetry Lockfiles for Any Python Service
+**File:** src/ai-service/, src/budget-service/, src/chatbot-service/, src/account-opening-service/
+**Issue:** No `poetry.lock` files exist for any of the 4 Python services using Poetry. Lockfiles ensure reproducible builds with verified dependency trees.
+**Risk:** Without lockfiles, each build may resolve to different dependency versions. Combined with unpinned deps, this creates a supply chain attack surface and makes builds non-reproducible.
+**Recommendation:** Run `poetry lock` for each service, commit the lockfiles, and use `poetry install --no-root` in Dockerfiles instead of raw `pip install`.
+
+### [HIGH] Dockerfile pip install Bypasses pyproject.toml
+**File:** src/ai-service/Dockerfile:8-13, src/chatbot-service/Dockerfile:8-13, src/budget-service/Dockerfile:8-14, src/account-opening-service/Dockerfile:8-14
+**Issue:** All Python Dockerfiles use `pip install` with an inline list of packages instead of installing from `pyproject.toml`. The `pyproject.toml` is copied but never used. Dependencies are duplicated and may drift.
+**Risk:** Dependency versions in Dockerfile diverge from pyproject.toml, causing "works in dev, fails in prod" issues. No hash verification (`--require-hashes`) is used.
+**Recommendation:** Use `pip install .` or `poetry install` from pyproject.toml in Dockerfiles. Add `--require-hashes` with a lockfile for supply chain integrity.
+
+### [HIGH] Inconsistent Azure.Identity Versions Across .NET Services
+**File:** src/user-service/user-service.csproj (1.13.2), src/account-service/account-service.csproj (1.13.2), src/transfer-service/transfer-service.csproj (1.13.2), src/prompt-eval-service/prompt-eval-service.csproj (1.16.0)
+**Issue:** `Azure.Identity` version differs between services (1.13.2 vs 1.16.0). The prompt-eval-service uses a newer version than all other services.
+**Risk:** Version inconsistency can cause subtle authentication behavior differences between services. Older versions may miss security fixes.
+**Recommendation:** Standardize all services on the latest stable Azure.Identity version. Use a `Directory.Packages.props` file for centralized NuGet version management.
+
+### [MEDIUM] OpenTelemetry Version Mismatch
+**File:** src/shared/Observability/Observability.csproj (OTEL Exporter 1.15.3), src/*/csproj (OTEL 1.8.1)
+**Issue:** The Observability shared project uses `OpenTelemetry.Exporter.OpenTelemetryProtocol` 1.15.3 while services use `OpenTelemetry.Extensions.Hosting` 1.8.1. Major version gap in the same library family.
+**Risk:** Version mismatches in telemetry libraries can cause runtime conflicts and data loss in observability.
+**Recommendation:** Align all OpenTelemetry packages to the same release train.
+
+### [LOW] FluentValidation.AspNetCore is Deprecated
+**File:** src/user-service/user-service.csproj:17
+**Issue:** `FluentValidation.AspNetCore` 11.3.1 is deprecated. The package has been replaced by manual integration with `FluentValidation` core.
+**Risk:** Deprecated packages may not receive security updates.
+**Recommendation:** Migrate to `FluentValidation` (without `.AspNetCore`) and configure DI manually per FluentValidation docs.
+
+### [INFO] Swashbuckle.AspNetCore May Be Replaced
+**File:** All .NET service .csproj files
+**Issue:** `Swashbuckle.AspNetCore` 6.6.2 is used for Swagger. .NET 9 has built-in OpenAPI support via `Microsoft.AspNetCore.OpenApi`.
+**Risk:** Swashbuckle is no longer the recommended approach for .NET 9+.
+**Recommendation:** Consider migrating to built-in OpenAPI support in .NET 9.
+
+---
+
+## 2. Docker Base Images
+
+### [MEDIUM] `alpine:latest` Tag in Event Processor
+**File:** src/event-processor/Dockerfile:16
+**Issue:** Final stage uses `FROM alpine:latest` instead of a pinned version.
+**Risk:** `:latest` can change at any time, breaking builds or introducing vulnerabilities without notice.
+**Recommendation:** Pin to specific alpine version, e.g., `alpine:3.21`.
+
+### [MEDIUM] `nginx:alpine` Unpinned in UI App
+**File:** src/ui-app/Dockerfile:10
+**Issue:** `FROM nginx:alpine` uses no version pin.
+**Risk:** Same as above — unpredictable base image changes.
+**Recommendation:** Pin to e.g., `nginx:1.27-alpine`.
+
+### [MEDIUM] Python Services Lack Multi-Stage Builds
+**File:** src/ai-service/Dockerfile, src/chatbot-service/Dockerfile, src/budget-service/Dockerfile, src/account-opening-service/Dockerfile
+**Issue:** Four Python services use single-stage builds. Build tools (pip, compilers for C extensions) remain in the final image.
+**Risk:** Larger attack surface with unnecessary tools in production containers.
+**Recommendation:** Use multi-stage builds: install deps in builder stage, copy only the app and installed packages to a slim final stage.
+
+### [CRITICAL] Account-Opening-Service Dockerfile Builds Wrong Service
+**File:** src/account-opening-service/Dockerfile:1-24
+**Issue:** This Dockerfile copies and builds `transaction-service` instead of `account-opening-service`. It's a .NET Dockerfile for what is actually a Python service. Lines: `COPY src/transaction-service/*.csproj ./transaction-service/` and `ENTRYPOINT ["dotnet", "transaction-service.dll"]`.
+**Risk:** The account-opening-service Docker image is actually the transaction-service. This is a deployment-breaking bug — the account-opening-service can never be correctly deployed from this Dockerfile.
+**Recommendation:** Replace with a proper Python Dockerfile for account-opening-service matching the pattern of other Python services (ai-service, budget-service).
+
+### [LOW] USER $APP_UID Variable Not Explicitly Set
+**File:** All .NET Dockerfiles (user-service, account-service, transfer-service, transaction-service, prompt-eval-service)
+**Issue:** `USER $APP_UID` relies on a variable provided by the Microsoft ASP.NET base image. While this works correctly, it's not obvious to auditors.
+**Risk:** Minimal — the Microsoft base images set this properly. But if a different base image is used, it could default to root.
+**Recommendation:** Add a comment noting this is set by `mcr.microsoft.com/dotnet/aspnet` base image, or use `USER 1654` explicitly.
+
+---
+
+## 3. Lockfile Hygiene
+
+### [HIGH] No Poetry Lock Files Committed
+**File:** src/ai-service/, src/budget-service/, src/chatbot-service/, src/account-opening-service/
+**Issue:** Zero `poetry.lock` files exist in the repository. All 4 Python services lack lockfiles.
+**Risk:** Non-reproducible builds, supply chain risk, version drift between environments.
+**Recommendation:** Run `poetry lock` in each Python service directory, commit the resulting `poetry.lock` files.
+
+### [MEDIUM] No nuget.config for Central Package Management
+**File:** (missing)
+**Issue:** No `nuget.config` or `Directory.Packages.props` exists. Each .csproj manages its own package versions independently.
+**Risk:** Version drift across services (already observed with Azure.Identity). No central control over package sources.
+**Recommendation:** Implement NuGet Central Package Management with `Directory.Packages.props`.
+
+### [INFO] Package-lock.json Files Present
+**File:** src/ui-app/package-lock.json, tests/e2e/package-lock.json
+**Issue:** Both JavaScript projects have lockfiles committed. Go has go.sum committed.
+**Risk:** None — this is correct.
+**Recommendation:** No action needed.
+
+---
+
+## 4. Test Coverage Assessment
+
+### [CRITICAL] Three Services Have Zero Test Coverage
+**File:** src/transaction-service/, src/prompt-eval-service/, src/event-processor/
+**Issue:** Three services have no test files whatsoever:
+- **transaction-service** — handles financial transactions (reads, queries)
+- **prompt-eval-service** — evaluates AI prompts with Cosmos DB
+- **event-processor** — Go service processing async events
+**Risk:** In a banking app, the transaction service is a critical financial path with zero automated tests. Bugs in transaction reading/display could show wrong balances.
+**Recommendation:** Create test projects/files for all three services. Prioritize transaction-service given its financial data handling role.
+
+### [HIGH] Hardcoded JWT Secret in Test Fixtures
+**File:** src/account-opening-service/tests/conftest.py:13-14
+**Issue:** `JWT_SECRET = "YourSuperSecretKeyForJWTTokenGeneration12345"` — this is a hardcoded test secret that matches a common default pattern.
+**Risk:** If this default secret matches any deployed environment's JWT secret (which it likely does given the naming), attackers can forge authentication tokens. Test secrets that match production patterns are a top OWASP risk.
+**Recommendation:** Use a clearly-fake test-only secret (e.g., `test-only-not-for-production-xxxxx`) and ensure production uses environment-injected secrets that differ completely.
+
+### [MEDIUM] Test Credentials Pattern: password123
+**File:** src/ui-app/src/pages/Login.test.tsx:45-53, tests/e2e/utils/testHelpers.ts
+**Issue:** Test files use `password123` as test credentials. While this is acceptable for test mocks, it establishes a weak password pattern.
+**Risk:** Low if tests are mocked. Higher if e2e tests run against real services with these credentials.
+**Recommendation:** Use clearly-fake test passwords and ensure test auth is fully mocked in unit tests.
+
+### [MEDIUM] Chatbot Service Has No Tests
+**File:** src/chatbot-service/
+**Issue:** The chatbot service (AI-powered financial advice) has no test files despite having a pyproject.toml. No pytest config present.
+**Risk:** AI-powered financial advice with no testing could produce harmful financial recommendations.
+**Recommendation:** Add tests for chatbot input validation, response formatting, and guardrails against harmful advice.
+
+### [LOW] transaction-service.Tests is Misnamed
+**File:** src/transaction-service.Tests/transaction-service.Tests.csproj
+**Issue:** This test project references `account-service.csproj`, not `transaction-service.csproj`. It appears to be the account-service test project incorrectly named.
+**Risk:** Confusing naming could lead to tests not being run or being associated with the wrong service.
+**Recommendation:** Verify project references match the test project name. If this tests account-service, rename appropriately.
+
+### [INFO] Good Test Patterns Where Tests Exist
+**File:** src/account-opening-service/tests/test_api.py, src/ui-app/src/pages/Login.test.tsx
+**Issue:** Where tests exist, they include:
+- Auth/authz testing (401, 403 responses)
+- Input validation (422 responses)
+- RBAC role testing (User vs Admin)
+- Meaningful assertions with proper mocking
+**Risk:** None — this is positive.
+**Recommendation:** Use these as templates for adding tests to uncovered services.
+
+---
+
+## 5. CI/CD Pipeline Security
+
+### [CRITICAL] No CI/CD Build or Test Pipeline
+**File:** .github/workflows/
+**Issue:** There are only 4 workflow files, all related to Squad issue triage/management. There is NO workflow for:
+- Building code
+- Running tests
+- Dependency scanning
+- Container image scanning
+- SAST/DAST analysis
+- Deployment
+**Risk:** No automated quality or security gates. Every merge goes unchecked. History.md mentions a ci.yml existed previously but it's gone now.
+**Recommendation:** Create a comprehensive CI pipeline with: build → test → dependency scan → container scan → SAST stages.
+
+### [HIGH] No Dependabot Configuration
+**File:** (missing) .github/dependabot.yml
+**Issue:** No Dependabot configuration exists. No alternative dependency scanning (Snyk, Renovate) is configured.
+**Risk:** Known vulnerabilities in dependencies will not be detected or patched automatically. Given the number of dependencies across 11 services, manual tracking is infeasible.
+**Recommendation:** Add `.github/dependabot.yml` covering all ecosystems: nuget, pip, gomod, npm, docker, github-actions.
+
+### [HIGH] GitHub Actions Not Pinned to SHA
+**File:** .github/workflows/squad-triage.yml:16,19, and all other workflows
+**Issue:** Actions use version tags (`actions/checkout@v4`, `actions/github-script@v7`) instead of SHA pins.
+**Risk:** A compromised or force-pushed tag could inject malicious code into workflows. This is a known supply chain attack vector (e.g., the `tj-actions/changed-files` incident).
+**Recommendation:** Pin all third-party actions to full SHA: `actions/checkout@<sha>`.
+
+### [MEDIUM] No SECURITY.md or Security Policy
+**File:** (missing)
+**Issue:** No SECURITY.md file exists. There's a `SECURITY_HARDENING.md` but no formal vulnerability disclosure policy.
+**Risk:** No clear channel for security researchers to report vulnerabilities responsibly.
+**Recommendation:** Add a SECURITY.md with vulnerability reporting instructions.
+
+---
+
+## Summary Table
+
+| Severity | Count | Key Areas |
+|----------|-------|-----------|
+| CRITICAL | 4 | Pre-release Cosmos SDK, wrong Dockerfile, missing CI pipeline, zero test coverage on critical services |
+| HIGH | 8 | Missing lockfiles, unpinned deps, no Dependabot, hardcoded secrets, actions not SHA-pinned |
+| MEDIUM | 10 | Docker image pinning, multi-stage builds, version inconsistencies, test credentials |
+| LOW | 5 | Deprecated packages, naming issues, minor improvements |
+| INFO | 4 | Positive observations and migration suggestions |
+
+## Recommended Priority Order
+1. **Fix account-opening-service Dockerfile** (builds wrong service entirely)
+2. **Add CI/CD pipeline** with build, test, and security scanning
+3. **Replace pre-release Cosmos SDK** with stable version across all services
+4. **Generate and commit poetry.lock** files for all Python services
+5. **Add Dependabot** for automated vulnerability detection
+6. **Pin GitHub Actions** to SHA hashes
+7. **Add tests** to transaction-service, prompt-eval-service, event-processor
+8. **Standardize package versions** across services
