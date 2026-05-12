@@ -198,6 +198,17 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 - Includes info Alert explaining the prompt is server-side hardcoded and requires code deployment to change
 - **Pattern:** Read-only audit/transparency displays don't need API calls — static constants are fine for hardcoded server prompts
 
+### 2026-05-12 — Deep Frontend Security & Code Quality Audit (Issue #18)
+- **Scope:** Full security audit of `src/ui-app/` — XSS, auth, sensitive data, API security, code quality, dependencies, build config
+- **Critical findings:**
+  1. JWT stored in localStorage — XSS token theft vector (AuthContext.tsx:68, client.ts:12)
+  2. Hardcoded demo credentials in Login.tsx:20,31-32 (password initialized to 'password123', fallback login with empty fields)
+- **High findings:** Role in localStorage (admin bypass), no JWT expiration check, no nginx security headers, source maps in production, account numbers unmasked
+- **Medium findings:** No Error Boundary, console.error may leak PII, password form missing autocomplete attrs, admin route not server-validated, dependencies use caret ranges
+- **Positive findings:** No dangerouslySetInnerHTML anywhere (XSS DOM injection risk is low), API base URL is relative '/api' (correct), TypeScript strict mode enabled
+- **Key files audited:** client.ts, AuthContext.tsx, AccountContext.tsx, App.tsx, Login.tsx, RegisterPage.tsx, Settings.tsx, Dashboard.tsx, Accounts.tsx, Transactions.tsx, Transfers.tsx, Chat.tsx, nginx.conf, Dockerfile, package.json, tsconfig.json
+- **Report written to:** `.squad/decisions/inbox/linus-security-audit.md`
+
 ## Cross-Agent Coordination (2026-05-11)
 
 ### Related Team Updates

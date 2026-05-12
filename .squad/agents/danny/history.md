@@ -576,3 +576,35 @@ Basher implemented the Redis architecture decision:
 - Agent assignments: Basher (backend/Python), Linus (React UI), Turk (Terraform/Kustomize/CI), Livingston (tests)
 
 **Estimated total:** ~10-14 days across all agents
+
+### Infrastructure Security Audit (2026-05-12) — Issue #18
+
+**Scope:** Deep security audit across Terraform, Kubernetes, Istio, Docker, CI/CD, secrets management.
+
+**Key Findings (27 total: 3 CRITICAL, 7 HIGH, 10 MEDIUM, 5 LOW, 2 INFO):**
+
+**Critical gaps:**
+- Hardcoded JWT fallback secret in docker-compose.yml (6 services)
+- No Istio PeerAuthentication (mTLS not enforced) or AuthorizationPolicy (no service-to-service ACL)
+
+**High-priority issues:**
+- NSG allows 0.0.0.0/0 inbound on ports 80/443 (infra/cloud/networking.tf:27-49)
+- KeyVault, Storage, ACR all have public_network_access_enabled = true despite private endpoints
+- No NetworkPolicies or PodDisruptionBudgets in any K8s manifests
+- 9 containers have readOnlyRootFilesystem: false
+- Azure client secrets passed as env vars in docker-compose
+
+**Positive patterns observed:**
+- All Dockerfiles use non-root users
+- SecretProviderClass correctly projects KeyVault secrets via CSI driver
+- K8s services use workload identity + secretKeyRef (not plaintext)
+- Private endpoints exist for all major PaaS services
+- Good use of multi-stage Docker builds
+
+**Key file paths for remediation:**
+- NSG rules: infra/cloud/networking.tf:27-49
+- Public access: infra/cloud/keyvault.tf:12, storage.tf:12, acr.tf:11
+- Missing Istio policies: cluster-config/istio/ (needs PeerAuthentication + AuthorizationPolicy)
+- readOnlyRootFilesystem issues: deploy/kustomize/base/{budget,chatbot,ai,ui-app,account-opening,prompt-eval}-service.yaml
+- JWT secret: docker-compose.yml:28,48,67,89,160,179
+- Full report: .squad/decisions/inbox/danny-security-audit.md

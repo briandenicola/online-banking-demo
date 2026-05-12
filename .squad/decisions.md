@@ -3808,3 +3808,211 @@ Audited all dependency manifests, Dockerfiles, CI/CD workflows, lockfile hygiene
 6. **Pin GitHub Actions** to SHA hashes
 7. **Add tests** to transaction-service, prompt-eval-service, event-processor
 8. **Standardize package versions** across services
+
+---
+
+# Session 2026-05-12: Critical Security Fixes (Issues #25, #26, #27)
+
+## Auth Vulnerability Fixes — Service-to-Service Impact
+
+**Date:** 2026-05-13  
+**Author:** Basher  
+**Priority:** P0  
+**Status:** Implemented (with known follow-up needed)  
+**Related Issues:** #25, #27
+
+### What Changed
+1. **X-User-Id header forgery removed** — account-service no longer accepts identity from HTTP headers. JWT claim only.
+2. **Ownership checks added** — all user-facing endpoints now verify the authenticated user owns the resource before returning it. Ownership failures return 404 (not 403) to prevent resource enumeration.
+3. **Fail-closed balance validation** — transaction-service now rejects transactions when balance cannot be validated (network errors, timeouts, service down). Previously it silently allowed them through.
+4. **Transfer ownership** — Transfer model now carries UserId. Transfer service verifies FromAccountId belongs to the authenticated user before processing.
+
+### Known Breaking Change: Service-to-Service Calls
+Adding ownership checks to `GET /api/accounts/{id}` and `POST /api/accounts/{id}/balance` affects service-to-service flows where the forwarded user JWT doesn't own the target resource.
+
+**Proposed Solution:** Three options documented:
+- Option A: Service identity mechanism with dedicated service JWT
+- Option B: mTLS-based identity (Istio peer authentication)
+- Option C: Move balance updates into transaction-service
+
+Recommendation: Option A is simplest short-term; Option C is architecturally cleanest.
+
+---
+
+## JWT Authentication for Python/FastAPI Services
+
+**Author:** Turk (Backend Dev)  
+**Date:** 2026-05-12  
+**Status:** Implemented  
+**Issue:** #26
+
+### Context
+All three Python/FastAPI services (budget-service, chatbot-service, ai-service) had zero authentication.
+
+### Decision
+1. **Shared auth module** — Created `src/shared/auth.py` as canonical source, copied to each service's `app/auth.py` (duplication necessary due to Docker build context constraints)
+2. **Unified JWT config** — All services read `Jwt__Key`, `Jwt__Issuer`, `Jwt__Audience` (same as .NET services)
+3. **User identity from JWT only** — Never trust client input; identity from JWT claim only
+4. **System prompt protection** — Admin endpoints no longer return full prompt text
+
+Coordination notes: UI must send `Authorization: Bearer <token>` headers; frontend changes needed by Linus.
+
+---
+
+## Security Test Suite for Issues #25, #26, #27
+
+**Date:** 2026-05-12  
+**Author:** Livingston (Tester/QA)  
+**Status:** Implemented & Passing
+
+### Summary
+Added 80 security tests across 6 services (25 .NET, 55 Python):
+
+| Service | Tests | Framework |
+|---------|-------|-----------|
+| account-service | 9 | xUnit/Moq |
+| transaction-service | 11 | xUnit/Moq |
+| transfer-service | 5 | xUnit/Moq |
+| budget-service | 13 | pytest |
+| chatbot-service | 14 | pytest |
+| ai-service | 28 | pytest |
+
+### Key Findings
+1. ✅ Basher's .NET auth fixes verified — ownership checks work correctly
+2. ✅ Python JWT auth is solid — proper JWT validation across all services
+3. ⚠️ Fail-closed gap still exists — HttpRequestException needs controller try/catch
+4. ⚠️ InMemoryTransactionService doesn't filter by userId (separate bug)
+
+All tests pass without external dependencies — safe for CI pipeline.
+
+---
+
+## Entra Agent ID Sidecar Credential
+
+**Date:** 2026-05-12  
+**Author:** Basher  
+**Priority:** P1  
+**Status:** Implemented
+
+### Context
+Account-opening worker's Foundry agent consumers need Azure AI tokens. In K8s with Entra Agent ID, a sidecar provides tokens via HTTP.
+
+### Decision
+1. Created `SidecarTokenCredential` (`app/sidecar_credential.py`) — conforms to Azure TokenCredential protocol
+2. Worker reads `AGENT_ID_SIDECAR_URL` + `AGENT_ID_AGENT_IDENTITY` env vars
+3. Falls back to `DefaultAzureCredential` if not set (backward compat for local dev)
+4. Removed silent fallback inside consumer `__init__` — credential now required; raises `RuntimeError` on `None`
+
+### Impact
+Requires `AGENT_ID_SIDECAR_URL` and `AGENT_ID_AGENT_IDENTITY` in K8s deployment; no breaking change for local dev.
+
+---
+
+## Entra Agent ID Sidecar Activation — Kustomize Manifest
+
+**Author:** Turk  
+**Date:** 2026-05-12  
+**Issue:** #20  
+**Status:** Implemented
+
+### Decisions
+1. **AGENT_ID_AGENT_IDENTITY via ConfigMap** — Placed in `banking-demo-config` configmap for consistent sed-substitute pattern
+2. **AGENT_ID_SIDECAR_URL explicit env var** — Set directly on worker container (pod-topology-specific, not shared)
+3. **Istio excludeInboundPorts** — Added `excludeInboundPorts: "5000"` for sidecar (localhost traffic shouldn't be intercepted)
+4. **Workload identity webhook** — Sidecar gets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_FEDERATED_TOKEN_FILE` automatically
+
+### Files Changed
+- `deploy/kustomize/base/account-opening-service.yaml` — sidecar container, env vars, Istio annotation
+- `deploy/kustomize/base/configmap.yaml` — added placeholder
+- `tasks/Taskfile.cloud.yml` — sed substitution
+
+---
+
+## Account-Opening Upload Directory — emptyDir Volume
+
+**Date:** 2026-05-12  
+**Author:** Basher  
+**Priority:** P1  
+**Status:** Implemented
+
+### Context
+`upload_document` endpoint failed with `PermissionError` because container runs as `appuser` but `/app` is root-owned.
+
+### Decision
+1. **Kustomize (K8s):** Added `emptyDir` volume named `upload-data` mounted at `/app/data`; `fsGroup: 1000` makes it writable for `appuser`
+2. **Dockerfile (local dev):** Added `RUN mkdir -p /app/data && chown appuser:appuser /app/data` before `USER appuser`
+
+### Impact
+- Fixes 500 errors on document upload
+- No image rebuild needed for K8s fix
+- Dockerfile change takes effect on next build
+
+---
+
+## Azure Blob Storage for Document Uploads
+
+**Author:** Basher  
+**Date:** 2026-05-12  
+**Status:** Proposed
+
+### Context
+Account-opening service document upload was writing to local filesystem, which doesn't work in AKS. Infrastructure already exists.
+
+### Decision
+- Use sync `BlobServiceClient` with `DefaultAzureCredential` — no account keys
+- Initialize client at app startup, store on `app.state`
+- Blob path: `{application_id}/{document_type}/{filename}`
+- Storage account name from `AZURE_STORAGE_ACCOUNT_NAME` env var
+- Removed `/app/data` directory from Dockerfile
+
+### Rationale
+- Entra RBAC auth aligns with project convention
+- Sync SDK avoids async complexity; FastAPI runs sync in threadpool
+- Single client instance reuses HTTP connections efficiently
+
+---
+
+## Account Opening Smoke Test Strategy
+
+**Author:** Basher  
+**Date:** 2026-05-12  
+**Status:** Proposed  
+**Related:** Issue #21, PR #23
+
+### Decisions
+1. **Graceful degradation** — Smoke tests catch connection errors and 5xx, logging as informational (matches AI service pattern)
+2. **`ACCOUNT_OPENING_URL` env var** — Supports routing to separate service URL; falls back to gateway-proxied path
+3. **Inline fixture data** — Application form data inlined in test (sourced from `john-smith.json`)
+
+---
+
+## E2E Account Opening Test Design
+
+**Author:** Livingston (Tester/QA)  
+**Date:** 2026-05-12  
+**Status:** Implemented
+
+### Context
+Issue #21 requires E2E tests for account-opening service workflow with state machine, JWT auth, multipart uploads, and validation.
+
+### Decisions
+1. **Graceful degradation** — Suite gated by health check; all 18 tests skip if service down
+2. **Serial mode for happy path** — Shared application state; other tests run in parallel
+3. **Terminal state polling** — Final status test polls 30s, accepts any valid state (avoids flakiness in dev environments)
+4. **Admin endpoint handling** — Test skips verification if user gets 401/403 (may not be admin)
+
+### Impact
+- No files modified that others are editing
+- Auto-skips if account-opening not in docker-compose
+- Safe to add to CI
+
+---
+
+## User Directive: TLS Configuration Conflict
+
+**Date:** 2026-05-12T13:34:00Z  
+**By:** Brian  
+**Issue:** Cloud:deploy overwrites TLS config set by cloud:tls:enable
+**Details:** VirtualService redeploy removes TLS routes/certs
+**Status:** Captured for team memory
+
