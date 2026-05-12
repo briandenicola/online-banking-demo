@@ -1001,3 +1001,27 @@ Using `create_session()` + `run("ping")` is lightest real connectivity test:
 - `tests/e2e/utils/testHelpers.ts` — health check array
 - `tests/fixtures/sample-documents/john-smith/photo_id.pdf` — used in document upload test
 - `tests/fixtures/sample-documents/applicants/john-smith.json` — application form data source
+
+### 2026-05 — Account-opening upload PermissionError fix
+
+**Problem:** `upload_document` endpoint returned 500 because `Path("/app/data/documents/...").mkdir()` failed — `/app` is root-owned but the container runs as `appuser` (UID 1000). The Dockerfile copies files as root then switches to `USER appuser`, so `/app/data` never existed with correct ownership.
+
+**Fix (two layers):**
+1. **Kustomize:** Added `emptyDir` volume (`upload-data`) mounted at `/app/data` on the API deployment only. The pod `fsGroup: 1000` makes it writable. Worker deployment left untouched (no uploads).
+2. **Dockerfile:** Added `RUN mkdir -p /app/data && chown appuser:appuser /app/data` before `USER appuser` so local Docker runs also work.
+
+**Pattern:** When a non-root container needs a writable directory under a root-owned WORKDIR, use `emptyDir` + `fsGroup` in K8s and pre-create with `chown` in the Dockerfile. Don't `chmod 777` — maintain least-privilege.
+
+**Key files:**
+- `deploy/kustomize/base/account-opening-service.yaml` — emptyDir volume on API deployment
+- `src/account-opening-service/Dockerfile` — mkdir + chown before USER switch
+
+### 2026-05 — Replace local file write with Azure Blob Storage
+
+**Change:** Document upload endpoint now uses `BlobServiceClient` with `DefaultAzureCredential` instead of writing to local filesystem. BlobServiceClient initialized once in app lifespan (similar to redis pattern). Removed `/app/data` directory from Dockerfile since it's no longer needed.
+
+**Key decisions:**
+- Sync `BlobClient.upload_blob()` used (runs in threadpool) — avoids async SDK complexity
+- Blob path convention: `{application_id}/{document_type}/{filename}`
+- `blobUrl` returns real Azure Blob URL consumed by downstream AI Content Understanding Service
+- Storage account name injected via `AZURE_STORAGE_ACCOUNT_NAME` env var (configmap placeholder pattern)
