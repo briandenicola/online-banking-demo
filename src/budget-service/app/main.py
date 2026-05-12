@@ -31,7 +31,7 @@ from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.auth import UserContext, verify_jwt
@@ -185,14 +185,14 @@ async def categorize_transaction(description: str) -> str:
 
 
 class TransactionEvent(BaseModel):
-    transactionId: str
-    accountId: str
+    transactionId: str = Field(..., min_length=1, max_length=128)
+    accountId: str = Field(..., min_length=1, max_length=128)
     amount: float
-    type: str
-    description: str
-    category: str
+    type: str = Field(..., min_length=1, max_length=50)
+    description: str = Field(..., max_length=500)
+    category: str = Field(..., max_length=100)
     timestamp: Optional[datetime] = None
-    aiCategory: Optional[str] = None
+    aiCategory: Optional[str] = Field(default=None, max_length=100)
 
 
 class BudgetInsight(BaseModel):

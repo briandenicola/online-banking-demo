@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Threading.Tasks;
 using AccountService.Models;
 using Microsoft.Azure.Cosmos;
@@ -92,7 +93,7 @@ public class AccountService : IAccountService
 
     private string GenerateAccountNumber()
     {
-        var random = new Random();
-        return $"ACC{random.Next(10000000, 99999999)}";
+        var number = RandomNumberGenerator.GetInt32(10000000, 99999999);
+        return $"ACC{number}";
     }
 }

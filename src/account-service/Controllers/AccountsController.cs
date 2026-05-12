@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -122,5 +123,7 @@ public class AccountsController : ControllerBase
 
 public class UpdateBalanceRequest
 {
+    [Required]
+    [Range(-10000000, 10000000, ErrorMessage = "Amount must be between -10,000,000 and 10,000,000")]
     public decimal Amount { get; set; }
 }

@@ -18,17 +18,17 @@ class ApplicationStatus(str, Enum):
 
 
 class Address(BaseModel):
-    street: str
-    city: str
-    state: str
-    zip: str
-    country: str
+    street: str = Field(..., min_length=1, max_length=200)
+    city: str = Field(..., min_length=1, max_length=100)
+    state: str = Field(..., min_length=1, max_length=100)
+    zip: str = Field(..., min_length=3, max_length=20)
+    country: str = Field(..., min_length=1, max_length=100)
 
 
 class Employment(BaseModel):
-    employer: str
-    title: str
-    annualIncome: float
+    employer: str = Field(..., min_length=1, max_length=200)
+    title: str = Field(..., min_length=1, max_length=200)
+    annualIncome: float = Field(..., gt=0)
 
 
 AccountType = Literal["checking", "savings", "both"]
@@ -36,14 +36,14 @@ DocumentType = Literal["photo_id", "proof_of_address"]
 
 
 class ApplicationCreate(BaseModel):
-    firstName: str
-    lastName: str
+    firstName: str = Field(..., min_length=1, max_length=100)
+    lastName: str = Field(..., min_length=1, max_length=100)
     email: EmailStr
-    phone: str | None = None
+    phone: str | None = Field(default=None, max_length=30, pattern=r"^\+?[\d\s\-().]{7,30}$")
     dateOfBirth: date
     address: Address | str
     employment: Employment | str | None = None
-    annualIncome: float | None = None
+    annualIncome: float | None = Field(default=None, gt=0)
     accountType: AccountType
     ssn: str = Field(pattern=r"^\d{4}$")
 

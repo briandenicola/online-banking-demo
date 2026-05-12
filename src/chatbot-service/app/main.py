@@ -447,8 +447,8 @@ HTTPXClientInstrumentor().instrument()
 
 
 class ChatRequest(BaseModel):
-    message: str
-    user_id: str
+    message: str = Field(..., min_length=1, max_length=10000)
+    user_id: str = Field(..., min_length=1, max_length=128)
     context: Optional[dict] = None
 
 

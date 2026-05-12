@@ -166,6 +166,10 @@ public class ResetPasswordRequest
 
 public class PromoteRequest
 {
+    [EmailAddress]
+    [StringLength(255)]
     public string? Email { get; set; }
+
+    [StringLength(128)]
     public string? UserId { get; set; }
 }

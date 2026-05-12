@@ -138,8 +138,8 @@ async def list_applications(
 
 
 class ReviewRequest(BaseModel):
-    decision: str = Field(..., description="approved/rejected/pending_review")
-    notes: str | None = None
+    decision: str = Field(..., pattern=r"^(approved|rejected|pending_review)$", description="approved/rejected/pending_review")
+    notes: str | None = Field(default=None, max_length=2000)
 
 
 @router.patch("/applications/{application_id}/review")

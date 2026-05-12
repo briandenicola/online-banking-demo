@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
@@ -311,16 +312,23 @@ public class UsersController : ControllerBase
 
 public class ChangePasswordRequest
 {
+    [Required]
+    [StringLength(128, MinimumLength = 8)]
     public string CurrentPassword { get; set; } = null!;
+
+    [Required]
+    [StringLength(128, MinimumLength = 8)]
     public string NewPassword { get; set; } = null!;
 }
 
 public class SetAvatarRequest
 {
+    [StringLength(700000)]
     public string? AvatarBase64 { get; set; }
 }
 
 public class SetCategoryPreferencesRequest
 {
+    [MaxLength(50)]
     public List<string>? Categories { get; set; }
 }

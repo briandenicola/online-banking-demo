@@ -186,17 +186,17 @@ class AdminStats(BaseModel):
 
 class ReviewRequest(BaseModel):
     status: str = Field(..., pattern=r"^(reviewed|cleared)$")
-    notes: str
+    notes: str = Field(..., min_length=1, max_length=2000)
 
 
 class DetectRequest(BaseModel):
     """Strict schema for synchronous transaction detection."""
-    transactionId: str = Field(description="Transaction identifier")
-    accountId: str = Field(description="Account identifier")
-    amount: float = Field(description="Transaction amount")
-    type: str = Field(description="Transaction type (e.g. Debit, Credit, Transfer)")
-    description: str = Field(default="", description="Transaction description")
-    category: str = Field(default="", description="Transaction category")
+    transactionId: str = Field(..., min_length=1, max_length=128, description="Transaction identifier")
+    accountId: str = Field(..., min_length=1, max_length=128, description="Account identifier")
+    amount: float = Field(..., description="Transaction amount")
+    type: str = Field(..., min_length=1, max_length=50, description="Transaction type (e.g. Debit, Credit, Transfer)")
+    description: str = Field(default="", max_length=500, description="Transaction description")
+    category: str = Field(default="", max_length=100, description="Transaction category")
 
 
 # ============================================================
@@ -1351,11 +1351,13 @@ async def get_active_prompts(user: UserContext = Depends(require_admin)):
 
 class EvalRequest(BaseModel):
     """Request to run a Foundry evaluation."""
-    eval_name: str = Field(description="Display name for the evaluation run")
-    system_prompt: str = Field(description="System prompt to evaluate")
-    transactions: list[dict] = Field(description="List of transaction dicts to test against")
+    eval_name: str = Field(..., min_length=1, max_length=200, description="Display name for the evaluation run")
+    system_prompt: str = Field(..., min_length=1, max_length=10000, description="System prompt to evaluate")
+    transactions: list[dict] = Field(..., min_length=1, max_length=100, description="List of transaction dicts to test against")
     evaluators: list[str] = Field(
         default=["coherence", "fluency", "relevance"],
+        min_length=1,
+        max_length=20,
         description="Foundry evaluator names (short form preferred, e.g. 'coherence' not 'builtin.coherence')"
     )
 

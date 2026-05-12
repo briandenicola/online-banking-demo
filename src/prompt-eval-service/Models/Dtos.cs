@@ -1,25 +1,48 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace PromptEvalService.Models;
 
 // Request DTOs
 
 public class CreatePromptTemplateRequest
 {
+    [Required]
+    [StringLength(200, MinimumLength = 1)]
     public string Name { get; set; } = string.Empty;
+
+    [StringLength(1000)]
     public string? Description { get; set; }
+
+    [Required]
+    [RegularExpression("^(risk-scoring|categorization)$", ErrorMessage = "Target must be 'risk-scoring' or 'categorization'")]
     public string Target { get; set; } = "risk-scoring";
+
+    [Required]
+    [StringLength(10000, MinimumLength = 1)]
     public string SystemPrompt { get; set; } = string.Empty;
 }
 
 public class UpdatePromptTemplateRequest
 {
+    [StringLength(200, MinimumLength = 1)]
     public string? Name { get; set; }
+
+    [StringLength(1000)]
     public string? Description { get; set; }
+
+    [StringLength(10000, MinimumLength = 1)]
     public string? SystemPrompt { get; set; }
 }
 
 public class RunEvaluationRequest
 {
+    [Required]
+    [StringLength(128)]
     public string TemplateId { get; set; } = string.Empty;
+
+    [Required]
+    [MinLength(1, ErrorMessage = "At least one transaction ID is required")]
+    [MaxLength(100)]
     public List<string> TransactionIds { get; set; } = new();
 }
 
