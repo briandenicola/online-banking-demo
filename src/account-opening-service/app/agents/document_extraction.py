@@ -42,7 +42,8 @@ class DocumentExtractionConsumer(AgentConsumer):
         self._state_machine = state_machine
 
         try:
-            from azure.ai.contentunderstanding import AnalysisInput, ContentUnderstandingClient
+            from azure.ai.contentunderstanding import ContentUnderstandingClient
+            from azure.ai.contentunderstanding.models import AnalysisInput
             from azure.identity import DefaultAzureCredential
         except ImportError as exc:
             logger.error("azure-ai-contentunderstanding is not installed", error=str(exc))
