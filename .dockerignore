@@ -1,7 +1,8 @@
 # Dependencies
 **/node_modules
-**/bin
-**/obj
+**/bin/
+**/obj/
+**/obj2/
 
 # Git
 .git
