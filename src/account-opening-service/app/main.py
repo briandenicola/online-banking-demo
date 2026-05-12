@@ -23,6 +23,7 @@ from azure.storage.blob import BlobServiceClient
 
 from .redis_client import create_redis_client
 from .repository import InMemoryApplicationRepository
+from .cosmos_repository import CosmosDBApplicationRepository
 from .routes import router as account_opening_router
 
 
@@ -88,11 +89,24 @@ init_telemetry()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    use_in_memory = os.getenv("USE_IN_MEMORY_DB", "true").lower() == "true"
-    if not use_in_memory:
-        logger.error("Cosmos DB repository not yet implemented")
-        raise RuntimeError("Cosmos DB repository not yet implemented")
-    app.state.repository = InMemoryApplicationRepository()
+    cosmos_endpoint = os.getenv("CosmosDb__Endpoint")
+    if cosmos_endpoint and cosmos_endpoint != "REPLACE_WITH_COSMOS_ENDPOINT":
+        try:
+            from azure.cosmos import CosmosClient
+
+            credential = DefaultAzureCredential()
+            cosmos_client = CosmosClient(cosmos_endpoint, credential=credential)
+            db = cosmos_client.get_database_client("BankingDemo")
+            container = db.get_container_client("account-applications")
+            app.state.repository = CosmosDBApplicationRepository(container)
+            logger.info("Using Cosmos DB repository", endpoint=cosmos_endpoint)
+        except Exception as exc:
+            logger.error("Failed to init Cosmos DB, falling back to in-memory", error=str(exc))
+            app.state.repository = InMemoryApplicationRepository()
+    else:
+        logger.warning("CosmosDb__Endpoint not set — using in-memory repository")
+        app.state.repository = InMemoryApplicationRepository()
+
     app.state.redis = await create_redis_client()
 
     storage_account_name = os.getenv("AZURE_STORAGE_ACCOUNT_NAME")
@@ -113,10 +127,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Account Opening Service", version="1.0.0", lifespan=lifespan)
-if os.getenv("USE_IN_MEMORY_DB", "true").lower() == "true":
-    app.state.repository = InMemoryApplicationRepository()
-else:
-    app.state.repository = None
+app.state.repository = None
 app.state.redis = None
 app.state.blob_service_client = None
 

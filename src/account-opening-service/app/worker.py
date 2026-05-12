@@ -16,6 +16,7 @@ from .agents import (
 )
 from .redis_client import create_redis_client
 from .repository import InMemoryApplicationRepository
+from .cosmos_repository import CosmosDBApplicationRepository
 from .state_machine import ApplicationStateMachine
 
 logger = structlog.get_logger("account-opening-worker")
@@ -98,7 +99,23 @@ async def main() -> int:
     if not redis_client:
         return 1
 
-    repository = InMemoryApplicationRepository()
+    cosmos_endpoint = os.getenv("CosmosDb__Endpoint")
+    if cosmos_endpoint and cosmos_endpoint != "REPLACE_WITH_COSMOS_ENDPOINT":
+        try:
+            from azure.cosmos import CosmosClient
+
+            cosmos_client = CosmosClient(cosmos_endpoint, credential=credential)
+            db = cosmos_client.get_database_client("BankingDemo")
+            container = db.get_container_client("account-applications")
+            repository = CosmosDBApplicationRepository(container)
+            logger.info("Worker using Cosmos DB repository", endpoint=cosmos_endpoint)
+        except Exception as exc:
+            logger.error("Worker failed to init Cosmos DB", error=str(exc))
+            return 1
+    else:
+        logger.error("CosmosDb__Endpoint not set — worker requires Cosmos DB for shared state")
+        return 1
+
     state_machine = ApplicationStateMachine()
 
     worker_id = os.getenv("HOSTNAME", "account-opening-worker")

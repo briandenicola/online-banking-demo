@@ -24,6 +24,7 @@ agent-framework-foundry = "*"
 azure-identity = "1.17.0"
 azure-ai-contentunderstanding = "*"
 azure-ai-projects = "*"
+azure-cosmos = "^4.7.0"
 
 [build-system]
 requires = ["poetry-core"]
