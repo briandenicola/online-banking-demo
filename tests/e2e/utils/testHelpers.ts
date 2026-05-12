@@ -35,19 +35,38 @@ export async function waitForService(options: HealthCheckOptions): Promise<void>
  * Waits for all core banking services to be healthy.
  */
 export async function waitForAllServices(baseURL: string): Promise<void> {
-  const services = [
+  const requiredServices = [
     { name: 'gateway', path: '/api/users/health' },
     { name: 'accounts', path: '/api/accounts/health' },
     { name: 'transactions', path: '/api/transactions/health' },
   ];
 
+  const optionalServices = [
+    { name: 'account-opening', path: '/api/account-opening/healthz' },
+  ];
+
+  // Required services must be healthy
   await Promise.all(
-    services.map((svc) =>
+    requiredServices.map((svc) =>
       waitForService({
         url: `${baseURL}${svc.path}`,
         timeout: 60_000,
       })
     )
+  );
+
+  // Optional services — log but don't block
+  await Promise.allSettled(
+    optionalServices.map(async (svc) => {
+      try {
+        await waitForService({
+          url: `${baseURL}${svc.path}`,
+          timeout: 15_000,
+        });
+      } catch {
+        console.log(`[waitForAllServices] Optional service "${svc.name}" not available — tests will degrade gracefully`);
+      }
+    })
   );
 }
 

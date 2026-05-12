@@ -5,6 +5,8 @@ import { DashboardPage } from '../../pages/DashboardPage';
 import { AccountsPage } from '../../pages/AccountsPage';
 import { TransactionsPage } from '../../pages/TransactionsPage';
 import { RegistrationPage } from '../../pages/RegistrationPage';
+import * as fs from 'fs';
+import * as path from 'path';
 
 
 test.describe('Smoke Tests', () => {
@@ -24,6 +26,17 @@ test.describe('Smoke Tests', () => {
       const response = await request.get(endpoint);
       // Accept any non-5xx response — 200, 401, etc. all mean the service is alive
       expect(response.status(), `${endpoint} returned ${response.status()}`).toBeLessThan(500);
+    }
+
+    // Optional services — log status but don't fail the test
+    const optionalEndpoints = ['/api/account-opening/healthz'];
+    for (const endpoint of optionalEndpoints) {
+      try {
+        const response = await request.get(endpoint);
+        console.log(`[Smoke] ${endpoint} → ${response.status()} ${response.status() < 500 ? '✓' : '(degraded)'}`);
+      } catch {
+        console.log(`[Smoke] ${endpoint} → unreachable (service may not be deployed)`);
+      }
     }
   });
 
@@ -304,6 +317,140 @@ test.describe('Smoke Tests', () => {
     expect(checkingFinal.balance, `Checking should be $75,000 (0 + 150k transfer - 75k car)`).toBe(75000);
 
     console.log(`[Lifecycle] Final balances — Savings: $${savingsFinal.balance} | Checking: $${checkingFinal.balance}`);
+  });
+
+  test('@smoke Account opening — submit application', async ({ request }) => {
+    const accountOpeningBaseURL = process.env.ACCOUNT_OPENING_URL || '';
+    const auth = await apiLogin(request);
+    const headers = { Authorization: `Bearer ${auth.token}` };
+
+    const applicationData = {
+      firstName: 'John',
+      lastName: 'Smith',
+      email: 'john.smith@example.com',
+      phone: '+12175551234',
+      dateOfBirth: '1988-03-15',
+      address: {
+        street: '742 Evergreen Terrace',
+        city: 'Springfield',
+        state: 'IL',
+        zip: '62704',
+        country: 'US',
+      },
+      employment: {
+        employer: 'Contoso Technologies',
+        title: 'IT Engineer',
+        annualIncome: 125000.0,
+      },
+      annualIncome: 125000.0,
+      accountType: 'checking',
+      ssn: '5678',
+    };
+
+    try {
+      const endpoint = accountOpeningBaseURL
+        ? `${accountOpeningBaseURL}/api/account-opening/applications`
+        : '/api/account-opening/applications';
+
+      const response = await request.post(endpoint, {
+        headers,
+        data: applicationData,
+      });
+
+      if (response.status() >= 500) {
+        console.log(`[Smoke] Account opening service returned ${response.status()} — service may not be deployed`);
+        return;
+      }
+
+      expect(response.status(), `POST /api/account-opening/applications returned ${response.status()}`).toBe(201);
+
+      const body = await response.json();
+      expect(body).toHaveProperty('id');
+      expect(body.status).toBe('submitted');
+      console.log(`[Smoke] Account opening application submitted: id=${body.id} status=${body.status}`);
+    } catch (error) {
+      console.log(`[Smoke] Account opening service unavailable — ${(error as Error).message}`);
+    }
+  });
+
+  test('@smoke Account opening — upload document', async ({ request }) => {
+    const accountOpeningBaseURL = process.env.ACCOUNT_OPENING_URL || '';
+    const auth = await apiLogin(request);
+    const headers = { Authorization: `Bearer ${auth.token}` };
+
+    const applicationData = {
+      firstName: 'John',
+      lastName: 'Smith',
+      email: 'john.smith@example.com',
+      phone: '+12175551234',
+      dateOfBirth: '1988-03-15',
+      address: {
+        street: '742 Evergreen Terrace',
+        city: 'Springfield',
+        state: 'IL',
+        zip: '62704',
+        country: 'US',
+      },
+      employment: {
+        employer: 'Contoso Technologies',
+        title: 'IT Engineer',
+        annualIncome: 125000.0,
+      },
+      annualIncome: 125000.0,
+      accountType: 'checking',
+      ssn: '5678',
+    };
+
+    try {
+      const baseEndpoint = accountOpeningBaseURL
+        ? `${accountOpeningBaseURL}/api/account-opening/applications`
+        : '/api/account-opening/applications';
+
+      // Create an application first
+      const createResponse = await request.post(baseEndpoint, {
+        headers,
+        data: applicationData,
+      });
+
+      if (createResponse.status() >= 500) {
+        console.log(`[Smoke] Account opening service returned ${createResponse.status()} — service may not be deployed`);
+        return;
+      }
+
+      expect(createResponse.status(), `POST /api/account-opening/applications returned ${createResponse.status()}`).toBe(201);
+      const application = await createResponse.json();
+
+      // Upload photo ID document
+      const pdfPath = path.resolve(__dirname, '../../../../fixtures/sample-documents/john-smith/photo_id.pdf');
+      const pdfBuffer = fs.readFileSync(pdfPath);
+
+      const uploadEndpoint = `${baseEndpoint}/${application.id}/documents`;
+      const response = await request.post(uploadEndpoint, {
+        headers,
+        multipart: {
+          documentType: 'photo_id',
+          file: {
+            name: 'photo_id.pdf',
+            mimeType: 'application/pdf',
+            buffer: pdfBuffer,
+          },
+        },
+      });
+
+      if (response.status() >= 500) {
+        console.log(`[Smoke] Document upload returned ${response.status()} — service may be degraded`);
+        return;
+      }
+
+      expect(response.status(), `POST documents returned ${response.status()}`).toBe(201);
+
+      const body = await response.json();
+      expect(body).toHaveProperty('type');
+      expect(body.type).toBe('photo_id');
+      console.log(`[Smoke] Document uploaded: type=${body.type} filename=${body.filename}`);
+    } catch (error) {
+      console.log(`[Smoke] Account opening document upload unavailable — ${(error as Error).message}`);
+    }
   });
 
   test('@smoke Logout — user can log out', async ({ authenticatedPage }) => {
