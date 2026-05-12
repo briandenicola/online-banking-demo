@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import shutil
+import os
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
@@ -63,20 +62,35 @@ async def upload_document(
     if user.role != "Admin" and owner != user.user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    base_dir = Path(__file__).resolve().parents[1]
-    document_dir = base_dir / "data" / "documents" / application_id
-    document_dir.mkdir(parents=True, exist_ok=True)
-
     safe_name = file.filename or f"document-{document_type}-{datetime.now(timezone.utc).timestamp()}"
-    file_path = document_dir / safe_name
-    with file_path.open("wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    blob_path = f"{application_id}/{document_type}/{safe_name}"
+    container_name = "account-opening-documents"
+
+    blob_service_client = request.app.state.blob_service_client
+    if not blob_service_client:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Blob storage not configured",
+        )
+
+    try:
+        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
+        file_content = await file.read()
+        blob_client.upload_blob(file_content, overwrite=True)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to upload document to blob storage: {exc}",
+        )
+
+    storage_account_name = os.getenv("AZURE_STORAGE_ACCOUNT_NAME", "")
+    blob_url = f"https://{storage_account_name}.blob.core.windows.net/{container_name}/{blob_path}"
 
     metadata = DocumentMetadata(
         type=document_type,
         filename=safe_name,
         uploadedAt=datetime.now(timezone.utc),
-        blobUrl=str(file_path),
+        blobUrl=blob_url,
     )
 
     repository.add_document(application_id, metadata)

@@ -18,6 +18,9 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
+from azure.identity import DefaultAzureCredential
+from azure.storage.blob import BlobServiceClient
+
 from .redis_client import create_redis_client
 from .repository import InMemoryApplicationRepository
 from .routes import router as account_opening_router
@@ -91,6 +94,16 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("Cosmos DB repository not yet implemented")
     app.state.repository = InMemoryApplicationRepository()
     app.state.redis = await create_redis_client()
+
+    storage_account_name = os.getenv("AZURE_STORAGE_ACCOUNT_NAME")
+    if storage_account_name:
+        credential = DefaultAzureCredential()
+        account_url = f"https://{storage_account_name}.blob.core.windows.net"
+        app.state.blob_service_client = BlobServiceClient(account_url, credential=credential)
+    else:
+        logger.warning("AZURE_STORAGE_ACCOUNT_NAME not set — blob uploads disabled")
+        app.state.blob_service_client = None
+
     yield
     redis_client = app.state.redis
     if redis_client:
@@ -105,6 +118,7 @@ if os.getenv("USE_IN_MEMORY_DB", "true").lower() == "true":
 else:
     app.state.repository = None
 app.state.redis = None
+app.state.blob_service_client = None
 
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(

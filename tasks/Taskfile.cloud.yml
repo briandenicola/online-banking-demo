@@ -295,14 +295,17 @@ tasks:
 
   _configmap:update:
     internal: true
-    desc: Substitute Cosmos endpoint in configmap, apply, then restore
+    desc: Substitute Cosmos endpoint and storage account in configmap, apply, then restore
     cmds:
       - sed -i "s|REPLACE_WITH_COSMOS_ENDPOINT|{{.COSMOS_ENDPOINT}}|g" deploy/kustomize/base/configmap.yaml
+      - sed -i "s|REPLACE_WITH_STORAGE_ACCOUNT|{{.STORAGE_ACCOUNT}}|g" deploy/kustomize/base/configmap.yaml
       - kubectl apply -f deploy/kustomize/base/configmap.yaml -n banking-demo
       - git checkout deploy/kustomize/base/configmap.yaml
     vars:
       COSMOS_ENDPOINT:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw cosmos_db_endpoint
+      STORAGE_ACCOUNT:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw storage_account_name
 
   _secretproviderclass:update:
     internal: true
