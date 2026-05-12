@@ -126,12 +126,16 @@ class DocumentExtractionConsumer(AgentConsumer):
             "extracted": extracted,
         }
 
-        application = self._state_machine.transition(
-            application,
-            ApplicationStatus.document_extraction,
-            agent_name=AGENT_NAME,
-            details=details,
-        )
+        # Multiple document_uploaded events fire (photo_id, proof_of_address).
+        # Only transition on the first; subsequent documents are additive.
+        already_in_extraction = application.status == ApplicationStatus.document_extraction
+        if not already_in_extraction:
+            application = self._state_machine.transition(
+                application,
+                ApplicationStatus.document_extraction,
+                agent_name=AGENT_NAME,
+                details=details,
+            )
 
         application.agentResults.append(
             AgentResult(

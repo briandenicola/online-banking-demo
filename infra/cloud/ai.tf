@@ -134,6 +134,50 @@ resource "azapi_resource" "text_embedding" {
   }
 }
 
+resource "azapi_resource" "cus_gpt41" {
+  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview"
+  name      = "gpt-4.1"
+  parent_id = data.azurerm_cognitive_account.content_understanding.id
+
+  depends_on = [azapi_resource.content_understanding]
+
+  body = {
+    sku = {
+      name     = "GlobalStandard"
+      capacity = 10
+    }
+    properties = {
+      model = {
+        format  = "OpenAI"
+        name    = "gpt-4.1"
+        version = "2025-04-14"
+      }
+    }
+  }
+}
+
+resource "azapi_resource" "cus_text_embedding_3_large" {
+  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview"
+  name      = "text-embedding-3-large"
+  parent_id = data.azurerm_cognitive_account.content_understanding.id
+
+  depends_on = [azapi_resource.cus_gpt41]
+
+  body = {
+    sku = {
+      name     = "GlobalStandard"
+      capacity = 10
+    }
+    properties = {
+      model = {
+        format  = "OpenAI"
+        name    = "text-embedding-3-large"
+        version = "1"
+      }
+    }
+  }
+}
+
 resource "azapi_resource" "ai_foundry_project" {
   type                      = "Microsoft.CognitiveServices/accounts/projects@2025-04-01-preview"
   name                      = local.project_name
