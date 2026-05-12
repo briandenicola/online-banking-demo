@@ -1,6 +1,9 @@
 FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
 WORKDIR /src
 
+# Copy central package management
+COPY Directory.Packages.props ./
+
 # Copy shared projects
 COPY src/shared/Contracts/*.csproj ./shared/Contracts/
 COPY src/shared/Observability/*.csproj ./shared/Observability/

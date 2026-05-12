@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Serilog.Formatting.Compact" />
     <PackageReference Include="Serilog.Sinks.Console" />
     <PackageReference Include="Serilog.Enrichers.Environment" />
     <PackageReference Include="Serilog.Enrichers.Thread" />
