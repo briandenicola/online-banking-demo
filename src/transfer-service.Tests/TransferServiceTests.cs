@@ -1,5 +1,10 @@
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using Moq;
 using OnlineBankingDemo.Contracts.Dtos;
+using StackExchange.Redis;
 using TransferService.Services;
 using Xunit;
 
@@ -11,7 +16,12 @@ public class TransferServiceTests
 
     public TransferServiceTests()
     {
-        _sut = new InMemoryTransferService();
+        _sut = new InMemoryTransferService(
+            Mock.Of<IConnectionMultiplexer>(),
+            Mock.Of<IHttpClientFactory>(),
+            Mock.Of<IHttpContextAccessor>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<InMemoryTransferService>>());
     }
 
     [Fact]

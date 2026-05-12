@@ -333,3 +333,53 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 - Playwright config `testDir: './specs'` means `--list` must be run from `tests/e2e/` dir
 - State machine terminal states: approved, rejected, pending_review — poll with 30s timeout
 - Multipart uploads use Playwright's `multipart` option with `{ name, mimeType, buffer }` for file field
+
+## Security & Supply Chain Audit (2026-05-12)
+
+### Completed — Issue #18
+- Full dependency, Docker, CI/CD, lockfile, and test coverage audit across all 11 services
+- Report filed at `.squad/decisions/inbox/livingston-security-audit.md`
+
+### Key Findings
+- **4 CRITICAL:** Pre-release Cosmos SDK (3.59.0-preview.0) in 5 .NET services, account-opening-service Dockerfile builds wrong service (transaction-service), no CI/CD pipeline exists, 3 services have zero tests
+- **8 HIGH:** No poetry.lock files for any Python service, unpinned wildcard deps in account-opening-service, Dockerfiles bypass pyproject.toml, no Dependabot, hardcoded JWT secret in test fixtures, GitHub Actions not SHA-pinned, inconsistent Azure.Identity versions
+- Detailed findings with file paths and remediation in decision inbox
+
+### Key Paths
+- .NET csproj files: src/{user,account,transfer,transaction,prompt-eval}-service/*.csproj
+- Python pyproject.toml: src/{ai,budget,chatbot,account-opening}-service/pyproject.toml
+- Go module: src/event-processor/go.mod
+- Dockerfiles: src/*/Dockerfile (11 total)
+- CI workflows: .github/workflows/ (only squad automation, no build/test pipeline)
+- No dependabot.yml, no poetry.lock files, no nuget.config
+
+### Architecture Observations
+- transaction-service.Tests references account-service.csproj (likely misnamed test project)
+- account-opening-service/Dockerfile is a copy of transaction-service's .NET Dockerfile (completely wrong — it's a Python service)
+- All Python Dockerfiles duplicate deps inline instead of using pyproject.toml
+- Microsoft.Azure.Cosmos 3.59.0-preview.0 is used universally — no stable alternative available may justify this, but should be documented
+
+## Security Test Suite (2026-05-12)
+
+### Completed — Issues #25, #26, #27
+Created 80 security tests across 6 services verifying auth boundaries:
+
+**Python services (55 tests, all passing):**
+- `budget-service/tests/test_security.py` — 13 tests: JWT validation, expired/wrong-secret rejection, health endpoint accessibility, path userId ignored in favor of JWT
+- `chatbot-service/tests/test_security.py` — 14 tests: JWT validation, chat history ownership (403 for other users), admin endpoint role enforcement
+- `ai-service/tests/test_security.py` — 28 tests: JWT validation on /detect, parametrized admin endpoint tests (5 GET + 3 POST/PUT endpoints × auth/role checks)
+
+**\.NET services (25 tests, all passing):**
+- `account-service.Tests/SecurityTests.cs` — 9 tests: X-User-Id header ignored, ownership checks on GetAccount/GetAccountByNumber/UpdateBalance, unauthenticated rejection
+- `transaction-service.Tests/SecurityTests.cs` — 8 tests: ownership on GetTransaction, account scoping via user transactions, unauthenticated rejection
+- `transaction-service.Tests/FailClosedSecurityTests.cs` — 3 tests: HttpRequestException propagation (Issue #27), InsufficientFunds rejection, happy path
+- `transfer-service.Tests/SecurityTests.cs` — 5 tests: transfer ownership, userId passthrough from JWT, failed transfer handling
+
+### Technical Notes
+- Python tests use FastAPI TestClient + PyJWT for token generation (HS256, same secret as user-service)
+- .NET tests use xUnit + Moq + FluentAssertions, same pattern as Phase 1
+- Added `src/Directory.Build.props` to exclude stale `obj.root`/`bin.root` dirs from compilation (created by concurrent root-owned builds)
+- Added pytest + httpx dev dependencies to chatbot-service pyproject.toml
+- Created transaction-service.Tests project (new .csproj + SecurityTests.cs + FailClosedSecurityTests.cs)
+- All tests verify post-fix behavior (Basher's commit 60c4b84 already applied fixes)
+- Fail-closed test documents that HttpRequestException propagates as 500 (not yet caught as 503)
