@@ -90,6 +90,10 @@ builder.Services.AddSingleton(async sp =>
     return database;
 });
 
+// Background evaluation queue
+builder.Services.AddSingleton<EvaluationQueue>();
+builder.Services.AddHostedService<EvaluationBackgroundService>();
+
 // Services
 builder.Services.AddScoped<IPromptTemplateService, PromptTemplateService>();
 builder.Services.AddScoped<IEvaluationService, EvaluationService>();

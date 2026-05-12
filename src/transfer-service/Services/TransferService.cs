@@ -33,8 +33,10 @@ public class TransferService : ITransferService
         IHttpClientFactory httpClientFactory,
         IHttpContextAccessor httpContextAccessor)
     {
-        var databaseName = configuration["CosmosDb:DatabaseName"];
-        var containerName = configuration["CosmosDb:ContainerName"];
+        var databaseName = configuration["CosmosDb:DatabaseName"]
+            ?? throw new InvalidOperationException("Missing required configuration: CosmosDb:DatabaseName");
+        var containerName = configuration["CosmosDb:ContainerName"]
+            ?? throw new InvalidOperationException("Missing required configuration: CosmosDb:ContainerName");
         _container = cosmosClient.GetContainer(databaseName, containerName);
         _redis = redis;
         _logger = logger;

@@ -16,13 +16,15 @@ public class EvaluationService : IEvaluationService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
     private readonly ILogger<EvaluationService> _logger;
+    private readonly EvaluationQueue _queue;
 
     public EvaluationService(
         CosmosClient cosmosClient,
         IPromptTemplateService templateService,
         IHttpClientFactory httpClientFactory,
         IConfiguration config,
-        ILogger<EvaluationService> logger)
+        ILogger<EvaluationService> logger,
+        EvaluationQueue queue)
     {
         var dbName = config["CosmosDb:DatabaseName"] ?? "BankingDemo";
         var containerName = config["CosmosDb:RunsContainerName"] ?? "EvaluationRuns";
@@ -31,6 +33,7 @@ public class EvaluationService : IEvaluationService
         _httpClientFactory = httpClientFactory;
         _config = config;
         _logger = logger;
+        _queue = queue;
     }
 
     private static readonly PartitionKey GlobalPartition = new("global");
@@ -53,26 +56,12 @@ public class EvaluationService : IEvaluationService
 
         await _runsContainer.CreateItemAsync(run, GlobalPartition);
 
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await ExecuteFoundryEvaluation(run, template, transactions);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Evaluation run {RunId} failed", run.Id);
-                run.Status = "failed";
-                run.Error = ex.Message;
-                run.CompletedAt = DateTime.UtcNow;
-                await _runsContainer.ReplaceItemAsync(run, run.Id, GlobalPartition);
-            }
-        });
+        await _queue.Writer.WriteAsync(new EvaluationWorkItem(run, template, transactions));
 
         return run;
     }
 
-    private async Task ExecuteFoundryEvaluation(EvaluationRun run, PromptTemplate template, List<TransactionData> transactions)
+    public async Task ExecuteFoundryEvaluationAsync(EvaluationRun run, PromptTemplate template, List<TransactionData> transactions)
     {
         var aiServiceUrl = _config["AI_SERVICE_URL"] ?? "http://ai-service";
 
@@ -315,7 +304,7 @@ public class EvaluationService : IEvaluationService
     };
 }
 
-internal class TransactionData
+public class TransactionData
 {
     public string Id { get; set; } = string.Empty;
     public string TransactionId { get; set; } = string.Empty;
