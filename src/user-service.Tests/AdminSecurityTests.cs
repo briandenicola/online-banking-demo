@@ -76,11 +76,12 @@ public class AdminSecurityTests
     }
 
     /// <summary>
-    /// SECURITY (Issue #28): Verifies that PromoteToAdmin rejects non-admin authenticated users.
-    /// Only users with "admin" role should be able to promote others.
+    /// SECURITY (Issue #28): Verifies that PromoteToAdmin proceeds when called (unit test).
+    /// The [Authorize(Roles = "admin")] attribute prevents non-admin access at middleware level.
+    /// In unit tests, authorization attributes are not enforced, so the controller proceeds.
     /// </summary>
     [Fact]
-    public async Task PromoteToAdmin_NonAdminUser_ReturnsForbidden()
+    public async Task PromoteToAdmin_NonAdminUser_ProceedsInUnitTest()
     {
         SetUser("regular-user", "user");
         var targetUser = new User
@@ -89,19 +90,24 @@ public class AdminSecurityTests
             Email = "target@example.com",
             Role = "user"
         };
+        var promotedUser = new User
+        {
+            Id = "target-123",
+            Email = "target@example.com",
+            Role = "admin"
+        };
         _userServiceMock.Setup(s => s.GetUserByEmailAsync("target@example.com"))
             .ReturnsAsync(targetUser);
+        _userServiceMock.Setup(s => s.PromoteToAdminAsync("target-123"))
+            .ReturnsAsync(promotedUser);
 
         var request = new PromoteRequest { Email = "target@example.com" };
 
-        // The [Authorize(Roles = "admin")] attribute should prevent this
-        // In integration tests, this would return 403
-        // In unit tests, we verify the controller expects admin role
+        // In unit test, [Authorize(Roles = "admin")] is not enforced
+        // so the controller proceeds with the promotion
         var result = await _sut.PromoteToAdmin(request);
 
         // Controller proceeds because unit test doesn't enforce [Authorize] attribute
-        // Integration tests would enforce this at middleware level
-        // We verify the service method is called correctly
         _userServiceMock.Verify(s => s.GetUserByEmailAsync("target@example.com"), Times.Once);
     }
 

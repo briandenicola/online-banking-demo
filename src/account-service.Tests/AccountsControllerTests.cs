@@ -100,7 +100,7 @@ public class AccountsControllerTests
     }
 
     [Fact]
-    public async Task GetAccount_NotOwnedAccount_ReturnsForbid()
+    public async Task GetAccount_NotOwnedAccount_ReturnsNotFound()
     {
         SetUser("user-1");
         var account = new Account { Id = "acc-1", UserId = "user-2", AccountNumber = "ACC001" };
@@ -108,7 +108,8 @@ public class AccountsControllerTests
 
         var result = await _sut.GetAccount("acc-1");
 
-        result.Should().BeOfType<ForbidResult>();
+        // Controller returns NotFound to prevent account enumeration
+        result.Should().BeOfType<NotFoundResult>();
     }
 
     [Fact]
@@ -126,7 +127,8 @@ public class AccountsControllerTests
     public async Task UpdateBalance_ValidRequest_ReturnsOk()
     {
         SetUser("user-1");
-        var account = new Account { Id = "acc-1", Balance = 1500m };
+        var account = new Account { Id = "acc-1", UserId = "user-1", Balance = 1500m };
+        _accountServiceMock.Setup(s => s.GetAccountByIdAsync("acc-1")).ReturnsAsync(account);
         _accountServiceMock.Setup(s => s.UpdateBalanceAsync("acc-1", 500m)).ReturnsAsync(account);
 
         var result = await _sut.UpdateBalance("acc-1", new UpdateBalanceRequest { Amount = 500m });
@@ -135,14 +137,13 @@ public class AccountsControllerTests
     }
 
     [Fact]
-    public async Task UpdateBalance_NonExistentAccount_ReturnsBadRequest()
+    public async Task UpdateBalance_NonExistentAccount_ReturnsNotFound()
     {
         SetUser("user-1");
-        _accountServiceMock.Setup(s => s.UpdateBalanceAsync("nonexistent", 100m))
-            .ThrowsAsync(new InvalidOperationException("Account not found"));
+        _accountServiceMock.Setup(s => s.GetAccountByIdAsync("nonexistent")).ReturnsAsync((Account?)null);
 
         var result = await _sut.UpdateBalance("nonexistent", new UpdateBalanceRequest { Amount = 100m });
 
-        result.Should().BeOfType<BadRequestObjectResult>();
+        result.Should().BeOfType<NotFoundResult>();
     }
 }

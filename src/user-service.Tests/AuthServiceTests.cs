@@ -31,7 +31,7 @@ public class AuthServiceTests
     [Fact]
     public async Task GenerateTokenAsync_ReturnsValidJwtToken()
     {
-        var token = await _sut.GenerateTokenAsync("user-123", "testuser");
+        var token = await _sut.GenerateTokenAsync("user-123", "testuser", "user");
 
         token.Should().NotBeNullOrEmpty();
         var handler = new JwtSecurityTokenHandler();
@@ -41,7 +41,7 @@ public class AuthServiceTests
     [Fact]
     public async Task GenerateTokenAsync_ContainsCorrectClaims()
     {
-        var token = await _sut.GenerateTokenAsync("user-123", "testuser");
+        var token = await _sut.GenerateTokenAsync("user-123", "testuser", "user");
 
         var handler = new JwtSecurityTokenHandler();
         var jwtToken = handler.ReadJwtToken(token);
@@ -56,7 +56,7 @@ public class AuthServiceTests
     public async Task GenerateTokenAsync_HasCorrectExpiry()
     {
         var before = DateTime.UtcNow;
-        var token = await _sut.GenerateTokenAsync("user-123", "testuser");
+        var token = await _sut.GenerateTokenAsync("user-123", "testuser", "user");
         var after = DateTime.UtcNow;
 
         var handler = new JwtSecurityTokenHandler();
@@ -69,7 +69,7 @@ public class AuthServiceTests
     [Fact]
     public async Task GenerateTokenAsync_HasCorrectIssuerAndAudience()
     {
-        var token = await _sut.GenerateTokenAsync("user-123", "testuser");
+        var token = await _sut.GenerateTokenAsync("user-123", "testuser", "user");
 
         var handler = new JwtSecurityTokenHandler();
         var jwtToken = handler.ReadJwtToken(token);
@@ -81,7 +81,7 @@ public class AuthServiceTests
     [Fact]
     public async Task ValidateTokenAsync_ValidToken_ReturnsTrue()
     {
-        var token = await _sut.GenerateTokenAsync("user-123", "testuser");
+        var token = await _sut.GenerateTokenAsync("user-123", "testuser", "user");
 
         var isValid = await _sut.ValidateTokenAsync(token);
 
@@ -99,7 +99,7 @@ public class AuthServiceTests
     [Fact]
     public async Task ValidateTokenAsync_TamperedToken_ReturnsFalse()
     {
-        var token = await _sut.GenerateTokenAsync("user-123", "testuser");
+        var token = await _sut.GenerateTokenAsync("user-123", "testuser", "user");
         var tamperedToken = token + "tampered";
 
         var isValid = await _sut.ValidateTokenAsync(tamperedToken);

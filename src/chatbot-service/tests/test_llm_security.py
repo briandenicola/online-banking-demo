@@ -18,6 +18,13 @@ from app.main import (
 )
 
 
+def _get_underlying_func(obj):
+    """Get the underlying function from a @tool-decorated FunctionTool or plain function."""
+    if hasattr(obj, "func"):
+        return obj.func
+    return obj
+
+
 class TestToolFunctionSecurityIssue36:
     """SECURITY (Issue #36): Tool functions must NOT accept user_id parameter."""
 
@@ -27,14 +34,13 @@ class TestToolFunctionSecurityIssue36:
         Previously, tool functions accepted user_id which allowed prompt injection attacks.
         Now user_id is resolved from JWT token via ContextVar.
         """
-        sig = inspect.signature(get_user_transactions)
+        fn = _get_underlying_func(get_user_transactions)
+        sig = inspect.signature(fn)
         param_names = list(sig.parameters.keys())
         
-        # Tool should not accept user_id as parameter
         assert "user_id" not in param_names, \
             "get_user_transactions must NOT accept user_id parameter (security issue #36)"
         
-        # Tool should accept no parameters (gets user from JWT context)
         assert len(param_names) == 0, \
             f"get_user_transactions should accept zero parameters, found: {param_names}"
 
@@ -43,7 +49,8 @@ class TestToolFunctionSecurityIssue36:
         SECURITY (Issue #36): Verifies get_user_accounts does not accept user_id parameter.
         User identity must come from JWT context, not from LLM-controlled parameters.
         """
-        sig = inspect.signature(get_user_accounts)
+        fn = _get_underlying_func(get_user_accounts)
+        sig = inspect.signature(fn)
         param_names = list(sig.parameters.keys())
         
         assert "user_id" not in param_names, \
@@ -57,13 +64,13 @@ class TestToolFunctionSecurityIssue36:
         SECURITY (Issue #36): Verifies get_budget_insights does not accept user_id parameter.
         Only accepts optional 'period' parameter, user identity from JWT.
         """
-        sig = inspect.signature(get_budget_insights)
+        fn = _get_underlying_func(get_budget_insights)
+        sig = inspect.signature(fn)
         param_names = list(sig.parameters.keys())
         
         assert "user_id" not in param_names, \
             "get_budget_insights must NOT accept user_id parameter (security issue #36)"
         
-        # Should only accept 'period' parameter
         assert set(param_names) == {"period"}, \
             f"get_budget_insights should only accept 'period', found: {param_names}"
 
@@ -71,7 +78,8 @@ class TestToolFunctionSecurityIssue36:
         """
         SECURITY (Issue #36): Verifies get_spending_pattern does not accept user_id parameter.
         """
-        sig = inspect.signature(get_spending_pattern)
+        fn = _get_underlying_func(get_spending_pattern)
+        sig = inspect.signature(fn)
         param_names = list(sig.parameters.keys())
         
         assert "user_id" not in param_names, \
@@ -87,11 +95,9 @@ class TestToolFunctionSecurityIssue36:
         """
         import app.main as main_module
         
-        # Verify ContextVar exists
         assert hasattr(main_module, "_current_auth_token"), \
             "Module should define _current_auth_token ContextVar"
         
-        # Verify it's a ContextVar
         from contextvars import ContextVar
         assert isinstance(main_module._current_auth_token, ContextVar), \
             "_current_auth_token should be a ContextVar"
@@ -104,12 +110,12 @@ class TestToolFunctionSecurityIssue36:
         if not AGENT_FRAMEWORK_AVAILABLE:
             pytest.skip("Agent framework not available")
         
-        # Check that functions have tool metadata
-        # (Agent framework adds attributes to decorated functions)
-        assert hasattr(get_user_transactions, "__name__"), \
-            "get_user_transactions should be a proper function"
-        assert hasattr(get_user_accounts, "__name__"), \
-            "get_user_accounts should be a proper function"
+        # Agent framework wraps @tool functions into FunctionTool objects
+        # with a .name attribute and .func pointing to the underlying function
+        assert hasattr(get_user_transactions, "name"), \
+            "get_user_transactions should be a FunctionTool with a name"
+        assert hasattr(get_user_accounts, "name"), \
+            "get_user_accounts should be a FunctionTool with a name"
 
 
 class TestAccountDataSanitization:

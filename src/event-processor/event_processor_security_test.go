@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -151,7 +152,7 @@ func TestGracefulShutdownIssue44(t *testing.T) {
 	}
 
 	// Verify wg.Wait() is called in shutdown logic
-	if !strings.Contains(source, "wg.Wait()") && !strings.Contains(source, "p.wg.Wait()") {
+	if !strings.Contains(source, "wg.Wait()") {
 		t.Error("SECURITY (Issue #44): Should call wg.Wait() for graceful shutdown")
 	}
 }
@@ -234,40 +235,9 @@ func TestRetryCounterIssue44(t *testing.T) {
 func readMainGoSource(t *testing.T) string {
 	t.Helper()
 	
-	// Read the main.go file
-	source := `// Placeholder - in real test, would read actual file
-	if err := p.processMessage(ctx, msg); err != nil {
-		p.mu.Lock()
-		p.failureCounts[msg.ID]++
-		count := p.failureCounts[msg.ID]
-		p.mu.Unlock()
-		
-		if count >= p.maxRetries {
-			// Move to DLQ
-			if dlqErr := p.client.XAdd(ctx, &redis.XAddArgs{
-				Stream: dlqStreamName,
-				Values: dlqFields,
-			}).Err(); dlqErr != nil {
-				return
-			}
-			if ackErr := p.client.XAck(ctx, streamName, consumerGroup, msg.ID).Err(); ackErr != nil {
-			}
-		}
-		// Do NOT ACK — message stays in pending list for retry
-		return
+	content, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("Failed to read main.go: %v", err)
 	}
-	
-	// ACK only after successful processing
-	if err := p.client.XAck(ctx, streamName, consumerGroup, msg.ID).Err(); err != nil {
-	}
-	`
-	
-	// In real implementation, read from file system:
-	// content, err := os.ReadFile("main.go")
-	// if err != nil {
-	//     t.Fatalf("Failed to read main.go: %v", err)
-	// }
-	// return string(content)
-	
-	return source
+	return string(content)
 }

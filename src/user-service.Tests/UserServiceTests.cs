@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
 using OnlineBankingDemo.Contracts.Dtos;
@@ -15,7 +16,13 @@ public class UserServiceTests
     public UserServiceTests()
     {
         _loggerMock = new Mock<ILogger<InMemoryUserService>>();
-        _sut = new InMemoryUserService(_loggerMock.Object);
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                { "Demo:Password", "TestPassword123" }
+            }!)
+            .Build();
+        _sut = new InMemoryUserService(_loggerMock.Object, config);
     }
 
     [Fact]
@@ -62,8 +69,8 @@ public class UserServiceTests
     [Fact]
     public async Task ValidateCredentialsAsync_ValidCredentials_ReturnsTrue()
     {
-        // "testuser" with password "password123" is seeded
-        var result = await _sut.ValidateCredentialsAsync("testuser", "password123");
+        // "testuser" with configured password "TestPassword123"
+        var result = await _sut.ValidateCredentialsAsync("testuser", "TestPassword123");
 
         result.Should().BeTrue();
     }

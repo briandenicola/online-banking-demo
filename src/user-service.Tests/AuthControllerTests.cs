@@ -73,7 +73,7 @@ public class AuthControllerTests
             .ReturnsAsync(true);
         _userServiceMock.Setup(s => s.GetUserByUsernameAsync("testuser"))
             .ReturnsAsync(user);
-        _authServiceMock.Setup(s => s.GenerateTokenAsync("1", "testuser"))
+        _authServiceMock.Setup(s => s.GenerateTokenAsync("1", "testuser", "user"))
             .ReturnsAsync("jwt-token-here");
 
         var result = await _sut.Login(request);
