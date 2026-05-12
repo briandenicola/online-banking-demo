@@ -121,3 +121,16 @@ Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com
 - **Basher (Backend):** Implemented admin promote bootstrap escape hatch + email lookup document pattern for uniqueness — user-service now self-healing for initial admin
 - **Linus (Frontend):** Created AdminUserManagementTab.tsx and AdminLoginAuditTab.tsx — new admin tabs ready
 - **Livingston (QA):** Created smoke test suite (15 total @smoke tests) — post-deployment gates now enabled
+
+### 2026-05-11 — Account-Opening Agent Consumer TYPE_CHECKING Cleanup
+
+**Issue:** Account-opening worker CrashLoopBackOff due to `TypeError: Can't instantiate abstract class IdentityVerificationConsumer with abstract method process_event`. Root cause was `process_event` being placed inside `if TYPE_CHECKING:` blocks, making it invisible at runtime.
+
+**State when assigned:** A partial fix had already moved `process_event` out of the `if TYPE_CHECKING:` blocks with correct indentation. The remaining issue was unused `TYPE_CHECKING` imports and a stray `if TYPE_CHECKING:` block in provisioning.py.
+
+**Fix:** Removed unused `TYPE_CHECKING` from imports in all three agent consumer files and deleted the stray `if TYPE_CHECKING:` block at end of provisioning.py.
+
+**Key files:** `src/account-opening-service/app/agents/{identity_verification,compliance_check,provisioning}.py`
+**Base class:** `src/account-opening-service/app/consumer.py` — defines `@abc.abstractmethod process_event`
+
+**Learning:** Never place runtime-required method implementations inside `if TYPE_CHECKING:` blocks — those blocks are stripped at runtime by design. Use string-quoted type annotations (e.g., `"DefaultAzureCredential | None"`) for forward references instead of `TYPE_CHECKING` imports when the type is only needed in signatures.

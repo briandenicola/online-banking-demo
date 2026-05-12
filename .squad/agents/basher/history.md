@@ -952,3 +952,16 @@ Using `create_session()` + `run("ping")` is lightest real connectivity test:
 - Root cause: `azure-ai-projects` SDK v2.1.0 changed `agents.get()` and `agents.create_version()` — `agent_name` and `agent_version` are positional args, not kwargs.
 - Fix: Changed to positional args: `client.agents.get(name, version)` and `client.agents.create_version(name, version, ...)`.
 - Also made provisioning errors non-fatal (exit 0) so init container doesn't CrashLoopBackOff when agents already exist or SDK has transient issues.
+
+### 2026-05 — Istio Gateway/VirtualService kustomize manifests
+
+**Problem:** Istio Gateway, VirtualService, and cert-manager Certificate were applied via `kubectl` directly and not tracked in kustomize manifests. They would be lost on redeployment.
+
+**Solution:** Created proper kustomize manifests:
+- `deploy/kustomize/ingress/gateway.yaml` — Certificate + Gateway (namespace: `aks-istio-ingress`)
+- `deploy/kustomize/ingress/kustomization.yaml` — separate kustomization to preserve `aks-istio-ingress` namespace
+- `deploy/kustomize/base/virtualservice.yaml` — VirtualService (namespace: `banking-demo`)
+
+**Key decision:** Gateway/Certificate live in a separate `deploy/kustomize/ingress/` kustomization (not under `base/`) because the main base has `namespace: banking-demo` which would override `aks-istio-ingress` on the ingress resources. Kustomize propagates namespace transformations to all sub-resources including subdirectories.
+
+**Pattern:** For cross-namespace kustomize resources, use separate kustomization directories. Never rely on a sub-directory to escape a parent's `namespace:` directive — kustomize will override it.
