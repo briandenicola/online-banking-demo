@@ -79,10 +79,11 @@ class DocumentExtractionConsumer(AgentConsumer):
             raise ValueError("document_uploaded event missing blobUrl")
 
         try:
-            analysis = self._client.analyze(
-                analyzer_name=ANALYZER_NAME,
-                inputs=[self._analysis_input_cls(uri=blob_url)],
+            poller = self._client.begin_analyze(
+                analyzer_id=ANALYZER_NAME,
+                inputs=[self._analysis_input_cls(url=blob_url)],
             )
+            analysis = poller.result()
         except Exception as exc:
             logger.error("Content Understanding analyze failed", error=str(exc))
             raise
