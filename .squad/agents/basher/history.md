@@ -1130,3 +1130,30 @@ Using `create_session()` + `run("ping")` is lightest real connectivity test:
 - `src/transfer-service/Models/Transfer.cs` — added UserId property
 
 **Breaking change:** Adding ownership checks to `GET /api/accounts/number/{accountNumber}` and `POST /api/accounts/{id}/balance` will break service-to-service calls where the forwarded user JWT doesn't own the target account (e.g., credit side of a transfer). This needs a service-identity solution (see decision doc).
+
+### 2026-05 — Security & SDK hardening batch (#28, #32, #35, #37)
+
+**Issue #28 — Anonymous admin promotion removed:**
+Removed `[AllowAnonymous]` from `POST /api/admin/promote`. Admin bootstrap now happens at startup via `Admin__BootstrapEmail` config/env var, falling back to first-user convention. The endpoint itself requires admin JWT.
+
+**Issue #32 — Hardcoded demo passwords eliminated:**
+`InMemoryUserService` now reads `Demo__Password` from config. Falls back to a random 16-char password logged at startup. No more `password123`.
+
+**Issue #35 — Cosmos SDK stabilized + central package management:**
+Replaced `Microsoft.Azure.Cosmos 3.59.0-preview.0` with stable `3.58.0` across all 5 services. Created `Directory.Packages.props` at repo root for centralized version management of all shared NuGet packages (Cosmos, Azure.Identity, OpenTelemetry, xunit, etc.). Unified Azure.Identity from mixed 1.13.2/1.16.0 to 1.16.0.
+
+**Issue #37 — Exception message leaking stopped:**
+All `.NET` controllers now return generic error messages with `correlationId` (from `HttpContext.TraceIdentifier`). Full exceptions logged server-side. Business exceptions (duplicate email, insufficient funds) return safe messages. Standardized error response format: `{ error: string, correlationId?: string }`. Fixed `TransferService.FailureReason` to not persist raw `ex.Message` in Cosmos DB.
+
+**Key files:**
+- `src/user-service/Controllers/AdminController.cs` — removed `[AllowAnonymous]`, cleaned up error format
+- `src/user-service/Program.cs` — `Admin__BootstrapEmail` bootstrap logic
+- `src/user-service/Services/InMemoryUserService.cs` — configurable demo password
+- `Directory.Packages.props` — centralized NuGet versions
+- `src/account-service/Controllers/AccountsController.cs` — correlationId error handling
+- `src/user-service/Controllers/AuthController.cs` — catch-all + correlationId
+- `src/transaction-service/Controllers/TransactionsController.cs` — safe InsufficientFunds response
+- `src/transfer-service/Services/TransferService.cs` — generic FailureReason
+- `src/prompt-eval-service/Controllers/EvaluationsController.cs` — generic errors + correlationId
+
+**Pattern:** All error responses follow `{ error: string, correlationId?: string }`. Business exceptions (known, user-safe) return the business message. Unknown exceptions return "An internal error occurred" with correlationId for log correlation.
