@@ -39,6 +39,7 @@ export async function waitForAllServices(baseURL: string): Promise<void> {
     { name: 'gateway', path: '/api/users/health' },
     { name: 'accounts', path: '/api/accounts/health' },
     { name: 'transactions', path: '/api/transactions/health' },
+    { name: 'account-opening', path: '/api/account-opening/healthz' },
   ];
 
   await Promise.all(
