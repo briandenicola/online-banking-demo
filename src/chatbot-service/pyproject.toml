@@ -3,7 +3,6 @@ name = "chatbot-service"
 version = "1.0.0"
 description = "AI-powered financial advice chatbot service"
 authors = ["Online Banking Demo"]
-readme = "README.md"
 packages = [{include = "app"}]
 
 [tool.poetry.dependencies]
