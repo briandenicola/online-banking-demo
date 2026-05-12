@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir --root-user-action=ignore \
 EXPOSE 8004
 
 RUN adduser --disabled-password --gecos "" --no-create-home appuser
+RUN mkdir -p /app/data && chown appuser:appuser /app/data
 USER appuser
 
 # Worker deployment overrides CMD with: python -m app.worker
