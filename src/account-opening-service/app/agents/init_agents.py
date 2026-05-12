@@ -80,7 +80,7 @@ def _agent_version_exists(
     client: AIProjectClient, agent_name: str, version: str
 ) -> bool:
     try:
-        client.agents.get(agent_name, version)
+        client.agents.get_version(agent_name, version)
         return True
     except ResourceNotFoundError:
         return False
@@ -123,8 +123,7 @@ def main() -> int:
                 instructions=spec["instructions"],
             )
             client.agents.create_version(
-                name,
-                version,
+                agent_name=name,
                 definition=definition,
                 description=spec["description"],
             )
