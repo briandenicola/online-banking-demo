@@ -608,3 +608,17 @@ Basher implemented the Redis architecture decision:
 - readOnlyRootFilesystem issues: deploy/kustomize/base/{budget,chatbot,ai,ui-app,account-opening,prompt-eval}-service.yaml
 - JWT secret: docker-compose.yml:28,48,67,89,160,179
 - Full report: .squad/decisions/inbox/danny-security-audit.md
+
+### 2026-05 — CI/CD Pipeline & Issue Triage (Issues #33, #34)
+
+**Issue #33 (Dockerfile):** Already resolved — the account-opening-service Dockerfile was replaced with a proper Python Dockerfile in prior commits (3430c79+). Closed as already fixed.
+
+**Issue #34 (CI/CD Pipeline):** Created three files:
+1. `.github/workflows/ci.yml` — Full CI with 5 job types: .NET build+test (matrix, 5 services), Python lint via ruff (matrix, 4 services), Go build, React build, Docker build verification (all 12 images). All GitHub Actions pinned to full SHA hashes.
+2. `.github/dependabot.yml` — Coverage for all ecosystems: nuget (5 dirs), pip (4 dirs), gomod, npm, docker (12 dirs), terraform, github-actions. Weekly cadence with grouped minor/patch updates.
+3. `.github/CODEOWNERS` — Repo owner on all files with extra `.github/` protection.
+
+**Learnings:**
+- .NET services build from repo root context (need src/shared/); Python services build from their own directory
+- Only 4 of 5 .NET services have test projects; only account-opening-service has Python tests
+- Docker build matrix needs per-service context/dockerfile mapping (not uniform)

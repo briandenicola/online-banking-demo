@@ -215,3 +215,10 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 - **Basher (Backend):** Implemented admin promote bootstrap escape hatch + email lookup document pattern + admin APIs (users, login audit) — endpoints ready for new tabs
 - **Livingston (QA):** Created smoke test suite (15 total @smoke tests) — now included in e2e CI gates
 - **Turk (Infrastructure):** Fixed AI Services PE DNS zones (now 3 zones) — all AI Foundry services resolve through PE
+
+### 2026-05-12 — Hardcoded Credentials Removal (Issue #32)
+- **Problem:** Login.tsx had `useState('password123')`, fallback to demo creds on empty submit, and plain-text credential display
+- **Fix:** All three credential leaks removed. Password field initializes empty. Empty submit now shows inline validation errors instead of auto-filling demo creds
+- **Demo mode:** Added `REACT_APP_DEMO_MODE` env var gate. When `true`, shows a "Demo Login" button (outlined, small, below Sign In) and a subtle hint. When unset/false, no demo artifacts visible at all
+- **Tests:** Updated 8 tests — replaced pre-filled credential assertions with empty-field checks, added validation error test, updated API call tests to use explicit credentials
+- **Pattern:** Environment-gated demo features keep demo UX accessible without leaking credentials in production builds
