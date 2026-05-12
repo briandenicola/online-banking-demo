@@ -28,7 +28,7 @@
     <PackageVersion Include="System.Text.Json" Version="9.0.0" />
 
     <!-- API -->
-    <PackageVersion Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+    <PackageVersion Include="Swashbuckle.AspNetCore" Version="10.1.7" />
 
     <!-- Validation -->
     <PackageVersion Include="FluentValidation.AspNetCore" Version="11.3.1" />
