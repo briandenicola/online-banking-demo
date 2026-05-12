@@ -106,6 +106,3 @@ online-banking-demo/
 - [Architecture Decision Records](adr/README.md) — Key technical decisions with rationale
 - [Squad Guide](squad-guide.md) — How the AI team framework was used during development
 - [Copilot Integration](copilot-integration.md) — GitHub Copilot CLI and speckit workflow
-- [Future AI Capabilities](future-ai-capabilities.md) — Spike: multi-agent, MCP/A2A, Agent365, red teaming
-- [eShopOnAKS Patterns Analysis](eshop-analysis.md) — Patterns adopted from eShopOnAKS
-- [Secure Deployment Plan](secure-deployment-plan.md) — Detailed security layering approach

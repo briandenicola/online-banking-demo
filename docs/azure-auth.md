@@ -1,21 +1,34 @@
-# Azure Authentication in Docker
+# Azure Authentication
 
 [← Azure Deployment](deployment-azure.md) | [Home](README.md) | [Next: Testing →](testing.md)
 
-The Python services (ai-service, budget-service, chatbot-service) use `DefaultAzureCredential` from the `azure-identity` SDK to authenticate with Azure AI services. This document explains how credentials are provided when running inside Docker containers.
+This document covers how services authenticate with Azure — both locally (Docker) and in production (AKS). The platform uses two credential patterns:
 
-## How DefaultAzureCredential Works
+1. **DefaultAzureCredential** — Standard Azure Identity SDK credential chain (all services)
+2. **Entra Agent ID Sidecar** — Microsoft Entra Agent ID auth-sidecar for Foundry agent workloads (account-opening-worker)
+
+---
+
+## DefaultAzureCredential
+
+The Python services (ai-service, budget-service, chatbot-service, account-opening-service) and .NET services use `DefaultAzureCredential` from the Azure Identity SDK to authenticate with Azure resources (Cosmos DB, Blob Storage, Redis, AI Foundry).
+
+### How DefaultAzureCredential Works
 
 `DefaultAzureCredential` tries multiple credential sources in order:
 
 1. Environment variables (service principal)
-2. Workload Identity (Kubernetes)
+2. Workload Identity (Kubernetes — federated token file)
 3. Managed Identity (Azure VMs, App Service)
 4. Azure CLI credentials (`~/.azure` token cache)
 5. Azure PowerShell
 6. Azure Developer CLI
 
-In Docker, only options 1 and 4 are practical.
+| Environment | Credential Used |
+|-------------|----------------|
+| Local Docker | Azure CLI volume mount (`~/.azure`) |
+| AKS (production) | Workload Identity (federated token via service account) |
+| CI/CD | Service principal environment variables |
 
 ---
 
@@ -143,7 +156,88 @@ Response when credentials are missing or invalid:
 
 - The `~/.azure` volume is mounted **read-only** (`:ro`) — containers cannot modify your local credentials.
 - Never commit `.env` files containing `AZURE_CLIENT_SECRET` to source control.
-- In production Kubernetes deployments, prefer Workload Identity over service principal secrets.
+- In production Kubernetes deployments, use Workload Identity (no secrets needed).
+- The Entra Agent ID sidecar uses federated credentials — no client secrets.
+
+---
+
+## Entra Agent ID Sidecar (Account Opening Worker)
+
+The Account Opening Worker uses a **dual credential pattern**: DefaultAzureCredential for infrastructure services (Cosmos DB, Blob Storage) and a dedicated **Entra Agent ID auth-sidecar** for Azure AI Foundry agent communication.
+
+### Why a Sidecar?
+
+Azure AI Foundry's Agent Framework requires scoped tokens with specific audiences. The Entra Agent ID sidecar (from `mcr.microsoft.com/entra-sdk/auth-sidecar`) handles token acquisition, caching, and refresh — isolating the complexity from application code.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│  account-opening-worker Pod                         │
+│                                                     │
+│  ┌─────────────┐     ┌──────────────────────────┐  │
+│  │   Worker     │────▶│  Entra Agent ID Sidecar  │  │
+│  │  (Python)    │     │  (ASP.NET, port 5000)    │  │
+│  │             │     │                          │  │
+│  │ DAC → Cosmos│     │ Workload Identity Fed    │  │
+│  │ DAC → Blob  │     │ Token → Foundry Agents   │  │
+│  │ Sidecar →   │     │                          │  │
+│  │   Foundry   │     │ GET /AuthorizationHeader  │  │
+│  └─────────────┘     │     Unauthenticated/     │  │
+│                       │     {api_name}           │  │
+│                       └──────────────────────────┘  │
+│                                                     │
+│  ┌─────────────┐                                    │
+│  │ Istio Proxy │  (mTLS mesh traffic)               │
+│  └─────────────┘                                    │
+└─────────────────────────────────────────────────────┘
+```
+
+### How It Works
+
+1. The AKS Workload Identity webhook injects `AZURE_FEDERATED_TOKEN_FILE` and `AZURE_CLIENT_ID` into all pod containers.
+2. The sidecar uses `SignedAssertionFilePath` credential type to exchange the federated token for Azure AD tokens.
+3. The worker's `SidecarTokenCredential` calls the sidecar's HTTP endpoint to get bearer tokens for Foundry.
+4. Tokens are cached by the sidecar and refreshed automatically.
+
+### Sidecar API
+
+```
+GET http://localhost:5000/AuthorizationHeaderUnauthenticated/{api_name}?AgentIdentity={agent_id}
+```
+
+Returns:
+```json
+{
+  "Authorization": "Bearer eyJ0eXAi..."
+}
+```
+
+### Configuration (via ConfigMap)
+
+| Key | Purpose |
+|-----|---------|
+| `AzureAd__TenantId` | Azure AD tenant ID |
+| `AzureAd__ClientId` | Workload identity client ID |
+| `AzureAd__ClientCredentials__0__SourceType` | `SignedAssertionFilePath` (uses fed token) |
+| `Kestrel__Endpoints__Http__Url` | `http://[::]:5000` (override default 8080) |
+| `AGENT_ID_SIDECAR_URL` | Worker env var pointing to `http://localhost:5000` |
+| `AGENT_ID_AGENT_IDENTITY` | Agent identity (client ID) passed to sidecar |
+
+### Deployment Notes
+
+- **Image:** `mcr.microsoft.com/entra-sdk/auth-sidecar:1.0.0-azurelinux3.0-distroless` (no `latest` tag exists)
+- **Readiness probe:** TCP socket on port 5000 (HTTP probes conflict with Istio rewriting)
+- **Volume:** Requires writable `/app/keys` emptyDir for ASP.NET data protection keys
+- **Init containers:** Run BEFORE the sidecar starts — `init_agents.py` must use DAC, not the sidecar
+
+### Fallback Behavior
+
+The `SidecarTokenCredential` is gated by the `AGENT_ID_SIDECAR_URL` environment variable:
+- **Set** (AKS production): Worker uses sidecar for Foundry tokens
+- **Not set** (local dev): Worker falls back to DefaultAzureCredential for everything
+
+This enables the same code to work locally (with `az login`) and in production (with the sidecar).
 
 ---
 

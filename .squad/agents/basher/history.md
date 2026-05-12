@@ -1039,3 +1039,17 @@ Using `create_session()` + `run("ping")` is lightest real connectivity test:
 - `src/account-opening-service/app/worker.py` — credential routing logic
 - `src/account-opening-service/app/agents/init_agents.py` — DAC kept with comment
 - `src/account-opening-service/app/agents/{identity_verification,compliance_check,provisioning}.py` — removed DAC fallback, credential now required
+
+### 2026-05 — Documentation update for Account Opening Service (Issue #19)
+
+**Task:** Added Account Opening Service documentation across all 6 lab docs (README.md, docs/README.md, architecture.md, deployment-local.md, deployment-azure.md, testing.md).
+
+**Key doc patterns:**
+- Service listed under "Python Agent Services" alongside chatbot, ai-service, budget
+- Architecture section includes full 4-stage pipeline flow diagram (CUS → identity → compliance → provisioning)
+- Entra Agent ID sidecar pattern documented in both architecture.md and deployment-azure.md
+- Local dev uses DefaultAzureCredential (no sidecar) — noted in deployment-local.md
+- Account opening API runs on port 6005 locally (mapped from 8004)
+- Unit tests in `src/account-opening-service/tests/`, E2E smoke test at `tests/e2e/specs/core/account-opening.spec.ts`
+- Cosmos DB container: `account-applications` (partition key `/id`)
+- No dedicated Taskfile build command yet — builds with the python group
