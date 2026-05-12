@@ -189,6 +189,15 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 - Polling aligns with the 2s decision and stops on approved/rejected/pending_review terminal states.
 - Test reliability: components support simplified render paths to keep spec-based tests stable (especially drag/drop in jsdom).
 
+### 2026-05-11 — Chatbot System Prompt Visibility in Admin UI
+- **Component created:** `src/ui-app/src/components/AdminChatbotPromptTab.tsx`
+- Displays the chatbot's `FINANCIAL_ADVISOR_INSTRUCTIONS` system prompt as a read-only card in the admin panel
+- Added as tab index 7 ("Chatbot Prompt") in AdminPage.tsx; bumped Account Applications to index 8
+- Prompt text is hardcoded in the frontend constant (mirrors `src/chatbot-service/app/main.py`) — acceptable for demo since it's not a secret
+- Styled consistently with AdminEvalTab's Active AI Prompts section: monospace font, grey background, outlined card
+- Includes info Alert explaining the prompt is server-side hardcoded and requires code deployment to change
+- **Pattern:** Read-only audit/transparency displays don't need API calls — static constants are fine for hardcoded server prompts
+
 ## Cross-Agent Coordination (2026-05-11)
 
 ### Related Team Updates
