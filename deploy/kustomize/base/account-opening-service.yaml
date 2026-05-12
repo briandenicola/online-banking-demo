@@ -233,9 +233,14 @@ spec:
           limits:
             memory: "128Mi"
             cpu: "100m"
+        volumeMounts:
+        - name: sidecar-keys
+          mountPath: /app/keys
         securityContext:
           allowPrivilegeEscalation: false
       volumes:
+      - name: sidecar-keys
+        emptyDir: {}
       - name: secrets-store
         csi:
           driver: secrets-store.csi.k8s.io
