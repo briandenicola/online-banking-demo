@@ -24,6 +24,7 @@ The Online Banking Demo is a microservices-based banking platform built on .NET 
 | **Chatbot Service** | AI financial advisor with Agent Framework, account/transaction data tools, Cosmos chat persistence | REST/HTTP (FastAPI) | Azure AI Foundry, Cosmos DB, Account Service, Transaction Service |
 | **AI Service** | Risk scoring, transaction categorization via Foundry agents, Redis Stream consumer | REST/HTTP (FastAPI) | Azure AI Foundry, Redis Streams |
 | **Budget Service** | Budget analysis, spending insights, financial health scoring | REST/HTTP (FastAPI) | Transaction Service, Azure AI Foundry |
+| **Account Opening Service** | AI-powered multi-agent pipeline for new account applications — document extraction (Azure CUS), identity verification, KYC compliance, and account provisioning via Foundry agents | REST/HTTP (FastAPI) + Redis Streams | Azure AI Foundry, Azure Content Understanding, Cosmos DB, Blob Storage, Redis Streams, User Service, Account Service |
 
 ### Infrastructure & Admin Services
 
@@ -119,12 +120,57 @@ Budget Service:
 - **anomaly.detected** - Suspicious activity flagged
 - **budget.updated** - Budget changed
 
+### Account Opening Pipeline (Multi-Agent)
+
+The Account Opening Service uses a 4-stage AI agent pipeline orchestrated via Redis Streams:
+
+```
+User submits POST /api/applications (with ID document upload)
+
+Stage 1 — Document Extraction (Azure Content Understanding Service):
+  ├─ Uploaded document stored in Azure Blob Storage
+  ├─ CUS extracts identity data (name, DOB, address, ID number)
+  ├─ Publishes document_extracted event to Redis Stream
+  └─ Application state updated in Cosmos DB
+
+Stage 2 — Identity Verification (Foundry Agent):
+  ├─ Consumes document_extracted event
+  ├─ Foundry agent verifies identity against extracted data
+  ├─ Publishes identity_verified event
+  └─ Updates application state
+
+Stage 3 — Compliance Check / KYC (Foundry Agent):
+  ├─ Consumes identity_verified event
+  ├─ Foundry agent performs KYC/AML compliance assessment
+  ├─ Publishes compliance_checked event
+  └─ Updates application state
+
+Stage 4 — Account Provisioning (Foundry Agent):
+  ├─ Consumes compliance_checked event
+  ├─ Foundry agent makes provisioning decision
+  ├─ Calls User Service + Account Service to create user/account
+  └─ Application state set to approved/rejected
+```
+
+**Deployment model:**
+- **API container** (`account-opening-service`) — FastAPI REST API for submitting and querying applications
+- **Worker container** (`account-opening-worker`) — Background processor running 4 agent consumers
+- **Init container** (`provision-agents`) — Provisions Foundry agents at startup
+- **Entra Agent ID auth-sidecar** — Handles Foundry authentication via Microsoft Entra Agent ID (worker only)
+
+**Key files:**
+- `src/account-opening-service/app/main.py` — API endpoints
+- `src/account-opening-service/app/worker.py` — Worker wiring and consumer loop
+- `src/account-opening-service/app/agents/` — Individual agent stage implementations
+- `deploy/kustomize/base/account-opening-service.yaml` — Kubernetes manifests
+
 ## Deployment Architecture
 
 ### Local Development (Docker Compose)
 
 - 4 .NET services (user, account, transaction, transfer)
 - 3 Python services (chatbot, anomaly, budget)
+- 1 Python account opening pipeline (API + worker containers)
 - 1 Go service (event-processor)
 - 1 React UI
 - 1 NGINX gateway
@@ -204,6 +250,7 @@ Azure Resource Group
 - **JWT tokens** for API authentication (HS256, shared key)
 - **Workload Identity** for Azure resource access (Cosmos DB, Redis, AI Foundry)
 - **Entra RBAC** for Cosmos DB and Redis (no connection string keys)
+- **Entra Agent ID sidecar** for Account Opening Service — authenticates Foundry agent calls via Microsoft Entra Agent ID
 - **RBAC**: Namespace isolation (banking-demo separate from system)
 
 ## Monitoring & Observability

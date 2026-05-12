@@ -8,6 +8,32 @@ The E2E test suite uses [Playwright](https://playwright.dev/) with TypeScript. T
 
 **Location:** `tests/e2e/`
 
+The Account Opening Service also has its own unit/integration test suite and an E2E smoke test.
+
+### Account Opening Service Tests
+
+**Unit/integration tests** are located at `src/account-opening-service/tests/` and cover:
+
+- `test_api.py` — API endpoint tests (submit application, get status, get events)
+- `test_document_extraction.py` — CUS document extraction stage
+- `test_identity_verification.py` — Foundry identity verification agent
+- `test_compliance_check.py` — Foundry KYC/AML compliance agent
+- `test_provisioning.py` — Account provisioning agent
+- `test_consumer.py` — Redis Stream consumer logic
+- `test_state_machine.py` — Application state transitions
+- `test_events.py` — Event publishing/handling
+- `test_models.py` — Data model validation
+- `test_worker.py` — Worker startup and wiring
+
+```bash
+# Run account opening service tests
+cd src/account-opening-service
+pip install -e ".[dev]"
+pytest tests/
+```
+
+**E2E smoke test** at `tests/e2e/specs/core/account-opening.spec.ts` tests the full pipeline: submit application → document extraction → identity verification → compliance check → account provisioning.
+
 ## Prerequisites
 
 1. **Docker Compose** — The application must be running locally:

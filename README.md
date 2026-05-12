@@ -88,6 +88,7 @@ This project was built using AI-assisted development practices:
 - **Chatbot Service** — AI financial advisor with Agent Framework, Cosmos chat persistence, account/transaction tools
 - **AI Service** — Risk scoring, transaction categorization via Foundry agents
 - **Budget Service** — Spending analysis and financial health insights
+- **Account Opening Service** — AI-powered multi-agent pipeline for new account applications (document extraction, identity verification, KYC compliance, account provisioning via Azure AI Foundry and Content Understanding Service)
 
 **Infrastructure & Admin Services**:
 - **Event Processor** (Go) — Redis Streams consumer, async event routing
@@ -98,7 +99,7 @@ This project was built using AI-assisted development practices:
 
 - **Event-Driven**: Redis Streams (`banking-events`) for inter-service communication
 - **JWT Authentication**: Tokens issued by User Service, validated across all services
-- **Agentic AI**: Chatbot with real data tools, anomaly detection, budget analysis via Azure AI Foundry
+- **Agentic AI**: Chatbot with real data tools, anomaly detection, budget analysis, AI-powered account opening via Azure AI Foundry
 - **Chat Persistence**: Cosmos DB-backed chat history with 30-day TTL
 - **Cloud-Native**: AKS with Istio service mesh, Workload Identity, KeyVault CSI driver
 - **Private Networking**: All PaaS services accessed via private endpoints with private DNS zones
@@ -152,6 +153,7 @@ online-banking-demo/
 │   ├── chatbot-service/         # Python — AI financial advisor (Agent Framework)
 │   ├── ai-service/              # Python — Risk scoring, categorization
 │   ├── budget-service/          # Python — Budget analysis
+│   ├── account-opening-service/ # Python — AI-powered account opening pipeline
 │   ├── event-processor/         # Go — Redis Streams consumer
 │   ├── prompt-eval-service/     # .NET 9 — AI prompt evaluation
 │   └── ui-app/                  # React 18 + MUI v9 — Web frontend

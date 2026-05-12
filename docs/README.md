@@ -29,6 +29,7 @@ Follow these guides in order for the best experience:
                     │   /api/transfers→ transfer-svc  │
                     │   /api/chat     → chatbot-svc   │
                     │   /api/budget   → budget-svc    │
+                    │   /api/applications → acct-opening │
                     │   /api/anomalies→ ai-service    │
                     │   /api/eval     → prompt-eval   │
                     │   /*            → ui-app        │
@@ -78,6 +79,7 @@ online-banking-demo/
 │   ├── account-service/    # .NET — Account management
 │   ├── ai-service/         # Python — Risk scoring & categorization
 │   ├── budget-service/     # Python — Budget tracking
+│   ├── account-opening-service/ # Python — AI account opening pipeline
 │   ├── chatbot-service/    # Python — AI chatbot (Foundry agents)
 │   ├── event-processor/    # Go — Redis Stream audit consumer
 │   ├── prompt-eval-service/# .NET — AI prompt evaluation (admin)

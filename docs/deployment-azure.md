@@ -17,6 +17,7 @@ Azure Resource Group
 │  │  │  ├─ transaction-service (.NET)  transfer-service (.NET)
 │  │  │  ├─ chatbot-service (Python)    budget-service (Python)
 │  │  │  ├─ ai-service (Python)         event-processor (Go)
+│  │  │  ├─ account-opening-service (Python) + worker + init container
 │  │  │  ├─ prompt-eval-service (.NET)  ui-app (React)
 │  │  │  └─ All services on port 8080
 │  │  ├─ ConfigMap: banking-demo-config
@@ -59,6 +60,7 @@ Azure Resource Group
 | Transactions | `/accountId` | Transaction records |
 | Transfers | `/id` | Transfer records |
 | ChatSessions | `/userId` | AI chat history |
+| account-applications | `/id` | Account opening application state |
 
 ### Authentication Model
 
@@ -178,7 +180,7 @@ task cloud:build
 
 This builds the following groups:
 - **`build:dotnet`** — user-service, account-service, transaction-service, transfer-service
-- **`build:python`** — chatbot-service, budget-service, ai-service, event-processor
+- **`build:python`** — chatbot-service, budget-service, ai-service, event-processor, account-opening-service
 - **`build:ui`** — ui-app (React)
 
 The ACR name is resolved from Terraform output automatically.
@@ -222,8 +224,20 @@ The Istio VirtualService (`cluster-config/istio/gateway/default-ingress.yaml`) r
 | `/api/chat` | chatbot-service |
 | `/api/anomaly`, `/api/admin` | ai-service |
 | `/api/budget` | budget-service |
+| `/api/applications` | account-opening-service |
 | `/api/evaluations` | prompt-eval-service |
 | `/` (default) | ui-app |
+
+### Account Opening Service Deployment
+
+The Account Opening Service has a unique deployment model with multiple containers defined in `deploy/kustomize/base/account-opening-service.yaml`:
+
+- **Init container** (`provision-agents`) — Runs `python -m app.agents.init_agents` to provision Foundry agents (identity-verifier, compliance-assessor, account-provisioner) before the worker starts
+- **API container** (`account-opening-service`) — FastAPI REST API serving application endpoints
+- **Worker container** (`account-opening-worker`) — Background processor running 4 Redis Stream consumer agents
+- **Entra Agent ID sidecar** (`entra-agent-id`) — Authentication sidecar on the worker pod that handles Foundry auth via Microsoft Entra Agent ID
+
+Both the API and worker use the `banking-workload-identity` service account. The worker's sidecar authenticates with Foundry using the `AGENT_ID_SIDECAR_URL` (http://localhost:5000) and the workload identity client ID set via `AGENT_ID_AGENT_IDENTITY`.
 
 ## TLS Configuration (Optional)
 

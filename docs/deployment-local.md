@@ -50,6 +50,8 @@ chmod +x scripts/seed-data.sh
 | **Chatbot Service** | 8001 | AI financial assistant (FastAPI) |
 | **Anomaly Service** | 8002 | Fraud detection (FastAPI) |
 | **Budget Service** | 8003 | Budget analysis (FastAPI) |
+| **Account Opening API** | 6005 | Account opening applications (FastAPI) |
+| **Account Opening Worker** | — | Background agent pipeline (no external port) |
 | **Redis** | 6380 | Cache, session store, event streaming |
 | **UI Application** | 3000 | React frontend |
 
@@ -129,9 +131,16 @@ AZURE_OPENAI_MODEL=gpt-4o-mini
 # Azure AI Agents - For advanced chatbot features (optional)
 AZURE_AI_AGENTS_ENDPOINT=https://<your-resource>.cognitiveservices.azure.com/
 
+# Account Opening Service - Required for AI-powered account opening pipeline
+FOUNDRY_PROJECT_ENDPOINT=https://<your-foundry-project>.cognitiveservices.azure.com/
+CUS_ENDPOINT=https://<your-cus-resource>.cognitiveservices.azure.com/
+AZURE_STORAGE_ACCOUNT_NAME=<your-storage-account>
+
 # Application Insights - Optional telemetry (leave blank for local dev)
 APPLICATIONINSIGHTS_CONNECTION_STRING=
 ```
+
+> **Note:** The Account Opening Service uses `DefaultAzureCredential` for local development (no Entra Agent ID sidecar needed). You must have Azure AI Foundry and Content Understanding Service endpoints configured to test the full pipeline locally.
 
 ### Minimal `.env` for Local Development
 
@@ -209,6 +218,22 @@ docker-compose up -d
 cd src/chatbot-service
 pip install -r requirements.txt
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
+```
+
+### Hot Reload for Account Opening Service
+
+```bash
+# Terminal 1: Keep Docker services running (Redis required for Streams)
+docker-compose up -d
+
+# Terminal 2: Run API with auto-reload
+cd src/account-opening-service
+pip install -e ".[dev]"
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8004
+
+# Terminal 3: Run worker (agent pipeline)
+cd src/account-opening-service
+python -m app.worker
 ```
 
 ### Hot Reload for React UI
