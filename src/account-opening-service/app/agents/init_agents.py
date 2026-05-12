@@ -98,6 +98,9 @@ def main() -> int:
     logger.info(f"Foundry endpoint: {endpoint}")
     logger.info(f"Model: {model}")
 
+    # NOTE: This init container runs BEFORE sidecar containers start in K8s.
+    # The Entra Agent ID auth-sidecar is NOT available here, so we MUST use
+    # DefaultAzureCredential (workload identity via projected token).
     try:
         credential = DefaultAzureCredential()
         token = credential.get_token(TOKEN_SCOPE)

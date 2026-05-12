@@ -73,7 +73,7 @@ class ProvisioningConsumer(AgentConsumer):
         consumer_name: str,
         foundry_endpoint: str,
         foundry_model: str,
-        credential: "DefaultAzureCredential | None" = None,
+        credential = None,
     ) -> None:
         super().__init__(
             redis=redis,
@@ -83,6 +83,8 @@ class ProvisioningConsumer(AgentConsumer):
         )
         if not foundry_endpoint:
             raise RuntimeError("FOUNDRY_PROJECT_ENDPOINT is not configured")
+        if credential is None:
+            raise RuntimeError("credential is required — caller must supply a TokenCredential")
 
         self._repository = repository
         self._state_machine = state_machine
@@ -93,14 +95,6 @@ class ProvisioningConsumer(AgentConsumer):
         except ImportError as exc:
             logger.error("agent-framework-foundry is not installed", error=str(exc))
             raise
-
-        if credential is None:
-            try:
-                from azure.identity import DefaultAzureCredential
-            except ImportError as exc:
-                logger.error("azure-identity is not installed", error=str(exc))
-                raise
-            credential = DefaultAzureCredential()
 
         self._credential = credential
         self._agent = FoundryAgent(

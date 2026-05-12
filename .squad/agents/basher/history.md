@@ -1025,3 +1025,17 @@ Using `create_session()` + `run("ping")` is lightest real connectivity test:
 - Blob path convention: `{application_id}/{document_type}/{filename}`
 - `blobUrl` returns real Azure Blob URL consumed by downstream AI Content Understanding Service
 - Storage account name injected via `AZURE_STORAGE_ACCOUNT_NAME` env var (configmap placeholder pattern)
+
+### 2026-05 — Entra Agent ID sidecar credential wrapper (Issue #20)
+
+**Pattern:** Created `SidecarTokenCredential` class (`app/sidecar_credential.py`) that conforms to Azure `TokenCredential` protocol. Fetches bearer tokens from the Entra Agent ID auth-sidecar HTTP endpoint (`GET /AuthorizationHeaderUnauthenticated/{api_name}?AgentIdentity=...`) with 3-attempt retry/backoff. JWT exp claim decoded for `expires_on`.
+
+**Wiring:** Worker.py creates `SidecarTokenCredential` when `AGENT_ID_SIDECAR_URL` + `AGENT_ID_AGENT_IDENTITY` env vars are set; falls back to `DefaultAzureCredential` otherwise. Only the 3 Foundry consumers use sidecar cred; Cosmos, Blob, connectivity check, and DocumentExtraction keep DAC.
+
+**K8s ordering constraint:** `init_agents.py` MUST use `DefaultAzureCredential` because init containers run before sidecars start.
+
+**Key files:**
+- `src/account-opening-service/app/sidecar_credential.py` — new TokenCredential implementation
+- `src/account-opening-service/app/worker.py` — credential routing logic
+- `src/account-opening-service/app/agents/init_agents.py` — DAC kept with comment
+- `src/account-opening-service/app/agents/{identity_verification,compliance_check,provisioning}.py` — removed DAC fallback, credential now required
