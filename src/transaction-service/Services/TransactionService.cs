@@ -1,11 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Text.Json;
 using System.Threading.Tasks;
-using Microsoft.AspNetCore.Http;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -18,29 +14,24 @@ namespace TransactionService.Services;
 public class TransactionService : ITransactionService
 {
     private readonly Container _container;
+    private readonly Container _accountsContainer;
     private readonly IConnectionMultiplexer _redis;
     private readonly ILogger<TransactionService> _logger;
-    private readonly IConfiguration _configuration;
-    private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IHttpContextAccessor _httpContextAccessor;
     private const string StreamName = "banking-events";
 
     public TransactionService(
         CosmosClient cosmosClient,
         IConnectionMultiplexer redis,
         ILogger<TransactionService> logger,
-        IConfiguration configuration,
-        IHttpClientFactory httpClientFactory,
-        IHttpContextAccessor httpContextAccessor)
+        IConfiguration configuration)
     {
         var databaseName = configuration["CosmosDb:DatabaseName"];
         var containerName = configuration["CosmosDb:ContainerName"];
+        var accountsContainerName = configuration["CosmosDb:AccountsContainerName"];
         _container = cosmosClient.GetContainer(databaseName, containerName);
+        _accountsContainer = cosmosClient.GetContainer(databaseName, accountsContainerName);
         _redis = redis;
         _logger = logger;
-        _configuration = configuration;
-        _httpClientFactory = httpClientFactory;
-        _httpContextAccessor = httpContextAccessor;
     }
 
     public async Task<Transaction> CreateTransactionAsync(OnlineBankingDemo.Contracts.Dtos.CreateTransactionRequest request, string userId)
@@ -164,43 +155,16 @@ public class TransactionService : ITransactionService
 
     private async Task ValidateBalanceAsync(string accountId, decimal amount)
     {
-        var accountServiceUrl = _configuration["Services:AccountService"];
-        if (string.IsNullOrEmpty(accountServiceUrl))
-        {
-            _logger.LogWarning("AccountService URL not configured; skipping balance validation");
-            return;
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient();
+            var response = await _accountsContainer.ReadItemAsync<AccountRecord>(accountId, new PartitionKey(accountId));
+            var account = response.Resource;
 
-            // Forward JWT for service-to-service auth
-            var authHeader = _httpContextAccessor.HttpContext?.Request.Headers["Authorization"].FirstOrDefault();
-            if (!string.IsNullOrEmpty(authHeader))
-            {
-                client.DefaultRequestHeaders.Authorization = System.Net.Http.Headers.AuthenticationHeaderValue.Parse(authHeader);
-            }
-
-            var response = await client.GetAsync($"{accountServiceUrl}/api/accounts/{accountId}");
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning("Could not fetch account {AccountId} for balance check (HTTP {StatusCode})", accountId, response.StatusCode);
-                return;
-            }
-
-            var json = await response.Content.ReadAsStringAsync();
-            var account = System.Text.Json.JsonSerializer.Deserialize<AccountInfo>(json, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
-
-            if (account != null && account.Balance < amount)
+            if (account.Balance < amount)
             {
                 _logger.LogWarning("Insufficient funds: account {AccountId} balance {Balance} < requested {Amount}",
                     accountId, account.Balance, amount);
 
-                // Publish anomaly event for insufficient funds attempt
                 await PublishInsufficientFundsEvent(accountId, account.Balance, amount);
 
                 throw new InsufficientFundsException(accountId, account.Balance, amount);
@@ -209,6 +173,11 @@ public class TransactionService : ITransactionService
         catch (InsufficientFundsException)
         {
             throw;
+        }
+        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            _logger.LogError("Account {AccountId} not found in Cosmos DB during balance validation", accountId);
+            throw new InvalidOperationException($"Account {accountId} not found. Transaction cannot be processed.", ex);
         }
         catch (Exception ex)
         {
@@ -250,48 +219,54 @@ public class TransactionService : ITransactionService
 
     private async Task UpdateAccountBalanceAsync(string accountId, decimal amount)
     {
-        var accountServiceUrl = _configuration["Services:AccountService"];
-        if (string.IsNullOrEmpty(accountServiceUrl))
-        {
-            _logger.LogWarning("AccountService URL not configured; skipping balance update");
-            return;
-        }
-
         try
         {
-            var client = _httpClientFactory.CreateClient();
-            
-            // Forward JWT token for service-to-service authentication
-            var authHeader = _httpContextAccessor.HttpContext?.Request.Headers["Authorization"].FirstOrDefault();
-            if (!string.IsNullOrEmpty(authHeader))
-            {
-                client.DefaultRequestHeaders.Authorization = AuthenticationHeaderValue.Parse(authHeader);
-            }
-            
-            var requestBody = Newtonsoft.Json.JsonConvert.SerializeObject(new { Amount = amount });
-            var content = new StringContent(requestBody, System.Text.Encoding.UTF8, "application/json");
-            
-            var response = await client.PostAsync($"{accountServiceUrl}/api/accounts/{accountId}/balance", content);
-            if (!response.IsSuccessStatusCode)
-            {
-                var responseContent = await response.Content.ReadAsStringAsync();
-                _logger.LogError("Failed to update account balance for {AccountId} (HTTP {StatusCode}): {Response}", 
-                    accountId, response.StatusCode, responseContent);
-            }
-            else
-            {
-                _logger.LogInformation("Updated account {AccountId} balance by {Amount}", accountId, amount);
-            }
+            var response = await _accountsContainer.ReadItemAsync<AccountRecord>(accountId, new PartitionKey(accountId));
+            var account = response.Resource;
+
+            account.Balance += amount;
+
+            await _accountsContainer.ReplaceItemAsync(account, accountId, new PartitionKey(accountId));
+            _logger.LogInformation("Updated account {AccountId} balance by {Amount}", accountId, amount);
+        }
+        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            _logger.LogError("Account {AccountId} not found in Cosmos DB during balance update", accountId);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to call account-service to update balance for account {AccountId}", accountId);
+            _logger.LogError(ex, "Failed to update balance for account {AccountId}", accountId);
         }
     }
 
-    private class AccountInfo
+    /// <summary>
+    /// Lightweight account record for direct Cosmos DB balance operations.
+    /// Mirrors the account-service Account model for the fields transaction-service needs.
+    /// </summary>
+    private class AccountRecord
     {
+        [JsonProperty("id")]
         public string Id { get; set; } = null!;
+
+        [JsonProperty("userId")]
+        public string UserId { get; set; } = null!;
+
+        [JsonProperty("accountNumber")]
+        public string AccountNumber { get; set; } = null!;
+
+        [JsonProperty("accountType")]
+        public string AccountType { get; set; } = null!;
+
+        [JsonProperty("balance")]
         public decimal Balance { get; set; }
+
+        [JsonProperty("currency")]
+        public string Currency { get; set; } = "USD";
+
+        [JsonProperty("createdAt")]
+        public DateTime CreatedAt { get; set; }
+
+        [JsonProperty("isActive")]
+        public bool IsActive { get; set; } = true;
     }
 }

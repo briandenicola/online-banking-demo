@@ -16,6 +16,7 @@ data:
   Services__TransactionService: "http://transaction-service.banking-demo.svc.cluster.local"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4317"
   CosmosDb__Endpoint: "REPLACE_WITH_COSMOS_ENDPOINT"
+  CosmosDb__AccountsContainerName: "Accounts"
   AZURE_STORAGE_ACCOUNT_NAME: "REPLACE_WITH_STORAGE_ACCOUNT"
   AGENT_ID_AGENT_IDENTITY: "REPLACE_WITH_AZURE_CLIENT_ID"
   AzureAd__TenantId: "REPLACE_WITH_TENANT_ID"

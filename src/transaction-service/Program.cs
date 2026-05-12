@@ -95,10 +95,6 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
 // Use in-memory database for development if configured
 var useInMemory = builder.Configuration.GetValue<bool>("UseInMemoryDatabase", false);
 
-// HTTP Client for service-to-service calls (account balance updates)
-builder.Services.AddHttpClient();
-builder.Services.AddHttpContextAccessor();
-
 if (useInMemory)
 {
     builder.Services.AddLogging();

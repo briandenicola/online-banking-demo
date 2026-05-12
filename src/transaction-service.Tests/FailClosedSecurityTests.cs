@@ -7,7 +7,6 @@ using OnlineBankingDemo.Contracts.Dtos;
 using TransactionService.Controllers;
 using TransactionService.Models;
 using TransactionService.Services;
-using System.Net.Http;
 using System.Security.Claims;
 using Xunit;
 
@@ -15,7 +14,7 @@ namespace TransactionService.Tests;
 
 /// <summary>
 /// Tests for fail-closed behavior in transaction creation.
-/// Related to Issue #27: when dependent services (e.g., account-service) are unreachable,
+/// Related to Issue #27: when dependent data stores are unreachable,
 /// the system should reject the transaction rather than allowing it to proceed unchecked.
 /// </summary>
 [Trait("Category", "Security")]
@@ -44,16 +43,16 @@ public class FailClosedBalanceValidationTests
     }
 
     /// <summary>
-    /// SECURITY GAP (Issue #27): When the account-service is unreachable, the service layer
-    /// throws HttpRequestException. The controller does NOT catch this exception, causing a
-    /// 500 Internal Server Error to propagate to the client.
+    /// SECURITY (Issue #27): When the accounts container in Cosmos DB is unreachable,
+    /// the service layer throws InvalidOperationException (wrapping CosmosException).
+    /// The controller does NOT catch this exception, causing a 500 Internal Server Error.
     ///
     /// Current behavior: unhandled exception → 500
-    /// Expected after fix: controller should catch HttpRequestException and return 503
+    /// Expected after fix: controller should catch and return 503
     /// with message "Transaction temporarily unavailable" to fail closed gracefully.
     /// </summary>
     [Fact]
-    public async Task CreateTransaction_WhenAccountServiceUnreachable_ThrowsUnhandledException()
+    public async Task CreateTransaction_WhenAccountsContainerUnreachable_ThrowsUnhandledException()
     {
         SetUser("user-1");
         var request = new CreateTransactionRequest
@@ -65,14 +64,14 @@ public class FailClosedBalanceValidationTests
         };
         _transactionServiceMock
             .Setup(s => s.CreateTransactionAsync(request, "user-1"))
-            .ThrowsAsync(new HttpRequestException("Connection refused"));
+            .ThrowsAsync(new InvalidOperationException("Unable to validate balance for account acc-1. Transaction cannot be processed at this time."));
 
         // Current behavior: the exception propagates unhandled from the controller.
         // After fix: should return StatusCode 503 with appropriate message.
         var act = () => _sut.CreateTransaction(request);
 
-        await act.Should().ThrowAsync<HttpRequestException>()
-            .WithMessage("*Connection refused*");
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*Unable to validate balance*");
     }
 
     /// <summary>

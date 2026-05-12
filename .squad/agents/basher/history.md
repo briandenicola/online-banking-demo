@@ -80,6 +80,25 @@
 
 **Why DNS-01 over HTTP-01:** HTTP-01 requires DNS already pointing to the gateway AND a VirtualService hack to route `.well-known/acme-challenge/` traffic through Istio to the solver pod. DNS-01 creates a TXT record in Azure DNS — no HTTP traffic, no solver routing, works day-0.
 
+### 2026-05 — Option C: Move balance updates into transaction-service (eliminate service-to-service JWT problem)
+
+**Problem:** During transfers, transaction-service called account-service via HTTP to validate and update balances. The sender's JWT was forwarded, but the ownership check on account-service rejected credit transactions to the destination account (sender doesn't own it). This is the service-identity problem.
+
+**Fix (Option C — chosen by Brian):** Transaction-service now reads/writes account balances directly via Cosmos DB instead of HTTP calls to account-service. This eliminates the JWT forwarding problem entirely.
+
+**Changes:**
+- `src/transaction-service/Services/TransactionService.cs` — Removed `IHttpClientFactory`, `IHttpContextAccessor`, `IConfiguration` deps. Added `_accountsContainer` (second Cosmos container). `ValidateBalanceAsync` and `UpdateAccountBalanceAsync` now do direct Cosmos DB reads/writes via `AccountRecord` model. Removed `AccountInfo` inner class.
+- `src/transaction-service/Services/InMemoryTransactionService.cs` — Removed HTTP deps. Added `ConcurrentDictionary<string, decimal> _accountBalances` seeded with same balances as `InMemoryAccountService`. Balance validation/updates are now local.
+- `src/transaction-service/Program.cs` — Removed `AddHttpClient()` and `AddHttpContextAccessor()` registrations.
+- `src/transaction-service/appsettings.json` — Added `CosmosDb:AccountsContainerName`, removed `Services:AccountService`.
+- `docker-compose.yml` — Transaction-service: replaced `Services__AccountService` with `CosmosDb__AccountsContainerName`.
+- `deploy/kustomize/base/configmap.yaml` — Added `CosmosDb__AccountsContainerName: "Accounts"`.
+- `src/transaction-service.Tests/FailClosedSecurityTests.cs` — Updated fail-closed test: now expects `InvalidOperationException` (Cosmos DB errors) instead of `HttpRequestException` (HTTP errors). Test name updated to reflect accounts container unreachability.
+
+**Pattern:** When a service needs to read/write another service's data for atomic operations, direct Cosmos DB access (shared database, separate container) is cleaner than service-to-service HTTP with JWT forwarding. The `AccountRecord` model in transaction-service mirrors the account-service `Account` model for Newtonsoft serialization compatibility.
+
+**Key config:** `CosmosDb:AccountsContainerName` — the Cosmos container name for accounts, read by transaction-service to get a second container reference from the singleton CosmosClient.
+
 ### 2026-05 — Chatbot SDK Migration: v2.x azure-ai-projects (final)
 
 **Problem:** chatbot-service used the old `create_agent()` / `threads.create()` / `messages.create()` / `runs.create_and_process()` API which no longer exists in azure-ai-projects 2.1.0.
