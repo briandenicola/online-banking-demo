@@ -231,3 +231,39 @@ Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com
 - Admin endpoints use `require_admin` dependency (stacked on `verify_jwt`)
 
 **Commit files:** `src/shared/auth.py`, `src/{budget,chatbot,ai}-service/app/{auth,main}.py`, `src/{budget,chatbot,ai}-service/{pyproject.toml,Dockerfile}`, `docker-compose.yml`, `deploy/kustomize/base/{budget,chatbot,ai}-service.yaml`
+
+### 2026-05-12 — Security Batch Fixes (Issues #36, #37, #38, #44)
+
+**Scope:** LLM security, Redis TLS, event processor reliability, exception leaking — across Python FastAPI services and Go event-processor.
+
+**Issue #36 — LLM Security (chatbot-service + ai-service):**
+1. **chatbot-service:** Removed `user_id` parameter from `get_budget_insights`, `get_spending_pattern`, `get_user_transactions`, and `get_user_accounts` tool functions. LLM can no longer supply arbitrary user IDs via prompt injection. Tools now forward the JWT via Authorization header (using `_current_auth_token` ContextVar) and let downstream services resolve the user from the token.
+2. **ai-service /detect:** Replaced raw `await request.json()` with strict `DetectRequest` Pydantic model (typed fields: transactionId, accountId, amount, type, description, category).
+3. **ai-service PII:** Masked accountId to last 4 chars (`****XXXX`) before sending to LLM risk assessment prompt. Only amount, type, description, category, and masked account sent to Foundry.
+4. **ai-service admin prompts:** Already fixed in issue #26 — endpoint returns names/types only, no system prompt text.
+
+**Issue #37 — Exception Leaking:**
+- chatbot-service: Replaced `detail=str(e)` with `detail=f"Internal error. Correlation ID: {correlation_id}"`. Full exception logged server-side with `exc_info=True`.
+- budget-service and ai-service had no `detail=str(e)` patterns.
+
+**Issue #38 — Redis TLS:**
+- **Go event-processor:** Replaced `InsecureSkipVerify: true` with `ServerName` set to the Redis host extracted from the connection string. Proper certificate verification now enabled.
+- **Python ai-service:** Replaced `ssl_cert_reqs=None` with `ssl_cert_reqs="required"` in both Azure cluster and local fallback paths.
+- **budget-service and chatbot-service:** Don't use Redis directly — no changes needed.
+- **Istio port exclusion:** Verified `traffic.sidecar.istio.io/excludeOutboundPorts: "10000"` is already configured on all relevant services (ai-service, event-processor, transaction-service, user-service, transfer-service, account-opening-service).
+
+**Issue #44 — Event Processor ACK-before-process:**
+- **Go event-processor:**
+  - `processMessage` now returns `error` instead of silently logging
+  - XACK moved to AFTER successful processing; failed messages stay in pending list
+  - Dead-letter mechanism: after N failed attempts (`DLQ_MAX_RETRIES` env var, default 3), message moves to `banking-events-dlq` stream, then original is ACKed
+  - Added `sync.WaitGroup` for graceful shutdown — drains in-flight messages before exit
+  - Startup retry loop now uses `select` on `ctx.Done()` instead of `time.Sleep`
+  - Consumer loop backoff also respects context cancellation
+- **Python ai-service:** Same ACK-after-process + dead-letter pattern applied to the async Redis stream consumer
+
+**Key patterns:**
+- `_current_auth_token` ContextVar is the mechanism for passing JWT from HTTP handler to tool functions in chatbot-service
+- Dead-letter stream naming convention: `{original-stream}-dlq`
+- `DLQ_MAX_RETRIES` env var controls retry threshold (both Go and Python)
+- Redis TLS: In Azure mode, use proper cert verification with system CA bundle. In local docker-compose mode (no AZURE_CLIENT_ID), plain connections allowed.

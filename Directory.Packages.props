@@ -6,7 +6,7 @@
 
   <ItemGroup>
     <!-- Core Azure SDKs -->
-    <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.59.0" />
+    <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.58.0" />
     <PackageVersion Include="Azure.Identity" Version="1.16.0" />
 
     <!-- Authentication -->
