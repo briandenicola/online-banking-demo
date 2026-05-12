@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using OnlineBankingDemo.Contracts.Dtos;
 using UserService.Models;
@@ -17,11 +18,19 @@ public class InMemoryUserService : IUserService
     private readonly ConcurrentBag<LoginAudit> _loginAudits = new();
     private readonly ILogger<InMemoryUserService> _logger;
 
-    public InMemoryUserService(ILogger<InMemoryUserService> logger)
+    public InMemoryUserService(ILogger<InMemoryUserService> logger, IConfiguration configuration)
     {
         _logger = logger;
-        // Seed a default test user for demo purposes
-        var passwordHash = BC.HashPassword("password123");
+
+        var demoPassword = configuration["Demo:Password"];
+        if (string.IsNullOrWhiteSpace(demoPassword))
+        {
+            demoPassword = Guid.NewGuid().ToString("N")[..16];
+            logger.LogWarning("No Demo__Password configured — generated demo password: {DemoPassword}", demoPassword);
+        }
+
+        var passwordHash = BC.HashPassword(demoPassword);
+
         var defaultUser = new User
         {
             Id = "1",
@@ -31,13 +40,11 @@ public class InMemoryUserService : IUserService
             LastName = "User",
             Role = "admin",
             PasswordHash = passwordHash,
-            Salt = "" // No longer needed with bcrypt
+            Salt = ""
         };
         _users[defaultUser.Id] = defaultUser;
         _emailIndex[defaultUser.Email] = defaultUser.Id;
 
-        // Seed a demo user
-        var demoPasswordHash = BC.HashPassword("password123");
         var demoUser = new User
         {
             Id = "2",
@@ -46,7 +53,7 @@ public class InMemoryUserService : IUserService
             FirstName = "Demo",
             LastName = "User",
             Role = "admin",
-            PasswordHash = demoPasswordHash,
+            PasswordHash = passwordHash,
             Salt = ""
         };
         _users[demoUser.Id] = demoUser;
