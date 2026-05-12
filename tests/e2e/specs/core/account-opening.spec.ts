@@ -154,6 +154,7 @@ test.describe('Account Opening — E2E', () => {
     });
 
     test('Application reaches a terminal state (or remains in pipeline)', async ({ request }) => {
+      test.setTimeout(120_000); // Pipeline stages (CUS + Foundry agents) need ~60s
       expect(applicationId, 'Application ID must be set from prior test').toBeTruthy();
 
       const terminalStates = ['approved', 'rejected', 'pending_review'];
@@ -165,9 +166,9 @@ test.describe('Account Opening — E2E', () => {
         ...terminalStates,
       ];
 
-      // Poll for up to 30 seconds for async processing
+      // Poll for up to 90 seconds for async processing (CUS + Foundry agents are slow)
       let finalStatus = '';
-      const deadline = Date.now() + 30_000;
+      const deadline = Date.now() + 90_000;
 
       while (Date.now() < deadline) {
         const response = await request.get(
