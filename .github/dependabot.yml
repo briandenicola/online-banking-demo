@@ -1,0 +1,167 @@
+version: 2
+updates:
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+
+  # .NET (NuGet) — each service
+  - package-ecosystem: nuget
+    directory: /src/user-service
+    schedule:
+      interval: weekly
+    groups:
+      nuget-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: nuget
+    directory: /src/account-service
+    schedule:
+      interval: weekly
+    groups:
+      nuget-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: nuget
+    directory: /src/transaction-service
+    schedule:
+      interval: weekly
+    groups:
+      nuget-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: nuget
+    directory: /src/transfer-service
+    schedule:
+      interval: weekly
+    groups:
+      nuget-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: nuget
+    directory: /src/prompt-eval-service
+    schedule:
+      interval: weekly
+    groups:
+      nuget-minor-patch:
+        update-types: [minor, patch]
+
+  # Python (pip) — each service
+  - package-ecosystem: pip
+    directory: /src/ai-service
+    schedule:
+      interval: weekly
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: pip
+    directory: /src/budget-service
+    schedule:
+      interval: weekly
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: pip
+    directory: /src/chatbot-service
+    schedule:
+      interval: weekly
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: pip
+    directory: /src/account-opening-service
+    schedule:
+      interval: weekly
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
+
+  # Go modules
+  - package-ecosystem: gomod
+    directory: /src/event-processor
+    schedule:
+      interval: weekly
+    groups:
+      go-minor-patch:
+        update-types: [minor, patch]
+
+  # npm (React UI)
+  - package-ecosystem: npm
+    directory: /src/ui-app
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+
+  # Docker
+  - package-ecosystem: docker
+    directory: /src/user-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /src/account-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /src/transaction-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /src/transfer-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /src/prompt-eval-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /src/ai-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /src/budget-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /src/chatbot-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /src/account-opening-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /src/event-processor
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /src/ui-app
+    schedule:
+      interval: weekly
+
+  # Terraform
+  - package-ecosystem: terraform
+    directory: /infra/cloud
+    schedule:
+      interval: weekly
+    groups:
+      terraform-minor-patch:
+        update-types: [minor, patch]

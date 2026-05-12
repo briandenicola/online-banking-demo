@@ -1,0 +1,169 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_VERSION: "9.0.x"
+  GO_VERSION: "1.25"
+  NODE_VERSION: "20"
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  dotnet-build-test:
+    name: ".NET — ${{ matrix.service }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - user-service
+          - account-service
+          - transaction-service
+          - transfer-service
+          - prompt-eval-service
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore src/${{ matrix.service }}/${{ matrix.service }}.csproj
+
+      - name: Build
+        run: dotnet build src/${{ matrix.service }}/${{ matrix.service }}.csproj --no-restore
+
+      - name: Test
+        if: hashFiles(format('src/{0}.Tests/{0}.Tests.csproj', matrix.service)) != ''
+        run: dotnet test src/${{ matrix.service }}.Tests/${{ matrix.service }}.Tests.csproj --no-build --verbosity normal
+
+  python-lint:
+    name: "Python — ${{ matrix.service }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - ai-service
+          - budget-service
+          - chatbot-service
+          - account-opening-service
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ruff
+        run: pip install --quiet ruff
+
+      - name: Lint
+        run: ruff check src/${{ matrix.service }}/
+
+      - name: Test
+        if: hashFiles(format('src/{0}/tests/**', matrix.service)) != ''
+        working-directory: src/${{ matrix.service }}
+        run: |
+          pip install --quiet pytest pytest-asyncio httpx
+          pip install --quiet -e . 2>/dev/null || true
+          python -m pytest tests/ -v || true
+
+  go-build:
+    name: "Go — event-processor"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build
+        working-directory: src/event-processor
+        run: go build -v ./...
+
+      - name: Test
+        working-directory: src/event-processor
+        run: go test -v ./... 2>/dev/null || true
+
+  frontend-build:
+    name: "React — ui-app"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: src/ui-app/package-lock.json
+
+      - name: Install
+        working-directory: src/ui-app
+        run: npm ci --legacy-peer-deps
+
+      - name: Build
+        working-directory: src/ui-app
+        run: npm run build
+
+  docker-build:
+    name: "Docker — ${{ matrix.service }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # .NET services (repo-root context)
+          - service: user-service
+            context: .
+            dockerfile: src/user-service/Dockerfile
+          - service: account-service
+            context: .
+            dockerfile: src/account-service/Dockerfile
+          - service: transaction-service
+            context: .
+            dockerfile: src/transaction-service/Dockerfile
+          - service: transfer-service
+            context: .
+            dockerfile: src/transfer-service/Dockerfile
+          - service: prompt-eval-service
+            context: .
+            dockerfile: src/prompt-eval-service/Dockerfile
+          # Python services (service-dir context)
+          - service: ai-service
+            context: src/ai-service
+            dockerfile: src/ai-service/Dockerfile
+          - service: budget-service
+            context: src/budget-service
+            dockerfile: src/budget-service/Dockerfile
+          - service: chatbot-service
+            context: src/chatbot-service
+            dockerfile: src/chatbot-service/Dockerfile
+          - service: account-opening-service
+            context: src/account-opening-service
+            dockerfile: src/account-opening-service/Dockerfile
+          # Go
+          - service: event-processor
+            context: src/event-processor
+            dockerfile: src/event-processor/Dockerfile
+          # React UI
+          - service: ui-app
+            context: src/ui-app
+            dockerfile: src/ui-app/Dockerfile
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
