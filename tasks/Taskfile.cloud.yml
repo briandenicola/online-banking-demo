@@ -84,6 +84,7 @@ tasks:
       - task: _secretproviderclass:update
       - kubectl apply -f cluster-config/istio/gateway/istio-ingress-gateway.yaml
       - kubectl apply -f cluster-config/istio/gateway/default-ingress.yaml
+      - task: tls:enable
 
   # === One-time infra configuration ===
   # Run after Terraform creates AKS. Sets up credentials, namespaces, secrets,
