@@ -55,14 +55,14 @@ public class TransactionService : ITransactionService
             RelatedTransactionId = request.RelatedTransactionId
         };
 
-        await _container.CreateItemAsync(transaction, new PartitionKey(transaction.AccountId));
-        
-        // Update account balance (transaction-service owns balance side effects)
-        // Debit transactions decrease balance, so negate positive amounts
+        // Update account balance FIRST — if this fails, no transaction is recorded
         var balanceChange = IsDebitTransaction(request) && transaction.Amount > 0
             ? -transaction.Amount
             : transaction.Amount;
         await UpdateAccountBalanceAsync(transaction.AccountId, balanceChange);
+
+        // Persist transaction only after balance is successfully updated
+        await _container.CreateItemAsync(transaction, new PartitionKey(transaction.AccountId));
         
         // Publish TransactionCreated event to Redis Stream
         await PublishTransactionCreatedEvent(transaction);
@@ -232,10 +232,12 @@ public class TransactionService : ITransactionService
         catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
             _logger.LogError("Account {AccountId} not found in Cosmos DB during balance update", accountId);
+            throw new InvalidOperationException($"Account {accountId} not found. Balance update cannot be completed.", ex);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update balance for account {AccountId}", accountId);
+            throw;
         }
     }
 
