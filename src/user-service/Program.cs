@@ -134,7 +134,9 @@ app.MapControllers();
 app.MapGet("/healthz", () => Results.Ok(new { status = "healthy", service = "user-service", timestamp = DateTime.UtcNow }));
 app.MapGet("/readyz", () => Results.Ok(new { status = "ready" }));
 
-// Promote the first user to admin if no admins exist (convention: first user = admin)
+// Promote the bootstrap admin if configured (Admin__BootstrapEmail env var)
+var bootstrapEmail = builder.Configuration["Admin:BootstrapEmail"];
+
 if (!useInMemory)
 {
     using var scope = app.Services.CreateScope();
@@ -153,17 +155,40 @@ if (!useInMemory)
 
         if (adminCount == 0)
         {
-            // Find the oldest user by CreatedAt and promote to admin
-            var firstUserQuery = new QueryDefinition("SELECT * FROM c ORDER BY c.CreatedAt ASC OFFSET 0 LIMIT 1");
-            var firstUserIterator = container.GetItemQueryIterator<UserService.Models.User>(firstUserQuery);
-            var firstUserResult = await firstUserIterator.ReadNextAsync();
-            var firstUser = firstUserResult.FirstOrDefault();
-
-            if (firstUser != null)
+            if (!string.IsNullOrWhiteSpace(bootstrapEmail))
             {
-                firstUser.Role = "admin";
-                await container.ReplaceItemAsync(firstUser, firstUser.Id, new PartitionKey(firstUser.Id));
-                logger.LogInformation("Promoted user {Username} ({Email}) to admin role — first user convention", firstUser.Username, firstUser.Email);
+                // Promote the user matching the bootstrap email
+                var emailQuery = new QueryDefinition("SELECT * FROM c WHERE LOWER(c.Email) = @email")
+                    .WithParameter("@email", bootstrapEmail.ToLowerInvariant());
+                var emailIterator = container.GetItemQueryIterator<UserService.Models.User>(emailQuery);
+                var emailResult = await emailIterator.ReadNextAsync();
+                var bootstrapUser = emailResult.FirstOrDefault();
+
+                if (bootstrapUser != null)
+                {
+                    bootstrapUser.Role = "admin";
+                    await container.ReplaceItemAsync(bootstrapUser, bootstrapUser.Id, new PartitionKey(bootstrapUser.Id));
+                    logger.LogInformation("Promoted user {Username} ({Email}) to admin role via Admin__BootstrapEmail", bootstrapUser.Username, bootstrapUser.Email);
+                }
+                else
+                {
+                    logger.LogWarning("Admin__BootstrapEmail is set to '{Email}' but no matching user was found", bootstrapEmail);
+                }
+            }
+            else
+            {
+                // Fall back to first-user convention
+                var firstUserQuery = new QueryDefinition("SELECT * FROM c ORDER BY c.CreatedAt ASC OFFSET 0 LIMIT 1");
+                var firstUserIterator = container.GetItemQueryIterator<UserService.Models.User>(firstUserQuery);
+                var firstUserResult = await firstUserIterator.ReadNextAsync();
+                var firstUser = firstUserResult.FirstOrDefault();
+
+                if (firstUser != null)
+                {
+                    firstUser.Role = "admin";
+                    await container.ReplaceItemAsync(firstUser, firstUser.Id, new PartitionKey(firstUser.Id));
+                    logger.LogInformation("Promoted user {Username} ({Email}) to admin role — first user convention", firstUser.Username, firstUser.Email);
+                }
             }
         }
     }

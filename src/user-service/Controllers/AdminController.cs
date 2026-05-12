@@ -1,6 +1,4 @@
-using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
-using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -25,27 +23,13 @@ public class AdminController : ControllerBase
 
     /// <summary>
     /// Promotes a user to admin by email or userId.
-    /// Bootstrap escape hatch: if there are zero admins in the system, this endpoint
-    /// allows any authenticated user to self-promote, bypassing the admin role check.
-    /// This handles the chicken-and-egg problem when the first user was created before
-    /// auto-promotion logic existed.
+    /// Requires an existing admin's JWT. For initial bootstrap, set the
+    /// Admin__BootstrapEmail environment variable — the matching user is
+    /// auto-promoted at startup.
     /// </summary>
     [HttpPost("promote")]
-    [AllowAnonymous]
     public async Task<IActionResult> PromoteToAdmin([FromBody] PromoteRequest request)
     {
-        // Bootstrap check: if no admins exist, allow any authenticated user to promote.
-        // Once at least one admin exists, require the caller to be an admin.
-        var adminCount = await _userService.GetAdminCountAsync();
-        var isBootstrap = adminCount == 0;
-
-        if (!isBootstrap)
-        {
-            // Normal path: require admin role
-            if (User.Identity?.IsAuthenticated != true || !User.IsInRole("admin"))
-                return Forbid();
-        }
-
         // Resolve target user by email or userId
         UserService.Models.User? targetUser = null;
         if (!string.IsNullOrWhiteSpace(request.Email))
@@ -58,19 +42,17 @@ public class AdminController : ControllerBase
         }
         else
         {
-            return BadRequest(new { Message = "Either 'email' or 'userId' must be provided" });
+            return BadRequest(new { error = "Either 'email' or 'userId' must be provided" });
         }
 
         if (targetUser == null)
-            return NotFound(new { Message = "User not found" });
+            return NotFound(new { error = "User not found" });
 
         try
         {
             var promoted = await _userService.PromoteToAdminAsync(targetUser.Id);
 
-            var promotedBy = isBootstrap
-                ? "BOOTSTRAP (no admins existed)"
-                : User.FindFirst("userId")?.Value ?? "unknown";
+            var promotedBy = User.FindFirst("userId")?.Value ?? "unknown";
 
             _logger.LogWarning(
                 "ADMIN PROMOTION: User {TargetUserId} ({TargetEmail}) promoted to admin by {PromotedBy}",
@@ -87,7 +69,7 @@ public class AdminController : ControllerBase
         }
         catch (InvalidOperationException)
         {
-            return Conflict(new { Message = $"User '{targetUser.Email}' is already an admin" });
+            return Conflict(new { error = $"User '{targetUser.Email}' is already an admin" });
         }
     }
 
@@ -119,10 +101,10 @@ public class AdminController : ControllerBase
     {
         var success = await _userService.LockUserAsync(id);
         if (!success)
-            return NotFound(new { Message = "User not found" });
+            return NotFound(new { error = "User not found" });
 
         _logger.LogInformation("Admin {AdminId} locked user {UserId}", User.FindFirst("userId")?.Value, id);
-        return Ok(new { Message = "User locked successfully" });
+        return Ok(new { message = "User locked successfully" });
     }
 
     [HttpPut("users/{id}/unlock")]
@@ -130,10 +112,10 @@ public class AdminController : ControllerBase
     {
         var success = await _userService.UnlockUserAsync(id);
         if (!success)
-            return NotFound(new { Message = "User not found" });
+            return NotFound(new { error = "User not found" });
 
         _logger.LogInformation("Admin {AdminId} unlocked user {UserId}", User.FindFirst("userId")?.Value, id);
-        return Ok(new { Message = "User unlocked successfully" });
+        return Ok(new { message = "User unlocked successfully" });
     }
 
     [HttpPut("users/{id}/reset-password")]
@@ -141,10 +123,10 @@ public class AdminController : ControllerBase
     {
         var success = await _userService.ResetUserPasswordAsync(id, request.NewPassword);
         if (!success)
-            return NotFound(new { Message = "User not found" });
+            return NotFound(new { error = "User not found" });
 
         _logger.LogInformation("Admin {AdminId} reset password for user {UserId}", User.FindFirst("userId")?.Value, id);
-        return Ok(new { Message = "Password reset successfully" });
+        return Ok(new { message = "Password reset successfully" });
     }
 
     [HttpDelete("users/{id}")]
@@ -154,14 +136,14 @@ public class AdminController : ControllerBase
 
         // Prevent admin from deleting themselves
         if (id == adminId)
-            return BadRequest(new { Message = "Cannot delete your own account" });
+            return BadRequest(new { error = "Cannot delete your own account" });
 
         var success = await _userService.DeleteUserAsync(id);
         if (!success)
-            return NotFound(new { Message = "User not found" });
+            return NotFound(new { error = "User not found" });
 
         _logger.LogInformation("Admin {AdminId} deleted user {UserId}", adminId, id);
-        return Ok(new { Message = "User deleted successfully" });
+        return Ok(new { message = "User deleted successfully" });
     }
 
     [HttpGet("login-audits")]

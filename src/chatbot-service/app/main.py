@@ -194,12 +194,15 @@ def _sanitize_transaction_description(description: str | None) -> str:
 
 @tool(approval_mode="never_require")
 def get_budget_insights(
-    user_id: Annotated[str, Field(description="The user ID to get budget insights for")],
     period: Annotated[str, Field(description="Time period (e.g. '7d', '30d')")] = "30d",
 ) -> str:
-    """Get budget insights including spending breakdown and savings rate for a user."""
+    """Get budget insights including spending breakdown and savings rate for the authenticated user."""
+    token = _current_auth_token.get("")
+    if not token:
+        return json.dumps({"error": "No auth token available to fetch budget insights"})
     try:
-        response = httpx.get(f"{BUDGET_SERVICE_URL}/insights/{user_id}?period={period}", timeout=10.0)
+        headers = {"Authorization": f"Bearer {token}"}
+        response = httpx.get(f"{BUDGET_SERVICE_URL}/insights/me?period={period}", headers=headers, timeout=10.0)
         if response.is_success:
             return json.dumps(response.json())
     except Exception as e:
@@ -208,12 +211,14 @@ def get_budget_insights(
 
 
 @tool(approval_mode="never_require")
-def get_spending_pattern(
-    user_id: Annotated[str, Field(description="The user ID to analyze spending for")],
-) -> str:
-    """Get recent spending patterns and trends for a user over the last 7 days."""
+def get_spending_pattern() -> str:
+    """Get recent spending patterns and trends for the authenticated user over the last 7 days."""
+    token = _current_auth_token.get("")
+    if not token:
+        return json.dumps({"error": "No auth token available to fetch spending patterns"})
     try:
-        response = httpx.get(f"{BUDGET_SERVICE_URL}/insights/{user_id}?period=7d", timeout=10.0)
+        headers = {"Authorization": f"Bearer {token}"}
+        response = httpx.get(f"{BUDGET_SERVICE_URL}/insights/me?period=7d", headers=headers, timeout=10.0)
         if response.is_success:
             return json.dumps(response.json())
     except Exception as e:
@@ -243,9 +248,7 @@ def analyze_transaction(
 
 
 @tool(approval_mode="never_require")
-def get_user_transactions(
-    user_id: Annotated[str, Field(description="The user ID (not used directly — auth token determines the user)")],
-) -> str:
+def get_user_transactions() -> str:
     """Get the authenticated user's recent transactions from the transaction service."""
     token = _current_auth_token.get("")
     if not token:
@@ -279,9 +282,7 @@ def get_user_transactions(
 
 
 @tool(approval_mode="never_require")
-def get_user_accounts(
-    user_id: Annotated[str, Field(description="The user ID (not used directly — auth token determines the user)")],
-) -> str:
+def get_user_accounts() -> str:
     """Get the authenticated user's bank accounts including balances."""
     token = _current_auth_token.get("")
     if not token:
@@ -513,8 +514,9 @@ async def chat(request: ChatRequest, http_request: Request, user: UserContext = 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in agent chat: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        correlation_id = structlog.contextvars.get_contextvars().get("correlation_id", uuid.uuid4().hex)
+        logger.error(f"Error in agent chat: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error. Correlation ID: {correlation_id}")
 
 
 @app.post("/api/chat/new", response_model=ChatResponse)
