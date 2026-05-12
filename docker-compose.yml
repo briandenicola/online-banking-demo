@@ -116,6 +116,9 @@ services:
       - AZURE_TENANT_ID=${AZURE_TENANT_ID}
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
       - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}
+      - Jwt__Key=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
+      - Jwt__Issuer=${JWT_ISSUER:-user-service}
+      - Jwt__Audience=${JWT_AUDIENCE:-banking-demo}
       - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - OTEL_SERVICE_NAME=chatbot-service
@@ -138,6 +141,9 @@ services:
       - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
       - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
       - REDIS__CONNECTIONSTRING=redis:6379
+      - Jwt__Key=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
+      - Jwt__Issuer=${JWT_ISSUER:-user-service}
+      - Jwt__Audience=${JWT_AUDIENCE:-banking-demo}
       - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - OTEL_SERVICE_NAME=ai-service
@@ -200,6 +206,9 @@ services:
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
       - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
       - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
+      - Jwt__Key=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
+      - Jwt__Issuer=${JWT_ISSUER:-user-service}
+      - Jwt__Audience=${JWT_AUDIENCE:-banking-demo}
       - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - OTEL_SERVICE_NAME=budget-service

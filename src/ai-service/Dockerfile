@@ -6,7 +6,7 @@ COPY ./app ./app
 COPY ./pyproject.toml ./
 
 RUN pip install --no-cache-dir --root-user-action=ignore \
-    fastapi uvicorn httpx pydantic python-dotenv structlog redis \
+    fastapi uvicorn httpx pydantic python-dotenv structlog redis PyJWT \
     opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp \
     opentelemetry-instrumentation-fastapi opentelemetry-instrumentation-httpx \
     agent-framework agent-framework-foundry azure-identity

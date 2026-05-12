@@ -29,7 +29,7 @@ except ImportError:
     FoundryChatClient = None
     DefaultAzureCredential = None
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -40,6 +40,8 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from app.auth import UserContext, require_admin, verify_jwt
 
 # Configure structured logging
 structlog.configure(
@@ -456,13 +458,16 @@ class ChatResponse(BaseModel):
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest, http_request: Request):
+async def chat(request: ChatRequest, http_request: Request, user: UserContext = Depends(verify_jwt)):
     """Get financial advice from the AI agent."""
     if not agent_ready or not financial_agent:
         raise HTTPException(
             status_code=503,
             detail="Azure AI Foundry not configured. Set FOUNDRY_PROJECT_ENDPOINT or AZURE_OPENAI_ENDPOINT.",
         )
+
+    # Use authenticated user_id from JWT, not from request body
+    authenticated_user_id = user.user_id
 
     # Extract JWT from Authorization header so tools can forward it
     auth_header = http_request.headers.get("Authorization", "")
@@ -475,7 +480,7 @@ async def chat(request: ChatRequest, http_request: Request):
         with tracer.start_as_current_span("ai-agent.chat") as span:
             span.set_attribute("agent.name", "FinancialAdvisor")
             span.set_attribute("agent.model", model_name)
-            span.set_attribute("user.id", request.user_id)
+            span.set_attribute("user.id", authenticated_user_id)
             span.set_attribute("user.message", request.message[:100])
 
             user_content = request.message
@@ -483,17 +488,17 @@ async def chat(request: ChatRequest, http_request: Request):
                 user_content = f"Context: {request.context}\n\nQuestion: {request.message}"
 
             # Get or create a session for multi-turn conversation
-            if request.user_id not in user_sessions:
-                user_sessions[request.user_id] = financial_agent.create_session()
+            if authenticated_user_id not in user_sessions:
+                user_sessions[authenticated_user_id] = financial_agent.create_session()
 
-            session = user_sessions[request.user_id]
+            session = user_sessions[authenticated_user_id]
 
             result = await financial_agent.run(user_content, session=session)
             answer = str(result) if result else "I couldn't generate a response at this time."
 
             # Persist both messages to Cosmos
-            await _save_chat_message(request.user_id, "user", request.message)
-            await _save_chat_message(request.user_id, "assistant", answer)
+            await _save_chat_message(authenticated_user_id, "user", request.message)
+            await _save_chat_message(authenticated_user_id, "assistant", answer)
 
             span.set_attribute("response.length", len(answer))
 
@@ -513,15 +518,17 @@ async def chat(request: ChatRequest, http_request: Request):
 
 
 @app.post("/api/chat/new", response_model=ChatResponse)
-async def chat_new_session(request: ChatRequest, http_request: Request):
+async def chat_new_session(request: ChatRequest, http_request: Request, user: UserContext = Depends(verify_jwt)):
     """Start a new chat session (clears conversation history for this user)."""
-    user_sessions.pop(request.user_id, None)
-    return await chat(request, http_request)
+    user_sessions.pop(user.user_id, None)
+    return await chat(request, http_request, user)
 
 
 @app.get("/api/chat/history/{user_id}")
-async def get_chat_history(user_id: str):
-    """Load persisted chat history for a user."""
+async def get_chat_history(user_id: str, user: UserContext = Depends(verify_jwt)):
+    """Load persisted chat history for the authenticated user."""
+    if user.user_id != user_id and user.role.lower() != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot access another user's history")
     messages = _load_chat_history(user_id)
     return {"messages": messages}
 
@@ -561,7 +568,7 @@ async def ready():
 
 
 @app.get("/api/chat/admin/foundry-status")
-async def foundry_status():
+async def foundry_status(user: UserContext = Depends(require_admin)):
     """Validate Foundry connectivity for the chat agent's model backend."""
     agent_name = "FinancialAdvisor"
     if not AGENT_FRAMEWORK_AVAILABLE:

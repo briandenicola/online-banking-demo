@@ -176,3 +176,58 @@ Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com
 
 **Pattern:** Sidecar gets AZURE_CLIENT_ID from workload identity webhook (pod has `azure.workload.identity/use: "true"` label). No manual client ID wiring needed on the sidecar itself.
 **Pattern:** Pod-specific URLs (localhost sidecar) go as explicit env vars on the container, not in the shared configmap.
+
+### 2026-05-12 — Deep Security Audit (Issue #18)
+
+**Scope:** All Python/FastAPI services (budget, chatbot, ai-service) + Go event-processor + prompt-eval-service (.NET, not Python as initially assumed).
+
+**Key findings:**
+1. **CRITICAL: Zero auth on all 3 Python FastAPI services** — budget-service, chatbot-service, ai-service have no JWT/Bearer middleware. All endpoints including admin routes are publicly accessible.
+2. **HIGH: LLM identity confusion** — chatbot-service tool functions accept `user_id` from the LLM, enabling indirect prompt injection for cross-user data access.
+3. **HIGH: Redis TLS verification disabled** — both Go (`InsecureSkipVerify: true`) and Python (`ssl_cert_reqs=None`) skip cert validation.
+4. **HIGH: Event processor loses messages** — ACKs before successful processing; failed events are permanently lost.
+5. **MEDIUM: PII in AI prompts and telemetry** — account IDs, transaction descriptions, and user messages flow into LLM endpoints and OTEL spans.
+
+**Architecture observations:**
+- prompt-eval-service is .NET/C#, not Python — it's the only service with proper `[Authorize]` attributes
+- Budget service uses in-memory storage (`defaultdict(list)`) — not production-ready
+- No shared auth module exists across Python services — each would need its own implementation
+- AI service's `/api/admin/prompts` endpoint returns full system prompt text — security anti-pattern
+
+**Proposed decision:** Create shared JWT auth dependency for all Python services before adding features. Filed to `.squad/decisions/inbox/turk-security-audit.md`.
+
+**Full report:** `.squad/decisions/inbox/turk-security-audit.md` — 3 CRITICAL, 9 HIGH, 14 MEDIUM, 7 LOW, 4 INFO findings with remediation roadmap.
+
+### 2026-05-12 — JWT Authentication for Python/FastAPI Services (Issue #26)
+
+**Feature:** Added JWT Bearer authentication to all three Python/FastAPI services (budget-service, chatbot-service, ai-service), closing the CRITICAL zero-auth finding from the security audit.
+
+**What was built:**
+1. **Shared auth module** (`src/shared/auth.py`, copied into each service's `app/auth.py`):
+   - `verify_jwt` — FastAPI `Depends()` that validates Bearer tokens using PyJWT (HMAC-SHA256)
+   - `require_admin` — wraps `verify_jwt` with role == "admin" check (403 if not)
+   - `UserContext` dataclass (user_id, username, role) extracted from JWT claims
+   - Reads `Jwt__Key`, `Jwt__Issuer`, `Jwt__Audience` env vars — matching .NET `Jwt:Key` config pattern
+   - Handles both .NET ClaimTypes.Role URI and short "role" claim names
+
+2. **budget-service:** Auth on `/insights/{userId}` and `/categorize`. userId now derived from JWT, path param ignored (prevents IDOR).
+
+3. **chatbot-service:** Auth on `/api/chat`, `/api/chat/new`, `/api/chat/history/{user_id}` (with user_id ownership check), `/api/chat/admin/foundry-status` (admin-only).
+
+4. **ai-service:** Auth on `/detect`. Admin-only on all `/api/admin/*` endpoints (stats, transactions, flagged-transactions, scored-transactions, rescore, review, prompts, evaluate). Prompts endpoint now returns names/types only — system prompt text stripped (security fix).
+
+5. **Environment config:**
+   - docker-compose.yml: Added `Jwt__Key`, `Jwt__Issuer`, `Jwt__Audience` env vars to all 3 Python services (same default as .NET services)
+   - Kustomize: Added `Jwt__Key` secretKeyRef to budget-service.yaml, chatbot-service.yaml, ai-service.yaml (from banking-secrets/jwt-key)
+   - Dockerfiles: Added `PyJWT` to pip install for all 3 services
+   - pyproject.toml: Added `PyJWT = "^2.8.0"` dependency to all 3 services
+
+**Health endpoints (`/healthz`, `/readyz`, `/health`) remain unauthenticated** — required for K8s probes.
+
+**Key patterns:**
+- Auth module is placed in each service's `app/auth.py` because Dockerfiles build from per-service contexts
+- `src/shared/auth.py` is the canonical source of truth
+- Never trust client-supplied user_id — always derive from JWT `sub`/`userId` claims
+- Admin endpoints use `require_admin` dependency (stacked on `verify_jwt`)
+
+**Commit files:** `src/shared/auth.py`, `src/{budget,chatbot,ai}-service/app/{auth,main}.py`, `src/{budget,chatbot,ai}-service/{pyproject.toml,Dockerfile}`, `docker-compose.yml`, `deploy/kustomize/base/{budget,chatbot,ai}-service.yaml`

@@ -38,7 +38,7 @@ except ImportError:
     FoundryChatClient = None
     DefaultAzureCredential = None
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -49,6 +49,8 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from app.auth import UserContext, require_admin, verify_jwt
 
 # Configure structured logging
 structlog.configure(
@@ -1015,7 +1017,7 @@ async def ready():
 # ============================================================
 
 @app.post("/detect", response_model=RiskAssessment)
-async def detect(request: Request):
+async def detect(request: Request, user: UserContext = Depends(verify_jwt)):
     """Score a single transaction synchronously (for on-demand assessment)."""
     body = await request.json()
     if not _analyzer_pipeline:
@@ -1024,7 +1026,7 @@ async def detect(request: Request):
 
 
 @app.get("/api/admin/foundry-status")
-async def foundry_status():
+async def foundry_status(user: UserContext = Depends(require_admin)):
     """Validate Foundry connectivity for transaction-categorizer and risk-assessor agents."""
     agents_status = {}
 
@@ -1073,7 +1075,7 @@ async def foundry_status():
 # ============================================================
 
 @app.get("/api/admin/stats", response_model=AdminStats)
-async def get_admin_stats():
+async def get_admin_stats(user: UserContext = Depends(require_admin)):
     """Return aggregated admin statistics."""
     if not _redis_client:
         raise HTTPException(status_code=503, detail="Redis not available")
@@ -1119,6 +1121,7 @@ async def list_scored_transactions(
     limit: int = Query(default=100, ge=1, le=500),
     sort: str = Query(default="scoredAt", pattern=r"^(scoredAt|riskScore|amount)$"),
     order: str = Query(default="desc", pattern=r"^(asc|desc)$"),
+    user: UserContext = Depends(require_admin),
 ):
     """Return all scored transactions with risk scores."""
     if not _redis_client:
@@ -1148,7 +1151,7 @@ async def list_scored_transactions(
 
 
 @app.get("/api/admin/flagged-transactions", response_model=list[FlaggedTransaction])
-async def list_flagged_transactions():
+async def list_flagged_transactions(user: UserContext = Depends(require_admin)):
     """Return all flagged (high-risk) transactions, ordered by most recent."""
     if not _redis_client:
         raise HTTPException(status_code=503, detail="Redis not available")
@@ -1163,7 +1166,7 @@ async def list_flagged_transactions():
 
 
 @app.get("/api/admin/flagged-transactions/{tx_id}", response_model=FlaggedTransaction)
-async def get_flagged_transaction(tx_id: str):
+async def get_flagged_transaction(tx_id: str, user: UserContext = Depends(require_admin)):
     """Get details of a single flagged transaction."""
     if not _redis_client:
         raise HTTPException(status_code=503, detail="Redis not available")
@@ -1175,7 +1178,7 @@ async def get_flagged_transaction(tx_id: str):
 
 
 @app.get("/api/admin/scored-transactions/{tx_id}", response_model=ScoredTransaction)
-async def get_scored_transaction(tx_id: str):
+async def get_scored_transaction(tx_id: str, user: UserContext = Depends(require_admin)):
     """Get details of a single scored transaction."""
     if not _redis_client:
         raise HTTPException(status_code=503, detail="Redis not available")
@@ -1187,7 +1190,7 @@ async def get_scored_transaction(tx_id: str):
 
 
 @app.post("/api/admin/scored-transactions/{tx_id}/rescore", response_model=ScoredTransaction)
-async def rescore_transaction(tx_id: str):
+async def rescore_transaction(tx_id: str, user: UserContext = Depends(require_admin)):
     """Re-run AI risk analysis on an existing scored transaction."""
     if not _redis_client:
         raise HTTPException(status_code=503, detail="Redis not available")
@@ -1258,7 +1261,7 @@ async def rescore_transaction(tx_id: str):
 
 
 @app.put("/api/admin/flagged-transactions/{tx_id}/review", response_model=FlaggedTransaction)
-async def review_flagged_transaction(tx_id: str, review: ReviewRequest):
+async def review_flagged_transaction(tx_id: str, review: ReviewRequest, user: UserContext = Depends(require_admin)):
     """Mark a flagged transaction as reviewed or cleared."""
     if not _redis_client:
         raise HTTPException(status_code=503, detail="Redis not available")
@@ -1280,31 +1283,27 @@ async def review_flagged_transaction(tx_id: str, review: ReviewRequest):
 
 
 @app.get("/api/admin/prompts")
-async def get_active_prompts():
-    """Return the system prompts currently used for risk scoring and categorization."""
+async def get_active_prompts(user: UserContext = Depends(require_admin)):
+    """Return prompt metadata (names/types only — no system prompt text)."""
     if not _analyzer_pipeline:
         raise HTTPException(status_code=503, detail="Analyzer pipeline not initialized")
 
     prompts = []
 
     for analyzer in _analyzer_pipeline._analyzers:
-        prompt_text = getattr(analyzer, 'SYSTEM_PROMPT', None)
-        if prompt_text:
+        if getattr(analyzer, 'SYSTEM_PROMPT', None):
             prompts.append({
                 "name": analyzer.name,
                 "type": "risk-scoring",
                 "enabled": analyzer.enabled,
-                "systemPrompt": prompt_text.strip()
             })
 
     for categorizer in _analyzer_pipeline._categorizers:
-        prompt_text = getattr(categorizer, 'SYSTEM_PROMPT', None)
-        if prompt_text:
+        if getattr(categorizer, 'SYSTEM_PROMPT', None):
             prompts.append({
                 "name": categorizer.name,
                 "type": "categorization",
                 "enabled": categorizer.enabled,
-                "systemPrompt": prompt_text.strip()
             })
 
     return prompts
@@ -1322,7 +1321,7 @@ class EvalRequest(BaseModel):
 
 
 @app.post("/api/admin/evaluate")
-async def run_foundry_evaluation(request: EvalRequest):
+async def run_foundry_evaluation(request: EvalRequest, user: UserContext = Depends(require_admin)):
     """Run a Foundry evaluation using the Agent Framework's FoundryEvals.
     
     For each transaction, first gets the model's response using the provided

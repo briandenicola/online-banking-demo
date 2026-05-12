@@ -22,7 +22,7 @@ except ImportError:
     DefaultAzureCredential = None
     AzureInstrumentor = None
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -33,6 +33,8 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from app.auth import UserContext, verify_jwt
 
 # Configure structured logging
 structlog.configure(
@@ -339,8 +341,10 @@ async def ready():
 
 
 @app.get("/insights/{userId}", response_model=BudgetInsight)
-async def get_insights(userId: str, period: str = "30d"):
-    """Get spending insights for a user"""
+async def get_insights(userId: str, period: str = "30d", user: UserContext = Depends(verify_jwt)):
+    """Get spending insights for the authenticated user."""
+    # Derive userId from JWT — ignore path param if it doesn't match
+    userId = user.user_id
     # Get all transactions for user's accounts
     transactions = []
     for accountId, txns in user_transactions.items():
@@ -353,7 +357,7 @@ async def get_insights(userId: str, period: str = "30d"):
 
 
 @app.post("/categorize")
-async def categorize(description: str):
+async def categorize(description: str, user: UserContext = Depends(verify_jwt)):
     """Categorize a transaction description"""
     category = await categorize_transaction(description)
     return {"description": description, "category": category}

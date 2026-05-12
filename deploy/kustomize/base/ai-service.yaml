@@ -80,6 +80,11 @@ spec:
               key: openai-endpoint
         - name: FOUNDRY_MODEL
           value: "gpt-5.4-mini"
+        - name: Jwt__Key
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: jwt-key
         envFrom:
         - configMapRef:
             name: banking-demo-config
