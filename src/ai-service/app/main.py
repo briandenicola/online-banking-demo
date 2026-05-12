@@ -189,6 +189,16 @@ class ReviewRequest(BaseModel):
     notes: str
 
 
+class DetectRequest(BaseModel):
+    """Strict schema for synchronous transaction detection."""
+    transactionId: str = Field(description="Transaction identifier")
+    accountId: str = Field(description="Account identifier")
+    amount: float = Field(description="Transaction amount")
+    type: str = Field(description="Transaction type (e.g. Debit, Credit, Transfer)")
+    description: str = Field(default="", description="Transaction description")
+    category: str = Field(default="", description="Transaction category")
+
+
 # ============================================================
 # Extensible Analyzer Framework
 # ============================================================
@@ -285,13 +295,17 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
             span.set_attribute("transaction.type", transaction.get("type", ""))
 
             try:
+                # Pseudonymize account ID — send only last 4 chars to LLM
+                raw_account_id = transaction.get("accountId", "")
+                masked_account = f"****{raw_account_id[-4:]}" if len(raw_account_id) >= 4 else "****"
+
                 user_message = (
                     f"Assess this transaction:\n"
                     f"- Amount: ${transaction.get('amount', 0):,.2f}\n"
                     f"- Type: {transaction.get('type', 'Unknown')}\n"
                     f"- Description: {transaction.get('description', 'N/A')}\n"
                     f"- Category: {transaction.get('category', 'N/A')}\n"
-                    f"- Account: {transaction.get('accountId', 'N/A')}"
+                    f"- Account: {masked_account}"
                 )
 
                 session = self._agent.create_session()
@@ -637,7 +651,7 @@ async def _create_redis_client():
             username=oid,
             password=token.token,
             ssl=parsed["ssl"],
-            ssl_cert_reqs=None,
+            ssl_cert_reqs="required",
             decode_responses=True,
         )
 
@@ -653,7 +667,7 @@ async def _create_redis_client():
     }
     if parsed["ssl"]:
         kwargs["ssl"] = True
-        kwargs["ssl_cert_reqs"] = None
+        kwargs["ssl_cert_reqs"] = "required"
     if parsed["password"]:
         kwargs["password"] = parsed["password"]
 
@@ -791,6 +805,10 @@ async def consume_redis_stream(redis_client: redis.Redis):
 
     logger.info(f"Starting Redis Stream consumer: {CONSUMER_NAME}")
     backoff = 1
+    # Track per-message failure counts for dead-letter mechanism
+    _failure_counts: dict[str, int] = {}
+    max_retries = int(os.getenv("DLQ_MAX_RETRIES", "3"))
+    dlq_stream = f"{STREAM_NAME}-dlq"
 
     while True:
         try:
@@ -828,11 +846,34 @@ async def consume_redis_stream(redis_client: redis.Redis):
                                 f"risk={scored.riskScore:.2f}"
                             )
 
+                        # ACK only after successful processing
                         await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+                        _failure_counts.pop(message_id, None)
 
                     except Exception as e:
-                        logger.error(f"Error processing message {message_id}: {e}")
-                        await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+                        # Do NOT ACK — message stays in pending list for retry
+                        fail_count = _failure_counts.get(message_id, 0) + 1
+                        _failure_counts[message_id] = fail_count
+                        logger.error(
+                            f"Error processing message {message_id} "
+                            f"(attempt {fail_count}/{max_retries}): {e}"
+                        )
+                        if fail_count >= max_retries:
+                            # Dead-letter: move to DLQ stream, then ACK original
+                            try:
+                                dlq_fields = dict(fields)
+                                dlq_fields["original_id"] = message_id
+                                dlq_fields["error"] = str(e)[:500]
+                                dlq_fields["attempts"] = str(fail_count)
+                                await redis_client.xadd(dlq_stream, dlq_fields)
+                                await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+                                _failure_counts.pop(message_id, None)
+                                logger.warning(
+                                    f"Message {message_id} moved to DLQ after "
+                                    f"{fail_count} failed attempts"
+                                )
+                            except Exception as dlq_err:
+                                logger.error(f"Failed to move {message_id} to DLQ: {dlq_err}")
 
         except redis.ConnectionError as e:
             logger.error(f"Redis connection error: {e}. Retrying in {backoff}s...")
@@ -1017,12 +1058,11 @@ async def ready():
 # ============================================================
 
 @app.post("/detect", response_model=RiskAssessment)
-async def detect(request: Request, user: UserContext = Depends(verify_jwt)):
+async def detect(body: DetectRequest, user: UserContext = Depends(verify_jwt)):
     """Score a single transaction synchronously (for on-demand assessment)."""
-    body = await request.json()
     if not _analyzer_pipeline:
         raise HTTPException(status_code=503, detail="Analyzer pipeline not initialized")
-    return await _analyzer_pipeline.assess(body)
+    return await _analyzer_pipeline.assess(body.model_dump())
 
 
 @app.get("/api/admin/foundry-status")
