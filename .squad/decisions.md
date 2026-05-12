@@ -2564,3 +2564,142 @@ Expose optional controlled props and simplified render paths across the account-
 2. **DocumentUpload dual-mode** — managed per-type uploads with callbacks for orchestrated flows, plus standalone API upload mode; includes jsdom-safe drag/drop fallbacks.
 3. **ApplicationStatus controlled mode** — accepts status data and polling controls so tests can validate rendering without real polling.
 
+---
+
+## Decision: Istio Ingress Resources in Separate Kustomization
+
+**Author:** Basher (Backend Dev)  
+**Date:** 2026-05-11  
+**Status:** Implemented
+
+### Context
+The Istio Gateway, Certificate, and VirtualService were applied via `kubectl` directly and missing from kustomize manifests. They needed to be codified for reproducibility.
+
+### Decision
+- Gateway and Certificate live in `deploy/kustomize/ingress/` (a separate kustomization), NOT in `deploy/kustomize/base/`
+- VirtualService stays in `base/`
+- Apply order: (1) `kubectl kustomize deploy/kustomize/ingress/` creates Gateway + Certificate in `aks-istio-ingress`, (2) `kubectl kustomize deploy/kustomize/base/` creates VirtualService + services in `banking-demo`
+
+### Rationale
+The main base kustomization has `namespace: banking-demo`. The Gateway and Certificate must live in `aks-istio-ingress`. Kustomize's namespace transformer overrides ALL resources including subdirectories — there is no way to exempt specific resources. A separate kustomization is the only correct approach.
+
+---
+
+## Decision: Redis Entra ID Auth via Shared Module
+
+**Author:** Basher (Backend Dev)  
+**Date:** 2026-05-11  
+**Status:** Implemented
+
+### Context
+Both `app/main.py` and `app/worker.py` had duplicate Redis connection code using password-only auth. Azure Managed Redis requires Entra ID token-based auth (ClusterClient, port 10000, TLS).
+
+### Decision
+1. Extracted shared `app/redis_client.py` module — single source of truth for Redis connections
+2. When `AZURE_CLIENT_ID` is set: uses `redis.asyncio.RedisCluster` with Entra ID JWT (OID as username, token as password), TLS, and 20-minute background token refresh
+3. When `AZURE_CLIENT_ID` is not set: falls back to plain `redis.asyncio.Redis` for local dev with docker-compose
+4. No account keys anywhere — strictly Entra ID + RBAC
+
+### Also
+`init_agents.py`: SDK args changed to positional, and provisioning errors are now non-fatal (exit 0) to prevent init container CrashLoopBackOff.
+
+---
+
+## Decision: fpdf2 Core Font Limitation — No Unicode Em-Dash
+
+**Author:** Basher (Backend Dev)  
+**Date:** 2026-05-12  
+**Priority:** P3  
+**Status:** Implemented (workaround)  
+**Feature:** #16 — Sample Documents for Account Opening
+
+### Context
+The spec calls for header text "STATE OF ILLINOIS — DRIVER LICENSE" with a Unicode em-dash (U+2014). fpdf2's built-in Helvetica font uses WinAnsiEncoding which doesn't include em-dash, causing `FPDFUnicodeEncodingException`.
+
+### Decision
+Used ASCII hyphen-minus (`-`) instead of em-dash. The header reads "STATE OF ILLINOIS - DRIVER LICENSE". This doesn't affect Azure AI Content Understanding field extraction — the header isn't a labeled extraction field.
+
+### Alternative Considered
+Embedding a TTF font via `pdf.add_font()` would support full Unicode but adds font file dependencies and increases PDF size. Not justified for a test fixture header.
+
+### Impact
+Team should be aware: if future document generators need Unicode characters (accented names, special symbols), they'll need embedded TTF fonts rather than core Helvetica.
+
+---
+
+## Decision: Chatbot Prompt Visibility in Admin UI
+
+**Author:** Linus (Frontend Dev)  
+**Date:** 2026-05-11  
+**Status:** Proposed
+
+### Context
+Transparency/auditability requirement: the chatbot system prompt (`FINANCIAL_ADVISOR_INSTRUCTIONS`) should be visible in the admin panel. Currently hardcoded in `src/chatbot-service/app/main.py` and not available via any API.
+
+### Decision
+Display the chatbot system prompt as a **hardcoded frontend constant** in a new read-only admin tab, rather than creating a new API endpoint.
+
+### Rationale
+- The prompt is not a secret — it defines the chatbot's behavior boundaries and is meant to be auditable
+- Creating an API endpoint solely to serve a static string adds unnecessary backend complexity for a demo
+- The read-only constraint is enforced naturally: there's no edit UI and no write endpoint
+- If the prompt changes in Python, the frontend constant should be updated to match (manual sync)
+
+### Trade-offs
+- **Pro:** Zero backend changes, zero new API calls, instant rendering
+- **Con:** Frontend copy can drift from backend source if Python prompt is updated without syncing the frontend
+- **Mitigation:** Comment in component cites exact source file and variable name for easy cross-referencing
+
+### Affected Files
+- `src/ui-app/src/components/AdminChatbotPromptTab.tsx` (new)
+- `src/ui-app/src/pages/AdminPage.tsx` (tab added)
+
+---
+
+## User Directives — Convention & Infrastructure Standards
+
+**Captured by:** Copilot (from Brian)  
+**Dates:** 2026-05-11 to 2026-05-12
+
+### Directive: Convention Over Configuration
+**Status:** Active
+
+All config values (Key Vault names, tenant IDs, client IDs, etc.) must come from environment, Taskfile variables, or Terraform outputs — **never baked into manifests**. SPC placeholders (REPLACE_WITH_*) are populated by the Taskfile at deploy time.
+
+**Applies To:** All Kubernetes deployments, all infrastructure-as-code, all environment-specific values.
+
+### Directive: Kubernetes Changes via Kustomize Only
+**Status:** Active
+
+Never apply kubectl edits/patches directly — they are always lost. All Kubernetes resource changes must be persisted in kustomize manifests first, then applied via kustomize. No hardcoded values in manifests.
+
+**Applies To:** All infrastructure deployments; all changes to Gateway, Certificate, VirtualService, ConfigMap, etc.
+
+### Directive: Entra ID & RBAC Only — Never Account Keys
+**Status:** Active
+
+NEVER use account keys. Content Understanding Service code (and all Foundry agents) must use Entra ID and RBAC, just like the other services.
+
+**Applies To:** All Azure service authentication (storage, content understanding, etc.).
+
+### Directive: KeyVault CSI Driver for Secrets
+**Status:** Active
+
+NEVER use Kubernetes secrets directly. Always use Azure KeyVault and the KeyVault CSI Driver (SecretProviderClass) to sync secrets into pods.
+
+**Applies To:** All pod secret injection.
+
+### Directive: Terraform Outputs — Never Hardcode ACR References
+**Status:** Active
+
+Never use memory or hardcode ACR references. This is a disposable environment. ALWAYS use terraform output to get the correct ACR name. Never hard code anything.
+
+**Applies To:** All service image references, registry URLs.
+
+### Directive: Ask Before Fixing Long-Standing Patterns
+**Status:** Active
+
+If you think you're going to fix something — especially something that's been around a long time — **ASK FIRST**. Never assume. Never "fix" long-standing patterns without explicit approval.
+
+**Applies To:** All code changes that challenge existing conventions or patterns.
+

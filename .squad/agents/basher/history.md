@@ -965,3 +965,22 @@ Using `create_session()` + `run("ping")` is lightest real connectivity test:
 **Key decision:** Gateway/Certificate live in a separate `deploy/kustomize/ingress/` kustomization (not under `base/`) because the main base has `namespace: banking-demo` which would override `aks-istio-ingress` on the ingress resources. Kustomize propagates namespace transformations to all sub-resources including subdirectories.
 
 **Pattern:** For cross-namespace kustomize resources, use separate kustomization directories. Never rely on a sub-directory to escape a parent's `namespace:` directive — kustomize will override it.
+
+### 2026-05 — Sample Documents for Account Opening (Issue #16, Phases 1-3)
+
+**What was built:** Test fixture generator for account-opening E2E tests. Created Python tooling under `tests/fixtures/sample-documents/` that produces text-based PDFs from JSON applicant profiles. Implemented Phases 1-3: directory structure, data models, applicant profile JSON, and photo ID (driver's license) PDF generation.
+
+**Key files:**
+- `tests/fixtures/sample-documents/requirements.txt` — fpdf2==2.8.7 dependency
+- `tests/fixtures/sample-documents/applicants/john-smith.json` — single-source-of-truth applicant profile with ApplicantProfile, PhotoIdSpec, ProofOfAddressSpec, and ApplicationFormData
+- `tests/fixtures/sample-documents/models.py` — Python dataclasses with validation (ISO dates, 4-digit SSN, 2-letter state, 5-digit ZIP, account type enum) + `load_profile()` loader
+- `tests/fixtures/sample-documents/generate_photo_id.py` — fpdf2-based driver's license generator, landscape layout, Helvetica font
+- `tests/fixtures/sample-documents/john-smith/photo_id.pdf` — generated PDF (1.4KB, text-based)
+
+**Design decisions applied:**
+- D1: All text is native PDF text (not images) — Azure AI Content Understanding can extract without OCR
+- D2: Field labels match normalization mapping: `Name`, `Date of Birth`, `Address`, `License Number`, `Expiry Date`
+- D3: All data sourced from john-smith.json, never hardcoded in generators
+- D4: Generated PDFs committed to repo (not .gitignored) for direct E2E test consumption
+
+**Gotcha:** fpdf2 core Helvetica font doesn't support Unicode em-dash (U+2014). Used ASCII hyphen in header "STATE OF ILLINOIS - DRIVER LICENSE" instead of "—". If Unicode is needed, must embed a TTF font via `add_font()`.
