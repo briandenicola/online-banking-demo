@@ -22,4 +22,4 @@ data:
   AzureAd__TenantId: "REPLACE_WITH_TENANT_ID"
   AzureAd__ClientId: "REPLACE_WITH_AZURE_CLIENT_ID"
   AzureAd__ClientCredentials__0__SourceType: "SignedAssertionFilePath"
-  Kestrel__Endpoints__Http__Url: "http://[::]:5000"
+  Kestrel__Endpoints__Http__Url: "http://[::]:8080"
