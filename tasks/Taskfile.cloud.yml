@@ -300,6 +300,7 @@ tasks:
     cmds:
       - sed -i "s|REPLACE_WITH_COSMOS_ENDPOINT|{{.COSMOS_ENDPOINT}}|g" deploy/kustomize/base/configmap.yaml
       - sed -i "s|REPLACE_WITH_STORAGE_ACCOUNT|{{.STORAGE_ACCOUNT}}|g" deploy/kustomize/base/configmap.yaml
+      - sed -i "s|REPLACE_WITH_AZURE_CLIENT_ID|{{.AZURE_CLIENT_ID}}|g" deploy/kustomize/base/configmap.yaml
       - kubectl apply -f deploy/kustomize/base/configmap.yaml -n banking-demo
       - git checkout deploy/kustomize/base/configmap.yaml
     vars:
@@ -307,6 +308,8 @@ tasks:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw cosmos_db_endpoint
       STORAGE_ACCOUNT:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw storage_account_name
+      AZURE_CLIENT_ID:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw banking_services_client_id
 
   _secretproviderclass:update:
     internal: true

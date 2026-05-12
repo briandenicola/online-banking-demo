@@ -116,6 +116,7 @@ spec:
     metadata:
       annotations:
         traffic.sidecar.istio.io/excludeOutboundPorts: "10000"
+        traffic.sidecar.istio.io/excludeInboundPorts: "5000"
       labels:
         app: account-opening-worker
         azure.workload.identity/use: "true"
@@ -191,6 +192,8 @@ spec:
               key: jwt-key
         - name: Jwt__Issuer
           value: "user-service"
+        - name: AGENT_ID_SIDECAR_URL
+          value: "http://localhost:5000"
         envFrom:
         - configMapRef:
             name: banking-demo-config
@@ -208,12 +211,30 @@ spec:
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: false
-      # - name: entra-agent-id
-      #   image: mcr.microsoft.com/entra-sdk/auth-sidecar
-      #   imagePullPolicy: Always
-      #   envFrom:
-      #   - configMapRef:
-      #       name: banking-demo-config
+      - name: entra-agent-id
+        image: mcr.microsoft.com/entra-sdk/auth-sidecar
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 5000
+          protocol: TCP
+        envFrom:
+        - configMapRef:
+            name: banking-demo-config
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        securityContext:
+          allowPrivilegeEscalation: false
       volumes:
       - name: secrets-store
         csi:

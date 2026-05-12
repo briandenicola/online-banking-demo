@@ -157,3 +157,22 @@ Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com
 - Module-level docstrings and type hints added (covers T011)
 
 **Gotcha:** fpdf2 Helvetica font doesn't support em dash (U+2014) — use regular dash instead in text cells. Got `FPDFUnicodeEncodingException` until replaced `—` with `-`.
+
+### 2026-05-12 — Entra Agent ID Auth-Sidecar Activation (Issue #20)
+
+**Feature:** Activated the Entra Agent ID auth-sidecar in the account-opening-worker kustomize deployment.
+
+**What was done:**
+1. Uncommented and fully configured the `entra-agent-id` sidecar container (port 5000, readiness probe on `/health`, resources 32Mi/25m → 128Mi/100m, security context)
+2. Added `AGENT_ID_SIDECAR_URL: "http://localhost:5000"` env var to worker container
+3. Added `AGENT_ID_AGENT_IDENTITY: "REPLACE_WITH_AZURE_CLIENT_ID"` to shared configmap (sed-substituted at deploy time)
+4. Added Istio `excludeInboundPorts: "5000"` annotation on worker pod template
+5. Extended `_configmap:update` Taskfile task with AZURE_CLIENT_ID sed substitution
+
+**Key files:**
+- `deploy/kustomize/base/account-opening-service.yaml` — sidecar + worker env vars + Istio annotation
+- `deploy/kustomize/base/configmap.yaml` — AGENT_ID_AGENT_IDENTITY placeholder
+- `tasks/Taskfile.cloud.yml` — _configmap:update sed + var
+
+**Pattern:** Sidecar gets AZURE_CLIENT_ID from workload identity webhook (pod has `azure.workload.identity/use: "true"` label). No manual client ID wiring needed on the sidecar itself.
+**Pattern:** Pod-specific URLs (localhost sidecar) go as explicit env vars on the container, not in the shared configmap.
