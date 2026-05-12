@@ -24,9 +24,7 @@ public class AccountsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> CreateAccount([FromBody] CreateAccountRequest request)
     {
-        // Support both JWT claim and X-User-Id header (for authenticated internal service calls)
-        var userId = User.FindFirst("userId")?.Value
-            ?? Request.Headers["X-User-Id"].FirstOrDefault();
+        var userId = User.FindFirst("userId")?.Value;
         if (string.IsNullOrEmpty(userId))
         {
             return Unauthorized();
@@ -66,11 +64,10 @@ public class AccountsController : ControllerBase
             return NotFound();
         }
 
-        // Verify ownership
         var userId = User.FindFirst("userId")?.Value;
-        if (account.UserId != userId)
+        if (string.IsNullOrEmpty(userId) || account.UserId != userId)
         {
-            return Forbid();
+            return NotFound();
         }
 
         return Ok(account);
@@ -85,18 +82,34 @@ public class AccountsController : ControllerBase
             return NotFound();
         }
 
-        // Return account info — no ownership check here because internal services
-        // (e.g. transfer-service) need to look up destination accounts by number.
+        var userId = User.FindFirst("userId")?.Value;
+        if (string.IsNullOrEmpty(userId) || account.UserId != userId)
+        {
+            return NotFound();
+        }
+
         return Ok(account);
     }
 
     [HttpPost("{id}/balance")]
     public async Task<IActionResult> UpdateBalance(string id, [FromBody] UpdateBalanceRequest request)
     {
+        var userId = User.FindFirst("userId")?.Value;
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized();
+        }
+
+        var account = await _accountService.GetAccountByIdAsync(id);
+        if (account == null || account.UserId != userId)
+        {
+            return NotFound();
+        }
+
         try
         {
-            var account = await _accountService.UpdateBalanceAsync(id, request.Amount);
-            return Ok(account);
+            var updated = await _accountService.UpdateBalanceAsync(id, request.Amount);
+            return Ok(updated);
         }
         catch (Exception ex)
         {

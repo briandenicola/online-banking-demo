@@ -1053,3 +1053,61 @@ Using `create_session()` + `run("ping")` is lightest real connectivity test:
 - Unit tests in `src/account-opening-service/tests/`, E2E smoke test at `tests/e2e/specs/core/account-opening.spec.ts`
 - Cosmos DB container: `account-applications` (partition key `/id`)
 - No dedicated Taskfile build command yet — builds with the python group
+
+### 2026-05 — Deep .NET Services Security Audit (Issue #18)
+
+**Scope:** Audited all 5 .NET service directories (user-service, account-service, transaction-service, transfer-service, shared) — 30+ C# files.
+
+**Critical findings (4):**
+- `X-User-Id` header forgery bypass in account-service (`Controllers/AccountsController.cs:28-29`)
+- Unprotected `POST /api/accounts/{id}/balance` endpoint — any user can modify any balance
+- Fail-open balance validation in transaction-service (`Services/TransactionService.cs:213-216`) — transactions proceed when account-service unreachable
+- Anonymous admin promotion when `adminCount == 0` (`user-service/Controllers/AdminController.cs:33-47`)
+
+**Systemic patterns found:**
+- All services leak `ex.Message` to clients in error responses (6+ locations)
+- All services fall back to Cosmos DB connection strings if endpoint not configured
+- No ownership/IDOR checks on read endpoints across account, transaction, and transfer services
+- transaction-service has `ValidateIssuer = false` while all others have `true`
+- No rate limiting on auth endpoints
+- No retry/circuit breaker on service-to-service HTTP calls
+- PII (emails, balances) logged in several services
+
+**Good patterns confirmed:**
+- Cosmos queries are parameterized (no NoSQL injection)
+- CosmosClient registered as singleton (correct lifecycle)
+- No dangerous Newtonsoft TypeNameHandling
+- OTEL instrumentation via shared library is consistent
+
+**Key files:** Report at `.squad/decisions/inbox/basher-security-audit.md`
+
+**Pattern:** account-opening-service and ai-service have no .NET code — both are Python-only.
+
+### 2026-05 — Critical Auth Vulnerability Fixes (Issues #25 + #27)
+
+**Problem:** Multiple authorization bypass vulnerabilities across .NET services:
+1. X-User-Id header forgery — account-service fell back to untrusted header when JWT claim was missing
+2. Missing ownership checks — several endpoints returned resources without verifying the authenticated user owned them
+3. InMemoryTransactionService.GetUserTransactionsAsync ignored the userId parameter, returning all transactions
+4. Fail-open balance validation — transaction-service allowed transactions to proceed when balance check failed
+
+**Fix:**
+- Removed X-User-Id header fallback in AccountsController; user identity now comes exclusively from JWT claims
+- Added ownership checks to all read/write endpoints: GetAccountByNumber, UpdateBalance, GetTransaction, GetAccountTransactions, GetTransfer
+- All ownership failures return 404 (not 403) to prevent resource enumeration
+- Fixed InMemoryTransactionService to actually filter by userId
+- Added UserId field to Transfer model for ownership tracking
+- Transfer service now verifies FromAccountId belongs to authenticated user before processing
+- Changed fail-open to fail-closed in both TransactionService and InMemoryTransactionService — if balance cannot be validated, transaction is rejected
+
+**Key files:**
+- `src/account-service/Controllers/AccountsController.cs` — X-User-Id removal, ownership checks
+- `src/transaction-service/Controllers/TransactionsController.cs` — ownership checks on GET endpoints
+- `src/transaction-service/Services/TransactionService.cs` — fail-closed balance validation
+- `src/transaction-service/Services/InMemoryTransactionService.cs` — userId filter fix, fail-closed
+- `src/transfer-service/Controllers/TransfersController.cs` — ownership check on GET
+- `src/transfer-service/Services/TransferService.cs` — account ownership verification, userId storage
+- `src/transfer-service/Services/InMemoryTransferService.cs` — same ownership verification
+- `src/transfer-service/Models/Transfer.cs` — added UserId property
+
+**Breaking change:** Adding ownership checks to `GET /api/accounts/number/{accountNumber}` and `POST /api/accounts/{id}/balance` will break service-to-service calls where the forwarded user JWT doesn't own the target account (e.g., credit side of a transfer). This needs a service-identity solution (see decision doc).

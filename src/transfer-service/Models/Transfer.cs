@@ -10,6 +10,10 @@ public class Transfer
 {
     [JsonProperty("id")]
     public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    [JsonProperty("userId")]
+    public string? UserId { get; set; }
+
     public string FromAccountId { get; set; } = null!;
     public string ToAccountId { get; set; } = null!;
     public string FromAccountNumber { get; set; } = null!;

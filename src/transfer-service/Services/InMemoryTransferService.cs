@@ -46,8 +46,12 @@ public class InMemoryTransferService : ITransferService
 
     public async Task<Transfer> InitiateTransferAsync(string userId, CreateTransferRequest request)
     {
+        // Verify the source account belongs to the authenticated user
+        await VerifyAccountOwnershipAsync(request.FromAccountId, userId);
+
         var transfer = new Transfer
         {
+            UserId = userId,
             FromAccountId = request.FromAccountId,
             ToAccountId = request.ToAccountId,
             FromAccountNumber = request.FromAccountNumber,
@@ -90,6 +94,39 @@ public class InMemoryTransferService : ITransferService
     }
 
 
+
+    private async Task VerifyAccountOwnershipAsync(string accountId, string userId)
+    {
+        var client = CreateAuthenticatedClient();
+        var accountServiceUrl = _configuration["Services:AccountService"];
+        if (string.IsNullOrEmpty(accountServiceUrl))
+        {
+            throw new InvalidOperationException("AccountService URL not configured; cannot verify account ownership");
+        }
+
+        var response = await client.GetAsync($"{accountServiceUrl}/api/accounts/{accountId}");
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Account {accountId} not found or not accessible");
+        }
+
+        var json = await response.Content.ReadAsStringAsync();
+        var account = System.Text.Json.JsonSerializer.Deserialize<AccountOwnerInfo>(json, new System.Text.Json.JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        });
+
+        if (account == null || account.UserId != userId)
+        {
+            throw new InvalidOperationException($"Account {accountId} not found or not accessible");
+        }
+    }
+
+    private class AccountOwnerInfo
+    {
+        public string Id { get; set; } = null!;
+        public string UserId { get; set; } = null!;
+    }
 
     private async Task CreateTransferTransactionsAsync(
         string fromAccountId, string toAccountId, decimal amount, string transferId, string? description)

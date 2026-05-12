@@ -43,8 +43,14 @@ public class TransfersController : ControllerBase
     [HttpGet("{id}")]
     public async Task<IActionResult> GetTransfer(string id)
     {
+        var userId = User.FindFirst("userId")?.Value;
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized();
+        }
+
         var transfer = await _transferService.GetTransferByIdAsync(id);
-        if (transfer == null)
+        if (transfer == null || transfer.UserId != userId)
         {
             return NotFound();
         }

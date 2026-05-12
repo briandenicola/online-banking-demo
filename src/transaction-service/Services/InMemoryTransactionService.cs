@@ -153,6 +153,7 @@ public class InMemoryTransactionService : ITransactionService
     public Task<IEnumerable<Transaction>> GetUserTransactionsAsync(string userId, int limit = 50)
     {
         var transactions = _transactions.Values
+            .Where(t => t.UserId == userId)
             .OrderByDescending(t => t.Timestamp)
             .Take(limit);
         return Task.FromResult(transactions);
@@ -206,7 +207,8 @@ public class InMemoryTransactionService : ITransactionService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Balance validation failed for account {AccountId}; allowing transaction to proceed", accountId);
+            _logger.LogError(ex, "Balance validation failed for account {AccountId}; rejecting transaction", accountId);
+            throw new InvalidOperationException($"Unable to validate balance for account {accountId}. Transaction cannot be processed at this time.", ex);
         }
     }
 

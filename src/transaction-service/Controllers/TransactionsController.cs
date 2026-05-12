@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -48,8 +49,14 @@ public class TransactionsController : ControllerBase
     [HttpGet("{id}")]
     public async Task<IActionResult> GetTransaction(string id)
     {
+        var userId = User.FindFirst("userId")?.Value;
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized();
+        }
+
         var transaction = await _transactionService.GetTransactionByIdAsync(id);
-        if (transaction == null)
+        if (transaction == null || transaction.UserId != userId)
         {
             return NotFound();
         }
@@ -59,8 +66,15 @@ public class TransactionsController : ControllerBase
     [HttpGet("account/{accountId}")]
     public async Task<IActionResult> GetAccountTransactions(string accountId)
     {
-        var transactions = await _transactionService.GetAccountTransactionsAsync(accountId);
-        return Ok(transactions);
+        var userId = User.FindFirst("userId")?.Value;
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized();
+        }
+
+        var userTransactions = await _transactionService.GetUserTransactionsAsync(userId);
+        var accountTransactions = userTransactions.Where(t => t.AccountId == accountId);
+        return Ok(accountTransactions);
     }
 
     [HttpGet]
