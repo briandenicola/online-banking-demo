@@ -939,3 +939,16 @@ Using `create_session()` + `run("ping")` is lightest real connectivity test:
 - **Account-opening agents** (`src/account-opening-service/app/agents/`): Added role anchoring, untrusted-input warnings, and strict output format enforcement to identity_verification.py, compliance_check.py, and provisioning.py.
 - **init_agents.py**: Updated AGENT_SPECS instructions to stay consistent with runtime SYSTEM_PROMPTs (role anchoring + input distrust + output strictness).
 - Pattern: User-facing prompts need the heaviest hardening (identity anchor, injection resistance, output boundary, PII masking). Backend agent prompts need role anchoring, input distrust, and output format enforcement.
+
+### 2026-05-11 — Redis Entra ID auth + init_agents SDK fix
+
+**Bug 1: Redis "Authentication required"**
+- Root cause: `main.py` and `worker.py` used `redis.asyncio.Redis` with password-only auth. Azure Managed Redis requires Entra ID token auth via `RedisCluster`.
+- Fix: Extracted shared `app/redis_client.py` module. When `AZURE_CLIENT_ID` is set, creates `RedisCluster` with JWT OID as username and token as password, TLS on port 10000, and a background token refresh every 20 minutes. Falls back to plain `redis.Redis` for local dev.
+- Follows the same pattern as the Go event-processor (`src/event-processor/main.go`).
+- Redis scope: `acca5fbb-b7e4-4009-81f1-37e38fd66d78/.default`
+
+**Bug 2: init_agents.py `agent_version` parameter error**
+- Root cause: `azure-ai-projects` SDK v2.1.0 changed `agents.get()` and `agents.create_version()` — `agent_name` and `agent_version` are positional args, not kwargs.
+- Fix: Changed to positional args: `client.agents.get(name, version)` and `client.agents.create_version(name, version, ...)`.
+- Also made provisioning errors non-fatal (exit 0) so init container doesn't CrashLoopBackOff when agents already exist or SDK has transient issues.

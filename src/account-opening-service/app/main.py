@@ -7,7 +7,6 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-import redis.asyncio as redis
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +18,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
+from .redis_client import create_redis_client
 from .repository import InMemoryApplicationRepository
 from .routes import router as account_opening_router
 
@@ -83,55 +83,6 @@ def init_telemetry() -> None:
 init_telemetry()
 
 
-def _parse_redis_connection_string(conn_str: str) -> dict:
-    result = {"host": "redis", "port": 6379, "ssl": False, "password": None}
-    parts = [p.strip() for p in conn_str.split(",") if p.strip()]
-    for index, part in enumerate(parts):
-        if index == 0:
-            if ":" in part and "=" not in part:
-                host, port_str = part.rsplit(":", 1)
-                result["host"] = host
-                if port_str.isdigit():
-                    result["port"] = int(port_str)
-            else:
-                result["host"] = part
-            continue
-        if "=" not in part:
-            continue
-        key, value = part.split("=", 1)
-        key = key.strip().lower()
-        value = value.strip()
-        if key == "ssl" and value.lower() == "true":
-            result["ssl"] = True
-        if key == "password":
-            result["password"] = value
-    return result
-
-
-async def _create_redis_client():
-    conn_str = os.getenv("REDIS__CONNECTIONSTRING", "redis:6379")
-    parsed = _parse_redis_connection_string(conn_str)
-    kwargs = {
-        "host": parsed["host"],
-        "port": parsed["port"],
-        "decode_responses": True,
-    }
-    if parsed["password"]:
-        kwargs["password"] = parsed["password"]
-    if parsed["ssl"]:
-        kwargs["ssl"] = True
-        kwargs["ssl_cert_reqs"] = None
-
-    client = redis.Redis(**kwargs)
-    try:
-        await client.ping()
-        logger.info("Connected to Redis", host=parsed["host"], port=parsed["port"])
-        return client
-    except Exception as exc:
-        logger.warning("Redis unavailable", error=str(exc))
-        return None
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     use_in_memory = os.getenv("USE_IN_MEMORY_DB", "true").lower() == "true"
@@ -139,7 +90,7 @@ async def lifespan(app: FastAPI):
         logger.error("Cosmos DB repository not yet implemented")
         raise RuntimeError("Cosmos DB repository not yet implemented")
     app.state.repository = InMemoryApplicationRepository()
-    app.state.redis = await _create_redis_client()
+    app.state.redis = await create_redis_client()
     yield
     redis_client = app.state.redis
     if redis_client:

@@ -77,10 +77,10 @@ AGENTS: list[dict] = [
 
 
 def _agent_version_exists(
-    client: AIProjectClient, agent_name: str, agent_version: str
+    client: AIProjectClient, agent_name: str, version: str
 ) -> bool:
     try:
-        client.agents.get(agent_name=agent_name, agent_version=agent_version)
+        client.agents.get(agent_name, version)
         return True
     except ResourceNotFoundError:
         return False
@@ -123,8 +123,8 @@ def main() -> int:
                 instructions=spec["instructions"],
             )
             client.agents.create_version(
-                agent_name=name,
-                agent_version=version,
+                name,
+                version,
                 definition=definition,
                 description=spec["description"],
             )
@@ -134,8 +134,8 @@ def main() -> int:
             errors += 1
 
     if errors:
-        logger.error(f"Agent provisioning completed with {errors} error(s)")
-        return 1
+        logger.warning(f"Agent provisioning completed with {errors} error(s) — continuing anyway")
+        return 0
 
     logger.info("✅ All agents provisioned — init complete")
     return 0

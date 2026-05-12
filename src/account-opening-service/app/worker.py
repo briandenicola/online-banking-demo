@@ -6,7 +6,6 @@ import os
 import signal
 import sys
 
-import redis.asyncio as redis
 import structlog
 
 from .agents import (
@@ -15,6 +14,7 @@ from .agents import (
     IdentityVerificationConsumer,
     ProvisioningConsumer,
 )
+from .redis_client import create_redis_client
 from .repository import InMemoryApplicationRepository
 from .state_machine import ApplicationStateMachine
 
@@ -40,55 +40,6 @@ def _configure_logging() -> None:
     )
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-
-
-def _parse_redis_connection_string(conn_str: str) -> dict:
-    result = {"host": "redis", "port": 6379, "ssl": False, "password": None}
-    parts = [p.strip() for p in conn_str.split(",") if p.strip()]
-    for index, part in enumerate(parts):
-        if index == 0:
-            if ":" in part and "=" not in part:
-                host, port_str = part.rsplit(":", 1)
-                result["host"] = host
-                if port_str.isdigit():
-                    result["port"] = int(port_str)
-            else:
-                result["host"] = part
-            continue
-        if "=" not in part:
-            continue
-        key, value = part.split("=", 1)
-        key = key.strip().lower()
-        value = value.strip()
-        if key == "ssl" and value.lower() == "true":
-            result["ssl"] = True
-        if key == "password":
-            result["password"] = value
-    return result
-
-
-async def _create_redis_client() -> redis.Redis | None:
-    conn_str = os.getenv("REDIS__CONNECTIONSTRING", "redis:6379")
-    parsed = _parse_redis_connection_string(conn_str)
-    kwargs = {
-        "host": parsed["host"],
-        "port": parsed["port"],
-        "decode_responses": True,
-    }
-    if parsed["password"]:
-        kwargs["password"] = parsed["password"]
-    if parsed["ssl"]:
-        kwargs["ssl"] = True
-        kwargs["ssl_cert_reqs"] = None
-
-    client = redis.Redis(**kwargs)
-    try:
-        await client.ping()
-        logger.info("Connected to Redis", host=parsed["host"], port=parsed["port"])
-        return client
-    except Exception as exc:
-        logger.error("Redis unavailable", error=str(exc))
-        return None
 
 
 async def main() -> int:
@@ -143,7 +94,7 @@ async def main() -> int:
         logger.error("Foundry connectivity check failed", error=str(exc))
         return 1
 
-    redis_client = await _create_redis_client()
+    redis_client = await create_redis_client()
     if not redis_client:
         return 1
 
