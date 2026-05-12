@@ -30,7 +30,7 @@ class SidecarTokenCredential:
 
     def __init__(
         self,
-        sidecar_url: str = "http://localhost:5000",
+        sidecar_url: str = "http://localhost:8080",
         agent_identity: str | None = None,
         api_name: str = "ai",
     ) -> None:
