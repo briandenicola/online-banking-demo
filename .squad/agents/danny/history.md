@@ -622,3 +622,9 @@ Basher implemented the Redis architecture decision:
 - .NET services build from repo root context (need src/shared/); Python services build from their own directory
 - Only 4 of 5 .NET services have test projects; only account-opening-service has Python tests
 - Docker build matrix needs per-service context/dockerfile mapping (not uniform)
+
+### Public Network Access Hardening (Issue #39)
+- Set `public_network_access_enabled = false` on Key Vault, Storage Account, and ACR
+- Cosmos DB already had public access disabled — no change needed
+- **ACR risk:** `az acr build` (used for all 10 services in Taskfile.build.yml) will fail without public access. Filed decision inbox (`danny-public-access.md`) with options: IP allowlist, self-hosted agent, or toggle access during builds.
+- Key Vault already had `network_acls` with `default_action = "Deny"` + deployer IP rule — disabling public access adds defense-in-depth on top of that.

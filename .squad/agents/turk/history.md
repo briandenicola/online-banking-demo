@@ -267,3 +267,20 @@ Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com
 - Dead-letter stream naming convention: `{original-stream}-dlq`
 - `DLQ_MAX_RETRIES` env var controls retry threshold (both Go and Python)
 - Redis TLS: In Azure mode, use proper cert verification with system CA bundle. In local docker-compose mode (no AZURE_CLIENT_ID), plain connections allowed.
+
+### 2026-05-12 — Python Dependency Pinning (Issue #42)
+
+**Feature:** Fixed Python dependency management across all 4 Python services.
+
+**Key changes:**
+1. **Pinned all dependencies to exact versions** — Replaced `^`, `>=`, and `*` wildcards with `==x.y.z` in all pyproject.toml files
+2. **Single source of truth** — Dockerfiles now use `pip install .` from pyproject.toml instead of inline package lists
+3. **Fixed ghost dependency** — `opentelemetry-instrumentation-azure` doesn't exist on PyPI; replaced with `azure-core-tracing-opentelemetry` in budget-service and chatbot-service
+4. **Reconciled Dockerfile/pyproject.toml mismatches** — Added packages that were in Dockerfiles but missing from pyproject.toml (agent-framework, agent-framework-foundry, redis, aiohttp, azure-cosmos, azure-storage-blob, opentelemetry-instrumentation-requests)
+5. **Poetry lockfiles skipped** — Poetry CLI not available in environment; pyproject.toml pinning is the critical fix
+6. **.NET side untouched** — Directory.Packages.props already handled by Basher
+
+**Learnings:**
+- `opentelemetry-instrumentation-azure` is a non-existent package; the correct name is `azure-core-tracing-opentelemetry`
+- Poetry-core as build backend works with plain `pip install .` — pip auto-installs build deps from `[build-system].requires`
+- Local environment has Python 3.10 but Docker images use 3.11-slim — can't do full local pip install validation

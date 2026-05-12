@@ -491,3 +491,23 @@ Created comprehensive security tests for all Round 2 fixes:
 - Root-owned obj/bin directories from Docker/CI builds block `dotnet test` — exclude via `DefaultItemExcludes` in `Directory.Build.props`
 - When grep-scanning for insecure patterns, always exclude test files to avoid self-referential matches
 - Always read actual production code before writing/fixing tests — never guess field names or method signatures
+
+## Issue #48 — Test Coverage Expansion (2026-05-12)
+
+### Work Done
+- **prompt-eval-service.Tests** (NEW — 31 tests): Created xUnit project with PromptsControllerTests (12), EvaluationsControllerTests (10), SecurityTests (9). Covers CRUD, validation, error leakage prevention, target allowlist enforcement.
+- **event-processor** (16 new unit tests): Added table-driven tests for parseRedisConnectionString (7), extractOIDFromToken (11 incl padding), BankingEvent JSON parsing (5).
+- **transaction-service.Tests**: Verified project reference already correct (points to transaction-service.csproj). All 11 existing tests pass.
+- **chatbot-service**: All 27 existing tests pass — no new tests needed (already well-covered by test_security.py + test_llm_security.py).
+
+### Key Findings
+- transaction-service.Tests.csproj already had the correct ProjectReference — issue description was stale
+- prompt-eval-service controllers validate admin role via [Authorize(Roles = "admin,Admin")] attribute
+- prompt-eval-service error handling correctly logs internally with correlationId but returns generic error to client
+- event-processor pure functions (parseRedisConnectionString, extractOIDFromToken) were testable without mocking Redis
+- chatbot-service test suite is comprehensive: JWT auth, IDOR, LLM prompt injection resistance, PII sanitization
+
+### Patterns Used
+- .NET: Moq for service mocking, FluentAssertions, xUnit [Theory]/[InlineData] for parameterized tests
+- Go: Table-driven tests with t.Run subtests, no external test dependencies
+- Python: FastAPI TestClient with JWT fixtures, pytest classes for test organization

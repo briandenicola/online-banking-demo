@@ -1157,3 +1157,28 @@ All `.NET` controllers now return generic error messages with `correlationId` (f
 - `src/prompt-eval-service/Controllers/EvaluationsController.cs` — generic errors + correlationId
 
 **Pattern:** All error responses follow `{ error: string, correlationId?: string }`. Business exceptions (known, user-safe) return the business message. Unknown exceptions return "An internal error occurred" with correlationId for log correlation.
+
+### 2026-05 — Input validation constraints across all services (#45)
+
+**Problem:** Request DTOs across all services lacked input validation constraints, allowing unbounded strings, missing required fields, and predictable account number generation via `System.Random`.
+
+**Fix:**
+- **.NET services:** Added `[Required]`, `[StringLength]`, `[Range]`, `[EmailAddress]`, `[RegularExpression]` attributes to all request DTOs in user-service, account-service, and prompt-eval-service. Shared DTOs (`RegisterUserRequest`, `CreateAccountRequest`, `CreateTransactionRequest`, `CreateTransferRequest`) already had validation — no changes needed.
+- **Python services:** Added `Field()` constraints (`min_length`, `max_length`, `pattern`, `gt`) to all Pydantic request models in ai-service, budget-service, chatbot-service, and account-opening-service.
+- **Security fix:** Replaced `new Random()` with `System.Security.Cryptography.RandomNumberGenerator.GetInt32()` in `AccountService.GenerateAccountNumber()` to prevent predictable account number enumeration.
+- All `[ApiController]` attributes were already present — automatic 400 on ModelState errors is active.
+
+**Key files:**
+- `src/user-service/Controllers/UsersController.cs` — ChangePasswordRequest, SetAvatarRequest, SetCategoryPreferencesRequest
+- `src/user-service/Controllers/AdminController.cs` — PromoteRequest
+- `src/user-service/Controllers/AuthController.cs` — LoginRequest
+- `src/account-service/Controllers/AccountsController.cs` — UpdateBalanceRequest
+- `src/account-service/Services/AccountService.cs` — RandomNumberGenerator fix
+- `src/prompt-eval-service/Models/Dtos.cs` — all request DTOs
+- `src/ai-service/app/main.py` — DetectRequest, ReviewRequest, EvalRequest
+- `src/budget-service/app/main.py` — TransactionEvent
+- `src/chatbot-service/app/main.py` — ChatRequest
+- `src/account-opening-service/app/models.py` — Address, Employment, ApplicationCreate
+- `src/account-opening-service/app/routes.py` — ReviewRequest
+
+**Pattern:** Shared .NET DTOs in `src/shared/Contracts/Dtos/` already have DataAnnotations validation. Service-local DTOs (defined in Controllers/ or Models/) need validation added manually. Python services use Pydantic `Field()` for the same purpose.
