@@ -1,0 +1,239 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account-opening-service
+  namespace: banking-demo
+  labels:
+    app: account-opening-service
+    app.kubernetes.io/part-of: banking-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: account-opening-service
+  template:
+    metadata:
+      annotations:
+        traffic.sidecar.istio.io/excludeOutboundPorts: "10000"
+      labels:
+        app: account-opening-service
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: banking-workload-identity
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: account-opening-service
+        image: ghcr.io/banking-demo/account-opening-service:1.0.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8004
+          protocol: TCP
+        env:
+        - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: appinsights-connection-string
+        - name: REDIS__CONNECTIONSTRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: redis-connection-string
+        - name: FOUNDRY_PROJECT_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: openai-endpoint
+        - name: FOUNDRY_MODEL
+          value: "gpt-5.4-mini"
+        - name: CUS_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: content-understanding-endpoint
+        - name: Jwt__Key
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: jwt-key
+        - name: Jwt__Issuer
+          value: "user-service"
+        envFrom:
+        - configMapRef:
+            name: banking-demo-config
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8004
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8004
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        volumeMounts:
+        - name: secrets-store
+          mountPath: "/mnt/secrets-store"
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+      volumes:
+      - name: secrets-store
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: banking-secrets-provider
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account-opening-worker
+  namespace: banking-demo
+  labels:
+    app: account-opening-worker
+    app.kubernetes.io/part-of: banking-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: account-opening-worker
+  template:
+    metadata:
+      annotations:
+        traffic.sidecar.istio.io/excludeOutboundPorts: "10000"
+      labels:
+        app: account-opening-worker
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: banking-workload-identity
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      initContainers:
+      - name: provision-agents
+        image: ghcr.io/banking-demo/account-opening-service:1.0.0
+        imagePullPolicy: Always
+        command: ["python", "-m", "app.agents.init_agents"]
+        env:
+        - name: FOUNDRY_PROJECT_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: openai-endpoint
+        - name: FOUNDRY_MODEL
+          value: "gpt-5.4-mini"
+        envFrom:
+        - configMapRef:
+            name: banking-demo-config
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "250m"
+        volumeMounts:
+        - name: secrets-store
+          mountPath: "/mnt/secrets-store"
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+      containers:
+      - name: account-opening-worker
+        image: ghcr.io/banking-demo/account-opening-service:1.0.0
+        imagePullPolicy: Always
+        command: ["python", "-m", "app.worker"]
+        env:
+        - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: appinsights-connection-string
+        - name: REDIS__CONNECTIONSTRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: redis-connection-string
+        - name: FOUNDRY_PROJECT_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: openai-endpoint
+        - name: FOUNDRY_MODEL
+          value: "gpt-5.4-mini"
+        - name: CUS_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: content-understanding-endpoint
+        - name: Jwt__Key
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: jwt-key
+        - name: Jwt__Issuer
+          value: "user-service"
+        envFrom:
+        - configMapRef:
+            name: banking-demo-config
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: secrets-store
+          mountPath: "/mnt/secrets-store"
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+      # - name: entra-agent-id
+      #   image: mcr.microsoft.com/entra-sdk/auth-sidecar
+      #   imagePullPolicy: Always
+      #   envFrom:
+      #   - configMapRef:
+      #       name: banking-demo-config
+      volumes:
+      - name: secrets-store
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: banking-secrets-provider
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: account-opening-service
+  namespace: banking-demo
+  labels:
+    app: account-opening-service
+spec:
+  type: ClusterIP
+  selector:
+    app: account-opening-service
+  ports:
+  - port: 80
+    targetPort: 8004
+    protocol: TCP

@@ -21,6 +21,7 @@ locals {
   storage_name        = "${substr(replace(random_uuid.guid.result, "-", ""), 0, 22)}sa"
   cosmos_name         = "${local.resource_name}-cosmos"
   openai_name         = "${local.resource_name}-foundry"
+  cus_name            = "${local.resource_name}-cus"
   project_name        = "${local.resource_name}-project"
   redis_name          = "${local.resource_name}-redis"
   loganalytics_name   = "${local.resource_name}-logs"
@@ -38,5 +39,4 @@ resource "azurerm_resource_group" "this" {
     AppName     = local.resource_name
   }
 }
-
 

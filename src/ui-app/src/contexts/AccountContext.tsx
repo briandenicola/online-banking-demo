@@ -34,14 +34,16 @@ export const AccountProvider: React.FC<{ children: ReactNode }> = ({ children })
     if (!user || !token) return;
     try {
       const response = await apiClient.get('/accounts');
-      const mapped: Account[] = (response.data || []).map((a: Record<string, unknown>) => ({
-        id: a.id as string,
-        name: `${a.accountType} Account`,
-        number: a.accountNumber as string,
-        balance: a.balance as number,
-        type: (a.accountType as string || '').toLowerCase(),
-        currency: a.currency as string,
-      }));
+      const mapped: Account[] = ((response?.data as Record<string, unknown>[] | undefined) || []).map(
+        (a: Record<string, unknown>) => ({
+          id: a.id as string,
+          name: `${a.accountType} Account`,
+          number: a.accountNumber as string,
+          balance: a.balance as number,
+          type: (a.accountType as string || '').toLowerCase(),
+          currency: a.currency as string,
+        })
+      );
       setAccounts(mapped);
     } catch (e) {
       console.error('Failed to fetch accounts:', e);

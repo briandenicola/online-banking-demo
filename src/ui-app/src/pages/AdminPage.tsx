@@ -40,6 +40,8 @@ import AdminEvalTab from '../components/AdminEvalTab';
 import AdminUserManagementTab from '../components/AdminUserManagementTab';
 import AdminLoginAuditTab from '../components/AdminLoginAuditTab';
 import AdminFoundryStatusTab from '../components/AdminFoundryStatusTab';
+import AdminChatbotPromptTab from '../components/AdminChatbotPromptTab';
+import AdminApplicationsTab from '../components/account-opening/AdminApplicationsTab';
 
 interface AdminStats {
   totalFlagged: number;
@@ -351,6 +353,8 @@ const AdminPage: React.FC = () => {
           <Tab label="User Management" />
           <Tab label="Login Audit" />
           <Tab label="System Health" />
+          <Tab label="Chatbot Prompt" />
+          <Tab label="Account Applications" />
         </Tabs>
       </Box>
 
@@ -701,6 +705,12 @@ const AdminPage: React.FC = () => {
 
       {/* System Health Tab */}
       {activeTab === 5 && <AdminFoundryStatusTab />}
+
+      {/* Chatbot Prompt Tab */}
+      {activeTab === 6 && <AdminChatbotPromptTab />}
+
+      {/* Account Applications Tab */}
+      {activeTab === 7 && <AdminApplicationsTab />}
     </Box>
   );
 };

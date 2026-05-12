@@ -444,3 +444,135 @@ Basher implemented the Redis architecture decision:
 - **Removed:** "Phase 3" language from user-facing docs; kept descriptions simple and clear
 - **Commit:** 4281bb7 — "docs: fix TLS task name references across documentation"
 - **Impact:** Documentation now accurately reflects actual Taskfile commands; users won't encounter command-not-found errors when following deployment guides
+### 2026-05-11 — Spec 006: Smart Account Opening Multi-Agent KYC Pipeline
+
+**Task:** Create comprehensive feature spec for multi-agent KYC pipeline showcasing Azure AI Content Understanding + Microsoft Agent Framework orchestration.
+
+**Key Architectural Decisions:**
+
+1. **Service Language: Python/FastAPI**
+   - Rationale: Aligns with existing AI-heavy services (ai-service, chatbot-service, budget-service)
+   - Stronger Azure AI Content Understanding SDK support in Python ecosystem
+   - Team pattern consistency (all AI agent services are Python)
+
+2. **Port Allocation: 8004**
+   - Extends Python service port range (8001=chatbot, 8002=ai-service, 8003=budget-service)
+   - Keeps .NET banking services separate (600x) from AI agents (800x)
+
+3. **Event-Driven Multi-Agent Coordination**
+   - **Pattern:** Redis Streams for agent-to-agent communication (not direct HTTP)
+   - **Stream:** `account-opening-events` with consumer groups per agent
+   - **Agents:** Document Extraction → Identity Verification → Compliance/KYC → Account Provisioning (orchestrator)
+   - **State machine:** submitted → document_extraction → identity_verification → compliance_check → approved|rejected|pending_review
+   - Eliminates tight coupling; agents publish results and subscribe to relevant events
+
+4. **Azure AI Content Understanding Integration**
+   - **SDK:** `azure-ai-documentintelligence` (Content Understanding)
+   - **Models:** `prebuilt-idDocument` (photo ID), `prebuilt-layout` (proof of address)
+   - **Extracts:** name, DOB, address, expiry, document number from uploaded documents
+   - **Fallback:** Flag for human review if extraction fails (<80% confidence)
+
+5. **Microsoft Agent Framework (agent-framework-foundry)**
+   - **NOT azure-ai-projects SDK** — team standard is agent-framework-foundry (per decisions.md)
+   - GPT-5.4-mini for Identity Verification, Compliance/KYC, Account Provisioning agents
+   - Structured output (JSON mode) for consistent agent responses
+   - Confidence thresholds: reject identity verification if <0.8
+
+6. **Document Storage: Azure Blob Storage**
+   - Container: `account-opening-documents/{applicationId}/`
+   - SAS URLs (1-hour expiry) for user document uploads
+   - Lifecycle policy: 7-year retention (regulatory compliance)
+   - Private endpoint (no public access)
+
+7. **Persistence: Cosmos DB**
+   - New container: `account-applications` (partition key: `/userId`)
+   - Schema includes: formData, documents[], agentResults{}, auditTrail[], status
+   - Audit trail: append-only, every agent decision logged with reasoning
+
+8. **Human-in-the-Loop: Admin Review Queue**
+   - Extends existing AdminPage.tsx with new "Account Applications" tab
+   - Flagged applications (mismatched data, medium/high risk) route to admin review
+   - Admin can approve/reject with notes via `PATCH /api/account-opening/applications/{id}/review`
+   - Auto-approval for low-risk, fully verified applications
+
+9. **Real-Time UI Progress**
+   - New page: `AccountOpeningPage.tsx` (route: `/account-opening`)
+   - Multi-step wizard: form → document upload → pipeline progress → decision
+   - Polling pattern (2s interval) for agent status updates via `GET /api/account-opening/applications/{id}`
+   - Visual stepper showing each agent's status (completed/in_progress/pending)
+
+10. **Infrastructure (Terraform)**
+    - Azure Blob Storage (Standard LRS)
+    - Azure AI Document Intelligence (S0)
+    - Managed Identity: `account-opening-workload-identity` with roles for Blob, Document Intelligence, Cosmos DB, Foundry
+    - AKS Federated Identity Credential for workload identity auth
+
+**Key Patterns Reused:**
+- Redis Streams event-driven pattern (from ai-service)
+- JWT authentication with admin role checks (from prompt-eval-service)
+- Workload Identity for Azure services (all Python services)
+- Istio VirtualService routing for `/api/account-opening` endpoints
+- Cosmos DB persistence pattern (same as existing services)
+
+**Phase 2 Enhancement: FabricIQ Data Agent**
+- Microsoft Fabric semantic model over `account-applications` container
+- Natural language analytics: "What's the auto-approval rate by risk tier?"
+- Operations Agent: monitor false positive rates, auto-tune risk thresholds
+- MCP server exposure for agent interoperability
+
+**Spec Structure:**
+- Followed format from specs/002 (AI Anomaly Detection) and specs/005 (AI Admin Portal)
+- Sections: Problem Statement, Goal, Requirements (R1-R10), Architecture (diagram), Non-Goals, Existing Infrastructure, Phase 2, API Contracts, Dependencies, Success Metrics, Security/Privacy, Risk Mitigation, Testing Strategy, Rollout Plan
+
+**Key Files Created:**
+- `specs/006-smart-account-opening/spec.md` (24KB, 500+ lines)
+
+**Decision Rationale:**
+- **Python over C#:** Python dominates Azure AI SDK ecosystem; team already has 3 Python AI services vs 0 C# AI services
+- **Redis Streams over HTTP:** Async decoupling prevents cascading failures; easier to add new agents without rewriting existing ones
+- **Event-driven state machine:** Each agent advances state independently; orchestrator aggregates results without polling
+- **Human-in-the-loop at medium/high risk:** Balances automation with safety; builds trust in AI decisions
+- **Structured output (JSON mode):** Eliminates hallucination risk; ensures parseable agent responses
+
+**User Preferences Captured:**
+- Brian values Azure-native patterns (Content Understanding, Foundry, Workload Identity)
+- Brian prefers showcase features with realistic business value (KYC is standard banking requirement)
+- Brian wants multi-agent coordination with event-driven orchestration (not just parallel API calls)
+- Brian approved the KYC scenario from docs/future-ai-capabilities.md Section 1
+
+**Related Decisions:**
+- `.squad/decisions.md` line 694-729: Chatbot SDK migration to azure-ai-projects 2.x API (agent-framework-foundry pattern)
+- `.squad/decisions.md` line 78-86: Redis Streams migration (establishes event-driven pattern)
+- `docs/adr/005-foundry-agents-over-direct-openai.md` line 13: Use agent-framework-foundry (project standard)
+
+**Next Steps (for implementation):**
+1. Create `src/account-opening-service/` with FastAPI scaffold
+2. Implement 4 agents (Document Extraction, Identity Verification, Compliance, Provisioning)
+3. Add Redis Streams producer/consumer logic
+4. Create Cosmos DB container `account-applications` via Terraform
+5. Provision Azure Blob Storage + Document Intelligence via Terraform
+6. Add Istio VirtualService route `/api/account-opening`
+7. Build React UI: `AccountOpeningPage.tsx`, `AgentPipeline.tsx`, admin review tab
+8. Add Playwright E2E tests for full pipeline (submit → upload → agents → decision)
+
+### 2026-05-11 — 006 Smart Account Opening Phase Decomposition
+
+**Spec:** `specs/006-smart-account-opening/spec.md` (commit `56fbc97`, branch `006-smart-account-opening`)
+**Output:** `.squad/decisions/inbox/danny-006-phases.md`
+
+**Scope:** Multi-agent KYC pipeline — 4 AI agents via Redis Streams, document extraction, Cosmos DB state, admin review, React wizard UI.
+
+**Decomposition:** 4 phases:
+1. **Service Skeleton** — FastAPI service, API endpoints, state machine, Redis Streams plumbing, docker-compose entry
+2. **Agent Pipeline + Mock Extraction** — All 4 agents with rule-based/mock logic (no Azure AI dependency for local dev)
+3. **React UI** — Application wizard, document upload, pipeline progress stepper, admin review queue
+4. **Azure Integration + AKS** — Blob Storage, Document Intelligence, Foundry agents, Terraform, Kustomize, CI
+
+**Key Decisions:**
+- Mock-first agents: rule-based fallback for local dev, Foundry opt-in via `USE_FOUNDRY_AGENTS` env var
+- Separate worker container for agent consumers (not in API process)
+- Adapter pattern: in-memory → Cosmos DB, local files → Blob Storage (mirrors .NET `UseInMemoryDatabase` pattern)
+- **Spec correction flagged:** Partition key should be `/id` not `/userId` (userId is null for submitted applications)
+- Agent assignments: Basher (backend/Python), Linus (React UI), Turk (Terraform/Kustomize/CI), Livingston (tests)
+
+**Estimated total:** ~10-14 days across all agents

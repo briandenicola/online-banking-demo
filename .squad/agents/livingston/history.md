@@ -227,3 +227,65 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 ### Test Execution
 - Committed realistic transaction smoke test (5 tx): 98c4f1e
 - Committed account lifecycle smoke test ($500k savings, $150k transfer, $75k purchase): dcd219f
+
+## 006 Smart Account Opening — Phase 1 Unit Tests (2026-05-11)
+
+### Created
+- `src/account-opening-service/tests/` — 6 test files, ~55 test cases total
+- **conftest.py**: Shared fixtures — app_client (httpx AsyncClient), sample_application, auth_token/admin_token (JWT via python-jose matching user-service HS256 key), mock_redis
+- **test_models.py** (18 tests): ApplicationCreate validation (required fields, email format, SSN 4-digit), ApplicationStatus enum (7 values), AgentResult confidence 0-1, DocumentMetadata type constraint, AuditEntry serialization
+- **test_state_machine.py** (22 tests): 8 valid transitions (submitted→document_extraction→identity_verification→compliance_check→approved/rejected/pending_review, plus pending_review→approved/rejected), 7 invalid transitions (skip steps, go backwards, self-transition, terminal states), 6 audit trail checks (timestamp, agent, action, previousState, newState)
+- **test_api.py** (12 tests): POST 201/401/422, GET by ID 200/404, GET list admin 200/non-admin 403, PATCH review admin/non-admin, GET audit admin/non-admin
+- **test_events.py** (6 tests): Correct stream name, payload contains applicationId/eventType/timestamp, graceful Redis failure handling, document_uploaded schema
+- **test_consumer.py** (6 tests): XGROUP CREATE on setup, group-already-exists handling, process_event dispatch, ACK after success, no crash on failure, no ACK on failure
+
+### Design Decisions
+- Tests written spec-first — no dependency on Basher's implementation details
+- Imports from `app.models`, `app.state_machine`, `app.events`, `app.consumer`, `app.main`
+- JWT tokens use same secret/algorithm/issuer/audience as user-service (HS256, "YourSuperSecretKeyForJWTTokenGeneration12345")
+- State machine tests validate transition() returns a result object with `new_state` and `audit_entry`
+- Consumer tests expect AgentConsumer base class with `setup()`, `process_one()`, and abstract `process_event()`
+- Event publisher tests are flexible on payload format (JSON string or flat dict)
+- Test deps needed in pyproject.toml: pytest, pytest-asyncio, httpx, python-jose[cryptography]
+
+## 006 Smart Account Opening — Phase 2 Agent Pipeline Tests (2026-05-11)
+
+### Created
+- **test_document_extraction.py** (14 tests): CUS mock calls, event publishing, state transition submitted→document_extraction, audit trail, photo_id/proof_of_address model selection, low-confidence flagging, CUS unavailability error propagation
+- **test_identity_verification.py** (18 tests): Name/address/expiry matching logic, flag collection (name_mismatch, expired_document, address_mismatch), multiple mismatches, Foundry agent mock, state transition document_extraction→identity_verification, event schema validation
+- **test_compliance_check.py** (14 tests): Risk tier evaluation (low/medium/high), kycStatus (approved/review/rejected), flag escalation, Foundry agent mock, state transition identity_verification→compliance_check, event reasoning
+- **test_provisioning.py** (17 tests): Auto-approve path (user-service + account-service calls), review path (flags/risk routing), reject path, service call failure propagation, state transitions to approved/rejected/pending_review, event schema
+- **test_worker.py** (5 tests): Worker startup, signal handling (SIGTERM/SIGINT), graceful shutdown, foundry import check
+
+### Design Decisions
+- Tests use stub consumer implementations in each test file that mirror expected Basher behavior — validates the *contract* from the spec
+- Each stub extends the real `AgentConsumer` base class from `app.consumer`
+- External deps (CUS, Foundry, user-service, account-service) mocked with `AsyncMock`
+- Tests verify errors propagate (not swallowed) when external services fail
+- State machine and repository use real implementations (InMemoryApplicationRepository, ApplicationStateMachine)
+- Event publishing tested via mock_redis.xadd assertions on payload structure
+- Naive datetime expiry strings need timezone normalization before comparing to UTC-aware now()
+
+### Test Count
+- Phase 2: 68 new tests
+- Total (Phase 1 + Phase 2): 136 passing tests
+
+## 006 Smart Account Opening — Phase 3 React Component Tests (2026-05-11)
+
+### Created (7 test files, ~90+ test cases)
+- **accountOpening.test.ts** (API module): 10 tests — createApplication, getApplication, listApplications, uploadDocuments, reviewApplication, getAuditTrail; verifies endpoints, HTTP methods, params, error propagation
+- **ApplicationForm.test.tsx** (Multi-step wizard): 15 tests — renders step 1, validates required fields, navigates Next/Back, preserves data, shows review on step 5, calls createApplication on submit, shows error on failure
+- **DocumentUpload.test.tsx** (File upload): 11 tests — renders drop zone, document type selector, accepts .jpg/.png/.pdf, rejects >10MB, file preview, calls uploadDocuments API, progress indicator, error handling
+- **AgentPipeline.test.tsx** (Visual stepper): 14 tests — renders 4 stages in order, pending/in_progress/completed/failed states, confidence scores for completed stages only, expandable reasoning, collapse toggle, full/partial pipeline states
+- **ApplicationStatus.test.tsx** (Polling tracker): 13 tests — fetches on mount, renders AgentPipeline, polls every 2s (fake timers), Approved/Rejected/Under Review banners, stops polling on terminal status (approved/rejected/pending_review), cleans up on unmount
+- **AdminApplicationsTab.test.tsx** (Admin queue): 14 tests — renders table, filter chips (All/Pending Review/Approved/Rejected), column sorting, expandable detail rows, Approve/Reject buttons call reviewApplication API, refreshes list after action, empty state
+- **AccountOpeningPage.test.tsx** (Page orchestration): 10 tests — renders form initially, transitions Form→DocumentUpload→ApplicationStatus, passes applicationId through flow, hides previous step on transition
+
+### Design Decisions
+- Tests written spec-first — components don't exist yet (Linus building in parallel)
+- Mocked child components in AccountOpeningPage to isolate orchestration logic
+- Mocked AgentPipeline in ApplicationStatus to isolate polling logic
+- Used flexible matchers (regex, ||) for UI text to accommodate Linus's implementation choices
+- ApplicationStatus uses jest.useFakeTimers() for deterministic polling tests
+- API tests mock the axios client directly, matching existing Accounts.test.tsx/Login.test.tsx patterns
+- Document upload tests use createMockFile helper for consistent file objects

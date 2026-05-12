@@ -28,6 +28,16 @@ resource "azurerm_key_vault_secret" "openai_endpoint" {
   ]
 }
 
+resource "azurerm_key_vault_secret" "content_understanding_endpoint" {
+  name         = "content-understanding-endpoint"
+  value        = data.azurerm_cognitive_account.content_understanding.endpoint
+  key_vault_id = azurerm_key_vault.main.id
+  depends_on = [
+    azurerm_role_assignment.deployer_keyvault_admin,
+    azurerm_private_endpoint.keyvault,
+  ]
+}
+
 resource "azurerm_key_vault_secret" "redis_connection_string" {
   name         = "redis-connection-string"
   value        = "${azurerm_managed_redis.main.hostname}:10000,ssl=True,abortConnect=False"

@@ -23,10 +23,13 @@ import PaymentIcon from '@mui/icons-material/Payment';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import ShoppingCartIcon from '@mui/icons-material/ShoppingCart';
+import AddBusinessIcon from '@mui/icons-material/AddBusiness';
 import { useNavigate } from 'react-router-dom';
 import { useAuthContext } from '../contexts/AuthContext';
 import { useAccountContext } from '../contexts/AccountContext';
 import apiClient from '../api/client';
+import ApplicationStatus from '../components/account-opening/ApplicationStatus';
+import { ACCOUNT_OPENING_STORAGE_KEY } from '../api/accountOpening';
 
 interface RecentTransaction {
   id: string;
@@ -41,6 +44,7 @@ const quickActions = [
   { label: 'Pay Bills', icon: <PaymentIcon />, path: '/transfers' },
   { label: 'View Statements', icon: <ReceiptLongIcon />, path: '/transactions' },
   { label: 'Chat Assistant', icon: <ChatIcon />, path: '/chat' },
+  { label: 'Open Account', icon: <AddBusinessIcon />, path: '/account-opening' },
 ];
 
 const Dashboard: React.FC = () => {
@@ -49,6 +53,7 @@ const Dashboard: React.FC = () => {
   const { accounts } = useAccountContext();
   const [transactions, setTransactions] = useState<RecentTransaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [applicationId, setApplicationId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -65,6 +70,10 @@ const Dashboard: React.FC = () => {
     };
     fetchRecentTransactions();
   }, [token]);
+
+  useEffect(() => {
+    setApplicationId(localStorage.getItem(ACCOUNT_OPENING_STORAGE_KEY));
+  }, []);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -243,6 +252,26 @@ const Dashboard: React.FC = () => {
               </Box>
             </CardContent>
           </Card>
+
+          <Box sx={{ mt: 3 }}>
+            {applicationId ? (
+              <ApplicationStatus applicationId={applicationId} />
+            ) : (
+              <Card>
+                <CardContent sx={{ p: 3 }}>
+                  <Typography variant="h6" sx={{ fontWeight: 600, mb: 1 }}>
+                    Open a New Account
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Start a new checking or savings application in minutes.
+                  </Typography>
+                  <Button variant="contained" onClick={() => navigate('/account-opening')}>
+                    Start Application
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+          </Box>
         </Grid>
       </Grid>
     </Box>

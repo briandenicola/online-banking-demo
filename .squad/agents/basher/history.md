@@ -8,6 +8,18 @@
 
 ## Learnings
 
+### 2026-05 — Account-opening agent pipeline (Foundry + Content Understanding)
+
+**Pattern:** Account-opening worker runs four Redis-stream consumers (document extraction, identity verification, compliance check, provisioning). Foundry agents are provisioned via init container (`app.agents.init_agents`) using `AIProjectClient.create_version`, while runtime uses `FoundryAgent` only. Content Understanding uses `ContentUnderstandingClient` with analyzer `prebuilt-documentSearch` and `update_defaults()` at startup.
+
+**Key files:**
+- `src/account-opening-service/app/agents/document_extraction.py` — CUS extraction + `document_extracted` events
+- `src/account-opening-service/app/agents/identity_verification.py` — Foundry identity checks
+- `src/account-opening-service/app/agents/compliance_check.py` — Foundry KYC assessment
+- `src/account-opening-service/app/agents/provisioning.py` — Foundry decision + user/account provisioning
+- `src/account-opening-service/app/worker.py` — worker wiring, Foundry connectivity check, signal handling
+- `deploy/kustomize/base/account-opening-service.yaml` — init container + CUS/Foundry env vars
+
 ### 2026-05 — Duplicate email registration TOCTOU fix (email lookup document pattern)
 
 **Problem:** Concurrent registration requests could bypass the email uniqueness check because Cosmos DB has no unique constraint on non-PK fields. The check-then-create pattern allowed two requests to both pass the email query before either wrote.
@@ -915,3 +927,41 @@ Using `create_session()` + `run("ping")` is lightest real connectivity test:
 - Admin panel uses these endpoints to display Foundry service health in System Health tab
 - Smoke tests can hit these endpoints to monitor Foundry availability without failing on transient issues
 - Graceful degradation: Services operate in "degraded" mode when agents unavailable
+
+### 2026-05 — Account Opening Phase 1 Skeleton
+- Added FastAPI account-opening-service scaffolding at `src/account-opening-service/` (models, repository, state machine, Redis events/consumer base, worker entrypoint).
+- Deployment assets: `deploy/kustomize/base/account-opening-service.yaml` + kustomization image mapping; docker-compose adds account-opening-service + worker.
+- API gateway routing updated: `nginx.conf` now forwards `/api/account-opening` to `account-opening-service:8004`.
+
+### 2026-05 — AI System Prompt Security Hardening
+- Hardened all AI agent system prompts across 5 files for prompt injection resistance.
+- **Chatbot** (`src/chatbot-service/app/main.py`): Added identity anchoring, explicit injection resistance (blocks "ignore previous instructions", "DAN mode", etc.), output boundary (no code/essays/stories), PII echo-back protection, and scope redirect phrasing.
+- **Account-opening agents** (`src/account-opening-service/app/agents/`): Added role anchoring, untrusted-input warnings, and strict output format enforcement to identity_verification.py, compliance_check.py, and provisioning.py.
+- **init_agents.py**: Updated AGENT_SPECS instructions to stay consistent with runtime SYSTEM_PROMPTs (role anchoring + input distrust + output strictness).
+- Pattern: User-facing prompts need the heaviest hardening (identity anchor, injection resistance, output boundary, PII masking). Backend agent prompts need role anchoring, input distrust, and output format enforcement.
+
+### 2026-05-11 — Redis Entra ID auth + init_agents SDK fix
+
+**Bug 1: Redis "Authentication required"**
+- Root cause: `main.py` and `worker.py` used `redis.asyncio.Redis` with password-only auth. Azure Managed Redis requires Entra ID token auth via `RedisCluster`.
+- Fix: Extracted shared `app/redis_client.py` module. When `AZURE_CLIENT_ID` is set, creates `RedisCluster` with JWT OID as username and token as password, TLS on port 10000, and a background token refresh every 20 minutes. Falls back to plain `redis.Redis` for local dev.
+- Follows the same pattern as the Go event-processor (`src/event-processor/main.go`).
+- Redis scope: `acca5fbb-b7e4-4009-81f1-37e38fd66d78/.default`
+
+**Bug 2: init_agents.py `agent_version` parameter error**
+- Root cause: `azure-ai-projects` SDK v2.1.0 changed `agents.get()` and `agents.create_version()` — `agent_name` and `agent_version` are positional args, not kwargs.
+- Fix: Changed to positional args: `client.agents.get(name, version)` and `client.agents.create_version(name, version, ...)`.
+- Also made provisioning errors non-fatal (exit 0) so init container doesn't CrashLoopBackOff when agents already exist or SDK has transient issues.
+
+### 2026-05 — Istio Gateway/VirtualService kustomize manifests
+
+**Problem:** Istio Gateway, VirtualService, and cert-manager Certificate were applied via `kubectl` directly and not tracked in kustomize manifests. They would be lost on redeployment.
+
+**Solution:** Created proper kustomize manifests:
+- `deploy/kustomize/ingress/gateway.yaml` — Certificate + Gateway (namespace: `aks-istio-ingress`)
+- `deploy/kustomize/ingress/kustomization.yaml` — separate kustomization to preserve `aks-istio-ingress` namespace
+- `deploy/kustomize/base/virtualservice.yaml` — VirtualService (namespace: `banking-demo`)
+
+**Key decision:** Gateway/Certificate live in a separate `deploy/kustomize/ingress/` kustomization (not under `base/`) because the main base has `namespace: banking-demo` which would override `aks-istio-ingress` on the ingress resources. Kustomize propagates namespace transformations to all sub-resources including subdirectories.
+
+**Pattern:** For cross-namespace kustomize resources, use separate kustomization directories. Never rely on a sub-directory to escape a parent's `namespace:` directive — kustomize will override it.
