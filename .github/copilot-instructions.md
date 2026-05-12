@@ -1,6 +1,6 @@
 # online-banking-demo Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-05-09
+Auto-generated from all feature plans. Last updated: 2026-05-12
 
 ## Active Technologies
 - Terraform (HCL) with AzureRM + AzAPI providers + `azurerm_subnet`, `azurerm_network_security_group`, `azurerm_subnet_network_security_group_association` (001-backlog-implementation-plan)
@@ -11,6 +11,8 @@ Auto-generated from all feature plans. Last updated: 2026-05-09
 - Terraform HCL (AzureRM ~> 4, AzAPI ~> 2, Random ~> 3) + `azurerm_private_endpoint`, `azurerm_private_dns_zone`, `azurerm_private_dns_zone_virtual_network_link`, `azapi_resource` (for AI Services PE) (001-azure-private-endpoints)
 - VNet /16 with 3 subnets: AKS (offset 3), Private Endpoints (offset 4), Agents (offset 5, Microsoft.App/environments delegation). 9 private endpoints, 10 private DNS zones. All PaaS services accessed via PE (public access disabled except ACR Premium). (001-azure-private-endpoints)
 - N/A (infrastructure-only change) (001-azure-private-endpoints)
+- Python 3.11+ + `fpdf2` (PDF generation — pure Python, LGPL v3, no system deps) (016-sample-documents-account-opening)
+- File system — static PDFs + JSON committed to `tests/fixtures/sample-documents/` (016-sample-documents-account-opening)
 
 - ASP.NET Core, Gin/stdlib, FastAPI, React + MUI v9, OTEL SDK (001-backlog-implementation-plan)
 
@@ -31,9 +33,9 @@ tests/
 : Follow standard conventions
 
 ## Recent Changes
+- 016-sample-documents-account-opening: Added Python 3.11+ + `fpdf2` (PDF generation — pure Python, LGPL v3, no system deps)
 - 001-azure-private-endpoints: Added Terraform HCL (AzureRM ~> 4, AzAPI ~> 2, Random ~> 3) + `azurerm_private_endpoint`, `azurerm_private_dns_zone`, `azurerm_private_dns_zone_virtual_network_link`, `azapi_resource` (for AI Services PE)
 - 002-ai-anomaly-detection: Added C# / .NET 9.0 (ASP.NET Core Web API) + Azure.AI.Projects (prerelease), Microsoft.Azure.Cosmos, Azure.Identity, Microsoft.AspNetCore.Authentication.JwtBearer
-- 001-backlog-implementation-plan: Added .NET 8 (C#), Go 1.22+, Python 3.11+ (FastAPI), React 18 (TypeScript), Terraform 1.5+ + ASP.NET Core, Cosmos DB SDK 3.x (Newtonsoft), StackExchange.Redis, Azure.Identity, FastAPI, MUI v9, Playwright, OTEL SDK, azure-ai-evaluation
 
 
 <!-- MANUAL ADDITIONS START -->

@@ -984,3 +984,20 @@ Using `create_session()` + `run("ping")` is lightest real connectivity test:
 - D4: Generated PDFs committed to repo (not .gitignored) for direct E2E test consumption
 
 **Gotcha:** fpdf2 core Helvetica font doesn't support Unicode em-dash (U+2014). Used ASCII hyphen in header "STATE OF ILLINOIS - DRIVER LICENSE" instead of "—". If Unicode is needed, must embed a TTF font via `add_font()`.
+
+### 2026-05 — Account opening smoke tests (Issue #21, PR #23)
+
+**What:** Added account-opening coverage to the existing smoke test suite in `tests/e2e/specs/smoke/smoke.spec.ts` and `tests/e2e/utils/testHelpers.ts`.
+
+**Tests added:**
+- Health check: `/api/account-opening/healthz` added to both `waitForAllServices()` and the `@smoke Health checks` test
+- Submit application: POST to `/api/account-opening/applications` with john-smith fixture data, verify `id` + `status === "submitted"`
+- Upload document: Create application then multipart POST `photo_id.pdf` to `/applications/{id}/documents`, verify `type === "photo_id"`
+
+**Pattern:** Graceful degradation — all account-opening tests wrap in try-catch and treat 5xx as "service not deployed." Supports `ACCOUNT_OPENING_URL` env var for separate service URL (same pattern as `AI_SERVICE_URL`).
+
+**Key files:**
+- `tests/e2e/specs/smoke/smoke.spec.ts` — 3 new test points
+- `tests/e2e/utils/testHelpers.ts` — health check array
+- `tests/fixtures/sample-documents/john-smith/photo_id.pdf` — used in document upload test
+- `tests/fixtures/sample-documents/applicants/john-smith.json` — application form data source

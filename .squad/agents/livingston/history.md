@@ -317,3 +317,19 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 
 ### Issues Found: NONE
 - No decision inbox entry needed — all checks passed clean.
+
+## E2E Account Opening Test Suite (2026-05-12)
+
+### Completed
+- Created `tests/e2e/specs/core/account-opening.spec.ts` — 18 Playwright E2E tests
+- 5 test groups: Happy path (serial, 5 tests), CRUD (4 tests), Input validation (5 tests), Document upload (3 tests), Auth enforcement (1 test)
+- Uses john-smith.json fixture data and PDF sample documents from `tests/fixtures/sample-documents/`
+- Graceful degradation: beforeAll health check skips suite if account-opening service is unavailable
+- Happy path tests run serially (shared application state); other groups run in parallel
+
+### Technical Notes
+- Fixture path from spec dir is `../../../fixtures/` (3 levels up from `tests/e2e/specs/core/`)
+- list_applications endpoint requires admin role — test gracefully degrades if user is non-admin
+- Playwright config `testDir: './specs'` means `--list` must be run from `tests/e2e/` dir
+- State machine terminal states: approved, rejected, pending_review — poll with 30s timeout
+- Multipart uploads use Playwright's `multipart` option with `{ name, mimeType, buffer }` for file field
