@@ -471,3 +471,23 @@ Created comprehensive security tests for all Round 2 fixes:
 - Python tests organized by security concern class names
 - Go tests follow Go testing conventions with descriptive function names
 - All tests include detailed security-focused comments explaining what they verify
+
+### Round 3 — Fix All Round 2 Failures (2026-05-12)
+- **Fixed 15+ test failures across all services**
+- chatbot-service: `@tool` decorator wraps functions into `FunctionTool` objects — use `.func` attribute
+- ai-service: `DetectRequest` uses camelCase fields (`transactionId`, `accountId`) not snake_case
+- ai-service: `/detect` endpoint checks auth before schema validation, returns 401 not 422
+- ai-service: `ssl_cert_reqs=None` regression test was self-matching and finding unfixed services
+- event-processor: `readMainGoSource()` was returning a hardcoded placeholder, not the actual file
+- user-service: Pre-existing tests broken by production changes (GenerateTokenAsync added `role` param, InMemoryUserService added `IConfiguration` param)
+- account-service: Pre-existing tests expected Forbid/BadRequest but controller returns NotFound for ownership
+- account-service: ExceptionLeakingTests tested for try-catch that doesn't exist on CreateAccount/GetAccount
+- **Fixed root-owned obj/bin directory build blocker** by adding exclusions to `Directory.Build.props`
+
+## Learnings
+- FunctionTool objects from agent_framework have `.func` for the underlying function — always check decorator wrapper types before using `inspect.signature()`
+- Pydantic v2 field names in FastAPI models must match exactly — this codebase uses camelCase
+- FastAPI `Depends(verify_jwt)` runs auth BEFORE Pydantic validation — unauthenticated requests get 401, not 422
+- Root-owned obj/bin directories from Docker/CI builds block `dotnet test` — exclude via `DefaultItemExcludes` in `Directory.Build.props`
+- When grep-scanning for insecure patterns, always exclude test files to avoid self-referential matches
+- Always read actual production code before writing/fixing tests — never guess field names or method signatures
