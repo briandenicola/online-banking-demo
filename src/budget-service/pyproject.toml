@@ -10,7 +10,7 @@ python = "^3.11"
 fastapi = "^0.115.0"
 uvicorn = "^0.32.0"
 azure-identity = "^1.17.0"
-azure-ai-inference = "^1.0.0"
+azure-ai-inference = ">=1.0.0b9"
 pydantic = {version = "^2.9.0", extras = ["email"]}
 python-dotenv = "^1.0.0"
 numpy = "^2.0.0"
