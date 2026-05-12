@@ -5,7 +5,7 @@ import os
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 import httpx
 import structlog
@@ -427,6 +427,3 @@ def _generate_service_token(user_id: str, username: str) -> str:
     }
     return jwt.encode(claims, secret, algorithm="HS256")
 
-
-if TYPE_CHECKING:
-    from azure.identity import DefaultAzureCredential

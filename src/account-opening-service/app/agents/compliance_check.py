@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 import structlog
 
@@ -112,9 +112,6 @@ class ComplianceCheckConsumer(AgentConsumer):
             instructions=SYSTEM_PROMPT,
         )
 
-
-if TYPE_CHECKING:
-    from azure.identity import DefaultAzureCredential
 
     async def process_event(self, event_data: dict) -> None:
         if event_data.get("eventType") != "identity_verified":
