@@ -212,7 +212,7 @@ spec:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: false
       - name: entra-agent-id
-        image: mcr.microsoft.com/entra-sdk/auth-sidecar
+        image: mcr.microsoft.com/entra-sdk/auth-sidecar:1.0.0-azurelinux3.0-distroless
         imagePullPolicy: Always
         ports:
         - containerPort: 5000
