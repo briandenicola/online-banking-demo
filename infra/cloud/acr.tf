@@ -3,12 +3,17 @@
 #############################################
 
 resource "azurerm_container_registry" "main" {
-  name                = local.acr_name
-  resource_group_name = azurerm_resource_group.this.name
-  location            = azurerm_resource_group.this.location
+  name                          = local.acr_name
+  resource_group_name           = azurerm_resource_group.this.name
+  location                      = azurerm_resource_group.this.location
   sku                           = "Premium"
   admin_enabled                 = false
-  public_network_access_enabled = true
+  public_network_access_enabled = false
+
+  # WARNING: Disabling public access breaks `az acr build` from outside the VNet.
+  # Options: (1) use a self-hosted build agent inside the VNet, (2) add a
+  # network_rule_set with ip_rule for the CI runner IP, or (3) temporarily
+  # enable public access during builds. See decision inbox for details.
 
   tags = {
     AppName = local.resource_name

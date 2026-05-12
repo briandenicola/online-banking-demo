@@ -9,7 +9,7 @@ resource "azurerm_storage_account" "main" {
   account_tier                  = "Standard"
   account_replication_type      = "LRS"
   shared_access_key_enabled     = false
-  public_network_access_enabled = true
+  public_network_access_enabled = false
 }
 
 resource "azurerm_storage_container" "account_opening_documents" {
