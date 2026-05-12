@@ -5,10 +5,7 @@ WORKDIR /app
 COPY ./app ./app
 COPY ./pyproject.toml ./
 
-RUN pip install --no-cache-dir --root-user-action=ignore \
-    fastapi uvicorn httpx pydantic[email] python-dotenv structlog redis PyJWT \
-    opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp \
-    opentelemetry-instrumentation-fastapi opentelemetry-instrumentation-httpx
+RUN pip install --no-cache-dir --root-user-action=ignore .
 
 EXPOSE 8003
 

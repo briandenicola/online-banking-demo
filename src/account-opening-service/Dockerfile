@@ -5,13 +5,7 @@ WORKDIR /app
 COPY ./app ./app
 COPY ./pyproject.toml ./
 
-RUN pip install --no-cache-dir --root-user-action=ignore \
-    fastapi uvicorn httpx pydantic[email] python-dotenv structlog redis \
-    python-jose[cryptography] \
-    opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp \
-    opentelemetry-instrumentation-fastapi opentelemetry-instrumentation-httpx \
-    agent-framework agent-framework-foundry azure-identity azure-storage-blob \
-    azure-ai-contentunderstanding azure-ai-projects azure-cosmos
+RUN pip install --no-cache-dir --root-user-action=ignore .
 
 EXPOSE 8004
 
