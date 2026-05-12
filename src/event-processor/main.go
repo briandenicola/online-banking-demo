@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -27,6 +29,7 @@ import (
 
 const (
 	streamName    = "banking-events"
+	dlqStreamName = "banking-events-dlq"
 	consumerGroup = "event-processor-group"
 	consumerName  = "event-processor-1"
 	// Azure Cache for Redis scope for Entra ID token requests
@@ -35,9 +38,13 @@ const (
 
 // EventProcessor handles Redis Stream messages
 type EventProcessor struct {
-	tracer    trace.Tracer
-	client    redis.Cmdable
-	redisReady bool
+	tracer       trace.Tracer
+	client       redis.Cmdable
+	redisReady   bool
+	wg           sync.WaitGroup
+	maxRetries   int
+	failureCounts map[string]int
+	mu           sync.Mutex
 }
 
 // BankingEvent represents an incoming banking event
@@ -80,9 +87,18 @@ func main() {
 		}
 	}()
 
+	maxRetries := 3
+	if v := os.Getenv("DLQ_MAX_RETRIES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxRetries = n
+		}
+	}
+
 	processor := &EventProcessor{
-		tracer: tracer,
-		client: rdb,
+		tracer:        tracer,
+		client:        rdb,
+		maxRetries:    maxRetries,
+		failureCounts: make(map[string]int),
 	}
 
 	// Handle graceful shutdown
@@ -124,7 +140,12 @@ func main() {
 				backoff = 30 * time.Second
 			}
 			log.Printf("Redis not ready (attempt %d): %v — retrying in %v...", i+1, err, backoff)
-			time.Sleep(backoff)
+			select {
+			case <-ctx.Done():
+				log.Println("Context cancelled during Redis startup retry")
+				return
+			case <-time.After(backoff):
+			}
 		}
 	}
 
@@ -140,8 +161,10 @@ func main() {
 	log.Println("Event processor started — consuming from Redis Stream")
 
 	<-sigChan
-	log.Println("Shutting down event processor...")
+	log.Println("Shutting down event processor — draining in-flight messages...")
 	cancel()
+	processor.wg.Wait()
+	log.Println("All in-flight messages drained. Shutdown complete.")
 }
 
 // newRedisClient creates a Redis client. If AZURE_CLIENT_ID is set (workload identity),
@@ -174,12 +197,14 @@ func newRedisClient(ctx context.Context, connStr string) (redis.Cmdable, error) 
 			Password: token.Token,
 		}
 		if opts.TLSConfig != nil {
-			// Azure Managed Redis cluster nodes use internal IPs that don't match
-			// the TLS certificate's hostname. We must skip verification for
-			// cluster-internal connections while still using TLS encryption.
+			// Extract hostname from address for TLS ServerName verification
+			redisHost := opts.Addr
+			if idx := strings.LastIndex(redisHost, ":"); idx > 0 {
+				redisHost = redisHost[:idx]
+			}
 			clusterOpts.TLSConfig = &tls.Config{
-				MinVersion:         tls.VersionTLS12,
-				InsecureSkipVerify: true,
+				MinVersion: tls.VersionTLS12,
+				ServerName: redisHost,
 			}
 		}
 
@@ -275,7 +300,11 @@ func (p *EventProcessor) consumeEvents(ctx context.Context) {
 				return
 			}
 			log.Printf("Error reading from stream: %v. Retrying in %v...", err, backoff)
-			time.Sleep(backoff)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
 			if backoff < 30*time.Second {
 				backoff *= 2
 			}
@@ -286,31 +315,73 @@ func (p *EventProcessor) consumeEvents(ctx context.Context) {
 
 		for _, stream := range streams {
 			for _, message := range stream.Messages {
-				p.processMessage(ctx, message)
+				p.wg.Add(1)
+				func(msg redis.XMessage) {
+					defer p.wg.Done()
 
-				// Acknowledge the message
-				if err := p.client.XAck(ctx, streamName, consumerGroup, message.ID).Err(); err != nil {
-					log.Printf("Failed to ACK message %s: %v", message.ID, err)
-				}
+					if err := p.processMessage(ctx, msg); err != nil {
+						p.mu.Lock()
+						p.failureCounts[msg.ID]++
+						count := p.failureCounts[msg.ID]
+						p.mu.Unlock()
+
+						log.Printf("Error processing message %s (attempt %d/%d): %v",
+							msg.ID, count, p.maxRetries, err)
+
+						if count >= p.maxRetries {
+							// Dead-letter: move to DLQ stream, then ACK original
+							dlqFields := make(map[string]interface{})
+							for k, v := range msg.Values {
+								dlqFields[k] = v
+							}
+							dlqFields["original_id"] = msg.ID
+							dlqFields["error"] = fmt.Sprintf("%.500s", err.Error())
+							dlqFields["attempts"] = fmt.Sprintf("%d", count)
+
+							if dlqErr := p.client.XAdd(ctx, &redis.XAddArgs{
+								Stream: dlqStreamName,
+								Values: dlqFields,
+							}).Err(); dlqErr != nil {
+								log.Printf("Failed to move %s to DLQ: %v", msg.ID, dlqErr)
+								return
+							}
+							if ackErr := p.client.XAck(ctx, streamName, consumerGroup, msg.ID).Err(); ackErr != nil {
+								log.Printf("Failed to ACK dead-lettered message %s: %v", msg.ID, ackErr)
+							}
+							p.mu.Lock()
+							delete(p.failureCounts, msg.ID)
+							p.mu.Unlock()
+							log.Printf("Message %s moved to DLQ after %d failed attempts", msg.ID, count)
+						}
+						// Do NOT ACK — message stays in pending list for retry
+						return
+					}
+
+					// ACK only after successful processing
+					if err := p.client.XAck(ctx, streamName, consumerGroup, msg.ID).Err(); err != nil {
+						log.Printf("Failed to ACK message %s: %v", msg.ID, err)
+					}
+					p.mu.Lock()
+					delete(p.failureCounts, msg.ID)
+					p.mu.Unlock()
+				}(message)
 			}
 		}
 	}
 }
 
-func (p *EventProcessor) processMessage(ctx context.Context, message redis.XMessage) {
+func (p *EventProcessor) processMessage(ctx context.Context, message redis.XMessage) error {
 	ctx, span := p.tracer.Start(ctx, "processMessage")
 	defer span.End()
 
 	payloadStr, ok := message.Values["payload"].(string)
 	if !ok {
-		log.Printf("Message %s has no payload field", message.ID)
-		return
+		return fmt.Errorf("message %s has no payload field", message.ID)
 	}
 
 	var evt BankingEvent
 	if err := json.Unmarshal([]byte(payloadStr), &evt); err != nil {
-		log.Printf("Failed to unmarshal event %s: %v", message.ID, err)
-		return
+		return fmt.Errorf("failed to unmarshal event %s: %w", message.ID, err)
 	}
 
 	span.SetAttributes(
@@ -329,6 +400,8 @@ func (p *EventProcessor) processMessage(ctx context.Context, message redis.XMess
 	default:
 		log.Printf("[AUDIT] Unknown event type: %s — data: %+v", evt.EventType, evt.Data)
 	}
+
+	return nil
 }
 
 // parseRedisConnectionString parses a StackExchange.Redis-style connection string

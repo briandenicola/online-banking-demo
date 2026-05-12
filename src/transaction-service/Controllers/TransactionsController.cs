@@ -42,7 +42,7 @@ public class TransactionsController : ControllerBase
         {
             _logger.LogWarning("Insufficient funds for account {AccountId}: balance {Balance}, requested {Amount}",
                 ex.AccountId, ex.CurrentBalance, ex.RequestedAmount);
-            return BadRequest(new { error = "Insufficient funds", message = ex.Message });
+            return BadRequest(new { error = "Insufficient funds" });
         }
     }
 

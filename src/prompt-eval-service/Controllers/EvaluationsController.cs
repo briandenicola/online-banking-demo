@@ -33,9 +33,15 @@ public class EvaluationsController : ControllerBase
             var run = await _evalService.StartEvaluationAsync(request.TemplateId, request.TransactionIds);
             return AcceptedAtAction(nameof(GetRun), new { id = run.Id }, run);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(new { error = "Template not found" });
+        }
+        catch (Exception ex)
+        {
+            var correlationId = HttpContext.TraceIdentifier;
+            _logger.LogError(ex, "Evaluation run failed. CorrelationId: {CorrelationId}", correlationId);
+            return StatusCode(500, new { error = "An internal error occurred", correlationId });
         }
     }
 
@@ -67,9 +73,15 @@ public class EvaluationsController : ControllerBase
             var comparison = await _evalService.CompareRunsAsync(runId1, runId2);
             return Ok(comparison);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(new { error = "Run not found" });
+        }
+        catch (Exception ex)
+        {
+            var correlationId = HttpContext.TraceIdentifier;
+            _logger.LogError(ex, "Run comparison failed. CorrelationId: {CorrelationId}", correlationId);
+            return StatusCode(500, new { error = "An internal error occurred", correlationId });
         }
     }
 }

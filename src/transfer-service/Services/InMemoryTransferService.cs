@@ -81,7 +81,7 @@ public class InMemoryTransferService : ITransferService
         {
             _logger.LogError(ex, "Transfer failed: {TransferId}", transfer.Id);
             transfer.Status = "Failed";
-            transfer.FailureReason = ex.Message;
+            transfer.FailureReason = "Transfer could not be completed";
             _transfers[transfer.Id] = transfer;
             return transfer;
         }

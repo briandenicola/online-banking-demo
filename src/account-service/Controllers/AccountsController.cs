@@ -113,8 +113,9 @@ public class AccountsController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to update balance for account {AccountId}", id);
-            return BadRequest(new { Message = ex.Message });
+            var correlationId = HttpContext.TraceIdentifier;
+            _logger.LogError(ex, "Failed to update balance for account {AccountId}. CorrelationId: {CorrelationId}", id, correlationId);
+            return StatusCode(500, new { error = "An internal error occurred", correlationId });
         }
     }
 }

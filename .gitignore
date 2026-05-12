@@ -60,3 +60,8 @@ Thumbs.db
 .squad/sessions/
 # Squad: SubSquad activation file (local to this machine)
 .squad-workstream
+
+**/obj.root/
+**/bin.root/
+**/obj2/
+**/build-intermediate/

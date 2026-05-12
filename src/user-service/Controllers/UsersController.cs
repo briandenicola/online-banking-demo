@@ -106,7 +106,7 @@ public class UsersController : ControllerBase
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("already exists"))
         {
-            return Conflict(new { Message = ex.Message });
+            return Conflict(new { error = ex.Message });
         }
     }
 

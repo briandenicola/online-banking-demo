@@ -90,7 +90,7 @@ public class TransferService : ITransferService
         {
             _logger.LogError(ex, "Transfer failed: {TransferId}", transfer.Id);
             transfer.Status = "Failed";
-            transfer.FailureReason = ex.Message;
+            transfer.FailureReason = "Transfer could not be completed";
             try
             {
                 await _container.CreateItemAsync(transfer, new PartitionKey(transfer.Id));

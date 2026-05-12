@@ -33,9 +33,15 @@ public class AuthController : ControllerBase
             var user = await _userService.CreateUserAsync(request);
             return CreatedAtAction(nameof(Register), new { UserId = user.Id, Username = user.Username });
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException ex) when (ex.Message.Contains("already exists"))
         {
-            return BadRequest(new { Message = ex.Message });
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            var correlationId = HttpContext.TraceIdentifier;
+            _logger.LogError(ex, "Registration failed. CorrelationId: {CorrelationId}", correlationId);
+            return StatusCode(500, new { error = "An internal error occurred", correlationId });
         }
     }
 
