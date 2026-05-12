@@ -1,0 +1,55 @@
+{
+  "applicantProfile": {
+    "firstName": "John",
+    "lastName": "Smith",
+    "dateOfBirth": "1988-03-15",
+    "address": {
+      "street": "742 Evergreen Terrace",
+      "city": "Springfield",
+      "state": "IL",
+      "zip": "62704",
+      "country": "US"
+    },
+    "email": "john.smith@example.com",
+    "phone": "+12175551234",
+    "ssn_last4": "5678",
+    "employer": "Contoso Technologies",
+    "jobTitle": "IT Engineer",
+    "annualIncome": 125000.0,
+    "accountType": "checking"
+  },
+  "photoIdSpec": {
+    "documentNumber": "D-1234-5678-9012",
+    "expiryDate": "2029-03-15",
+    "issuingState": "Illinois",
+    "documentClass": "D"
+  },
+  "proofOfAddressSpec": {
+    "providerName": "Springfield Electric Utility",
+    "accountNumber": "ACCT-78901234",
+    "billDate": "2025-07-01",
+    "amountDue": 127.43
+  },
+  "applicationFormData": {
+    "firstName": "John",
+    "lastName": "Smith",
+    "email": "john.smith@example.com",
+    "phone": "+12175551234",
+    "dateOfBirth": "1988-03-15",
+    "address": {
+      "street": "742 Evergreen Terrace",
+      "city": "Springfield",
+      "state": "IL",
+      "zip": "62704",
+      "country": "US"
+    },
+    "employment": {
+      "employer": "Contoso Technologies",
+      "title": "IT Engineer",
+      "annualIncome": 125000.0
+    },
+    "annualIncome": 125000.0,
+    "accountType": "checking",
+    "ssn": "5678"
+  }
+}
