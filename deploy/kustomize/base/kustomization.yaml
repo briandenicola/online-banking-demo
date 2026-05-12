@@ -4,11 +4,11 @@ kind: Kustomization
 namespace: banking-demo
 
 
+
 resources:
 - namespace.yaml
 - configmap.yaml
 - secret-provider-class.yaml
-
 - user-service.yaml
 - account-service.yaml
 - transaction-service.yaml

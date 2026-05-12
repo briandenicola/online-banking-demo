@@ -29,11 +29,15 @@ test.describe('Smoke Tests', () => {
     }
 
     // Optional services — log status but don't fail the test
-    const optionalEndpoints = ['/api/account-opening/healthz'];
+    // account-opening /healthz is on the root app, not under the router prefix,
+    // so it's not reachable through the gateway. Probe the applications endpoint instead —
+    // a 401 (missing token) proves the service is alive and routable.
+    const optionalEndpoints = ['/api/account-opening/applications'];
     for (const endpoint of optionalEndpoints) {
       try {
         const response = await request.get(endpoint);
-        console.log(`[Smoke] ${endpoint} → ${response.status()} ${response.status() < 500 ? '✓' : '(degraded)'}`);
+        const alive = response.status() < 500;
+        console.log(`[Smoke] ${endpoint} → ${response.status()} ${alive ? '✓' : '(degraded)'}`);
       } catch {
         console.log(`[Smoke] ${endpoint} → unreachable (service may not be deployed)`);
       }

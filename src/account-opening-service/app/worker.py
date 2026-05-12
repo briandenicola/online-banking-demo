@@ -118,6 +118,17 @@ async def main() -> int:
 
     state_machine = ApplicationStateMachine()
 
+    # BlobServiceClient for document extraction to download blobs for CUS
+    storage_account_name = os.getenv("AZURE_STORAGE_ACCOUNT_NAME")
+    if storage_account_name:
+        from azure.storage.blob import BlobServiceClient
+        blob_account_url = f"https://{storage_account_name}.blob.core.windows.net"
+        blob_service_client = BlobServiceClient(blob_account_url, credential=credential)
+        logger.info("Blob service client initialized", account=storage_account_name)
+    else:
+        logger.error("AZURE_STORAGE_ACCOUNT_NAME not set — required for document extraction")
+        return 1
+
     worker_id = os.getenv("HOSTNAME", "account-opening-worker")
     consumers = [
         DocumentExtractionConsumer(
@@ -126,6 +137,7 @@ async def main() -> int:
             state_machine=state_machine,
             consumer_name=f"{worker_id}-document-extraction",
             cus_endpoint=cus_endpoint,
+            blob_service_client=blob_service_client,
         ),
         IdentityVerificationConsumer(
             redis_client,

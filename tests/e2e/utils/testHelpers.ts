@@ -42,7 +42,7 @@ export async function waitForAllServices(baseURL: string): Promise<void> {
   ];
 
   const optionalServices = [
-    { name: 'account-opening', path: '/api/account-opening/healthz' },
+    { name: 'account-opening', path: '/api/account-opening/applications' },
   ];
 
   // Required services must be healthy

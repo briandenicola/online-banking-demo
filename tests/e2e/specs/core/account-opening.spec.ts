@@ -4,7 +4,9 @@ import { test, expect, apiLogin, DEFAULT_USER } from '../../fixtures/authFixture
 
 const LOG_PREFIX = '[E2E Account Opening]';
 const ACCOUNT_OPENING_BASE = '/api/account-opening';
-const HEALTH_ENDPOINT = `${ACCOUNT_OPENING_BASE}/healthz`;
+// Health check probes the applications endpoint (401 = alive) since /healthz
+// is on the root app and not routable through the Istio VirtualService gateway
+const HEALTH_ENDPOINT = `${ACCOUNT_OPENING_BASE}/applications`;
 const APPLICATIONS_ENDPOINT = `${ACCOUNT_OPENING_BASE}/applications`;
 
 // Load applicant fixture data

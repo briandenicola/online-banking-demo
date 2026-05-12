@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 import structlog
 
@@ -27,6 +29,7 @@ class DocumentExtractionConsumer(AgentConsumer):
         state_machine: ApplicationStateMachine,
         consumer_name: str,
         cus_endpoint: str,
+        blob_service_client=None,
         model_deployments: dict[str, str] | None = None,
     ) -> None:
         super().__init__(
@@ -37,9 +40,12 @@ class DocumentExtractionConsumer(AgentConsumer):
         )
         if not cus_endpoint:
             raise RuntimeError("CUS_ENDPOINT is not configured for document extraction")
+        if not blob_service_client:
+            raise RuntimeError("BlobServiceClient is required for document extraction")
 
         self._repository = repository
         self._state_machine = state_machine
+        self._blob_service_client = blob_service_client
 
         try:
             from azure.ai.contentunderstanding import ContentUnderstandingClient
@@ -78,10 +84,33 @@ class DocumentExtractionConsumer(AgentConsumer):
         if not blob_url:
             raise ValueError("document_uploaded event missing blobUrl")
 
+        # Download blob content so CUS doesn't need direct network access
+        try:
+            parsed = urlparse(blob_url)
+            path_parts = parsed.path.lstrip("/").split("/", 1)
+            container_name = path_parts[0]
+            blob_name = path_parts[1] if len(path_parts) > 1 else ""
+            blob_client = self._blob_service_client.get_blob_client(
+                container=container_name, blob=blob_name,
+            )
+            blob_data = blob_client.download_blob().readall()
+            logger.info("Downloaded blob for CUS analysis", blob_url=blob_url, size=len(blob_data))
+        except Exception as exc:
+            logger.error("Failed to download blob", blob_url=blob_url, error=str(exc))
+            raise
+
+        # Determine MIME type from filename
+        filename = payload.get("filename", "")
+        mime_type = "application/pdf"
+        if filename.lower().endswith((".jpg", ".jpeg")):
+            mime_type = "image/jpeg"
+        elif filename.lower().endswith(".png"):
+            mime_type = "image/png"
+
         try:
             poller = self._client.begin_analyze(
                 analyzer_id=ANALYZER_NAME,
-                inputs=[self._analysis_input_cls(url=blob_url)],
+                inputs=[self._analysis_input_cls(data=blob_data, mime_type=mime_type)],
             )
             analysis = poller.result()
         except Exception as exc:
