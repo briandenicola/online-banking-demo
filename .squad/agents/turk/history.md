@@ -134,3 +134,26 @@ Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com
 **Base class:** `src/account-opening-service/app/consumer.py` — defines `@abc.abstractmethod process_event`
 
 **Learning:** Never place runtime-required method implementations inside `if TYPE_CHECKING:` blocks — those blocks are stripped at runtime by design. Use string-quoted type annotations (e.g., `"DefaultAzureCredential | None"`) for forward references instead of `TYPE_CHECKING` imports when the type is only needed in signatures.
+
+### 2026-05-12 — Sample Documents Phases 4-5 (Issue #16)
+
+**Feature:** Implemented proof of address PDF generator and unified CLI script for sample document generation.
+
+**What was built:**
+1. **T007-T008 (Phase 4):** `tests/fixtures/sample-documents/generate_proof_of_address.py` — portrait A4 utility bill PDF with header (Springfield Electric Utility), account info, service address (Name/Address labels matching normalization mapping), billing summary, and a table breakdown using fpdf2 `table()` context manager.
+2. **T009-T010 (Phase 5):** `tests/fixtures/sample-documents/generate.py` — unified CLI with `argparse`, `--profile` flag (default: `applicants/john-smith.json`), generates both photo_id.pdf and proof_of_address.pdf, prints summary with file sizes.
+
+**Key files:**
+- `tests/fixtures/sample-documents/generate_proof_of_address.py` — proof of address generator
+- `tests/fixtures/sample-documents/generate.py` — CLI entry point
+- `tests/fixtures/sample-documents/john-smith/proof_of_address.pdf` — generated utility bill (1,885 bytes)
+
+**Patterns followed:**
+- Same function signature pattern as `generate_photo_id.py`: `(profile, spec, output_path) -> None`
+- Same import style: `from models import ...`, `from fpdf import FPDF`
+- Same `if __name__ == "__main__"` guard with `out_dir` naming convention
+- Field labels `Name` and `Address` match normalization mapping exactly
+- All data sourced from profile JSON via `load_profile()`, never hardcoded
+- Module-level docstrings and type hints added (covers T011)
+
+**Gotcha:** fpdf2 Helvetica font doesn't support em dash (U+2014) — use regular dash instead in text cells. Got `FPDFUnicodeEncodingException` until replaced `—` with `-`.

@@ -289,3 +289,31 @@ The application has ~11 critical bugs across all layers (3 infrastructure, 6 bac
 - ApplicationStatus uses jest.useFakeTimers() for deterministic polling tests
 - API tests mock the axios client directly, matching existing Accounts.test.tsx/Login.test.tsx patterns
 - Document upload tests use createMockFile helper for consistent file objects
+
+## Issue #16 — Sample Documents Validation (Phase 6: T012, T013)
+
+### T012 — Field Consistency Check: ALL PASS
+- **Field labels in photo ID PDF**: `Name`, `Date of Birth`, `Address`, `License Number`, `Expiry Date`, `Issuing State`, `Class` — all match D2 normalization mapping
+- **Field labels in proof of address PDF**: `Name`, `Address` — present and correct
+- **Values from profile objects**: All values sourced from `profile.full_name`, `profile.format_dob()`, `profile.full_address`, etc. — no hardcoded data
+- **applicationFormData ↔ applicantProfile**: All identity fields (firstName, lastName, dateOfBirth, address, email, accountType) are consistent between both objects
+- **applicationFormData schema**: Matches ApplicationCreate model from data-model.md exactly (all keys + sub-objects verified)
+
+### T013 — Quickstart Validation: ALL PASS
+- `cd tests/fixtures/sample-documents && pip install fpdf2 && python generate.py` — succeeded
+- Photo ID: 1,392 bytes ✓ (>500)
+- Proof of Address: 1,885 bytes ✓ (>500)
+- CLI summary output printed to stdout ✓
+- `--profile` flag works ✓
+- `--help` shows usage with `--profile` argument ✓
+
+### Additional Quality Checks: ALL PASS
+- All 4 Python files have complete type hints (verified via AST inspection)
+- `models.load_profile()` loads and validates john-smith.json without errors
+- PDF text extraction confirmed native text (not images) — all field labels and values present as PDF text operators (Tj)
+- `generate.py --help` prints usage with `--profile` argument
+- Billing breakdown table uses `fpdf2` `table()` context manager as spec'd
+- Module-level docstrings present in all files
+
+### Issues Found: NONE
+- No decision inbox entry needed — all checks passed clean.
