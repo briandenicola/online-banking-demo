@@ -117,6 +117,14 @@ spec:
         host: ai-service
         port:
           number: 80
+  - match:
+    - uri:
+        prefix: /api/account-opening
+    route:
+    - destination:
+        host: account-opening-service
+        port:
+          number: 80
   # Default: serve UI
   - route:
     - destination:

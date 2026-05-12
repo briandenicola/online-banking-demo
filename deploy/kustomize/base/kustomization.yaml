@@ -8,7 +8,7 @@ resources:
 - namespace.yaml
 - configmap.yaml
 - secret-provider-class.yaml
-- virtualservice.yaml
+
 - user-service.yaml
 - account-service.yaml
 - transaction-service.yaml
