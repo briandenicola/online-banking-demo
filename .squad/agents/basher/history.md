@@ -2250,3 +2250,31 @@ I narrowed the shipped guard to *only* `agent-framework-*` per Brian's spec and 
 - `.squad/decisions/inbox/basher-137-preview-sdk-pinning.md` (new)
 
 **No service code touched. No deploys.** Brian to deploy via `task cloud:deploy` after review. Existing skill `.squad/skills/preview-sdk-pinning/SKILL.md` already covers the pattern; no skill update needed (it predicted exactly this remediation step in section "Remediation Checklist" item 4 — "Pre-commit lint: fail on `agent-framework.*= \"\*\"`").
+
+## Learnings (issue #130 — aiCallsToday redux)
+
+- **In-memory counter anti-pattern in multi-pod services.** Any module/class-level integer that's read by an HTTP endpoint is broken under HPA min>=2 — different pods serve different reads. Symptom: dashboard "flicker" (17 → 68 → 17) as requests round-robin. The fix is always external state (Redis), never sticky sessions or "best-effort sync".
+- **Redis INCR + first-write TTL.** `INCR` creates the key without a TTL. Set TTL only when the increment returns `1` (newly created) — do NOT call `EXPIRE` on every increment, which resets the clock and the key never expires. Equivalent: check `TTL == -1` (key exists, no TTL). Either is idempotent; the `INCR == 1` branch is one fewer round-trip.
+- **Success-path-only increments.** Bumping the counter inside the same `try:` block as the AI call (and before the success return) means a Redis hiccup will be caught by the outer `except Exception` and turn a successful AI result into a fallback assessment. Two fixes together: (a) move the increment after `_parse_response` so it only runs on success; (b) wrap the increment in its own try/except that swallows Redis errors. The metric is less important than the AI result.
+- **Pass `redis_client` through every call site.** Easy to miss: the `/detect` synchronous endpoint was calling `pipeline.assess(body.model_dump())` without `redis_client`, so on-demand scores weren't counted at all. Audit every caller of any function that does the increment.
+- **UTC for day-bucket keys.** Always `datetime.now(timezone.utc).strftime("%Y-%m-%d")`. Naive `datetime.now()` would mean different pods in different TZs would write to different keys around midnight — another flicker source.
+
+### Eval-403 RCA #2 — The Real Root Cause (2026-05-13)
+
+**The real cause:** The `/api/admin/evaluate` endpoint was sending eval payloads with **only `[system, user]` turns — no assistant turn**. FoundryEvals' raisvc backend requires a non-empty assistant message to evaluate (it's evaluating a *response*, after all). When the assistant turn is absent / empty, raisvc rejects the eval-run create with a 400-wrapped 403 `UnauthorizedUserAction` — a misleading error code that *looks* like RBAC but is actually "your eval payload is incomplete."
+
+**Bisect path that found it:**
+1. Confirmed live failure in `kubectl logs deploy/ai-service`: POST `/openai/v1/evals` → 201, POST `/openai/v1/evals/{id}/runs` → 400 (componentName: raisvc).
+2. Traced eval flow into installed SDK — `agent_framework_foundry/_foundry_evals.py:_evaluate_via_dataset` builds `query_text` from `role==user` messages and `response_text` from `role==assistant` messages. With only system+user, `response_text == ""`.
+3. Verified token scope is irrelevant: `azure.ai.projects` hardcodes `https://ai.azure.com/.default` for `get_openai_client()`. Our app's `get_token(...)` call at startup is purely a diagnostic warm-up; SDK requests its own scope. So the warm-up scope value doesn't affect runtime auth.
+4. Compared current `app/routes/api.py:356-376` against pre-refactor `app/main.py` at commit `bd4f6a7`. Original code did `session = eval_agent.create_session(); response = await eval_agent.run(user_msg, session=session)` and appended `Message(role="assistant", contents=[str(response)])`. Refactor stripped both lines.
+5. Confirmed the regression was introduced in **commit 39dfdbe** ("P2 Wave 1: code quality + refactoring (10 issues) (#114)") which extracted `main.py` → `routes/api.py` and dropped the `eval_agent.run()` call (and broke `Message`/`EvalItem` API to boot — the latter was patched in #126 / 4134138 but the missing assistant turn was not noticed because the immediate AttributeError masked it).
+6. The dead `eval_agent` variable in current code (constructed but never used) is the smoking-gun residue of the lost code path.
+
+**Fix applied:** `src/ai-service/app/routes/api.py` — restore `eval_agent.create_session()` + `await eval_agent.run(prompt, session=...)` and append `Message("assistant", [agent_response.text])` to each EvalItem's conversation. Also pass `eval_name=request.eval_name` to `evals.evaluate()` (was being ignored). Plus reverted the silent regression in `anomaly_service.py` (commit 243457f) of the warm-up scope from `ai.azure.com` back to `cognitiveservices.azure.com` — cosmetic / diagnostic only, but worth tidying for log clarity.
+
+**Why the prior 1.2.2 pin (commit 0b6255a) was a red herring:** The SDK contract was fine on 1.2.x. The eval payload was structurally incomplete on *our* side. Pinning fixed nothing because the SDK was never the cause. Same for the RBAC chase — Cognitive Services Contributor / Azure AI Project Manager didn't help because the request never had a permissions problem; raisvc fails the request before role evaluation when payload validation fails, then maps it to the catch-all `UnauthorizedUserAction` code.
+
+**Lesson:** Treat `componentName: raisvc` + `UnauthorizedUserAction` 403s as **payload validation failures first, RBAC second**. Always check that `query_text` *and* `response_text` will be non-empty after the SDK splits the conversation. If your eval is meant to test a prompt, you must run the prompt first and capture the model output — there is no "evaluate without a response" mode for the safety/quality evaluators.
+
+**Issue:** #137  **Branch:** current  **Tests:** 72 pass, 1 skip (no behavioural test of the eval flow yet — follow-up worth filing).

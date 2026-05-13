@@ -66,7 +66,7 @@ async def detect(
     """Score a single transaction synchronously (for on-demand assessment)."""
     if not state.analyzer_pipeline:
         raise HTTPException(status_code=503, detail="Analyzer pipeline not initialized")
-    return await state.analyzer_pipeline.assess(body.model_dump())
+    return await state.analyzer_pipeline.assess(body.model_dump(), state.redis_client)
 
 
 @router.get("/api/admin/foundry-status")
@@ -363,17 +363,28 @@ async def run_foundry_evaluation(
             f"- Category: {tx.get('category', 'N/A')}\n"
             f"- Account: ****{str(tx.get('accountId', '')[-4:])}"
         )
+
+        # FoundryEvals (raisvc) requires a non-empty assistant turn to evaluate.
+        # Run the prompt through the eval_agent first to capture the model's
+        # response, then submit the full system→user→assistant conversation.
+        # Without the assistant turn, raisvc rejects the run with a 400-wrapped
+        # 403 (UnauthorizedUserAction) — see issue #137.
+        session = eval_agent.create_session()
+        agent_response = await eval_agent.run(prompt, session=session)
+        assistant_text = agent_response.text or ""
+
         eval_items.append(
             EvalItem(
                 conversation=[
                     Message("system", [request.system_prompt]),
                     Message("user", [prompt]),
+                    Message("assistant", [assistant_text]),
                 ],
             )
         )
 
     evals = FoundryEvals(client=client, evaluators=request.evaluators)
-    results = await evals.evaluate(eval_items)
+    results = await evals.evaluate(eval_items, eval_name=request.eval_name)
     return {
         "status": "ok",
         "eval_name": request.eval_name,

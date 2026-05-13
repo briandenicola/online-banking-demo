@@ -34,6 +34,44 @@ SCORED_TRANSACTION_PREFIX = "scored-tx:"
 SCORED_TX_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
 FLAGGING_THRESHOLD = 0.7
 
+# Cross-replica AI call counter. Per-pod in-memory counters caused dashboard
+# flicker under HPA min>=2 (issue #130). Storage: ai:metrics:calls:{YYYY-MM-DD}
+# (UTC date-bucketed, INCR + 36h TTL set only on key creation).
+AI_CALLS_COUNTER_PREFIX = "ai:metrics:calls"
+AI_CALLS_COUNTER_TTL_SECONDS = 36 * 60 * 60  # 36h: covers UTC day boundary + buffer
+
+
+async def _increment_ai_calls_counter(redis_client: Optional[redis.Redis]) -> None:
+    """Increment today's AI-call counter in Redis. Failures are logged, never raised:
+    a Redis hiccup must NOT degrade the AI request path."""
+    if not redis_client:
+        return
+    try:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        key = f"{AI_CALLS_COUNTER_PREFIX}:{today}"
+        new_value = await redis_client.incr(key)
+        # Only set TTL when the key is freshly created — avoid resetting on every
+        # increment (which would prevent expiration entirely).
+        if new_value == 1:
+            await redis_client.expire(key, AI_CALLS_COUNTER_TTL_SECONDS)
+    except Exception as e:
+        logger.warning("Failed to increment AI calls counter (non-fatal)", error=str(e))
+
+
+async def get_ai_calls_today_from_redis(redis_client: Optional[redis.Redis]) -> int:
+    """Read today's AI-call count. Returns 0 if Redis is unavailable so the
+    dashboard degrades gracefully instead of 500-ing."""
+    if not redis_client:
+        return 0
+    try:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        key = f"{AI_CALLS_COUNTER_PREFIX}:{today}"
+        count = await redis_client.get(key)
+        return int(count) if count else 0
+    except Exception as e:
+        logger.warning("Failed to read AI calls counter from Redis", error=str(e))
+        return 0
+
 @dataclass
 class AnomalyState:
     redis_client: Optional[redis.Redis] = None
@@ -149,18 +187,13 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
                 session = self._agent.create_session()
                 response = await self._agent.run(user_message, session=session)
 
-                # Increment AI calls counter in Redis (success path only)
-                if redis_client:
-                    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                    counter_key = f"ai:metrics:calls:{today}"
-                    await redis_client.incr(counter_key)
-                    # Set TTL to 36 hours on first increment (covers UTC day boundary + buffer)
-                    ttl = await redis_client.ttl(counter_key)
-                    if ttl == -1:  # Key exists but has no TTL
-                        await redis_client.expire(counter_key, 36 * 60 * 60)
-
                 result = self._parse_response(str(response))
                 span.set_attribute("risk.score", result.riskScore)
+
+                # Success path only: increment cross-replica AI call counter.
+                # Helper swallows any Redis error so the AI result is never lost.
+                await _increment_ai_calls_counter(redis_client)
+
                 return result
 
             except Exception as e:
@@ -334,25 +367,6 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
                 confidence=0.0,
                 reasoning="Failed to parse categorization response"
             )
-
-
-def get_ai_calls_today(analyzer_pipeline: Optional["AnalyzerPipeline"]) -> int:
-    """Deprecated: counter moved to Redis. Use get_ai_calls_today_from_redis instead."""
-    return 0
-
-
-async def get_ai_calls_today_from_redis(redis_client: Optional[redis.Redis]) -> int:
-    """Get today's AI call count from Redis."""
-    if not redis_client:
-        return 0
-    try:
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        counter_key = f"ai:metrics:calls:{today}"
-        count = await redis_client.get(counter_key)
-        return int(count) if count else 0
-    except Exception as e:
-        logger.warning(f"Failed to read AI calls counter from Redis: {e}")
-        return 0
 
 
 class AnalyzerPipeline:
@@ -784,7 +798,7 @@ async def lifespan(app: FastAPI):
             state.foundry_credential = credential
             state.foundry_endpoint = endpoint
             state.foundry_model = model_name
-            token = await asyncio.to_thread(credential.get_token, "https://cognitiveservices.azure.com/.default")
+            token = await asyncio.to_thread(credential.get_token, "https://ai.azure.com/.default")
             logger.info(f"✅ Azure credential acquired (expires: {token.expires_on})")
 
             risk_agent = FoundryAgent(
