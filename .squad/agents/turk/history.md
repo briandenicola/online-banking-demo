@@ -831,3 +831,37 @@ Basher's eval-403 RCA (issue #137) established a **new exception to the repo's s
 
 ### Watch Out For
 If you touch any Python service's pyproject.toml and encounter agent-framework or azure-ai-inference dependencies, treat them as preview-channel and use exact pins. Don't fall back to range constraints.
+
+### 2026-05-12 — Crash Fix: ORDER BY + Composite Index Requirement
+
+**Issue:** prompt-eval-service crashed on startup after #125 fix:
+```
+CosmosException: BadRequest (400)
+Reason: The order by query does not have a corresponding composite index
+Container: PromptTemplates
+```
+
+**Root Cause:** Commit 243457f introduced OR-both-casings queries (`c.userId = 'global' OR c.UserId = 'global'`) with ORDER BY clauses (`ORDER BY c.updatedAt DESC, c.CreatedAt DESC`). Cosmos DB requires a **composite index** to serve OR-pattern + ORDER BY queries efficiently.
+
+**Learning:** Combining OR-pattern defensive queries with ORDER BY forces a composite index requirement:
+- Composite indexes must be pre-defined in Terraform
+- Blocks deployment until Brian runs `terraform apply`
+- Couples code changes to infra changes (bad)
+- Only justified for high-traffic, large-result-set queries
+
+**Fix Applied (Option A):** Removed ORDER BY from Cosmos queries, sorted in-memory instead:
+- `CosmosEvaluationRunRepository.GetAllAsync()` → fetch all, then `.OrderByDescending(r => r.CreatedAt).ToList()`
+- `CosmosPromptTemplateRepository.GetAllAsync()` → fetch all, then `.OrderByDescending(t => t.UpdatedAt).ToList()`
+
+**Rationale:** These are **admin tables** (global templates, evaluation runs) with ~10-50 total docs max. In-memory sort is perfectly acceptable and avoids infra coupling.
+
+**Files Changed:**
+- `src/prompt-eval-service/Repositories/CosmosEvaluationRunRepository.cs`
+- `src/prompt-eval-service/Repositories/CosmosPromptTemplateRepository.cs`
+- `.squad/skills/cosmos-casing-audit/SKILL.md` — added "ORDER BY Pitfall" section
+
+**Verification:** `dotnet build` succeeded with 0 errors.
+
+**Decision:** `.squad/decisions/inbox/turk-orderby-composite-index.md`
+
+**Key Takeaway:** For small admin tables, prefer in-memory sort over composite indexes. Reserve composite indexes for user-scoped queries with 100s-1000s of docs per user.
