@@ -1207,3 +1207,22 @@ All `.NET` controllers now return generic error messages with `correlationId` (f
 7. Hardcoded config fallbacks
 
 **Full report:** `.squad/decisions/inbox/basher-code-audit.md`
+
+### 2026-05 — .NET P1 Fixes: Exception Handling & Cosmos Init (#88, #90, #91)
+
+**Issue #90 — Global exception handler middleware:**
+Added `GlobalExceptionHandlerMiddleware` to `Banking.Observability` shared library. All 5 .NET services (user, account, transaction, transfer, prompt-eval) now register it via `UseGlobalExceptionHandler()` in the pipeline. Returns standardized JSON `{ error, message, statusCode }`. Hides stack traces in production; shows exception messages in development. Maps exception types to HTTP codes (ArgumentException→400, InvalidOperation→422, KeyNotFound→404, etc.). Includes correlation ID in logs.
+
+**Issue #88 — Specific exception catches:**
+Replaced broad `catch (Exception)` blocks in Redis publish methods (TransactionService.PublishTransactionCreatedEvent, PublishInsufficientFundsEvent; TransferService.PublishTransferInitiatedEvent) with `catch (RedisConnectionException)` + `catch (RedisException)`. Transfer initiation flow now catches `HttpRequestException`, `InvalidOperationException`, and `CosmosException` separately. Persist-failure inner catches narrowed to `CosmosException`. UpdateAccountBalanceAsync catch narrowed to `CosmosException`.
+
+**Issue #91 — Cosmos init silent fallback:**
+Fixed `account-opening-service/app/main.py` Cosmos init to catch `CosmosHttpResponseError` and `ConnectionError/OSError` specifically. In production (`AZURE_CLIENT_ID` set), failures abort startup instead of silently falling back to in-memory. In dev mode, in-memory fallback preserved with clear warning logs per failure type. Verified no similar silent fallback exists in .NET services (they use explicit `UseInMemoryDatabase` config toggle).
+
+**Key files:**
+- `src/shared/Observability/GlobalExceptionHandlerMiddleware.cs` — middleware
+- `src/shared/Observability/ObservabilityExtensions.cs` — `UseGlobalExceptionHandler()` extension
+- All 5 `Program.cs` files — middleware registration
+- `src/transaction-service/Services/TransactionService.cs` — specific catches
+- `src/transfer-service/Services/TransferService.cs` — specific catches
+- `src/account-opening-service/app/main.py` — Cosmos init fix
