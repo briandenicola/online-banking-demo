@@ -66,6 +66,48 @@ task cloud:deploy      # Deploy to AKS
 task e2e:run                      # Run Playwright E2E tests
 ```
 
+## 📖 API Documentation
+
+All backend services expose OpenAPI (Swagger) documentation:
+
+### .NET Services
+- [User Service](api/user-service-openapi.json) — Authentication and user management
+- [Account Service](api/account-service-openapi.json) — Account CRUD operations
+- [Transaction Service](api/transaction-service-openapi.json) — Transaction recording and retrieval
+- [Transfer Service](api/transfer-service-openapi.json) — Peer-to-peer and account transfers
+- [Prompt Evaluation Service](api/prompt-eval-service-openapi.json) — AI prompt template management
+
+### Python Services (FastAPI)
+- [AI Service](api/ai-service-openapi.json) — Risk scoring and transaction categorization
+- [Budget Service](api/budget-service-openapi.json) — Budget tracking and insights
+- [Chatbot Service](api/chatbot-service-openapi.json) — AI financial advice chatbot
+- [Account Opening Service](api/account-opening-service-openapi.json) — AI-powered account opening
+
+### Runtime Swagger UI
+When running locally, all services expose interactive Swagger UI at `/swagger`:
+- User Service: http://localhost:8081/swagger
+- Account Service: http://localhost:8082/swagger
+- Transaction Service: http://localhost:8083/swagger
+- Transfer Service: http://localhost:8084/swagger
+- AI Service: http://localhost:8085/docs
+- Budget Service: http://localhost:8086/docs
+- Chatbot Service: http://localhost:8087/docs
+- Account Opening Service: http://localhost:8088/docs
+- Prompt Eval Service: http://localhost:8089/swagger
+
+### Regenerating OpenAPI Specs
+To regenerate the committed OpenAPI specs after API changes:
+
+```bash
+./scripts/generate-openapi-specs.sh
+```
+
+This script:
+1. Installs `Swashbuckle.AspNetCore.Cli` (for .NET services)
+2. Builds each service
+3. Extracts the OpenAPI spec using `swagger tofile`
+4. Writes the spec to `docs/api/{service-name}-openapi.json`
+
 ## 📂 Repository Structure
 
 ```
@@ -74,7 +116,10 @@ online-banking-demo/
 ├── cluster-config/         # Istio, cert-manager, network policies
 ├── deploy/kustomize/       # Kubernetes manifests (base + overlays)
 ├── docs/                   # This documentation
+│   └── api/                # OpenAPI specs for all services
 ├── infra/cloud/            # Terraform for Azure resources
+├── scripts/                # Build and utility scripts
+│   └── generate-openapi-specs.sh  # Regenerate OpenAPI specs
 ├── src/
 │   ├── account-service/    # .NET — Account management
 │   ├── ai-service/         # Python — Risk scoring & categorization
