@@ -1,0 +1,909 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Anomaly Detection Service",
+    "version": "2.0.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "summary": "Healthz",
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "summary": "Ready",
+        "operationId": "ready_readyz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/detect": {
+      "post": {
+        "summary": "Detect",
+        "description": "Score a single transaction synchronously (for on-demand assessment).",
+        "operationId": "detect_detect_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DetectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RiskAssessment"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/foundry-status": {
+      "get": {
+        "summary": "Foundry Status",
+        "description": "Validate Foundry connectivity for transaction-categorizer and risk-assessor agents.",
+        "operationId": "foundry_status_api_admin_foundry_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/stats": {
+      "get": {
+        "summary": "Get Admin Stats",
+        "description": "Return aggregated admin statistics.",
+        "operationId": "get_admin_stats_api_admin_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminStats"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/transactions": {
+      "get": {
+        "summary": "List Scored Transactions",
+        "description": "List all scored transactions (most recent/highest risk).",
+        "operationId": "list_scored_transactions_api_admin_transactions_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ScoredTransaction"
+                  },
+                  "title": "Response List Scored Transactions Api Admin Transactions Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/flagged-transactions": {
+      "get": {
+        "summary": "List Flagged Transactions",
+        "description": "List all flagged transactions.",
+        "operationId": "list_flagged_transactions_api_admin_flagged_transactions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FlaggedTransaction"
+                  },
+                  "type": "array",
+                  "title": "Response List Flagged Transactions Api Admin Flagged Transactions Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/flagged-transactions/{tx_id}": {
+      "get": {
+        "summary": "Get Flagged Transaction",
+        "operationId": "get_flagged_transaction_api_admin_flagged_transactions__tx_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tx_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tx Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlaggedTransaction"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/scored-transactions/{tx_id}": {
+      "get": {
+        "summary": "Get Scored Transaction",
+        "operationId": "get_scored_transaction_api_admin_scored_transactions__tx_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tx_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tx Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoredTransaction"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/scored-transactions/{tx_id}/rescore": {
+      "post": {
+        "summary": "Rescore Transaction",
+        "operationId": "rescore_transaction_api_admin_scored_transactions__tx_id__rescore_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tx_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tx Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoredTransaction"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/flagged-transactions/{tx_id}/review": {
+      "put": {
+        "summary": "Review Flagged Transaction",
+        "operationId": "review_flagged_transaction_api_admin_flagged_transactions__tx_id__review_put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tx_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tx Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlaggedTransaction"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/prompts": {
+      "get": {
+        "summary": "Get Active Prompts",
+        "description": "List the active prompt templates (names/types only).",
+        "operationId": "get_active_prompts_api_admin_prompts_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/evaluate": {
+      "post": {
+        "summary": "Run Foundry Evaluation",
+        "description": "Run a Foundry evaluation using the Agent Framework's FoundryEvals.\n\nFor each transaction, first gets the model's response using the provided\nsystem prompt, then evaluates the full conversation (system\u2192user\u2192assistant).",
+        "operationId": "run_foundry_evaluation_api_admin_evaluate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AdminStats": {
+        "properties": {
+          "totalFlagged": {
+            "type": "integer",
+            "title": "Totalflagged"
+          },
+          "pendingReview": {
+            "type": "integer",
+            "title": "Pendingreview"
+          },
+          "reviewed": {
+            "type": "integer",
+            "title": "Reviewed"
+          },
+          "cleared": {
+            "type": "integer",
+            "title": "Cleared"
+          },
+          "avgRiskScore": {
+            "type": "number",
+            "title": "Avgriskscore"
+          },
+          "totalScored": {
+            "type": "integer",
+            "title": "Totalscored"
+          },
+          "highRiskCount": {
+            "type": "integer",
+            "title": "Highriskcount"
+          },
+          "aiCallsToday": {
+            "type": "integer",
+            "title": "Aicallstoday"
+          }
+        },
+        "type": "object",
+        "required": [
+          "totalFlagged",
+          "pendingReview",
+          "reviewed",
+          "cleared",
+          "avgRiskScore",
+          "totalScored",
+          "highRiskCount",
+          "aiCallsToday"
+        ],
+        "title": "AdminStats"
+      },
+      "DetectRequest": {
+        "properties": {
+          "transactionId": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Transactionid",
+            "description": "Transaction identifier"
+          },
+          "accountId": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Accountid",
+            "description": "Account identifier"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount",
+            "description": "Transaction amount"
+          },
+          "type": {
+            "type": "string",
+            "maxLength": 50,
+            "minLength": 1,
+            "title": "Type",
+            "description": "Transaction type (e.g. Debit, Credit, Transfer)"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Description",
+            "description": "Transaction description",
+            "default": ""
+          },
+          "category": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Category",
+            "description": "Transaction category",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "transactionId",
+          "accountId",
+          "amount",
+          "type"
+        ],
+        "title": "DetectRequest",
+        "description": "Strict schema for synchronous transaction detection."
+      },
+      "EvalRequest": {
+        "properties": {
+          "eval_name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Eval Name",
+            "description": "Display name for the evaluation run"
+          },
+          "system_prompt": {
+            "type": "string",
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "System Prompt",
+            "description": "System prompt to evaluate"
+          },
+          "transactions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Transactions",
+            "description": "List of transaction dicts to test against"
+          },
+          "evaluators": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Evaluators",
+            "description": "Foundry evaluator names (short form preferred, e.g. 'coherence' not 'builtin.coherence')",
+            "default": [
+              "coherence",
+              "fluency",
+              "relevance"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "eval_name",
+          "system_prompt",
+          "transactions"
+        ],
+        "title": "EvalRequest",
+        "description": "Request to run a Foundry evaluation."
+      },
+      "FlaggedTransaction": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "transactionId": {
+            "type": "string",
+            "title": "Transactionid"
+          },
+          "accountId": {
+            "type": "string",
+            "title": "Accountid"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "riskScore": {
+            "type": "number",
+            "title": "Riskscore"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "flags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Flags",
+            "default": []
+          },
+          "flaggedAt": {
+            "type": "string",
+            "title": "Flaggedat"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "pending"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "transactionId",
+          "accountId",
+          "amount",
+          "type",
+          "riskScore",
+          "reason",
+          "flaggedAt"
+        ],
+        "title": "FlaggedTransaction",
+        "description": "A high-risk transaction requiring admin review."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ReviewRequest": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "pattern": "^(reviewed|cleared)$",
+            "title": "Status"
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "notes"
+        ],
+        "title": "ReviewRequest"
+      },
+      "RiskAssessment": {
+        "properties": {
+          "riskScore": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Riskscore",
+            "description": "Risk score 0.0 (safe) to 1.0 (critical)"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation",
+            "description": "Human-readable explanation of the risk assessment"
+          },
+          "flags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Flags",
+            "description": "Risk flag categories detected"
+          }
+        },
+        "type": "object",
+        "required": [
+          "riskScore",
+          "explanation"
+        ],
+        "title": "RiskAssessment",
+        "description": "Result of analyzing a single transaction for risk."
+      },
+      "ScoredTransaction": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "transactionId": {
+            "type": "string",
+            "title": "Transactionid"
+          },
+          "accountId": {
+            "type": "string",
+            "title": "Accountid"
+          },
+          "userId": {
+            "type": "string",
+            "title": "Userid",
+            "default": ""
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category",
+            "default": ""
+          },
+          "categoryConfidence": {
+            "type": "number",
+            "title": "Categoryconfidence",
+            "default": 0.0
+          },
+          "categoryReasoning": {
+            "type": "string",
+            "title": "Categoryreasoning",
+            "default": ""
+          },
+          "riskScore": {
+            "type": "number",
+            "title": "Riskscore"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "flags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Flags",
+            "default": []
+          },
+          "scoredAt": {
+            "type": "string",
+            "title": "Scoredat"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "scored"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "transactionId",
+          "accountId",
+          "amount",
+          "type",
+          "description",
+          "riskScore",
+          "explanation",
+          "scoredAt"
+        ],
+        "title": "ScoredTransaction",
+        "description": "A transaction with its AI risk assessment and categorization."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}
