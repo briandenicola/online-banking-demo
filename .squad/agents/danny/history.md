@@ -947,3 +947,19 @@ Wave 3 ships are deployed and code-validated. The #123 ai-service consumer fix i
 - `.squad/decisions.md` — "Chat Persistence Regression — Missing partition_key in Cosmos upsert"
 - `.squad/decisions.md` — "Bundle Fix — #131 Foundry Token Scope + Chat Persistence (Commit 69ce049)"
 
+---
+
+## Note: Account-Opening Service — Workload Identity Foundry Auth (2026-05-13)
+
+**Reference:** `.squad/decisions.md` — "Revert account-opening-service to workload identity (issue #134)"
+
+Account-opening-service sidecar auth pattern (Entra Agent ID with dedicated auth-sidecar) has been **reverted to plain workload-identity** due to production token acquisition failures. The working pattern is **ai-service.yaml**, which uses:
+
+- `banking-workload-identity` ServiceAccount with Entra federated credentials
+- `DefaultAzureCredential` in Python code (automatic token handling, no sidecar)
+- Pod spec: init `provision-agents` + main app container + istio-proxy
+
+**Key insight:** Both services target the same Azure AI Foundry project with the same managed identity. Sidecar complexity added no value; workload identity is the simpler, proven pattern in this codebase.
+
+**Account-opening now mirrors ai-service pattern for Foundry agent authentication.**
+

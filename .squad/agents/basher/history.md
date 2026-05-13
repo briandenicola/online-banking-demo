@@ -2051,3 +2051,88 @@ resource "azurerm_role_assignment" "banking_ai_evaluator" {
 
 **Bundling:** Ship as standalone Terraform PR (no service restart needed).
 
+
+---
+
+## 2026-05-13 — Re-investigation of Eval 403 RAI Failure
+
+**Task:** Re-investigate 403 RAI failure after Brian added `Azure AI Developer` role and cycled pods  
+**Status:** 🔴 Root cause corrected — **COGNITIVE SERVICES CONTRIBUTOR REQUIRED**  
+**Prior RCA Error:** Assumed prompt-eval-service was the failing caller (incorrect — it was ai-service)
+
+### What Went Wrong in First RCA
+
+**Incorrect assumption:** Looked at prompt-eval-service (.NET) because it has "eval" in the name and because the user flow goes through its API.
+
+**Actual truth:** The Python `openai._base_client.py` stack trace was the smoking gun. This package is only used by Python services. ai-service makes the actual Azure AI Foundry evals API call (via `agent-framework-foundry` → `azure-ai-evaluation` → OpenAI SDK).
+
+**Signal missed:** Stack trace package path ALWAYS reveals the calling service:
+- `openai._base_client.py` (Python) → ai-service, budget-service, chatbot-service
+- `Azure.AI.Projects` SDK (.NET) → prompt-eval-service
+- If I'd checked this FIRST, would've found ai-service immediately
+
+### Root Cause: Cognitive Services OpenAI User Insufficient for RAI Service
+
+**What actually fails:** `src/ai-service/app/routes/api.py:372-373`
+
+```python
+evals = FoundryEvals(client=client, evaluators=request.evaluators)
+results = await evals.evaluate(eval_items)
+```
+
+**Why it fails:**
+1. FoundryEvals calls Azure AI Foundry safety evaluators (hate, violence, self-harm, sexual content)
+2. The RAI service backend (`componentName: raisvc`) enforces RBAC on evaluation run creation
+3. `Cognitive Services OpenAI User` grants **inference-only** permissions (`Microsoft.CognitiveServices/*/read` + `inference/action`)
+4. RAI evaluators require **management permissions** to write evaluation runs, manage evaluation state, and interact with the RAI backend
+5. This requires `Microsoft.CognitiveServices/*` wildcard (available in `Cognitive Services Contributor`)
+
+**Why `Azure AI Developer` didn't fix it:**
+- RG-scope assignment may not propagate correctly to the RAI subsystem
+- RAI operates at the Cognitive Services resource level
+- Best practice: Assign roles at the most specific scope (resource > RG > subscription)
+
+**Microsoft docs citation:**
+- [Azure AI Content Safety permissions](https://learn.microsoft.com/azure/ai-services/content-safety/overview-permissions) — safety evaluators require Contributor-level access
+- [Cognitive Services Contributor definition](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles#cognitive-services-contributor) — grants `Microsoft.CognitiveServices/*`
+
+### Fix: Cognitive Services Contributor at Foundry Resource Scope
+
+**Command:**
+```bash
+az role assignment create \
+  --assignee 05a5f8d1-df4d-413d-9495-498634639e1b \
+  --role "Cognitive Services Contributor" \
+  --scope /subscriptions/ccfc5dda-43af-4b5e-8cc2-1dda18f2382e/resourceGroups/modest-hippo-861-rg/providers/Microsoft.CognitiveServices/accounts/modest-hippo-861-foundry
+
+kubectl rollout restart deployment/ai-service -n banking-demo
+```
+
+**Verification:**
+- MI: `modest-hippo-861-banking-mi` (principal ID `05a5f8d1-df4d-413d-9495-498634639e1b`)
+- Binding: ✅ Correct (ServiceAccount `banking-workload-identity` with client ID `0a606c77-03f3-4e4c-9cc7-4d51b86c09ff`)
+- Endpoint: ✅ Correct (`https://modest-hippo-861-foundry.services.ai.azure.com/api/projects/modest-hippo-861-project`)
+- Role needed: `Cognitive Services Contributor` (not just OpenAI User)
+
+### Lesson: ALWAYS Check Stack Trace Package Path First
+
+**When analyzing Azure RBAC 403 errors:**
+1. ✅ Check the stack trace's package/SDK path FIRST
+   - Python `openai._base_client.py` → Python service (ai-service, not prompt-eval-service)
+   - .NET `Azure.AI.Projects` SDK → .NET service
+2. ✅ Read the error's `componentName` field
+   - `raisvc` = Responsible AI Service subsystem with distinct permissions
+3. ✅ Verify role definitions (don't assume)
+   - "OpenAI User" is inference-only; "Contributor" is management
+4. ✅ Prefer resource-scope over RG-scope for PaaS services
+
+**Key mistake:** Service naming ("prompt-eval") misled the investigation. Always trace the actual failing code path via stack trace, not the logical flow diagram.
+
+**Full details:** `.squad/decisions/inbox/basher-eval-403-rci.md`
+
+## Learnings — 2026-05-13 (issue #134 acct-open sidecar revert)
+
+- **Revert decision:** account-opening-service worker pod's Entra Agent ID auth-sidecar (`mcr.microsoft.com/entra-sdk/auth-sidecar`) was failing in prod with `Failed to acquire token from sidecar after 3 attempts`. Brian called it: abandon the sidecar, fall back to plain workload identity.
+- **Pattern:** sidecar → workload-identity. The Foundry agents accept any `azure.identity` credential; `DefaultAzureCredential` over the federated token mounted by `azure.workload.identity/use: "true"` works for the same `https://ai.azure.com/.default` scope the worker already verifies on startup.
+- **Reference manifest:** `deploy/kustomize/base/ai-service.yaml` — the canonical workload-identity-only Python service pod (init container + main container + istio sidecar, no entra-agent-id, no `sidecar-keys` projected volume). Mirror this whenever a Python worker needs Foundry/Cognitive Services auth.
+- **Kept for re-enable:** `app/sidecar_credential.py` left in tree with a top-of-file deprecation comment; the module is no longer imported anywhere. `configmap.yaml` still has a stray `AGENT_ID_AGENT_IDENTITY` placeholder — harmless (no consumer) but worth a sweep next config pass.

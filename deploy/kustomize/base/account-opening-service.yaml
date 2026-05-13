@@ -201,8 +201,6 @@ spec:
             configMapKeyRef:
               name: banking-demo-config
               key: COSMOS_DB_ENDPOINT
-        - name: AGENT_ID_SIDECAR_URL
-          value: "http://localhost:8080"
         envFrom:
         - configMapRef:
             name: banking-demo-config
@@ -220,35 +218,7 @@ spec:
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: false
-      - name: entra-agent-id
-        image: mcr.microsoft.com/entra-sdk/auth-sidecar:1.0.0-azurelinux3.0-distroless
-        imagePullPolicy: Always
-        ports:
-        - containerPort: 8080
-          protocol: TCP
-        envFrom:
-        - configMapRef:
-            name: banking-demo-config
-        readinessProbe:
-          tcpSocket:
-            port: 8080
-          initialDelaySeconds: 5
-          periodSeconds: 10
-        resources:
-          requests:
-            memory: "32Mi"
-            cpu: "25m"
-          limits:
-            memory: "128Mi"
-            cpu: "100m"
-        volumeMounts:
-        - name: sidecar-keys
-          mountPath: /app/keys
-        securityContext:
-          allowPrivilegeEscalation: false
       volumes:
-      - name: sidecar-keys
-        emptyDir: {}
       - name: secrets-store
         csi:
           driver: secrets-store.csi.k8s.io

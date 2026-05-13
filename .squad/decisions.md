@@ -6050,3 +6050,181 @@ Landed two critical 1-line bug fixes in single surgical commit on squad/p2-wave-
 **Why:** Investigation revealed the root cause was a stale token scope, not missing RBAC roles. The managed identity already has all required permissions. No Terraform changes needed.
 
 **Recommendation:** Do not implement the original RBAC role addition plan. The one-line token scope fix (commit 69ce049) resolves the issue.
+
+---
+
+## Decision: Eval 403 Scope Revert — Diagnostic Test
+
+**Date:** 2026-05-12  
+**Author:** Basher  
+**Status:** 🟡 Awaiting verification  
+**Issue:** Related to #131 (fix broke eval pipeline)
+
+### Context
+
+Post-deploy of commit `69ce049` (fix #131 Foundry token scope), eval pipeline now failing with:
+```
+403 componentName: raisvc / UnauthorizedUserAction
+```
+
+Brian confirmed:
+- Eval worked yesterday (pre-69ce049)
+- Eval broke today (post-69ce049)
+- MI roles unchanged
+- **Only** ai-service code change between working/broken: line 781 scope flip
+
+### Diagnosis
+
+Commit `69ce049` changed `src/ai-service/app/services/anomaly_service.py:781`:
+- **FROM:** `"https://cognitiveservices.azure.com/.default"`
+- **TO:** `"https://ai.azure.com/.default"`
+
+This was intended to fix chatbot 401, but ai-service serves TWO workflows:
+1. **Anomaly detection** (FoundryAgent for risk scoring)
+2. **Eval pipeline** (FoundryEvals → raisvc)
+
+The scope change broke eval while attempting to fix chatbot.
+
+### Hypothesis
+
+**raisvc validates token audience and rejects `ai.azure.com` tokens; requires `cognitiveservices.azure.com`.**
+
+- Chatbot may need `ai.azure.com` scope (Agent Framework endpoint)
+- Eval pipeline needs `cognitiveservices.azure.com` scope (AI Services / raisvc)
+- Single credential with wrong scope → eval 403
+
+### Test Plan
+
+1. **Revert line 781** to `cognitiveservices.azure.com/.default`
+2. Brian rebuilds ai-service and deploys
+3. Brian triggers eval run
+
+### Expected Outcomes
+
+**If eval works after revert ✅**
+- **Confirms:** Scope-mismatch theory correct
+- **Root cause:** Regression from #131 fix — scope flip broke eval that was already working
+- **Real fix needed:** Two credentials with different scopes:
+  - Chatbot path: `ai.azure.com/.default`
+  - Eval path: `cognitiveservices.azure.com/.default`
+
+**If eval still fails after revert ❌**
+- **Conclusion:** Scope theory dies
+- **Next:** Investigate raisvc-specific region/feature gating, MI propagation delay, or Foundry SDK version compatibility
+
+### Change Summary
+
+**File:** `src/ai-service/app/services/anomaly_service.py`  
+**Line:** 781  
+**Change:** Reverted scope from `https://ai.azure.com/.default` → `https://cognitiveservices.azure.com/.default`
+
+### Next Steps
+
+1. **Brian:** Rebuild ai-service container
+2. **Brian:** Deploy to environment
+3. **Brian:** Trigger eval run and report result
+4. **Squad:** If eval passes, design proper dual-credential solution for chatbot + eval coexistence
+
+---
+
+## Decision: 403 RAI Failure — Re-investigation (Corrected)
+
+**Date:** 2026-05-13  
+**Investigator:** Basher  
+**Status:** 🔴 Superseded  
+**Superseded-by:** Eval 403 Scope Revert (above)
+
+### Summary
+
+Initial diagnosis claimed RAI requires `Cognitive Services Contributor` role. This investigation has been **superseded** by the scope-revert diagnostic, which provides a more direct test of the actual root cause.
+
+### Previous Findings (retain for reference)
+
+- **Failing call site:** `src/ai-service/app/routes/api.py:372-373` (FoundryEvals.evaluate)
+- **Calling service:** `ai-service` (Python), not prompt-eval-service
+- **MI binding:** Correct
+- **Endpoint:** Correct
+- **Role theory:** `Cognitive Services OpenAI User` lacks write/management permissions
+
+### Why Superseded
+
+The scope-revert decision provides a faster test: if reverting line 781 fixes eval, the problem is scope-mismatch (not RBAC). If eval still fails, then role/permission investigation continues.
+
+### Recommendation
+
+Execute scope-revert diagnostic first. If eval passes, this RBAC re-investigation becomes obsolete. If eval fails, resurface this investigation.
+
+---
+
+## Decision: Revert account-opening-service to workload identity (issue #134)
+
+**Author:** Basher
+**Date:** 2026-05-13
+**Status:** 🟢 Implemented (awaiting Brian deploy)
+**Issue:** #134
+
+### Why
+
+Production worker logs at 2026-05-13T21:12:29Z showed Foundry agent consumers failing during identity verification:
+
+```
+"error": "Failed to acquire token from sidecar after 3 attempts"
+"event": "Foundry identity verification failed"
+"logger": "identity-verification-agent"
+```
+
+The Entra Agent ID auth-sidecar (`mcr.microsoft.com/entra-sdk/auth-sidecar`) running alongside `account-opening-worker` could not return a bearer token, blocking the entire account-opening pipeline (document extraction → identity → compliance → provisioning).
+
+Brian's call: drop the sidecar for now, revert to the plain workload-identity pattern that `ai-service` already uses successfully against the same Foundry project. The sidecar approach is shelved, not deleted.
+
+### What changed (4 files)
+
+1. **`src/account-opening-service/app/worker.py`**
+   - Removed `from .sidecar_credential import SidecarTokenCredential` import.
+   - Deleted the `AGENT_ID_SIDECAR_URL` / `AGENT_ID_AGENT_IDENTITY` branch (lines ~100–112).
+   - `foundry_credential` is now unconditionally the same `DefaultAzureCredential` instance used for blob/cosmos auth.
+
+2. **`src/account-opening-service/app/sidecar_credential.py`**
+   - **Kept** in tree. Added top-of-file comment:
+     `# DEPRECATED 2026-05-13 (issue #134): Reverted to DefaultAzureCredential / workload identity. Kept for potential future re-enable.`
+   - No longer imported anywhere.
+
+3. **`src/account-opening-service/README.md`**
+   - Removed `AGENT_ID_SIDECAR_URL` and `AGENT_ID_AGENT_IDENTITY` rows from the env-vars table.
+
+4. **`deploy/kustomize/base/account-opening-service.yaml`** (worker Deployment)
+   - Removed `entra-agent-id` sidecar container.
+   - Removed `sidecar-keys` projected volume + volumeMount.
+   - Removed `AGENT_ID_SIDECAR_URL=http://localhost:8080` env var from the main worker container.
+   - Workload-identity SA, federated-token mount, and istio-proxy sidecar are unchanged.
+   - Pod now matches the `ai-service.yaml` pattern (init + main + istio).
+
+### Diff summary
+
+```
+deploy/kustomize/base/account-opening-service.yaml    | 30 -----------------------
+src/account-opening-service/README.md                 |  2 --
+src/account-opening-service/app/sidecar_credential.py |  1 +
+src/account-opening-service/app/worker.py             | 20 ++++-----------
+```
+
+### Verification (by inspection)
+
+- ✅ `worker.py` parses (`python -c "ast.parse(...)"`).
+- ✅ No remaining references to `SidecarTokenCredential`, `AGENT_ID_SIDECAR_URL`, or `entra-agent-id` in `src/account-opening-service/` or `deploy/kustomize/base/account-opening-service.yaml`.
+- ✅ Pod spec now: init `provision-agents` + main `account-opening-worker` + istio-proxy. No third app container.
+- ✅ Mirrors `deploy/kustomize/base/ai-service.yaml` workload-identity pattern.
+
+### Out of scope / deferred
+
+- `deploy/kustomize/base/configmap.yaml` still has a `AGENT_ID_AGENT_IDENTITY` placeholder entry.
+  No consumer reads it after this change — harmless, but a future config pass should remove it.
+- `app/sidecar_credential.py` retained intentionally per Brian's instruction ("preserves option to re-enable later").
+
+### Hard rules respected
+
+- ❌ No `git push`, no image build, no deploy. **Brian deploys.**
+- ❌ No changes to `ai-service` or any other service.
+- ❌ `sidecar_credential.py` not deleted.
+- ❌ `init_agents.py` not touched.
+- ✅ `ai-service.yaml` consulted as the reference manifest before editing.
