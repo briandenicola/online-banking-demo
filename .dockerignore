@@ -3,6 +3,7 @@
 **/bin/
 **/obj/
 **/obj2/
+**/obj.old/
 
 # Git
 .git
