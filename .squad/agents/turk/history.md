@@ -393,3 +393,57 @@ Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com
 **Outcome:** ✓ All Python services import, Go builds clean, test pass. Commits: 3e215af, 9b0912d, 512db07, 065994c.
 
 **Team:** Coordinated with Basher (.NET standardization) and Linus (frontend cleanup) to ensure cross-service consistency. Wave complete; PR pending merge to main.
+
+---
+
+## 2026-05-13 — Issue #115: Python Test Repairs After Wave 1
+
+**Branch:** squad/p2-wave-3  
+**Issue:** #115 — Repair Python service tests after Wave 1 #93 service-layer extraction
+
+**Problem:**
+Wave 1 extraction moved Python service code from monolithic `app/main.py` into layered modules (`app/routes/`, `app/services/`, `app/models/`), but test fixtures still imported from old locations and relied on module-level globals that no longer existed. All 4 services (ai, budget, chatbot, account-opening) had failing tests.
+
+**Fixes Applied:**
+
+1. **ai-service** (002e24b):
+   - Updated test imports to use new module structure (`app.services.anomaly_service`, `app.models.*`)
+   - Result: All tests passing
+
+2. **budget-service** (3481962):
+   - Added JWT auth fixtures to `conftest.py` (matching user-service token format)
+   - Updated imports to match extracted routes
+   - Result: 21/21 tests passing
+
+3. **chatbot-service** (c7435e8):
+   - Updated test imports from `app.main` to `app.services.*`
+   - Result: All tests passing
+
+4. **account-opening-service** (e4fc3b4):
+   - Restored missing audit trail endpoint (`GET /applications/{id}/audit`) accidentally dropped during Wave 1 extraction
+   - Added FastAPI dependency overrides to `conftest.py` using async functions
+   - Overrode: `get_repository`, `get_redis_client`, `get_blob_service_client`, `get_state_machine`
+   - Result: 136/136 tests passing
+
+**Key Learning — FastAPI Dependency Override Pattern:**
+When FastAPI routes use `Depends()` with async dependency functions, test fixtures must override them with **async functions**, not lambda returns:
+
+```python
+# ❌ WRONG — sync lambda
+app.dependency_overrides[get_repository] = lambda: mock_repo
+
+# ✅ CORRECT — async function
+async def override_repository():
+    return mock_repo
+
+app.dependency_overrides[get_repository] = override_repository
+```
+
+This pattern applies to all Python services using the FastAPI DI pattern introduced in Wave 1 and refined in Wave 2 (#94).
+
+**Gotchas:**
+- Async dependency functions in `dependencies.py` require async override functions, even if the returned object is not itself awaitable
+- Missing endpoints from extraction can cause tests to pass with wrong status codes (e.g., 404 vs 403 when endpoint is missing entirely)
+- Always verify extracted routes against original monolithic `main.py` to ensure nothing was dropped
+
+**Outcome:** Issue #115 closed. All Python service tests green on branch `squad/p2-wave-3`.
