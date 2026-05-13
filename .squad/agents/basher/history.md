@@ -2215,3 +2215,38 @@ jq -r '.releases | to_entries | .[] | select(.value[0].upload_time > "2026-05-13
 **Issue:** #137
 **Commit:** 0b6255a
 **Services fixed:** ai-service, chatbot-service, account-opening-service (budget-service doesn't use agent-framework)
+
+## Learnings
+
+### Issue #137 closure: CI guard added for agent-framework preview pin discipline (2026-05-13)
+
+**State found:** The exact pins from commit 0b6255a + chatbot follow-up 65f6c9f are still in place across all three Python services using agent-framework (ai-service, chatbot-service, account-opening-service). All show `agent-framework-core = "1.2.2"` and `agent-framework-foundry = "1.2.2"`. ai-service additionally has `azure-ai-inference = "1.0.0b9"` (exact). budget-service has no agent-framework dep — verified — and was left untouched per Brian's instruction.
+
+**Why the issue persisted despite the pins being correct:** Remediation #2 in the issue body — *add a CI guard* — was never implemented. So the squad was one bad merge or copy-paste away from regressing back to `"*"`. The fix had no enforcement. That's exactly how the bug originally landed (commit db70575 silently dropped version constraints during a meta-package → -core refactor), and nothing prevented it from happening again.
+
+**What I did:**
+1. Verified pins via `grep -rE 'agent-framework' src/*/pyproject.toml` — all three services correct.
+2. Ran `uv pip compile --python-version 3.11` against all three pyproject.tomls — clean resolution, no transitive conflicts on the mcp/pydantic/httpx chain. Pins are stable.
+3. Added `.github/workflows/preview-sdk-pin-guard.yml` — fires on PRs touching `src/**/pyproject.toml`, fails on any `agent-framework[a-z-]* = "*"|">=..."|"^..."|"~..."`. Bare exact versions pass.
+4. Added `tasks/Taskfile.lint.yml` with `task lint:preview-sdk-pins` for local pre-push checks. Wired into root Taskfile.yml under `lint:` namespace.
+5. Verified guard works: green on clean tree, red after temporarily reverting `agent-framework-core` to `"*"` and re-running.
+
+**Side finding (not in scope, deferred):** The guard's broader sibling pattern (covering all preview Azure AI SDKs) caught two additional unpinned preview SDKs:
+- `account-opening-service/pyproject.toml`: `azure-ai-contentunderstanding = "*"`
+- `budget-service/pyproject.toml`: `azure-ai-inference = ">=1.0.0b9"`
+
+I narrowed the shipped guard to *only* `agent-framework-*` per Brian's spec and his "do not touch budget-service" instruction. Documented these as recommended follow-up in the decision drop.
+
+**Pin discipline established:**
+- Preview SDKs (`agent-framework-*`, `azure-ai-inference` betas, `azure-ai-projects` prereleases, `azure-ai-contentunderstanding`) → **exact pin** (`"1.2.2"`).
+- Stable libs (fastapi, pydantic, redis, azure-identity, etc.) → caret/range (`"^0.115.0"`).
+- Bumping a preview SDK requires its own PR, `uv pip compile` resolution check, eval-pipeline smoke test (`kubectl exec ai-service -- curl /evals/run`), and a commit message that lists old → new versions + test results.
+- CI workflow `preview-sdk-pin-guard.yml` enforces it.
+
+**Files changed:**
+- `.github/workflows/preview-sdk-pin-guard.yml` (new)
+- `tasks/Taskfile.lint.yml` (new)
+- `Taskfile.yml` (added `lint:` include)
+- `.squad/decisions/inbox/basher-137-preview-sdk-pinning.md` (new)
+
+**No service code touched. No deploys.** Brian to deploy via `task cloud:deploy` after review. Existing skill `.squad/skills/preview-sdk-pinning/SKILL.md` already covers the pattern; no skill update needed (it predicted exactly this remediation step in section "Remediation Checklist" item 4 — "Pre-commit lint: fail on `agent-framework.*= \"\*\"`").

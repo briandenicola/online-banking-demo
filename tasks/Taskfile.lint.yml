@@ -1,0 +1,24 @@
+version: '3'
+
+tasks:
+  default:
+    desc: Run all repo lint checks
+    cmds:
+      - task: preview-sdk-pins
+
+  preview-sdk-pins:
+    desc: Fail if any agent-framework-* preview SDK in src/*/pyproject.toml is unpinned (issue #137)
+    silent: true
+    cmds:
+      - |
+        set -e
+        BAD=$(grep -nHE '^agent-framework[a-z-]*[[:space:]]*=[[:space:]]*"(\*|[\^~>].*|>=.*)"' src/*/pyproject.toml || true)
+        if [ -n "$BAD" ]; then
+          echo "❌ agent-framework-* preview SDKs must be exact-pinned (e.g. \"1.2.2\")."
+          echo "Offending lines:"
+          echo "$BAD"
+          echo ""
+          echo "See .squad/skills/preview-sdk-pinning/SKILL.md"
+          exit 1
+        fi
+        echo "✅ All agent-framework-* dependencies are exact-pinned."

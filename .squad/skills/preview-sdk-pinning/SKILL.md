@@ -206,5 +206,7 @@ pydantic = "2.9.2"
 
 - **Incident:** #137 (eval-403 caused by agent-framework 1.3.0 drift)
 - **Fix commit:** 0b6255a (exact-pin to 1.2.2)
-- **Decision:** `.squad/decisions/inbox/basher-eval403-repin.md`
+- **CI guard (enforces this skill):** `.github/workflows/preview-sdk-pin-guard.yml`
+- **Local check:** `task lint:preview-sdk-pins`
+- **Decision:** `.squad/decisions/inbox/basher-137-preview-sdk-pinning.md`
 - **Repo standard (exception):** `.squad/decisions.md` line 4250 (normal deps use `>=min,<next-major`, preview SDKs are exception)
