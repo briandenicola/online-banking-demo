@@ -3,6 +3,7 @@ import { Box, Typography, Paper, Table, TableBody, TableCell, TableContainer, Ta
 import AddIcon from '@mui/icons-material/Add';
 import { useAccountContext } from '../contexts/AccountContext';
 import AddAccountDialog from '../components/AddAccountDialog';
+import { logger } from '../utils/logger';
 
 const Accounts: React.FC = () => {
   const { accounts, addAccount } = useAccountContext();
@@ -18,7 +19,7 @@ const Accounts: React.FC = () => {
       setDialogOpen(false);
       setTimeout(() => setSuccess(false), 3000);
     } catch (e) {
-      console.error('Failed to add account:', e);
+      logger.error('Failed to add account', e);
       setError('Failed to add account. Please try again.');
       setTimeout(() => setError(null), 5000);
     }

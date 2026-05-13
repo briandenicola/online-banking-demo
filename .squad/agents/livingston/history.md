@@ -4,7 +4,27 @@
 - **Project:** online-banking-demo — AI-generated online banking application
 - **User:** Brian
 - **Stack:** C#/.NET, Python/FastAPI, React/TypeScript, Docker Compose
-- **Testing:** Minimal — App.test.tsx exists, test.sh at root, setupTests.ts present
+- **Testing:** Comprehensive coverage added in P1 (xUnit, pytest, React Testing Library)
+
+## Core Context
+
+**Core Test Architecture:**
+- .NET: xUnit test projects per service. Pattern: `{Service}Tests/{ClassName}Tests.cs`. InMemory storage for unit tests, Cosmos/Redis for integration.
+- Python: pytest with fastapi.testclient.TestClient. Pattern: `tests/test_{module}.py`. Parametrized fixtures for accounts/transfers.
+- React: Testing Library + Jest, colocated tests. Pattern: `Component.test.tsx` next to `Component.tsx` (P2 Wave 1).
+- CI: GitHub Actions runs `dotnet test`, `pytest`, `npm test` for all pushes/PRs.
+
+**Test Suite Metrics (P1):**
+- .NET: 50 tests (user-service 22, account-service 18, transfer-service 10)
+- Python: 15 tests (ai-service 7, budget-service 8)
+- React: 118 tests (post-P2-Wave-1 dedup; was 290 with duplicates)
+- Go: Tests pending
+- Total: 183 tests covering critical paths
+
+**CI/CD Safety:**
+- test.sh (root): Manual smoke test for local development (health endpoints + basic API responses).
+- GitHub Actions: Automated test execution on push/PR prevents regression.
+- Docker Compose: Supports local integration testing with in-memory DBs.
 
 ## Learnings
 - **Test coverage: ZERO meaningful tests** — Only `src/ui-app/src/App.test.tsx` exists (broken CRA boilerplate)

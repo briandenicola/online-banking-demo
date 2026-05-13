@@ -15,9 +15,9 @@ class UserClaims:
 
 
 def _get_settings() -> tuple[str, str, str]:
-    secret = os.getenv("Jwt__Key", "YourSuperSecretKeyForJWTTokenGeneration12345")
-    issuer = os.getenv("Jwt__Issuer", "user-service")
-    audience = os.getenv("Jwt__Audience", "banking-demo")
+    secret = os.getenv("JWT_KEY", "YourSuperSecretKeyForJWTTokenGeneration12345")
+    issuer = os.getenv("JWT_ISSUER", "user-service")
+    audience = os.getenv("JWT_AUDIENCE", "banking-demo")
     return secret, issuer, audience
 
 

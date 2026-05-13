@@ -9,17 +9,17 @@ import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel, Field
 
-from .auth import UserClaims, require_admin, require_auth
-from .events import publish_event
-from .models import (
+from app.auth import UserClaims, require_admin, require_auth
+from app.events import publish_event
+from app.models import (
     ApplicationCreate,
     ApplicationStatus,
     AuditEntry,
     DocumentMetadata,
     DocumentType,
 )
-from .repository import InMemoryApplicationRepository
-from .state_machine import ApplicationStateMachine
+from app.repository import InMemoryApplicationRepository
+from app.state_machine import ApplicationStateMachine
 
 router = APIRouter(prefix="/api/account-opening", tags=["account-opening"])
 state_machine = ApplicationStateMachine()
@@ -198,22 +198,9 @@ async def review_application(
         event_type="application_decision",
         data={
             "applicationId": application_id,
-            "decision": new_status.value,
-            "notes": payload.notes,
+            "status": new_status.value,
+            "agent": admin.user_id,
         },
     )
+
     return application
-
-
-@router.get("/applications/{application_id}/audit")
-async def get_audit_trail(
-    application_id: str,
-    request: Request,
-    _: Annotated[UserClaims, Depends(require_admin)],
-):
-    repository: InMemoryApplicationRepository = request.app.state.repository
-    application = repository.get(application_id)
-    if not application:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
-
-    return application.auditTrail

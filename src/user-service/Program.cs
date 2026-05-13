@@ -172,7 +172,7 @@ if (!useInMemory)
 
                 if (bootstrapUser != null)
                 {
-                    bootstrapUser.Role = "admin";
+                    bootstrapUser.Role = global::UserService.Constants.Roles.Admin;
                     await container.ReplaceItemAsync(bootstrapUser, bootstrapUser.Id, new PartitionKey(bootstrapUser.Id));
                     logger.LogInformation("Promoted user {Username} ({Email}) to admin role via Admin__BootstrapEmail", bootstrapUser.Username, bootstrapUser.Email);
                 }
@@ -191,7 +191,7 @@ if (!useInMemory)
 
                 if (firstUser != null)
                 {
-                    firstUser.Role = "admin";
+                    firstUser.Role = global::UserService.Constants.Roles.Admin;
                     await container.ReplaceItemAsync(firstUser, firstUser.Id, new PartitionKey(firstUser.Id));
                     logger.LogInformation("Promoted user {Username} ({Email}) to admin role — first user convention", firstUser.Username, firstUser.Email);
                 }

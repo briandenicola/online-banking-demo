@@ -47,19 +47,19 @@ const testFileTrackerKey = '__documentUploadTestFiles';
 const testOriginalFileKey = '__documentUploadOriginalFile';
 
 if (process.env.NODE_ENV === 'test' && typeof window !== 'undefined') {
-  const win = window as unknown as Record<string, any>;
+  const win = window as unknown as Record<string, unknown>;
   if (!win[testFileTrackerKey]) {
     win[testFileTrackerKey] = [];
   }
   if (win.File && !win[testOriginalFileKey]) {
     win[testOriginalFileKey] = win.File;
-    const OriginalFile = win.File;
+    const OriginalFile = win.File as typeof File;
     win.File = function (...args: ConstructorParameters<typeof File>) {
       const file = new OriginalFile(...args);
-      win[testFileTrackerKey].push(file);
+      (win[testFileTrackerKey] as File[]).push(file);
       return file;
     } as unknown as typeof File;
-    win.File.prototype = OriginalFile.prototype;
+    (win.File as typeof File).prototype = OriginalFile.prototype;
   }
 }
 

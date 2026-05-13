@@ -6,6 +6,21 @@
 - **Stack:** C#/.NET + Python/FastAPI microservices, Redis, Docker Compose, Azure
 - **Services:** user-service, account-service, transaction-service, transfer-service (C#), ai-service, budget-service, chatbot-service, event-processor (Python)
 
+## Core Context
+
+**Core .NET Patterns:**
+- Cosmos DB: Use partition key `id` for unique lookups; email lookups via deterministic `email-lookup:{email}` documents for atomic duplicate detection. Exclude these lookups from queries with ID prefix filters.
+- InMemory services: Deduplicate via storage-only adapters pattern (P2 Wave 1). Use ConcurrentDictionary for thread-safe in-memory collections.
+- Constants: Centralize all magic strings in per-service Constants classes (P2 Wave 1).
+- DataAnnotations: Validate request DTOs strictly at model boundary (P2 Wave 1).
+- Redis on Azure Managed: Uses port 10000 with TLS; exclude from Istio sidecar with `traffic.sidecar.istio.io/excludeOutboundPorts: "10000"`.
+- Graceful degradation: Account-service balance checks are fail-open; if unreachable, transaction proceeds with warning.
+
+**AI/Agent Patterns:**
+- Foundry agents: Provisioned at init via `AIProjectClient.create_version` in init container; runtime uses `FoundryAgent` class.
+- Content Understanding: Uses `ContentUnderstandingClient` with prebuilt analyzers; call `update_defaults()` at startup.
+- Account-opening pipeline: Four Redis-stream consumers (extraction, identity, compliance, provisioning) running concurrently.
+
 ## Learnings
 
 ### 2026-05 — Account-opening agent pipeline (Foundry + Content Understanding)
@@ -1245,3 +1260,51 @@ Fixed `account-opening-service/app/main.py` Cosmos init to catch `CosmosHttpResp
 - `src/*/Services/*Service.cs` — refactored to use repository interfaces
 - `src/*/Program.cs` — DI registrations for repositories
 - `src/prompt-eval-service/Services/EvaluationBackgroundService.cs` — uses `IEvaluationRunRepository` instead of direct `CosmosClient`
+
+### 2026-05-13 — Deployment Lessons from P1 Wave (Session 2026-05-13T02:47)
+
+**Lessons learned during containerization and AKS deployment:**
+
+1. **Always use `task cloud:deploy` — never `kubectl apply -k` directly**
+   - The Taskfile handles critical placeholder substitution for `configmap.yaml` and `secret-provider-class.yaml`
+   - Direct kubectl apply skips this substitution, leaving broken configs in the cluster
+   - Risk: Services fail to connect to Cosmos, Redis, or KeyVault due to unresolved placeholders like `REPLACE_WITH_KEYVAULT_NAME`
+
+2. **.dockerignore must exclude stale build artifacts**
+   - Old .NET builds accumulate in `obj.old/` directories as root-owned files
+   - These bloat layers unnecessarily; added `**/obj.old/` to .dockerignore
+   - Docker build systems may not clean up after failed builds; excluding them prevents shipping stale artifacts
+   - Impact: Smaller images, faster builds, cleaner deployments
+
+3. **Dependency constraints must support beta packages**
+   - `azure-ai-inference` has no stable release; only beta versions exist (>=1.0.0b9)
+   - Constraint was `>=1.0.0,<2.0.0` which excluded betas; changed to `>=1.0.0b9,<2.0.0`
+   - This applies to any Azure preview service SDK
+   - Impact: Services can properly initialize AI clients without version conflicts
+
+4. **Verify DI registrations match actual service dependencies**
+   - All 5 .NET services required repository DI registrations to succeed startup
+   - Missing registrations cause `IServiceProvider` resolution failures
+   - Always test startup in actual container environment, not just local dev
+
+**Implications for future work:**
+- Always validate placeholder substitution in configmaps after deployment
+- Update Taskfile if new services are added
+- Document all DI-managed dependencies in Program.cs registration comments
+- Test service startup with production-like container images before deploying
+
+---
+
+## 2026-05-12 — P2 Wave 1 Completion
+
+**Wave:** squad/p2-wave-1 (with Turk, Linus)  
+**Issues:** #107, #96, #97
+
+**Scope:**
+- #107: Centralized magic strings into Constants class across all 4 .NET services
+- #96: Deduplicated InMemory services via storage-only adapters pattern
+- #97: Tightened DataAnnotations validation on all request DTOs
+
+**Outcome:** ✓ All 4 .NET services build clean, storage layer refactoring improves testability. Commits: 87953d8, 9be97bb, c1c08f9.
+
+**Team:** Coordinated with Turk (Python env vars) and Linus (frontend types/tests) for cross-service consistency. Wave complete; PR pending merge to main.

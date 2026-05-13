@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
 import apiClient from '../api/client';
 import { useAuthContext } from './AuthContext';
+import { logger } from '../utils/logger';
 
 export interface Account {
   id: string;
@@ -46,7 +47,7 @@ export const AccountProvider: React.FC<{ children: ReactNode }> = ({ children })
       );
       setAccounts(mapped);
     } catch (e) {
-      console.error('Failed to fetch accounts:', e);
+      logger.error('Failed to fetch accounts', e);
     }
   }, [user, token]);
 
@@ -93,7 +94,7 @@ export const AccountProvider: React.FC<{ children: ReactNode }> = ({ children })
       }));
       return true;
     } catch (e) {
-      console.error('Transfer failed:', e);
+      logger.error('Transfer failed', e);
       return false;
     }
   };

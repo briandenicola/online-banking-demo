@@ -115,7 +115,7 @@ async def main() -> int:
     if not redis_client:
         return 1
 
-    cosmos_endpoint = os.getenv("CosmosDb__Endpoint")
+    cosmos_endpoint = os.getenv("COSMOS_DB_ENDPOINT")
     if cosmos_endpoint and cosmos_endpoint != "REPLACE_WITH_COSMOS_ENDPOINT":
         try:
             from azure.cosmos import CosmosClient
@@ -129,7 +129,7 @@ async def main() -> int:
             logger.error("Worker failed to init Cosmos DB", error=str(exc))
             return 1
     else:
-        logger.error("CosmosDb__Endpoint not set — worker requires Cosmos DB for shared state")
+        logger.error("COSMOS_DB_ENDPOINT not set — worker requires Cosmos DB for shared state")
         return 1
 
     state_machine = ApplicationStateMachine()

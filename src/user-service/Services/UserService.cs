@@ -74,7 +74,7 @@ public class UserService : IUserService
             LastName = request.LastName,
             PasswordHash = passwordHash,
             Salt = "",
-            Role = isFirstUser ? "admin" : "user"
+            Role = isFirstUser ? global::UserService.Constants.Roles.Admin : global::UserService.Constants.Roles.User
         };
 
         if (isFirstUser)
@@ -194,12 +194,12 @@ public class UserService : IUserService
 
             var payload = JsonConvert.SerializeObject(new
             {
-                eventType = "UserRegistered",
+                eventType = global::UserService.Constants.EventTypes.UserRegistered,
                 timestamp = DateTime.UtcNow.ToString("o"),
                 data = evt
             });
 
-            await _eventPublisher.PublishAsync("banking-events", payload);
+            await _eventPublisher.PublishAsync(global::UserService.Constants.DefaultStreamName, payload);
             _logger.LogInformation("Published UserRegistered event to Redis Stream for user {UserId}", user.Id);
         }
         catch (Exception ex)
@@ -214,10 +214,10 @@ public class UserService : IUserService
         if (user == null)
             throw new KeyNotFoundException($"User {userId} not found");
 
-        if (user.Role == "admin")
+        if (user.Role == global::UserService.Constants.Roles.Admin)
             throw new InvalidOperationException($"User {userId} is already an admin");
 
-        user.Role = "admin";
+        user.Role = global::UserService.Constants.Roles.Admin;
         await _userRepository.ReplaceAsync(user);
         _logger.LogInformation("User {UserId} ({Email}) promoted to admin", user.Id, user.Email);
         return user;

@@ -28,6 +28,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthContext } from '../contexts/AuthContext';
 import { useAccountContext } from '../contexts/AccountContext';
 import apiClient from '../api/client';
+import { logger } from '../utils/logger';
 import ApplicationStatus from '../components/account-opening/ApplicationStatus';
 import { ACCOUNT_OPENING_STORAGE_KEY } from '../api/accountOpening';
 
@@ -63,7 +64,7 @@ const Dashboard: React.FC = () => {
         const data = Array.isArray(response.data) ? response.data : (response.data.transactions || []);
         setTransactions(data.slice(0, 5));
       } catch (e) {
-        console.error('Failed to fetch recent transactions:', e);
+        logger.error('Failed to fetch recent transactions', e);
       } finally {
         setLoading(false);
       }

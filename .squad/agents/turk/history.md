@@ -7,6 +7,23 @@
 - **Joined:** 2026-05-07
 - **Focus:** Python service config fixes and cross-service consistency
 
+## Core Context
+
+**Core Python/FastAPI Patterns:**
+- Env vars: All Python services use SCREAMING_SNAKE_CASE (JWT_KEY, REDIS_CONNECTION_STRING, COSMOS_DB_ENDPOINT). Referenced in kustomize manifests and docker-compose.
+- Layered architecture: `app/config.py` (logging/telemetry), `app/models/`, `app/services/`, `app/routes/`, with `main.py` only wiring app/middleware/routers/lifespan.
+- Service modules retain shared state (analyzer pipeline, agent sessions, in-memory stores) for behavior preservation.
+
+**Core Cross-Service Patterns:**
+- Balance validation: Transaction/transfer services call account-service before debit. Fail-open if unreachable (graceful degradation).
+- Events: InsufficientFundsAttempt events published to Redis "banking-events" stream for anomaly/audit consumption.
+- Kustomize ConfigMap: `deploy/kustomize/base/configmap.yaml` — central source of truth for env vars, services, replicas, image refs.
+
+**Core Infrastructure Patterns:**
+- Redis: Azure Managed (port 10000, TLS). Dual-mode auth: AZURE_CLIENT_ID → Entra token (AKS), else password from conn string (local).
+- Secrets: KeyVault + CSI driver syncs to K8s Secret `banking-secrets` via `SecretProviderClass`. Kubelet identity RBAC needed.
+- Go slog: event-processor uses stdlib slog with JSON handler for structured logging.
+
 ## Learnings
 - Azure Managed Redis (Balanced B0) uses port 10000 with TLS, not standard 6379
 - Redis auth is dual-mode: AZURE_CLIENT_ID presence triggers Entra ID token auth (cloud/AKS), absence uses connection string password (local docker-compose)
@@ -31,6 +48,9 @@
 - key_vault_name output added to infra/cloud/outputs.tf for Taskfile consumption
 - Content Understanding Service uses the same three AI private DNS zones (cogservices/openai/services.ai) even when deployed cross-region with a local PE
 - Taskfile.build.yml builds Python services using service-directory contexts; account-opening-service now follows this pattern.
+- Python/FastAPI services now use SCREAMING_SNAKE env vars (`JWT_KEY`, `REDIS_CONNECTION_STRING`, `COSMOS_DB_ENDPOINT`) with docker-compose + kustomize updated in deploy/kustomize/base/*-service.yaml
+- Python services follow layered layout: `app/config.py`, `app/routes/`, `app/services/`, `app/models/` with `main.py` as entrypoint (src/{ai,budget,chatbot,account-opening}-service/app/)
+- Go event-processor logs via stdlib slog JSON handler (src/event-processor/main.go)
 
 ### 2026-05-08 — KeyVault CSI Driver Secrets Migration
 
@@ -321,3 +341,54 @@ Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com
 - Error response shape: `{"error": str, "message": str, "status_code": int}`
 - Broad catches acceptable in: startup init (graceful degradation), background loop outer handler, health checks
 - Narrow catches required in: request handlers, tool functions, data parsing
+
+### 2026-05-13 — Deployment Lessons from P1 Wave (Session 2026-05-13T02:47)
+
+**Lessons learned during containerization and AKS deployment:**
+
+1. **Always use `task cloud:deploy` — never `kubectl apply -k` directly**
+   - The Taskfile handles critical placeholder substitution for `configmap.yaml` and `secret-provider-class.yaml`
+   - Direct kubectl apply skips this substitution, leaving broken configs in the cluster
+   - Risk: Services fail to connect to Cosmos, Redis, or KeyVault due to unresolved placeholders like `REPLACE_WITH_KEYVAULT_NAME`
+
+2. **Python service dependencies must be declared in both pyproject.toml and Dockerfile**
+   - `account-opening-service` was missing `python-multipart` (needed for multipart form uploads) and `aiohttp` (async HTTP client)
+   - Added both to pyproject.toml; Docker images now install via `pip install .`
+
+3. **.dockerignore must exclude stale build artifacts**
+   - Old .NET builds accumulate in `obj.old/` directories as root-owned files
+   - These bloat layers unnecessarily; added `**/obj.old/` to .dockerignore
+   - Impact: Smaller images, faster builds
+
+4. **Entra agent sidecar listens on port 8080, not 5000**
+   - `account-opening-worker` was probing the sidecar on port 5000 but it listens on port 8080
+   - Updated sidecar port mapping and health probe config
+   - Impact: Worker now successfully obtains Entra-authenticated tokens via sidecar
+
+5. **Beta package versions must be explicitly allowed**
+   - `azure-ai-inference` has no stable release; only beta versions exist (>=1.0.0b9)
+   - Constraint was `>=1.0.0,<2.0.0` which excluded betas; changed to `>=1.0.0b9,<2.0.0`
+   - This applies to any Azure preview service SDK
+
+**Implications for future work:**
+- Always validate placeholder substitution in configmaps after deployment
+- Update Taskfile if new services are added
+- Keep `[build-system]` and `[project].dependencies` in sync with Dockerfiles
+- Review .dockerignore before building images
+- Check env var references in health probes and startup configs
+
+---
+
+## 2026-05-12 — P2 Wave 1 Completion
+
+**Wave:** squad/p2-wave-1 (with Basher, Linus)  
+**Issues:** #108, #93, #106
+
+**Scope:**
+- #108: Standardized Python env vars to SCREAMING_SNAKE_CASE across all FastAPI services
+- #93: Extracted layered architecture (config, models, services, routes) for Python services
+- #106: Migrated Go event-processor from log.Printf to stdlib slog with JSON handler
+
+**Outcome:** ✓ All Python services import, Go builds clean, test pass. Commits: 3e215af, 9b0912d, 512db07, 065994c.
+
+**Team:** Coordinated with Basher (.NET standardization) and Linus (frontend cleanup) to ensure cross-service consistency. Wave complete; PR pending merge to main.

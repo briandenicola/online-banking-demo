@@ -21,13 +21,13 @@ public class Transaction
     public decimal Amount { get; set; }
 
     [JsonProperty("currency")]
-    public string Currency { get; set; } = "USD";
+    public string Currency { get; set; } = global::TransactionService.Constants.Currencies.USD;
 
     [JsonProperty("type")]
     public string Type { get; set; } = null!;
 
     [JsonProperty("status")]
-    public string Status { get; set; } = "Completed";
+    public string Status { get; set; } = global::TransactionService.Constants.TransactionStatuses.Completed;
 
     [JsonProperty("description")]
     public string Description { get; set; } = null!;
@@ -39,5 +39,5 @@ public class Transaction
     public string? RelatedTransactionId { get; set; }
 
     [JsonProperty("category")]
-    public string Category { get; set; } = "Uncategorized";
+    public string Category { get; set; } = global::TransactionService.Constants.Categories.Uncategorized;
 }

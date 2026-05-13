@@ -6,6 +6,23 @@
 - **Stack:** C#/.NET + Python/FastAPI microservices, React/TS UI, Redis, Docker Compose, Azure
 - **Services:** user-service, account-service, transaction-service, transfer-service (C#), ai-service, budget-service, chatbot-service, event-processor (Python), ui-app (React)
 
+## Core Context
+
+**Core Architecture Patterns:**
+- Microservice decomposition: .NET core banking (user/account/transaction/transfer on ports 600x), Python AI agents (ai/budget/chatbot on ports 800x), Go event-processor, React UI on 3000.
+- Shared code: `src/shared/Contracts` — .NET DTOs, Events (IEvent interface), Models. No shared Python library.
+- IaC split: `infra/local` (AI Foundry dev), `infra/cloud` (full AKS + Cosmos + EventHub + Redis + KeyVault).
+- Deploy path: Flux GitOps → `deploy/kustomize/base/app.yaml` (K8s manifests).
+
+**Security & Secrets:**
+- Cloud: Azure RBAC + Managed Identity (good). KeyVault + CSI driver secrets.
+- Local: JWT key hardcoded in docker-compose.yml and appsettings.json (dev-only pattern).
+
+**Build & Deploy:**
+- Taskfile: Root includes local + cloud sub-taskfiles. `local:run` wires Terraform outputs to Docker Compose env vars.
+- CI context: All services build from repo root (not service dir) to access src/shared/ — fixed in P1.
+- Docker Compose: In-memory DBs for local testing; supports integration tests.
+
 ## Learnings
 
 ### Architecture Review (2025-07-15)

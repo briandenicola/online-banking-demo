@@ -38,11 +38,16 @@ spec:
               key: openai-endpoint
         - name: FOUNDRY_MODEL
           value: "gpt-5.4-mini"
-        - name: Jwt__Key
+        - name: JWT_KEY
           valueFrom:
             secretKeyRef:
               name: banking-secrets
               key: jwt-key
+        - name: COSMOS_DB_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: banking-demo-config
+              key: COSMOS_DB_ENDPOINT
         envFrom:
         - configMapRef:
             name: banking-demo-config

@@ -403,10 +403,10 @@ def _build_user_payload(form_data: dict[str, Any], password: str) -> dict[str, A
 
 
 def _generate_service_token(user_id: str, username: str) -> str:
-    secret = os.getenv("Jwt__Key", "YourSuperSecretKeyForJWTTokenGeneration12345")
-    issuer = os.getenv("Jwt__Issuer", "user-service")
-    audience = os.getenv("Jwt__Audience", "banking-demo")
-    expires_in = int(os.getenv("Jwt__ExpiresInMinutes", "60"))
+    secret = os.getenv("JWT_KEY", "YourSuperSecretKeyForJWTTokenGeneration12345")
+    issuer = os.getenv("JWT_ISSUER", "user-service")
+    audience = os.getenv("JWT_AUDIENCE", "banking-demo")
+    expires_in = int(os.getenv("JWT_EXPIRES_IN_MINUTES", "60"))
 
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=expires_in)
     claims = {
@@ -420,4 +420,3 @@ def _generate_service_token(user_id: str, username: str) -> str:
         "exp": int(expires_at.timestamp()),
     }
     return jwt.encode(claims, secret, algorithm="HS256")
-

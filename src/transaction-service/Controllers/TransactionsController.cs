@@ -27,7 +27,7 @@ public class TransactionsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> CreateTransaction([FromBody] CreateTransactionRequest request)
     {
-        var userId = User.FindFirst("userId")?.Value;
+        var userId = User.FindFirst(global::TransactionService.Constants.ClaimNames.UserId)?.Value;
         if (string.IsNullOrEmpty(userId))
         {
             return Unauthorized();
@@ -49,7 +49,7 @@ public class TransactionsController : ControllerBase
     [HttpGet("{id}")]
     public async Task<IActionResult> GetTransaction(string id)
     {
-        var userId = User.FindFirst("userId")?.Value;
+        var userId = User.FindFirst(global::TransactionService.Constants.ClaimNames.UserId)?.Value;
         if (string.IsNullOrEmpty(userId))
         {
             return Unauthorized();
@@ -66,7 +66,7 @@ public class TransactionsController : ControllerBase
     [HttpGet("account/{accountId}")]
     public async Task<IActionResult> GetAccountTransactions(string accountId)
     {
-        var userId = User.FindFirst("userId")?.Value;
+        var userId = User.FindFirst(global::TransactionService.Constants.ClaimNames.UserId)?.Value;
         if (string.IsNullOrEmpty(userId))
         {
             return Unauthorized();
@@ -80,7 +80,7 @@ public class TransactionsController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetTransactions()
     {
-        var userId = User.FindFirst("userId")?.Value;
+        var userId = User.FindFirst(global::TransactionService.Constants.ClaimNames.UserId)?.Value;
         if (string.IsNullOrEmpty(userId))
         {
             return Unauthorized();
@@ -93,7 +93,7 @@ public class TransactionsController : ControllerBase
     [HttpGet("my")]
     public async Task<IActionResult> GetUserTransactions()
     {
-        var userId = User.FindFirst("userId")?.Value;
+        var userId = User.FindFirst(global::TransactionService.Constants.ClaimNames.UserId)?.Value;
         if (string.IsNullOrEmpty(userId))
         {
             return Unauthorized();

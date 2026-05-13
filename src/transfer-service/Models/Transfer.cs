@@ -20,7 +20,7 @@ public class Transfer
     public string ToAccountNumber { get; set; } = null!;
     public decimal Amount { get; set; }
     public string Currency { get; set; } = "USD";
-    public string Status { get; set; } = "Pending";
+    public string Status { get; set; } = global::TransferService.Constants.TransferStatuses.Pending;
     public DateTime InitiatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? CompletedAt { get; set; }
     public string? Description { get; set; }

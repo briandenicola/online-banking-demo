@@ -31,7 +31,7 @@ spec:
         - containerPort: 8003
           protocol: TCP
         env:
-        - name: Jwt__Key
+        - name: JWT_KEY
           valueFrom:
             secretKeyRef:
               name: banking-secrets

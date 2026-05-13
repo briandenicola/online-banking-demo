@@ -26,6 +26,7 @@ import { useAuthContext } from '../contexts/AuthContext';
 import { useAccountContext } from '../contexts/AccountContext';
 import AddAccountDialog from '../components/AddAccountDialog';
 import apiClient from '../api/client';
+import { logger } from '../utils/logger';
 
 interface Transaction {
   id: string;
@@ -49,7 +50,7 @@ interface NewTransaction {
 }
 
 const Transactions: React.FC = () => {
-  const { token } = useAuthContext();
+  const { token, isAdmin } = useAuthContext();
   const { accounts, addAccount } = useAccountContext();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -91,7 +92,9 @@ const Transactions: React.FC = () => {
       setLoading(true);
       const [txResponse, scoredResponse] = await Promise.all([
         apiClient.get('/transactions/my'),
-        apiClient.get('/admin/transactions').catch(() => ({ data: [] })),
+        isAdmin
+          ? apiClient.get('/admin/transactions').catch(() => ({ data: [] }))
+          : Promise.resolve({ data: [] }),
       ]);
       const data = Array.isArray(txResponse.data) ? txResponse.data : (txResponse.data.transactions || []);
       const scored = Array.isArray(scoredResponse.data) ? scoredResponse.data : [];
@@ -125,7 +128,7 @@ const Transactions: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => {
     if (token) {
@@ -174,7 +177,8 @@ const Transactions: React.FC = () => {
       await addAccount(account);
       setAccountDialogOpen(false);
     } catch (e) {
-      console.error('Failed to add account:', e);
+      logger.error('Failed to add account', e);
+      setError('Failed to add account. Please try again.');
     }
   };
 

@@ -31,7 +31,7 @@ public class AccountService : IAccountService
             AccountNumber = GenerateAccountNumber(),
             AccountType = request.AccountType,
             Balance = request.InitialBalance,
-            Currency = request.Currency ?? "USD"
+            Currency = request.Currency ?? global::AccountService.Constants.Currencies.USD
         };
 
         var created = await _repository.CreateAsync(account);
@@ -67,6 +67,6 @@ public class AccountService : IAccountService
     private string GenerateAccountNumber()
     {
         var number = RandomNumberGenerator.GetInt32(10000000, 99999999);
-        return $"ACC{number}";
+        return $"{(global::AccountService.Constants.AccountNumberPrefix)}{number}";
     }
 }
