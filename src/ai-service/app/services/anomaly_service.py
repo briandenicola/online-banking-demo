@@ -778,7 +778,7 @@ async def lifespan(app: FastAPI):
             state.foundry_credential = credential
             state.foundry_endpoint = endpoint
             state.foundry_model = model_name
-            token = await asyncio.to_thread(credential.get_token, "https://cognitiveservices.azure.com/.default")
+            token = await asyncio.to_thread(credential.get_token, "https://ai.azure.com/.default")
             logger.info(f"✅ Azure credential acquired (expires: {token.expires_on})")
 
             risk_agent = FoundryAgent(
