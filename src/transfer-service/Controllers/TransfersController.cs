@@ -24,7 +24,7 @@ public class TransfersController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> InitiateTransfer([FromBody] CreateTransferRequest request)
     {
-        var userId = User.FindFirst("userId")?.Value;
+        var userId = User.FindFirst(global::TransferService.Constants.ClaimNames.UserId)?.Value;
         if (string.IsNullOrEmpty(userId))
         {
             return Unauthorized();
@@ -32,7 +32,7 @@ public class TransfersController : ControllerBase
 
         var transfer = await _transferService.InitiateTransferAsync(userId, request);
 
-        if (transfer.Status == "Failed")
+        if (transfer.Status == global::TransferService.Constants.TransferStatuses.Failed)
         {
             return BadRequest(new { error = transfer.FailureReason, transfer });
         }
@@ -43,7 +43,7 @@ public class TransfersController : ControllerBase
     [HttpGet("{id}")]
     public async Task<IActionResult> GetTransfer(string id)
     {
-        var userId = User.FindFirst("userId")?.Value;
+        var userId = User.FindFirst(global::TransferService.Constants.ClaimNames.UserId)?.Value;
         if (string.IsNullOrEmpty(userId))
         {
             return Unauthorized();

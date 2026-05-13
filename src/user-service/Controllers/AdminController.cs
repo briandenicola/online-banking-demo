@@ -9,7 +9,7 @@ namespace UserService.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "admin")]
+[Authorize(Roles = global::UserService.Constants.Roles.Admin)]
 public class AdminController : ControllerBase
 {
     private readonly IUserService _userService;
@@ -52,7 +52,7 @@ public class AdminController : ControllerBase
         {
             var promoted = await _userService.PromoteToAdminAsync(targetUser.Id);
 
-            var promotedBy = User.FindFirst("userId")?.Value ?? "unknown";
+            var promotedBy = User.FindFirst(global::UserService.Constants.ClaimNames.UserId)?.Value ?? "unknown";
 
             _logger.LogWarning(
                 "ADMIN PROMOTION: User {TargetUserId} ({TargetEmail}) promoted to admin by {PromotedBy}",
@@ -103,7 +103,7 @@ public class AdminController : ControllerBase
         if (!success)
             return NotFound(new { error = "User not found" });
 
-        _logger.LogInformation("Admin {AdminId} locked user {UserId}", User.FindFirst("userId")?.Value, id);
+        _logger.LogInformation("Admin {AdminId} locked user {UserId}", User.FindFirst(global::UserService.Constants.ClaimNames.UserId)?.Value, id);
         return Ok(new { message = "User locked successfully" });
     }
 
@@ -114,7 +114,7 @@ public class AdminController : ControllerBase
         if (!success)
             return NotFound(new { error = "User not found" });
 
-        _logger.LogInformation("Admin {AdminId} unlocked user {UserId}", User.FindFirst("userId")?.Value, id);
+        _logger.LogInformation("Admin {AdminId} unlocked user {UserId}", User.FindFirst(global::UserService.Constants.ClaimNames.UserId)?.Value, id);
         return Ok(new { message = "User unlocked successfully" });
     }
 
@@ -125,14 +125,14 @@ public class AdminController : ControllerBase
         if (!success)
             return NotFound(new { error = "User not found" });
 
-        _logger.LogInformation("Admin {AdminId} reset password for user {UserId}", User.FindFirst("userId")?.Value, id);
+        _logger.LogInformation("Admin {AdminId} reset password for user {UserId}", User.FindFirst(global::UserService.Constants.ClaimNames.UserId)?.Value, id);
         return Ok(new { message = "Password reset successfully" });
     }
 
     [HttpDelete("users/{id}")]
     public async Task<IActionResult> DeleteUser(string id)
     {
-        var adminId = User.FindFirst("userId")?.Value;
+        var adminId = User.FindFirst(global::UserService.Constants.ClaimNames.UserId)?.Value;
 
         // Prevent admin from deleting themselves
         if (id == adminId)

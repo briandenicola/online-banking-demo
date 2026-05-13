@@ -15,7 +15,7 @@ public class TransactionService : ITransactionService
     private readonly IAccountBalanceRepository _accountBalanceRepository;
     private readonly IEventPublisher _eventPublisher;
     private readonly ILogger<TransactionService> _logger;
-    private const string StreamName = "banking-events";
+    private const string StreamName = global::TransactionService.Constants.DefaultStreamName;
 
     public TransactionService(
         ITransactionRepository transactionRepository,
@@ -43,10 +43,10 @@ public class TransactionService : ITransactionService
             AccountId = request.AccountId,
             UserId = userId,
             Amount = request.Amount,
-            Currency = request.Currency ?? "USD",
+            Currency = request.Currency ?? global::TransactionService.Constants.Currencies.USD,
             Type = request.Type,
             Description = request.Description,
-            Category = request.Category ?? "Uncategorized",
+            Category = request.Category ?? global::TransactionService.Constants.Categories.Uncategorized,
             RelatedTransactionId = request.RelatedTransactionId
         };
 
@@ -86,7 +86,7 @@ public class TransactionService : ITransactionService
         {
             var eventPayload = new
             {
-                eventType = "TransactionCreated",
+                eventType = global::TransactionService.Constants.EventTypes.TransactionCreated,
                 timestamp = DateTime.UtcNow.ToString("o"),
                 data = new
                 {
@@ -117,7 +117,7 @@ public class TransactionService : ITransactionService
     private static bool IsDebitTransaction(OnlineBankingDemo.Contracts.Dtos.CreateTransactionRequest request)
     {
         return request.Amount < 0 ||
-               string.Equals(request.Type, "Debit", StringComparison.OrdinalIgnoreCase);
+               string.Equals(request.Type, global::TransactionService.Constants.TransactionTypes.Debit, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task ValidateBalanceAsync(string accountId, decimal amount)
@@ -158,14 +158,14 @@ public class TransactionService : ITransactionService
         {
             var eventPayload = new
             {
-                eventType = "InsufficientFundsAttempt",
+                eventType = global::TransactionService.Constants.EventTypes.InsufficientFundsAttempt,
                 timestamp = DateTime.UtcNow.ToString("o"),
                 data = new
                 {
                     accountId,
                     currentBalance = balance,
                     requestedAmount,
-                    type = "Debit"
+                    type = global::TransactionService.Constants.TransactionTypes.Debit
                 }
             };
 

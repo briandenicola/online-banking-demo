@@ -17,7 +17,7 @@ public class InMemoryTransferService : ITransferService
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IConfiguration _configuration;
     private readonly ILogger<InMemoryTransferService> _logger;
-    private const string StreamName = "banking-events";
+    private const string StreamName = global::TransferService.Constants.DefaultStreamName;
 
     public InMemoryTransferService(
         IConnectionMultiplexer redis,
@@ -58,7 +58,7 @@ public class InMemoryTransferService : ITransferService
             ToAccountNumber = request.ToAccountNumber,
             Amount = request.Amount,
             Description = request.Description,
-            Status = "Processing"
+            Status = global::TransferService.Constants.TransferStatuses.Processing
         };
 
         try
@@ -68,7 +68,7 @@ public class InMemoryTransferService : ITransferService
                 request.FromAccountId, request.ToAccountId,
                 request.Amount, transfer.Id, request.Description);
 
-            transfer.Status = "Completed";
+            transfer.Status = global::TransferService.Constants.TransferStatuses.Completed;
             transfer.CompletedAt = DateTime.UtcNow;
             _transfers[transfer.Id] = transfer;
 
@@ -80,8 +80,8 @@ public class InMemoryTransferService : ITransferService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Transfer failed: {TransferId}", transfer.Id);
-            transfer.Status = "Failed";
-            transfer.FailureReason = "Transfer could not be completed";
+            transfer.Status = global::TransferService.Constants.TransferStatuses.Failed;
+            transfer.FailureReason = global::TransferService.Constants.FailureReasons.Generic;
             _transfers[transfer.Id] = transfer;
             return transfer;
         }
@@ -138,9 +138,9 @@ public class InMemoryTransferService : ITransferService
         {
             AccountId = fromAccountId,
             Amount = -amount,
-            Type = "Transfer",
+            Type = global::TransferService.Constants.TransactionTypes.Transfer,
             Description = description ?? $"Transfer to account",
-            Category = "Transfer",
+            Category = global::TransferService.Constants.Categories.Transfer,
             RelatedTransactionId = transferId
         };
 
@@ -154,9 +154,9 @@ public class InMemoryTransferService : ITransferService
         {
             AccountId = toAccountId,
             Amount = amount,
-            Type = "Transfer",
+            Type = global::TransferService.Constants.TransactionTypes.Transfer,
             Description = description ?? $"Transfer from account",
-            Category = "Transfer",
+            Category = global::TransferService.Constants.Categories.Transfer,
             RelatedTransactionId = transferId
         };
 
@@ -173,7 +173,7 @@ public class InMemoryTransferService : ITransferService
         {
             var eventPayload = new
             {
-                eventType = "TransferInitiated",
+                eventType = global::TransferService.Constants.EventTypes.TransferInitiated,
                 timestamp = DateTime.UtcNow.ToString("o"),
                 data = new
                 {

@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
     <!-- Exclude stale root-owned build artifact directories from compilation -->
-    <DefaultItemExcludes>$(DefaultItemExcludes);obj.root/**;obj.root2/**;bin.root/**;bin.root2/**;build-intermediate/**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj.root/**;obj.root2/**;bin.root/**;bin.root2/**;build-intermediate/**;obj.old/**;bin.old/**</DefaultItemExcludes>
   </PropertyGroup>
 </Project>

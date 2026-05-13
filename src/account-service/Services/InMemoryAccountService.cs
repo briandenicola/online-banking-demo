@@ -27,18 +27,18 @@ public class InMemoryAccountService : IAccountService
             Id = "acct-1-checking",
             UserId = "1",
             AccountNumber = "ACC10000001",
-            AccountType = "Checking",
+            AccountType = global::AccountService.Constants.AccountTypes.Checking,
             Balance = 3250.75m,
-            Currency = "USD"
+            Currency = global::AccountService.Constants.Currencies.USD
         };
         _accounts["acct-1-savings"] = new Account
         {
             Id = "acct-1-savings",
             UserId = "1",
             AccountNumber = "ACC10000002",
-            AccountType = "Savings",
+            AccountType = global::AccountService.Constants.AccountTypes.Savings,
             Balance = 8500.00m,
-            Currency = "USD"
+            Currency = global::AccountService.Constants.Currencies.USD
         };
 
         // Seed accounts for demo user (ID: 2)
@@ -47,18 +47,18 @@ public class InMemoryAccountService : IAccountService
             Id = "acct-2-checking",
             UserId = "2",
             AccountNumber = "ACC20000001",
-            AccountType = "Checking",
+            AccountType = global::AccountService.Constants.AccountTypes.Checking,
             Balance = 5432.10m,
-            Currency = "USD"
+            Currency = global::AccountService.Constants.Currencies.USD
         };
         _accounts["acct-2-savings"] = new Account
         {
             Id = "acct-2-savings",
             UserId = "2",
             AccountNumber = "ACC20000002",
-            AccountType = "Savings",
+            AccountType = global::AccountService.Constants.AccountTypes.Savings,
             Balance = 12750.00m,
-            Currency = "USD"
+            Currency = global::AccountService.Constants.Currencies.USD
         };
 
         _logger.LogInformation("Seeded demo accounts for users 1 and 2");
@@ -73,7 +73,7 @@ public class InMemoryAccountService : IAccountService
             AccountNumber = GenerateAccountNumber(),
             AccountType = request.AccountType,
             Balance = request.InitialBalance,
-            Currency = request.Currency ?? "USD"
+            Currency = request.Currency ?? global::AccountService.Constants.Currencies.USD
         };
 
         _accounts[account.Id] = account;
@@ -112,6 +112,6 @@ public class InMemoryAccountService : IAccountService
     private string GenerateAccountNumber()
     {
         var random = new Random();
-        return $"ACC{random.Next(10000000, 99999999)}";
+        return $"{(global::AccountService.Constants.AccountNumberPrefix)}{random.Next(10000000, 99999999)}";
     }
 }

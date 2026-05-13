@@ -25,7 +25,7 @@ public class AccountsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> CreateAccount([FromBody] CreateAccountRequest request)
     {
-        var userId = User.FindFirst("userId")?.Value;
+        var userId = User.FindFirst(global::AccountService.Constants.ClaimNames.UserId)?.Value;
         if (string.IsNullOrEmpty(userId))
         {
             return Unauthorized();
@@ -46,7 +46,7 @@ public class AccountsController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetUserAccounts()
     {
-        var userId = User.FindFirst("userId")?.Value;
+        var userId = User.FindFirst(global::AccountService.Constants.ClaimNames.UserId)?.Value;
         if (string.IsNullOrEmpty(userId))
         {
             return Unauthorized();
@@ -65,7 +65,7 @@ public class AccountsController : ControllerBase
             return NotFound();
         }
 
-        var userId = User.FindFirst("userId")?.Value;
+        var userId = User.FindFirst(global::AccountService.Constants.ClaimNames.UserId)?.Value;
         if (string.IsNullOrEmpty(userId) || account.UserId != userId)
         {
             return NotFound();
@@ -83,7 +83,7 @@ public class AccountsController : ControllerBase
             return NotFound();
         }
 
-        var userId = User.FindFirst("userId")?.Value;
+        var userId = User.FindFirst(global::AccountService.Constants.ClaimNames.UserId)?.Value;
         if (string.IsNullOrEmpty(userId) || account.UserId != userId)
         {
             return NotFound();
@@ -95,7 +95,7 @@ public class AccountsController : ControllerBase
     [HttpPost("{id}/balance")]
     public async Task<IActionResult> UpdateBalance(string id, [FromBody] UpdateBalanceRequest request)
     {
-        var userId = User.FindFirst("userId")?.Value;
+        var userId = User.FindFirst(global::AccountService.Constants.ClaimNames.UserId)?.Value;
         if (string.IsNullOrEmpty(userId))
         {
             return Unauthorized();

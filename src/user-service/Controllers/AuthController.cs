@@ -53,21 +53,21 @@ public class AuthController : ControllerBase
         // Log failed login audit
         if (user == null)
         {
-            await LogLoginAuditAsync(null, request.Username, false, "User not found");
+            await LogLoginAuditAsync(null, request.Username, false, global::UserService.Constants.FailureReasons.UserNotFound);
             return Unauthorized(new { Message = "Invalid credentials" });
         }
 
         // Check if account is locked
         if (user.IsLocked)
         {
-            await LogLoginAuditAsync(user.Id, request.Username, false, "Account locked");
+            await LogLoginAuditAsync(user.Id, request.Username, false, global::UserService.Constants.FailureReasons.AccountLocked);
             return Unauthorized(new { Message = "Account is locked. Please contact administrator." });
         }
 
         var isValid = await _userService.ValidateCredentialsAsync(request.Username, request.Password);
         if (!isValid)
         {
-            await LogLoginAuditAsync(user.Id, request.Username, false, "Invalid password");
+            await LogLoginAuditAsync(user.Id, request.Username, false, global::UserService.Constants.FailureReasons.InvalidPassword);
             return Unauthorized(new { Message = "Invalid credentials" });
         }
 
@@ -98,11 +98,11 @@ public class AuthController : ControllerBase
             string? browser = null;
             if (!string.IsNullOrEmpty(userAgent))
             {
-                if (userAgent.Contains("Chrome")) browser = "Chrome";
-                else if (userAgent.Contains("Firefox")) browser = "Firefox";
-                else if (userAgent.Contains("Safari")) browser = "Safari";
-                else if (userAgent.Contains("Edge")) browser = "Edge";
-                else browser = "Other";
+                if (userAgent.Contains("Chrome")) browser = global::UserService.Constants.Browsers.Chrome;
+                else if (userAgent.Contains("Firefox")) browser = global::UserService.Constants.Browsers.Firefox;
+                else if (userAgent.Contains("Safari")) browser = global::UserService.Constants.Browsers.Safari;
+                else if (userAgent.Contains("Edge")) browser = global::UserService.Constants.Browsers.Edge;
+                else browser = global::UserService.Constants.Browsers.Other;
             }
 
             var audit = new UserService.Models.LoginAudit

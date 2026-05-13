@@ -22,7 +22,7 @@ public class TransferService : ITransferService
     private readonly IConfiguration _configuration;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IHttpContextAccessor _httpContextAccessor;
-    private const string StreamName = "banking-events";
+    private const string StreamName = global::TransferService.Constants.DefaultStreamName;
 
     public TransferService(
         ITransferRepository transferRepository,
@@ -66,14 +66,14 @@ public class TransferService : ITransferService
             ToAccountNumber = request.ToAccountNumber,
             Amount = request.Amount,
             Description = request.Description,
-            Status = "Processing"
+            Status = global::TransferService.Constants.TransferStatuses.Processing
         };
 
         try
         {
             await CreateTransferTransactionsAsync(request.FromAccountId, request.ToAccountId, request.Amount, transfer.Id, request.Description);
 
-            transfer.Status = "Completed";
+            transfer.Status = global::TransferService.Constants.TransferStatuses.Completed;
             transfer.CompletedAt = DateTime.UtcNow;
 
             await _transferRepository.CreateAsync(transfer);
@@ -86,8 +86,8 @@ public class TransferService : ITransferService
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "HTTP request failed during transfer: {TransferId}", transfer.Id);
-            transfer.Status = "Failed";
-            transfer.FailureReason = "Transfer could not be completed due to a service communication error";
+            transfer.Status = global::TransferService.Constants.TransferStatuses.Failed;
+            transfer.FailureReason = global::TransferService.Constants.FailureReasons.ServiceCommunication;
             try
             {
                 await _transferRepository.CreateAsync(transfer);
@@ -101,8 +101,8 @@ public class TransferService : ITransferService
         catch (InvalidOperationException ex)
         {
             _logger.LogError(ex, "Transfer operation failed: {TransferId}", transfer.Id);
-            transfer.Status = "Failed";
-            transfer.FailureReason = "Transfer could not be completed";
+            transfer.Status = global::TransferService.Constants.TransferStatuses.Failed;
+            transfer.FailureReason = global::TransferService.Constants.FailureReasons.Generic;
             try
             {
                 await _transferRepository.CreateAsync(transfer);
@@ -116,8 +116,8 @@ public class TransferService : ITransferService
         catch (CosmosException ex)
         {
             _logger.LogError(ex, "Cosmos DB error during transfer: {TransferId}", transfer.Id);
-            transfer.Status = "Failed";
-            transfer.FailureReason = "Transfer could not be completed due to a storage error";
+            transfer.Status = global::TransferService.Constants.TransferStatuses.Failed;
+            transfer.FailureReason = global::TransferService.Constants.FailureReasons.Storage;
             try
             {
                 await _transferRepository.CreateAsync(transfer);
@@ -179,9 +179,9 @@ public class TransferService : ITransferService
         {
             AccountId = fromAccountId,
             Amount = -amount,
-            Type = "Transfer",
+            Type = global::TransferService.Constants.TransactionTypes.Transfer,
             Description = description ?? $"Transfer to account ending in {toAccountId[^4..]}",
-            Category = "Transfer",
+            Category = global::TransferService.Constants.Categories.Transfer,
             RelatedTransactionId = transferId
         };
 
@@ -197,9 +197,9 @@ public class TransferService : ITransferService
         {
             AccountId = toAccountId,
             Amount = amount,
-            Type = "Transfer",
+            Type = global::TransferService.Constants.TransactionTypes.Transfer,
             Description = description ?? $"Transfer from account ending in {fromAccountId[^4..]}",
-            Category = "Transfer",
+            Category = global::TransferService.Constants.Categories.Transfer,
             RelatedTransactionId = transferId
         };
 
@@ -219,7 +219,7 @@ public class TransferService : ITransferService
         {
             var eventPayload = new
             {
-                eventType = "TransferInitiated",
+                eventType = global::TransferService.Constants.EventTypes.TransferInitiated,
                 timestamp = DateTime.UtcNow.ToString("o"),
                 data = new
                 {

@@ -38,7 +38,7 @@ public class InMemoryUserService : IUserService
             Email = "test@example.com",
             FirstName = "Test",
             LastName = "User",
-            Role = "admin",
+            Role = global::UserService.Constants.Roles.Admin,
             PasswordHash = passwordHash,
             Salt = ""
         };
@@ -52,7 +52,7 @@ public class InMemoryUserService : IUserService
             Email = "demo@banking-demo.com",
             FirstName = "Demo",
             LastName = "User",
-            Role = "admin",
+            Role = global::UserService.Constants.Roles.Admin,
             PasswordHash = passwordHash,
             Salt = ""
         };
@@ -100,7 +100,7 @@ public class InMemoryUserService : IUserService
             LastName = request.LastName,
             PasswordHash = passwordHash,
             Salt = "",
-            Role = isFirstUser ? "admin" : "user"
+            Role = isFirstUser ? global::UserService.Constants.Roles.Admin : global::UserService.Constants.Roles.User
         };
 
         // Atomic email uniqueness check — prevents TOCTOU race
@@ -172,17 +172,17 @@ public class InMemoryUserService : IUserService
         if (!_users.TryGetValue(userId, out var user))
             throw new KeyNotFoundException($"User {userId} not found");
 
-        if (user.Role == "admin")
+        if (user.Role == global::UserService.Constants.Roles.Admin)
             throw new InvalidOperationException($"User {userId} is already an admin");
 
-        user.Role = "admin";
+        user.Role = global::UserService.Constants.Roles.Admin;
         _logger.LogInformation("User {UserId} ({Email}) promoted to admin", user.Id, user.Email);
         return Task.FromResult(user);
     }
 
     public Task<int> GetAdminCountAsync()
     {
-        var count = _users.Values.Count(u => u.Role == "admin");
+        var count = _users.Values.Count(u => u.Role == global::UserService.Constants.Roles.Admin);
         return Task.FromResult(count);
     }
 

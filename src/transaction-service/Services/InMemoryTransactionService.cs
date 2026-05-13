@@ -13,7 +13,7 @@ public class InMemoryTransactionService : ITransactionService
     private readonly ConcurrentDictionary<string, decimal> _accountBalances = new();
     private readonly IConnectionMultiplexer _redis;
     private readonly ILogger<InMemoryTransactionService> _logger;
-    private const string StreamName = "banking-events";
+    private const string StreamName = global::TransactionService.Constants.DefaultStreamName;
 
     public InMemoryTransactionService(
         IConnectionMultiplexer redis,
@@ -42,25 +42,25 @@ public class InMemoryTransactionService : ITransactionService
         // Transactions for demo user's checking account (acct-2-checking)
         var demoChecking = new[]
         {
-            new Transaction { Id = "txn-demo-1", AccountId = "acct-2-checking", Amount = -85.50m, Type = "Debit", Description = "Electric Company Payment", Category = "Utilities", Timestamp = now.AddDays(-1) },
-            new Transaction { Id = "txn-demo-2", AccountId = "acct-2-checking", Amount = -42.99m, Type = "Debit", Description = "Grocery Store", Category = "Groceries", Timestamp = now.AddDays(-2) },
-            new Transaction { Id = "txn-demo-3", AccountId = "acct-2-checking", Amount = 3200.00m, Type = "Credit", Description = "Direct Deposit - Payroll", Category = "Income", Timestamp = now.AddDays(-3) },
-            new Transaction { Id = "txn-demo-4", AccountId = "acct-2-checking", Amount = -15.00m, Type = "Debit", Description = "Netflix Subscription", Category = "Entertainment", Timestamp = now.AddDays(-5) },
-            new Transaction { Id = "txn-demo-5", AccountId = "acct-2-checking", Amount = -127.30m, Type = "Debit", Description = "Gas Station", Category = "Transportation", Timestamp = now.AddDays(-7) },
+            new Transaction { Id = "txn-demo-1", AccountId = "acct-2-checking", Amount = -85.50m, Type = global::TransactionService.Constants.TransactionTypes.Debit, Description = "Electric Company Payment", Category = "Utilities", Timestamp = now.AddDays(-1) },
+            new Transaction { Id = "txn-demo-2", AccountId = "acct-2-checking", Amount = -42.99m, Type = global::TransactionService.Constants.TransactionTypes.Debit, Description = "Grocery Store", Category = "Groceries", Timestamp = now.AddDays(-2) },
+            new Transaction { Id = "txn-demo-3", AccountId = "acct-2-checking", Amount = 3200.00m, Type = global::TransactionService.Constants.TransactionTypes.Credit, Description = "Direct Deposit - Payroll", Category = "Income", Timestamp = now.AddDays(-3) },
+            new Transaction { Id = "txn-demo-4", AccountId = "acct-2-checking", Amount = -15.00m, Type = global::TransactionService.Constants.TransactionTypes.Debit, Description = "Netflix Subscription", Category = "Entertainment", Timestamp = now.AddDays(-5) },
+            new Transaction { Id = "txn-demo-5", AccountId = "acct-2-checking", Amount = -127.30m, Type = global::TransactionService.Constants.TransactionTypes.Debit, Description = "Gas Station", Category = "Transportation", Timestamp = now.AddDays(-7) },
         };
 
         // Transactions for demo user's savings account (acct-2-savings)
         var demoSavings = new[]
         {
-            new Transaction { Id = "txn-demo-6", AccountId = "acct-2-savings", Amount = 500.00m, Type = "Credit", Description = "Transfer from Checking", Category = "Transfer", Timestamp = now.AddDays(-4) },
-            new Transaction { Id = "txn-demo-7", AccountId = "acct-2-savings", Amount = 25.00m, Type = "Credit", Description = "Interest Payment", Category = "Income", Timestamp = now.AddDays(-10) },
+            new Transaction { Id = "txn-demo-6", AccountId = "acct-2-savings", Amount = 500.00m, Type = global::TransactionService.Constants.TransactionTypes.Credit, Description = "Transfer from Checking", Category = "Transfer", Timestamp = now.AddDays(-4) },
+            new Transaction { Id = "txn-demo-7", AccountId = "acct-2-savings", Amount = 25.00m, Type = global::TransactionService.Constants.TransactionTypes.Credit, Description = "Interest Payment", Category = "Income", Timestamp = now.AddDays(-10) },
         };
 
         // Transactions for testuser's checking account (acct-1-checking)
         var testChecking = new[]
         {
-            new Transaction { Id = "txn-test-1", AccountId = "acct-1-checking", Amount = -200.00m, Type = "Debit", Description = "ATM Withdrawal", Category = "Cash", Timestamp = now.AddDays(-1) },
-            new Transaction { Id = "txn-test-2", AccountId = "acct-1-checking", Amount = 1500.00m, Type = "Credit", Description = "Freelance Payment", Category = "Income", Timestamp = now.AddDays(-6) },
+            new Transaction { Id = "txn-test-1", AccountId = "acct-1-checking", Amount = -200.00m, Type = global::TransactionService.Constants.TransactionTypes.Debit, Description = "ATM Withdrawal", Category = "Cash", Timestamp = now.AddDays(-1) },
+            new Transaction { Id = "txn-test-2", AccountId = "acct-1-checking", Amount = 1500.00m, Type = global::TransactionService.Constants.TransactionTypes.Credit, Description = "Freelance Payment", Category = "Income", Timestamp = now.AddDays(-6) },
         };
 
         foreach (var txn in demoChecking.Concat(demoSavings).Concat(testChecking))
@@ -85,10 +85,10 @@ public class InMemoryTransactionService : ITransactionService
             AccountId = request.AccountId,
             UserId = userId,
             Amount = request.Amount,
-            Currency = request.Currency ?? "USD",
+            Currency = request.Currency ?? global::TransactionService.Constants.Currencies.USD,
             Type = request.Type,
             Description = request.Description,
-            Category = request.Category ?? "Uncategorized"
+            Category = request.Category ?? global::TransactionService.Constants.Categories.Uncategorized
         };
         _transactions[transaction.Id] = transaction;
 
@@ -104,7 +104,7 @@ public class InMemoryTransactionService : ITransactionService
         {
             var eventPayload = new
             {
-                eventType = "TransactionCreated",
+                eventType = global::TransactionService.Constants.EventTypes.TransactionCreated,
                 timestamp = DateTime.UtcNow.ToString("o"),
                 data = new
                 {
@@ -161,7 +161,7 @@ public class InMemoryTransactionService : ITransactionService
     private static bool IsDebitTransaction(CreateTransactionRequest request)
     {
         return request.Amount < 0 ||
-               string.Equals(request.Type, "Debit", StringComparison.OrdinalIgnoreCase);
+               string.Equals(request.Type, global::TransactionService.Constants.TransactionTypes.Debit, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task ValidateBalanceAsync(string accountId, decimal amount)
@@ -189,14 +189,14 @@ public class InMemoryTransactionService : ITransactionService
         {
             var eventPayload = new
             {
-                eventType = "InsufficientFundsAttempt",
+                eventType = global::TransactionService.Constants.EventTypes.InsufficientFundsAttempt,
                 timestamp = DateTime.UtcNow.ToString("o"),
                 data = new
                 {
                     accountId,
                     currentBalance = balance,
                     requestedAmount,
-                    type = "Debit"
+                    type = global::TransactionService.Constants.TransactionTypes.Debit
                 }
             };
 
