@@ -612,3 +612,14 @@ Client-side regex must match backend regex exactly to avoid false positives.
 - **Test wrapper requirement:** Any component using `useAuthContext()` must be wrapped in `<AuthProvider>` during tests or will throw "must be used within AuthProvider"
 - **Reusable:** For future forms needing user-derived pre-fills (email, firstName, phone, etc.), import `useAuthContext` from `src/ui-app/src/contexts/AuthContext.tsx` and follow this pattern
 - **Phone input mask:** Hand-rolled ~30 lines. Formatter restricts to `[\d\+\-() .]`, applies US mask `(555) 123-4567` unless international (`+`), strips invalid chars on paste. Validator checks backend regex `^\+?[\d\s\-().]{7,30}$` on blur.
+
+### 2026-05-13 — Multi-Select / Singular File Upload Binding (#130)
+- **Problem:** Frontend allowed `<input multiple>` while backend FastAPI `file: UploadFile = File(...)` (singular) only processes one file — rest silently dropped
+- **Root cause:** FormData.append('file', f) loop appended multiple 'file' keys, but FastAPI non-list binding only reads the first
+- **Solution (Option 3):** Block multi-select at UI level. Removed `multiple` attribute from input, changed `uploadDocuments()` API signature from `File[]` → `File`, defensive slice in `handleFileSelection()` to guard against drag-drop bypassing input attribute
+- **Files changed:**
+  - `src/ui-app/src/api/accountOpening.ts` — uploadDocuments() now takes single `File` parameter
+  - `src/ui-app/src/api/accountOpening.test.ts` — test calls updated to pass single file instead of array
+  - `src/ui-app/src/components/account-opening/DocumentUpload.tsx` — removed `multiple`, updated copy ("Drop a file here", "Select File"), sliced `files[0]` in upload call
+- **Gotcha:** HTML input `multiple` can be bypassed by drag-drop — always defensively slice `selected.length > 1 ? [selected[0]] : selected` in drop handlers
+- **Rationale:** Backend contract is singular (one file per request). Multi-file support would require backend changes (`file: list[UploadFile] = File(...)`). Simpler to match frontend to actual backend behavior than risk silent failures.

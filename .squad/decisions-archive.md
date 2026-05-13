@@ -71,3 +71,71 @@ deploy/kustomize/base/
 - Pods run with minimal privileges
 - Services can discover each other via DNS (configmap URLs)
 
+
+---
+
+# Decision: Deploy OTEL Collector with App Insights Exporter
+
+**Author:** Basher
+**Date:** 2025-07
+**Status:** proposed
+
+## Context
+
+Brian requested an OpenTelemetry Collector deployment to centralize traces/metrics/logs and export them to Azure Application Insights. The App Insights resource and Terraform output already exist.
+
+## Decision
+
+1. **Single manifest file** (`deploy/kustomize/observability/otel-collector.yaml`) containing Namespace (`observability`), Service, Deployment, and ConfigMap. Separate kustomization directory since base enforces `namespace: banking-demo`.
+2. **Secret-based connection string** — The collector reads `APPINSIGHTS_CONNECTION_STRING` from a K8s Secret (`appinsights-secret` in `observability` namespace). The OTEL config uses native `${env:APPINSIGHTS_CONNECTION_STRING}` substitution.
+3. **Operator responsibility** — The K8s secret must be created out-of-band (e.g., via Terraform's `kubernetes_secret` resource or a CI step using the existing `application_insights_connection_string` output).
+4. **Image pinned** to `otel/opentelemetry-collector-contrib:0.151.0`.
+5. **OTEL endpoint re-added** to the shared configmap so all services can send telemetry to the collector.
+
+## Alternatives Considered
+
+- Hardcoding connection string in ConfigMap — rejected (secret material).
+- Helm chart for collector — rejected (project uses Kustomize).
+- Deploying in `banking-demo` namespace — rejected (separation of concerns).
+
+## Consequences
+
+- All services can now export OTLP telemetry to the collector.
+- Operator must create `appinsights-secret` in `observability` namespace before deploying.
+- Future: consider adding a `SealedSecret` or External Secrets Operator for GitOps-friendly secret management.
+
+---
+
+# Decision: Remove Legacy Gateway Directory
+
+**Date:** 2025-07-16
+**Author:** Danny (Lead/Architect)
+**Status:** Implemented
+**Requested by:** Brian
+
+## Context
+
+The `gateway/` directory contained an nginx reverse proxy with njs-based JWT validation (`jwt_validate.js`). This component was superseded by Istio ingress gateway, which now handles ingress routing, mTLS, and authorization policy at the mesh level.
+
+## Decision
+
+Remove the entire `gateway/` directory and all references to it:
+
+- **Deleted:** `gateway/Dockerfile`, `gateway/jwt_validate.js`
+- **Cleaned:** `docker-compose.yml` — removed the `gateway` service block (build, ports, env, volumes, depends_on) and the `depends_on: gateway` from `ui-app`
+- **Retained:** Root-level `nginx.conf` (still used by docker-compose for local API routing)
+- **No action needed:** CI/CD workflows, kustomize manifests, and Taskfile references were already clean (Taskfile.e2e.yml references Istio's `aks-istio-ingressgateway-external`, not the legacy gateway)
+
+## Rationale
+
+- Dead code increases maintenance burden and confuses onboarding
+- JWT validation in njs was a local-only workaround; Istio `RequestAuthentication` + `AuthorizationPolicy` is the production path
+- Reduces docker-compose surface area and build time
+
+## Risks
+
+- **Local dev without Istio:** The `ui-app` service no longer depends on a gateway. For local docker-compose usage, the root `nginx.conf` still provides routing. If JWT auth is needed locally, it must be added to individual services or a new lightweight proxy.
+
+## Commit
+
+`chore: remove legacy gateway — replaced by Istio ingress`

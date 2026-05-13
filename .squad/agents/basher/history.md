@@ -1961,3 +1961,93 @@ await asyncio.to_thread(state.cosmos_chat_container.upsert_item, doc, partition_
 - Consider OpenAPI schema validation in CI to catch client/server drift earlier
 
 **Decision Document:** `.squad/decisions.md` — "Account Opening Document Upload 422 Regression"
+
+---
+
+## Wave 3 Account Opening: Linus Option 3 Fix (2026-05-13)
+
+**Task:** Block multi-select on DocumentUpload (builds on Basher's 418cbdd fix)  
+**Status:** ✅ Implemented  
+**Commit:** d4b52be (amend of 418cbdd)  
+
+### Context
+
+Basher's commit 418cbdd fixed the immediate 422 + React #31 crash. However, the root issue runs deeper: backend FastAPI signature is singular (`file: UploadFile`), but frontend allowed multi-select. Users could select 2+ files, and FastAPI's singular binding would silently drop extras.
+
+### Linus Decision: Option 3 — Block Multi-Select on Frontend
+
+**Rationale:**
+- Each document type (photo_id, proof_of_address, etc.) is uploaded separately anyway
+- Frontend should honor backend contract explicitly (singular)
+- Silent-drop failure eliminated at the source
+- Clearer UX: user knows upfront it's single-file per upload
+
+**Changes:**
+1. Removed `multiple` attribute from `<input type="file">`
+2. Changed `uploadDocuments()` signature: `files: File[]` → `file: File`
+3. Updated UI copy: "Drop files here" → "Drop a file here"
+4. Defensive slice in handler: guards against drag-drop bypassing input attribute
+
+**Verification:**
+- ✅ npm build succeeds
+- ✅ 24/24 tests pass
+- ✅ Commit amend: d4b52be
+
+### Related Decision Document
+
+`.squad/decisions.md` — "Block Multi-Select for Account Opening Document Upload" — full analysis of Options 1-3 and rationale for Option 3.
+
+
+---
+
+## 2026-05-13 — Eval-Runner 500: Azure AI Foundry RBAC Issue
+
+**Task:** Brian reports 500 when clicking "Run Evaluation" in Prompt Eval admin UI  
+**Status:** 🔴 Diagnosed; **INFRA FOLLOW-UP FOR DANNY**  
+**Commit Tested:** 69ce049 (live in AKS)  
+
+### Root Cause: Workload Identity Missing Azure AI Evaluator Role
+
+**Logs (ai-service):**
+1. ✅ `POST .../evals` → **201 Created** (eval definition created)
+2. ❌ `POST .../evals/{id}/runs` → **400 wrapping 403 Forbidden** (eval run creation failed)
+   - Error: `innerError: { code: 'UnauthorizedUserAction' }`
+   - Source: raisvc (Responsible AI Service backend)
+
+**Why it's RBAC, not code:**
+- Token scope is correct (`ai.azure.com/.default`, fixed in commit 69ce049 for agents)
+- Eval definition creation succeeds → confirms credential is valid
+- Eval run creation fails → isolated to evaluator permissions
+- Decision #126 flagged this as infra follow-up; this is the root cause
+
+### Proposed Fix
+
+**File:** `infra/cloud/identity.tf`  
+**Add after line 62:**
+```hcl
+resource "azurerm_role_assignment" "banking_ai_evaluator" {
+  scope                = azapi_resource.ai_foundry_project.id
+  role_definition_name = "Azure AI Evaluator"
+  principal_id         = azurerm_user_assigned_identity.banking_services.principal_id
+}
+```
+
+**Rationale:**
+- Current: `Azure AI Project Manager` covers agents, deployments, connections, eval definitions
+- Missing: `Azure AI Evaluator` covers raisvc execution plane (required for `evals/runs` operations)
+- Least-privilege: Add `Azure AI Evaluator` as separate assignment
+
+**Precedent:** Similar three-role pattern used for Cosmos DB (Reader, Writer, Admin). AI Foundry roles are similarly granular.
+
+### Verification Steps
+
+1. `terraform apply` (RBAC propagation takes 1-5 min)
+2. Test in UI: Prompt Eval admin → "Risk Scoring" → "Run Evaluation"
+3. Expected: 200 OK (no 500); check logs for `"HTTP/1.1 200 OK"` on evals/runs endpoint
+
+### Decision Document
+
+`.squad/decisions.md` — "Diagnosis: Eval-Runner 500 — Azure AI Foundry RBAC Issue" — full log traces, code path analysis, and RBAC role comparison.
+
+**Bundling:** Ship as standalone Terraform PR (no service restart needed).
+
