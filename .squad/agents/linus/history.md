@@ -568,3 +568,38 @@ which handles: string detail, array detail (FastAPI), `message`/`title`, Problem
 is a flat UI-friendly shape. The backend wire contract (`ApplicationCreateRequest`)
 is nested. Keep them as separate TypeScript types and convert at the API boundary
 (`buildCreateRequest`). Conflating them is what let the contract drift unnoticed.
+
+
+## Learnings — 2026-05-13 — issue #129 (Phone Mask + Email Pre-fill)
+
+**Hand-rolled input formatters beat libs for simple cases** — The phone mask (restrict
+chars + apply US format) is ~30 lines total. React Input Mask / IMask would add 50KB+
+to the bundle for the same result. Keep the formatter inline, under 40 lines. Backend
+regex: `^\+?[\d\s\-().]{7,30}$` — validate on blur for instant feedback, but still
+defer to server-side 422 as the source of truth. Defense-in-depth: client restricts,
+server enforces.
+
+**Auth context pre-fill pattern** — Use `useAuthContext()` from
+`src/ui-app/src/contexts/AuthContext.tsx`. For email pre-fill, do it in state init
+(not `useEffect`) to avoid flicker:
+```typescript
+const { user } = useAuthContext();
+const [values, setValues] = React.useState(() => {
+  const initial = resolveInitialState(initialData);
+  if (!initial.email && user?.email) {
+    initial.email = user.email;
+  }
+  return initial;
+});
+```
+Defensive: fallback to empty if `user?.email` is null. Field remains editable.
+
+**Test harness must match runtime context** — Components using `useAuthContext` throw
+"must be used within AuthProvider" in tests. Wrap the component in `<AuthProvider>` in
+`renderForm()` (or each test case). Pattern is consistent across the codebase — no
+mocks, just wrap in the real provider. 15/15 tests passed after adding the wrapper.
+
+**onBlur validation for format checks** — Phone validation triggers on blur so the user
+isn't harassed mid-type, but still sees the error before submitting. Pattern:
+`handlePhoneBlur()` sets `errors.phone` if `validatePhoneFormat(values.phone)` fails.
+Client-side regex must match backend regex exactly to avoid false positives.
