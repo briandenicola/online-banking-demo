@@ -90,18 +90,35 @@ init_telemetry()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cosmos_endpoint = os.getenv("CosmosDb__Endpoint")
+    is_production = bool(os.getenv("AZURE_CLIENT_ID"))
     if cosmos_endpoint and cosmos_endpoint != "REPLACE_WITH_COSMOS_ENDPOINT":
         try:
             from azure.cosmos import CosmosClient
+            from azure.cosmos.exceptions import CosmosHttpResponseError
 
             credential = DefaultAzureCredential()
-            cosmos_client = CosmosClient(cosmos_endpoint, credential=credential)
+            cosmos_client = await asyncio.to_thread(CosmosClient, cosmos_endpoint, credential=credential)
             db = cosmos_client.get_database_client("BankingDemo")
             container = db.get_container_client("account-applications")
             app.state.repository = CosmosDBApplicationRepository(container)
             logger.info("Using Cosmos DB repository", endpoint=cosmos_endpoint)
+        except CosmosHttpResponseError as exc:
+            if is_production:
+                logger.error("Cosmos DB initialization failed in production — aborting startup", error=str(exc))
+                raise
+            logger.warning("Cosmos DB request failed, falling back to in-memory", error=str(exc))
+            app.state.repository = InMemoryApplicationRepository()
+        except (ConnectionError, OSError) as exc:
+            if is_production:
+                logger.error("Cosmos DB network error in production — aborting startup", error=str(exc))
+                raise
+            logger.warning("Cosmos DB unreachable, falling back to in-memory", error=str(exc))
+            app.state.repository = InMemoryApplicationRepository()
         except Exception as exc:
-            logger.error("Failed to init Cosmos DB, falling back to in-memory", error=str(exc))
+            if is_production:
+                logger.error("Unexpected Cosmos DB init failure in production — aborting startup", error=str(exc))
+                raise
+            logger.warning("Unexpected Cosmos DB init error, falling back to in-memory", error=str(exc))
             app.state.repository = InMemoryApplicationRepository()
     else:
         logger.warning("CosmosDb__Endpoint not set — using in-memory repository")
@@ -162,3 +179,18 @@ async def readyz():
     except Exception as exc:
         return {"status": "unavailable", "reason": "redis", "error": str(exc)}, 503
     return {"status": "ready", "timestamp": datetime.utcnow().isoformat()}
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    correlation_id = structlog.contextvars.get_contextvars().get("correlation_id", uuid.uuid4().hex)
+    logger.error("Unhandled exception", error=str(exc), path=request.url.path, exc_info=True)
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": type(exc).__name__,
+            "message": f"Internal server error. Correlation ID: {correlation_id}",
+            "status_code": 500,
+        },
+    )
