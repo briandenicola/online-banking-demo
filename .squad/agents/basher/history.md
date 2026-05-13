@@ -1226,3 +1226,22 @@ Fixed `account-opening-service/app/main.py` Cosmos init to catch `CosmosHttpResp
 - `src/transaction-service/Services/TransactionService.cs` — specific catches
 - `src/transfer-service/Services/TransferService.cs` — specific catches
 - `src/account-opening-service/app/main.py` — Cosmos init fix
+
+### 2026-05-12 — Repository/Data-Access Abstraction (Issue #89)
+
+**What:** Extracted repository interfaces and Cosmos/Redis implementations for all 5 .NET services to decouple business logic from infrastructure.
+
+**Pattern:** Each service now depends on `I{Entity}Repository` interfaces injected via DI. Cosmos implementations live in `Repositories/` folders. Redis event publishing abstracted behind `IEventPublisher`. Business logic (validation, hashing, event composition) stays in service classes.
+
+**Repositories created:**
+- user-service: `IUserRepository`, `ILoginAuditRepository`, `IEventPublisher` → `CosmosUserRepository`, `CosmosLoginAuditRepository`, `RedisEventPublisher`
+- account-service: `IAccountRepository` → `CosmosAccountRepository`
+- transaction-service: `ITransactionRepository`, `IAccountBalanceRepository`, `IEventPublisher` → `CosmosTransactionRepository`, `CosmosAccountBalanceRepository`, `RedisEventPublisher`
+- transfer-service: `ITransferRepository`, `IEventPublisher` → `CosmosTransferRepository`, `RedisEventPublisher`
+- prompt-eval-service: `IPromptTemplateRepository`, `IEvaluationRunRepository` → `CosmosPromptTemplateRepository`, `CosmosEvaluationRunRepository`
+
+**Key files:**
+- `src/*/Repositories/` — all new interface and implementation files
+- `src/*/Services/*Service.cs` — refactored to use repository interfaces
+- `src/*/Program.cs` — DI registrations for repositories
+- `src/prompt-eval-service/Services/EvaluationBackgroundService.cs` — uses `IEvaluationRunRepository` instead of direct `CosmosClient`

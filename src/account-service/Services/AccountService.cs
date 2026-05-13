@@ -1,33 +1,25 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
 using AccountService.Models;
-using Microsoft.Azure.Cosmos;
-using Microsoft.Extensions.Configuration;
+using AccountService.Repositories;
 using Microsoft.Extensions.Logging;
 using OnlineBankingDemo.Contracts.Dtos;
-using OnlineBankingDemo.Contracts.Events;
 
 namespace AccountService.Services;
 
 public class AccountService : IAccountService
 {
-    private readonly Container _container;
+    private readonly IAccountRepository _repository;
     private readonly ILogger<AccountService> _logger;
-    private readonly IConfiguration _configuration;
 
     public AccountService(
-        CosmosClient cosmosClient,
-        ILogger<AccountService> logger,
-        IConfiguration configuration)
+        IAccountRepository repository,
+        ILogger<AccountService> logger)
     {
-        var databaseName = configuration["CosmosDb:DatabaseName"];
-        var containerName = configuration["CosmosDb:ContainerName"];
-        _container = cosmosClient.GetContainer(databaseName, containerName);
+        _repository = repository;
         _logger = logger;
-        _configuration = configuration;
     }
 
     public async Task<Account> CreateAccountAsync(string userId, CreateAccountRequest request)
@@ -42,53 +34,34 @@ public class AccountService : IAccountService
             Currency = request.Currency ?? "USD"
         };
 
-        await _container.CreateItemAsync(account, new PartitionKey(account.Id));
+        var created = await _repository.CreateAsync(account);
         _logger.LogInformation("Created account {AccountId} for user {UserId}", account.Id, userId);
-        return account;
+        return created;
     }
 
     public async Task<Account?> GetAccountByIdAsync(string id)
     {
-        try
-        {
-            var response = await _container.ReadItemAsync<Account>(id, new PartitionKey(id));
-            return response.Resource;
-        }
-        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            return null;
-        }
+        return await _repository.GetByIdAsync(id);
     }
 
     public async Task<IEnumerable<Account>> GetUserAccountsAsync(string userId)
     {
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.UserId = @userId")
-            .WithParameter("@userId", userId);
-        
-        var iterator = _container.GetItemQueryIterator<Account>(query);
-        var results = await iterator.ReadNextAsync();
-        return results.ToList();
+        return await _repository.GetByUserIdAsync(userId);
     }
 
     public async Task<Account?> GetAccountByNumberAsync(string accountNumber)
     {
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.AccountNumber = @accountNumber")
-            .WithParameter("@accountNumber", accountNumber);
-        
-        var iterator = _container.GetItemQueryIterator<Account>(query);
-        var results = await iterator.ReadNextAsync();
-        return results.FirstOrDefault();
+        return await _repository.GetByAccountNumberAsync(accountNumber);
     }
 
     public async Task<Account> UpdateBalanceAsync(string accountId, decimal amount)
     {
-        var account = await GetAccountByIdAsync(accountId);
+        var account = await _repository.GetByIdAsync(accountId);
         if (account == null)
             throw new InvalidOperationException("Account not found");
 
         account.Balance += amount;
-        var response = await _container.UpsertItemAsync(account, new PartitionKey(account.Id));
-        return response.Resource;
+        return await _repository.UpsertAsync(account);
     }
 
     private string GenerateAccountNumber()

@@ -1,15 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Azure.Cosmos;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using OnlineBankingDemo.Contracts.Dtos;
 using OnlineBankingDemo.Contracts.Events;
-using StackExchange.Redis;
+using UserService.Repositories;
 using UserModel = UserService.Models.User;
 using BC = global::BCrypt.Net.BCrypt;
 
@@ -17,57 +14,36 @@ namespace UserService.Services;
 
 public class UserService : IUserService
 {
-    private readonly Container _container;
-    private readonly IConnectionMultiplexer _redis;
+    private readonly IUserRepository _userRepository;
+    private readonly ILoginAuditRepository _loginAuditRepository;
+    private readonly IEventPublisher _eventPublisher;
     private readonly ILogger<UserService> _logger;
-    private readonly IConfiguration _configuration;
 
     public UserService(
-        CosmosClient cosmosClient,
-        IConnectionMultiplexer redis,
-        ILogger<UserService> logger,
-        IConfiguration configuration)
+        IUserRepository userRepository,
+        ILoginAuditRepository loginAuditRepository,
+        IEventPublisher eventPublisher,
+        ILogger<UserService> logger)
     {
-        var databaseName = configuration["CosmosDb:DatabaseName"];
-        var containerName = configuration["CosmosDb:ContainerName"];
-        _container = cosmosClient.GetContainer(databaseName, containerName);
-        _redis = redis;
+        _userRepository = userRepository;
+        _loginAuditRepository = loginAuditRepository;
+        _eventPublisher = eventPublisher;
         _logger = logger;
-        _configuration = configuration;
     }
 
     public async Task<UserModel?> GetUserByIdAsync(string id)
     {
-        try
-        {
-            var response = await _container.ReadItemAsync<UserModel>(id, new PartitionKey(id));
-            return response.Resource;
-        }
-        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            return null;
-        }
+        return await _userRepository.GetByIdAsync(id);
     }
 
     public async Task<UserModel?> GetUserByUsernameAsync(string username)
     {
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.Username = @username")
-            .WithParameter("@username", username);
-        
-        var iterator = _container.GetItemQueryIterator<UserModel>(query);
-        var results = await iterator.ReadNextAsync();
-        return results.FirstOrDefault();
+        return await _userRepository.GetByUsernameAsync(username);
     }
 
     public async Task<UserModel?> GetUserByEmailAsync(string email)
     {
-        var normalizedEmail = email.ToLowerInvariant();
-        var query = new QueryDefinition("SELECT * FROM c WHERE LOWER(c.Email) = @email")
-            .WithParameter("@email", normalizedEmail);
-
-        var iterator = _container.GetItemQueryIterator<UserModel>(query);
-        var results = await iterator.ReadNextAsync();
-        return results.FirstOrDefault();
+        return await _userRepository.GetByEmailAsync(email);
     }
 
     public async Task<UserModel> CreateUserAsync(RegisterUserRequest request)
@@ -87,7 +63,7 @@ public class UserService : IUserService
         var passwordHash = BC.HashPassword(request.Password);
 
         // Check if this is the first user in the system — auto-promote to admin
-        var isFirstUser = await IsContainerEmptyAsync();
+        var isFirstUser = await _userRepository.IsContainerEmptyAsync();
 
         var user = new UserModel
         {
@@ -119,7 +95,7 @@ public class UserService : IUserService
 
         try
         {
-            await _container.CreateItemAsync(emailLookupDoc, new PartitionKey(emailLookupId));
+            await _userRepository.CreateEmailLookupAsync(emailLookupId, emailLookupDoc);
         }
         catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict)
         {
@@ -129,18 +105,18 @@ public class UserService : IUserService
         // Create the actual user document. If this fails, clean up the lookup doc.
         try
         {
-            var response = await _container.CreateItemAsync(user, new PartitionKey(user.Id));
+            var createdUser = await _userRepository.CreateAsync(user);
 
             await PublishUserRegisteredEvent(user);
 
-            return response;
+            return createdUser;
         }
         catch
         {
             // Best-effort cleanup of the lookup document
             try
             {
-                await _container.DeleteItemAsync<object>(emailLookupId, new PartitionKey(emailLookupId));
+                await _userRepository.DeleteEmailLookupAsync(emailLookupId);
             }
             catch (Exception cleanupEx)
             {
@@ -168,7 +144,7 @@ public class UserService : IUserService
             return false;
 
         user.PasswordHash = BC.HashPassword(newPassword);
-        await _container.ReplaceItemAsync(user, user.Id, new PartitionKey(user.Id));
+        await _userRepository.ReplaceAsync(user);
         _logger.LogInformation("Password changed for user {UserId}", userId);
         return true;
     }
@@ -185,7 +161,7 @@ public class UserService : IUserService
         if (user == null) throw new InvalidOperationException("User not found");
 
         user.AvatarBase64 = avatarBase64;
-        await _container.ReplaceItemAsync(user, user.Id, new PartitionKey(user.Id));
+        await _userRepository.ReplaceAsync(user);
         _logger.LogInformation("Avatar updated for user {UserId}", userId);
     }
 
@@ -201,16 +177,8 @@ public class UserService : IUserService
         if (user == null) throw new InvalidOperationException("User not found");
 
         user.CategoryPreferences = categories;
-        await _container.ReplaceItemAsync(user, user.Id, new PartitionKey(user.Id));
+        await _userRepository.ReplaceAsync(user);
         _logger.LogInformation("Category preferences updated for user {UserId}: {Count} categories", userId, categories.Count);
-    }
-
-    private async Task<bool> IsContainerEmptyAsync()
-    {
-        var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE NOT STARTSWITH(c.id, 'email-lookup:')");
-        var iterator = _container.GetItemQueryIterator<int>(query);
-        var response = await iterator.ReadNextAsync();
-        return response.FirstOrDefault() == 0;
     }
 
     private async Task PublishUserRegisteredEvent(UserModel user)
@@ -231,11 +199,7 @@ public class UserService : IUserService
                 data = evt
             });
 
-            var db = _redis.GetDatabase();
-            await db.StreamAddAsync("banking-events", new NameValueEntry[]
-            {
-                new("payload", payload)
-            });
+            await _eventPublisher.PublishAsync("banking-events", payload);
             _logger.LogInformation("Published UserRegistered event to Redis Stream for user {UserId}", user.Id);
         }
         catch (Exception ex)
@@ -254,33 +218,20 @@ public class UserService : IUserService
             throw new InvalidOperationException($"User {userId} is already an admin");
 
         user.Role = "admin";
-        await _container.ReplaceItemAsync(user, user.Id, new PartitionKey(user.Id));
+        await _userRepository.ReplaceAsync(user);
         _logger.LogInformation("User {UserId} ({Email}) promoted to admin", user.Id, user.Email);
         return user;
     }
 
     public async Task<int> GetAdminCountAsync()
     {
-        var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.Role = 'admin'");
-        var iterator = _container.GetItemQueryIterator<int>(query);
-        var response = await iterator.ReadNextAsync();
-        return response.FirstOrDefault();
+        return await _userRepository.GetAdminCountAsync();
     }
 
     // Admin methods
     public async Task<List<UserModel>> GetAllUsersAsync()
     {
-        var query = new QueryDefinition("SELECT * FROM c WHERE NOT STARTSWITH(c.id, 'email-lookup:') ORDER BY c.CreatedAt DESC");
-        var iterator = _container.GetItemQueryIterator<UserModel>(query);
-        var users = new List<UserModel>();
-
-        while (iterator.HasMoreResults)
-        {
-            var response = await iterator.ReadNextAsync();
-            users.AddRange(response);
-        }
-
-        return users;
+        return await _userRepository.GetAllUsersAsync();
     }
 
     public async Task<bool> LockUserAsync(string userId)
@@ -289,7 +240,7 @@ public class UserService : IUserService
         if (user == null) return false;
 
         user.IsLocked = true;
-        await _container.ReplaceItemAsync(user, user.Id, new PartitionKey(user.Id));
+        await _userRepository.ReplaceAsync(user);
         _logger.LogInformation("User {UserId} locked", userId);
         return true;
     }
@@ -300,7 +251,7 @@ public class UserService : IUserService
         if (user == null) return false;
 
         user.IsLocked = false;
-        await _container.ReplaceItemAsync(user, user.Id, new PartitionKey(user.Id));
+        await _userRepository.ReplaceAsync(user);
         _logger.LogInformation("User {UserId} unlocked", userId);
         return true;
     }
@@ -311,53 +262,35 @@ public class UserService : IUserService
         if (user == null) return false;
 
         user.PasswordHash = BC.HashPassword(newPassword);
-        await _container.ReplaceItemAsync(user, user.Id, new PartitionKey(user.Id));
+        await _userRepository.ReplaceAsync(user);
         _logger.LogInformation("Password reset for user {UserId}", userId);
         return true;
     }
 
     public async Task<bool> DeleteUserAsync(string userId)
     {
-        try
+        // Fetch user first to get email for lookup doc cleanup
+        var user = await GetUserByIdAsync(userId);
+
+        var deleted = await _userRepository.DeleteAsync(userId);
+        if (!deleted) return false;
+
+        _logger.LogInformation("User {UserId} deleted", userId);
+
+        // Best-effort cleanup of the email lookup document
+        if (user?.Email != null)
         {
-            // Fetch user first to get email for lookup doc cleanup
-            var user = await GetUserByIdAsync(userId);
-
-            await _container.DeleteItemAsync<UserModel>(userId, new PartitionKey(userId));
-            _logger.LogInformation("User {UserId} deleted", userId);
-
-            // Best-effort cleanup of the email lookup document
-            if (user?.Email != null)
-            {
-                try
-                {
-                    var emailLookupId = $"email-lookup:{user.Email.ToLowerInvariant()}";
-                    await _container.DeleteItemAsync<object>(emailLookupId, new PartitionKey(emailLookupId));
-                }
-                catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-                {
-                    // Lookup doc may not exist for users created before this fix
-                }
-            }
-
-            return true;
+            await _userRepository.DeleteEmailLookupAsync($"email-lookup:{user.Email.ToLowerInvariant()}");
         }
-        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            return false;
-        }
+
+        return true;
     }
 
     public async Task LogLoginAuditAsync(Models.LoginAudit audit)
     {
         try
         {
-            // Store in a separate container (login-audits)
-            var auditContainerName = _configuration["CosmosDb:LoginAuditContainerName"] ?? "login-audits";
-            var databaseName = _configuration["CosmosDb:DatabaseName"];
-            var auditContainer = _container.Database.GetContainer(auditContainerName);
-
-            await auditContainer.CreateItemAsync(audit, new PartitionKey(audit.Id));
+            await _loginAuditRepository.CreateAsync(audit);
             _logger.LogInformation("Login audit logged for user {UserId}", audit.UserId);
         }
         catch (Exception ex)
@@ -370,21 +303,7 @@ public class UserService : IUserService
     {
         try
         {
-            var auditContainerName = _configuration["CosmosDb:LoginAuditContainerName"] ?? "login-audits";
-            var databaseName = _configuration["CosmosDb:DatabaseName"];
-            var auditContainer = _container.Database.GetContainer(auditContainerName);
-
-            var query = new QueryDefinition($"SELECT TOP {limit} * FROM c ORDER BY c.Timestamp DESC");
-            var iterator = auditContainer.GetItemQueryIterator<Models.LoginAudit>(query);
-            var audits = new List<Models.LoginAudit>();
-
-            while (iterator.HasMoreResults)
-            {
-                var response = await iterator.ReadNextAsync();
-                audits.AddRange(response);
-            }
-
-            return audits;
+            return await _loginAuditRepository.GetRecentAsync(limit);
         }
         catch (Exception ex)
         {

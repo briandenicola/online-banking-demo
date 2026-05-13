@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Azure.Cosmos;
 using PromptEvalService.Models;
+using PromptEvalService.Repositories;
 
 namespace PromptEvalService.Services;
 
@@ -11,7 +12,7 @@ namespace PromptEvalService.Services;
 /// </summary>
 public class EvaluationService : IEvaluationService
 {
-    private readonly Container _runsContainer;
+    private readonly IEvaluationRunRepository _runRepository;
     private readonly IPromptTemplateService _templateService;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
@@ -19,16 +20,14 @@ public class EvaluationService : IEvaluationService
     private readonly EvaluationQueue _queue;
 
     public EvaluationService(
-        CosmosClient cosmosClient,
+        IEvaluationRunRepository runRepository,
         IPromptTemplateService templateService,
         IHttpClientFactory httpClientFactory,
         IConfiguration config,
         ILogger<EvaluationService> logger,
         EvaluationQueue queue)
     {
-        var dbName = config["CosmosDb:DatabaseName"] ?? "BankingDemo";
-        var containerName = config["CosmosDb:RunsContainerName"] ?? "EvaluationRuns";
-        _runsContainer = cosmosClient.GetContainer(dbName, containerName);
+        _runRepository = runRepository;
         _templateService = templateService;
         _httpClientFactory = httpClientFactory;
         _config = config;
@@ -54,7 +53,7 @@ public class EvaluationService : IEvaluationService
             Status = "running"
         };
 
-        await _runsContainer.CreateItemAsync(run, GlobalPartition);
+        await _runRepository.CreateAsync(run);
 
         await _queue.Writer.WriteAsync(new EvaluationWorkItem(run, template, transactions));
 
@@ -175,7 +174,7 @@ public class EvaluationService : IEvaluationService
         _logger.LogInformation("Foundry evaluation completed via ai-service: {Total} total, {Passed} passed, {Failed} failed",
             total, passed, failed);
 
-        await _runsContainer.ReplaceItemAsync(run, run.Id, GlobalPartition);
+        await _runRepository.ReplaceAsync(run.Id, run);
     }
 
     private static string FormatTransactionQuery(TransactionData tx, string target)
@@ -220,35 +219,12 @@ public class EvaluationService : IEvaluationService
 
     public async Task<EvaluationRun?> GetRunAsync(string id)
     {
-        try
-        {
-            var response = await _runsContainer.ReadItemAsync<EvaluationRun>(id, GlobalPartition);
-            return response.Resource;
-        }
-        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            return null;
-        }
+        return await _runRepository.GetByIdAsync(id);
     }
 
     public async Task<PaginatedResponse<EvaluationRunSummary>> ListRunsAsync(int page = 1, int pageSize = 20, string? templateId = null)
     {
-        var queryText = "SELECT * FROM c WHERE c.userId = 'global'";
-        if (!string.IsNullOrEmpty(templateId))
-            queryText += " AND c.templateId = @templateId";
-        queryText += " ORDER BY c.createdAt DESC";
-
-        var queryDef = new QueryDefinition(queryText);
-        if (!string.IsNullOrEmpty(templateId))
-            queryDef.WithParameter("@templateId", templateId);
-
-        var allRuns = new List<EvaluationRun>();
-        using var iterator = _runsContainer.GetItemQueryIterator<EvaluationRun>(queryDef);
-        while (iterator.HasMoreResults)
-        {
-            var response = await iterator.ReadNextAsync();
-            allRuns.AddRange(response);
-        }
+        var allRuns = await _runRepository.GetAllAsync(templateId);
 
         var total = allRuns.Count;
         var items = allRuns

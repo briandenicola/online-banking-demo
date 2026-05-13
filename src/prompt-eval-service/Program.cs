@@ -5,6 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 using Azure.Identity;
 using Banking.Observability;
 using PromptEvalService.Models;
+using PromptEvalService.Repositories;
 using PromptEvalService.Services;
 var builder = WebApplication.CreateBuilder(args);
 
@@ -89,6 +90,10 @@ builder.Services.AddSingleton(async sp =>
 
     return database;
 });
+
+// Repositories
+builder.Services.AddScoped<IPromptTemplateRepository, CosmosPromptTemplateRepository>();
+builder.Services.AddScoped<IEvaluationRunRepository, CosmosEvaluationRunRepository>();
 
 // Background evaluation queue
 builder.Services.AddSingleton<EvaluationQueue>();

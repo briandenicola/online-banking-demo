@@ -9,16 +9,15 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using OnlineBankingDemo.Contracts.Dtos;
-using OnlineBankingDemo.Contracts.Events;
-using StackExchange.Redis;
 using TransferService.Models;
+using TransferService.Repositories;
 
 namespace TransferService.Services;
 
 public class TransferService : ITransferService
 {
-    private readonly Container _container;
-    private readonly IConnectionMultiplexer _redis;
+    private readonly ITransferRepository _transferRepository;
+    private readonly IEventPublisher _eventPublisher;
     private readonly ILogger<TransferService> _logger;
     private readonly IConfiguration _configuration;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -26,19 +25,15 @@ public class TransferService : ITransferService
     private const string StreamName = "banking-events";
 
     public TransferService(
-        CosmosClient cosmosClient,
-        IConnectionMultiplexer redis,
+        ITransferRepository transferRepository,
+        IEventPublisher eventPublisher,
         ILogger<TransferService> logger,
         IConfiguration configuration,
         IHttpClientFactory httpClientFactory,
         IHttpContextAccessor httpContextAccessor)
     {
-        var databaseName = configuration["CosmosDb:DatabaseName"]
-            ?? throw new InvalidOperationException("Missing required configuration: CosmosDb:DatabaseName");
-        var containerName = configuration["CosmosDb:ContainerName"]
-            ?? throw new InvalidOperationException("Missing required configuration: CosmosDb:ContainerName");
-        _container = cosmosClient.GetContainer(databaseName, containerName);
-        _redis = redis;
+        _transferRepository = transferRepository;
+        _eventPublisher = eventPublisher;
         _logger = logger;
         _configuration = configuration;
         _httpClientFactory = httpClientFactory;
@@ -81,7 +76,7 @@ public class TransferService : ITransferService
             transfer.Status = "Completed";
             transfer.CompletedAt = DateTime.UtcNow;
 
-            await _container.CreateItemAsync(transfer, new PartitionKey(transfer.Id));
+            await _transferRepository.CreateAsync(transfer);
 
             // Publish TransferInitiated event to Redis Stream
             await PublishTransferInitiatedEvent(transfer);
@@ -95,7 +90,7 @@ public class TransferService : ITransferService
             transfer.FailureReason = "Transfer could not be completed due to a service communication error";
             try
             {
-                await _container.CreateItemAsync(transfer, new PartitionKey(transfer.Id));
+                await _transferRepository.CreateAsync(transfer);
             }
             catch (CosmosException persistEx)
             {
@@ -110,7 +105,7 @@ public class TransferService : ITransferService
             transfer.FailureReason = "Transfer could not be completed";
             try
             {
-                await _container.CreateItemAsync(transfer, new PartitionKey(transfer.Id));
+                await _transferRepository.CreateAsync(transfer);
             }
             catch (CosmosException persistEx)
             {
@@ -125,7 +120,7 @@ public class TransferService : ITransferService
             transfer.FailureReason = "Transfer could not be completed due to a storage error";
             try
             {
-                await _container.CreateItemAsync(transfer, new PartitionKey(transfer.Id));
+                await _transferRepository.CreateAsync(transfer);
             }
             catch (CosmosException persistEx)
             {
@@ -137,15 +132,7 @@ public class TransferService : ITransferService
 
     public async Task<Transfer?> GetTransferByIdAsync(string id)
     {
-        try
-        {
-            var response = await _container.ReadItemAsync<Transfer>(id, new PartitionKey(id));
-            return response.Resource;
-        }
-        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            return null;
-        }
+        return await _transferRepository.GetByIdAsync(id);
     }
 
 
@@ -243,19 +230,15 @@ public class TransferService : ITransferService
                 }
             };
 
-            var db = _redis.GetDatabase();
-            await db.StreamAddAsync(StreamName, new NameValueEntry[]
-            {
-                new("payload", JsonConvert.SerializeObject(eventPayload))
-            });
+            await _eventPublisher.PublishAsync(StreamName, JsonConvert.SerializeObject(eventPayload));
 
             _logger.LogInformation("Published TransferInitiated event to Redis for transfer {TransferId}", transfer.Id);
         }
-        catch (RedisConnectionException ex)
+        catch (StackExchange.Redis.RedisConnectionException ex)
         {
             _logger.LogError(ex, "Redis connection failed while publishing TransferInitiated event for transfer {TransferId}", transfer.Id);
         }
-        catch (RedisException ex)
+        catch (StackExchange.Redis.RedisException ex)
         {
             _logger.LogError(ex, "Redis error while publishing TransferInitiated event for transfer {TransferId}", transfer.Id);
         }

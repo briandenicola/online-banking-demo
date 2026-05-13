@@ -10,6 +10,7 @@ using Azure.Identity;
 using StackExchange.Redis;
 using System.Text;
 using Banking.Observability;
+using TransactionService.Repositories;
 using TransactionService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -113,6 +114,11 @@ else
         }
         return new CosmosClient(configuration["CosmosDb:ConnectionString"]);
     });
+
+    // Repositories
+    builder.Services.AddScoped<ITransactionRepository, CosmosTransactionRepository>();
+    builder.Services.AddScoped<IAccountBalanceRepository, CosmosAccountBalanceRepository>();
+    builder.Services.AddSingleton<IEventPublisher, RedisEventPublisher>();
 
     // Services
     builder.Services.AddScoped<ITransactionService, TransactionService.Services.TransactionService>();

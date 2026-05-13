@@ -11,6 +11,7 @@ using System.Text;
 using Azure.Identity;
 using Banking.Observability;
 using StackExchange.Redis;
+using UserService.Repositories;
 using UserService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -105,6 +106,11 @@ else
         }
         return ConnectionMultiplexer.Connect(configOptions);
     });
+
+    // Repositories
+    builder.Services.AddScoped<IUserRepository, CosmosUserRepository>();
+    builder.Services.AddScoped<ILoginAuditRepository, CosmosLoginAuditRepository>();
+    builder.Services.AddSingleton<IEventPublisher, RedisEventPublisher>();
 
     // Services
     builder.Services.AddScoped<IUserService, UserService.Services.UserService>();

@@ -10,6 +10,7 @@ using Azure.Identity;
 using StackExchange.Redis;
 using System.Text;
 using Banking.Observability;
+using TransferService.Repositories;
 using TransferService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -123,6 +124,10 @@ else
         }
         return new CosmosClient(configuration["CosmosDb:ConnectionString"]);
     });
+
+    // Repositories
+    builder.Services.AddScoped<ITransferRepository, CosmosTransferRepository>();
+    builder.Services.AddSingleton<IEventPublisher, RedisEventPublisher>();
 
     // HTTP Client for service-to-service calls
     builder.Services.AddHttpClient();

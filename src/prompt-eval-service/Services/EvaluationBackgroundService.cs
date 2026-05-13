@@ -1,6 +1,6 @@
 using System.Threading.Channels;
-using Microsoft.Azure.Cosmos;
 using PromptEvalService.Models;
+using PromptEvalService.Repositories;
 
 namespace PromptEvalService.Services;
 
@@ -70,16 +70,12 @@ public class EvaluationBackgroundService : BackgroundService
         try
         {
             using var scope = _scopeFactory.CreateScope();
-            var config = scope.ServiceProvider.GetRequiredService<IConfiguration>();
-            var cosmosClient = scope.ServiceProvider.GetRequiredService<CosmosClient>();
-            var dbName = config["CosmosDb:DatabaseName"] ?? "BankingDemo";
-            var containerName = config["CosmosDb:RunsContainerName"] ?? "EvaluationRuns";
-            var container = cosmosClient.GetContainer(dbName, containerName);
+            var runRepository = scope.ServiceProvider.GetRequiredService<IEvaluationRunRepository>();
 
             run.Status = "failed";
             run.Error = ex.Message;
             run.CompletedAt = DateTime.UtcNow;
-            await container.ReplaceItemAsync(run, run.Id, new PartitionKey("global"));
+            await runRepository.ReplaceAsync(run.Id, run);
         }
         catch (Exception persistEx)
         {

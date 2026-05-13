@@ -1,36 +1,31 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Azure.Cosmos;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
-using StackExchange.Redis;
 using TransactionService.Models;
+using TransactionService.Repositories;
 
 namespace TransactionService.Services;
 
 public class TransactionService : ITransactionService
 {
-    private readonly Container _container;
-    private readonly Container _accountsContainer;
-    private readonly IConnectionMultiplexer _redis;
+    private readonly ITransactionRepository _transactionRepository;
+    private readonly IAccountBalanceRepository _accountBalanceRepository;
+    private readonly IEventPublisher _eventPublisher;
     private readonly ILogger<TransactionService> _logger;
     private const string StreamName = "banking-events";
 
     public TransactionService(
-        CosmosClient cosmosClient,
-        IConnectionMultiplexer redis,
-        ILogger<TransactionService> logger,
-        IConfiguration configuration)
+        ITransactionRepository transactionRepository,
+        IAccountBalanceRepository accountBalanceRepository,
+        IEventPublisher eventPublisher,
+        ILogger<TransactionService> logger)
     {
-        var databaseName = configuration["CosmosDb:DatabaseName"];
-        var containerName = configuration["CosmosDb:ContainerName"];
-        var accountsContainerName = configuration["CosmosDb:AccountsContainerName"];
-        _container = cosmosClient.GetContainer(databaseName, containerName);
-        _accountsContainer = cosmosClient.GetContainer(databaseName, accountsContainerName);
-        _redis = redis;
+        _transactionRepository = transactionRepository;
+        _accountBalanceRepository = accountBalanceRepository;
+        _eventPublisher = eventPublisher;
         _logger = logger;
     }
 
@@ -62,7 +57,7 @@ public class TransactionService : ITransactionService
         await UpdateAccountBalanceAsync(transaction.AccountId, balanceChange);
 
         // Persist transaction only after balance is successfully updated
-        await _container.CreateItemAsync(transaction, new PartitionKey(transaction.AccountId));
+        await _transactionRepository.CreateAsync(transaction);
         
         // Publish TransactionCreated event to Redis Stream
         await PublishTransactionCreatedEvent(transaction);
@@ -72,45 +67,17 @@ public class TransactionService : ITransactionService
 
     public async Task<Transaction?> GetTransactionByIdAsync(string id, string? accountId = null)
     {
-        try
-        {
-            if (!string.IsNullOrEmpty(accountId))
-            {
-                var response = await _container.ReadItemAsync<Transaction>(id, new PartitionKey(accountId));
-                return response.Resource;
-            }
-
-            // Cross-partition query when accountId is unknown
-            var query = new QueryDefinition("SELECT * FROM c WHERE c.id = @id")
-                .WithParameter("@id", id);
-            var iterator = _container.GetItemQueryIterator<Transaction>(query);
-            var results = await iterator.ReadNextAsync();
-            return results.FirstOrDefault();
-        }
-        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            return null;
-        }
+        return await _transactionRepository.GetByIdAsync(id, accountId);
     }
 
     public async Task<IEnumerable<Transaction>> GetAccountTransactionsAsync(string accountId, int limit = 50)
     {
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.accountId = @accountId ORDER BY c.timestamp DESC")
-            .WithParameter("@accountId", accountId);
-        
-        var iterator = _container.GetItemQueryIterator<Transaction>(query);
-        var results = await iterator.ReadNextAsync();
-        return results.Take(limit);
+        return await _transactionRepository.GetByAccountIdAsync(accountId, limit);
     }
 
     public async Task<IEnumerable<Transaction>> GetUserTransactionsAsync(string userId, int limit = 50)
     {
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.userId = @userId ORDER BY c.timestamp DESC")
-            .WithParameter("@userId", userId);
-        
-        var iterator = _container.GetItemQueryIterator<Transaction>(query);
-        var results = await iterator.ReadNextAsync();
-        return results.Take(limit);
+        return await _transactionRepository.GetByUserIdAsync(userId, limit);
     }
 
     private async Task PublishTransactionCreatedEvent(Transaction transaction)
@@ -133,19 +100,15 @@ public class TransactionService : ITransactionService
                 }
             };
 
-            var db = _redis.GetDatabase();
-            await db.StreamAddAsync(StreamName, new NameValueEntry[]
-            {
-                new("payload", JsonConvert.SerializeObject(eventPayload))
-            });
+            await _eventPublisher.PublishAsync(StreamName, JsonConvert.SerializeObject(eventPayload));
 
             _logger.LogInformation("Published TransactionCreated event to Redis for transaction {TransactionId}", transaction.Id);
         }
-        catch (RedisConnectionException ex)
+        catch (StackExchange.Redis.RedisConnectionException ex)
         {
             _logger.LogError(ex, "Redis connection failed while publishing TransactionCreated event for transaction {TransactionId}", transaction.Id);
         }
-        catch (RedisException ex)
+        catch (StackExchange.Redis.RedisException ex)
         {
             _logger.LogError(ex, "Redis error while publishing TransactionCreated event for transaction {TransactionId}", transaction.Id);
         }
@@ -161,17 +124,16 @@ public class TransactionService : ITransactionService
     {
         try
         {
-            var response = await _accountsContainer.ReadItemAsync<AccountRecord>(accountId, new PartitionKey(accountId));
-            var account = response.Resource;
+            var (balance, _) = await _accountBalanceRepository.GetBalanceAsync(accountId);
 
-            if (account.Balance < amount)
+            if (balance < amount)
             {
                 _logger.LogWarning("Insufficient funds: account {AccountId} balance {Balance} < requested {Amount}",
-                    accountId, account.Balance, amount);
+                    accountId, balance, amount);
 
-                await PublishInsufficientFundsEvent(accountId, account.Balance, amount);
+                await PublishInsufficientFundsEvent(accountId, balance, amount);
 
-                throw new InsufficientFundsException(accountId, account.Balance, amount);
+                throw new InsufficientFundsException(accountId, balance, amount);
             }
         }
         catch (InsufficientFundsException)
@@ -207,19 +169,15 @@ public class TransactionService : ITransactionService
                 }
             };
 
-            var db = _redis.GetDatabase();
-            await db.StreamAddAsync(StreamName, new NameValueEntry[]
-            {
-                new("payload", JsonConvert.SerializeObject(eventPayload))
-            });
+            await _eventPublisher.PublishAsync(StreamName, JsonConvert.SerializeObject(eventPayload));
 
             _logger.LogInformation("Published InsufficientFundsAttempt event for account {AccountId}", accountId);
         }
-        catch (RedisConnectionException ex)
+        catch (StackExchange.Redis.RedisConnectionException ex)
         {
             _logger.LogError(ex, "Redis connection failed while publishing InsufficientFundsAttempt event for account {AccountId}", accountId);
         }
-        catch (RedisException ex)
+        catch (StackExchange.Redis.RedisException ex)
         {
             _logger.LogError(ex, "Redis error while publishing InsufficientFundsAttempt event for account {AccountId}", accountId);
         }
@@ -229,13 +187,7 @@ public class TransactionService : ITransactionService
     {
         try
         {
-            var response = await _accountsContainer.ReadItemAsync<AccountRecord>(accountId, new PartitionKey(accountId));
-            var account = response.Resource;
-
-            account.Balance += amount;
-
-            await _accountsContainer.ReplaceItemAsync(account, accountId, new PartitionKey(accountId));
-            _logger.LogInformation("Updated account {AccountId} balance by {Amount}", accountId, amount);
+            await _accountBalanceRepository.UpdateBalanceAsync(accountId, amount);
         }
         catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
@@ -247,36 +199,5 @@ public class TransactionService : ITransactionService
             _logger.LogError(ex, "Cosmos DB error updating balance for account {AccountId}", accountId);
             throw;
         }
-    }
-
-    /// <summary>
-    /// Lightweight account record for direct Cosmos DB balance operations.
-    /// Mirrors the account-service Account model for the fields transaction-service needs.
-    /// </summary>
-    private class AccountRecord
-    {
-        [JsonProperty("id")]
-        public string Id { get; set; } = null!;
-
-        [JsonProperty("userId")]
-        public string UserId { get; set; } = null!;
-
-        [JsonProperty("accountNumber")]
-        public string AccountNumber { get; set; } = null!;
-
-        [JsonProperty("accountType")]
-        public string AccountType { get; set; } = null!;
-
-        [JsonProperty("balance")]
-        public decimal Balance { get; set; }
-
-        [JsonProperty("currency")]
-        public string Currency { get; set; } = "USD";
-
-        [JsonProperty("createdAt")]
-        public DateTime CreatedAt { get; set; }
-
-        [JsonProperty("isActive")]
-        public bool IsActive { get; set; } = true;
     }
 }

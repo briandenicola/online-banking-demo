@@ -10,6 +10,7 @@ using Swashbuckle.AspNetCore;
 using System.Text;
 using Azure.Identity;
 using Banking.Observability;
+using AccountService.Repositories;
 using AccountService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -110,6 +111,9 @@ else
         }
         return new CosmosClient(configuration["CosmosDb:ConnectionString"]);
     });
+
+    // Repositories
+    builder.Services.AddScoped<IAccountRepository, CosmosAccountRepository>();
 
     // Services
     builder.Services.AddScoped<AccountService.Services.IAccountService, AccountService.Services.AccountService>();

@@ -1,58 +1,35 @@
-using Microsoft.Azure.Cosmos;
 using PromptEvalService.Models;
+using PromptEvalService.Repositories;
 
 namespace PromptEvalService.Services;
 
 public class PromptTemplateService : IPromptTemplateService
 {
-    private readonly Container _container;
+    private readonly IPromptTemplateRepository _repository;
     private readonly ILogger<PromptTemplateService> _logger;
 
-    public PromptTemplateService(CosmosClient cosmosClient, IConfiguration config, ILogger<PromptTemplateService> logger)
+    public PromptTemplateService(IPromptTemplateRepository repository, ILogger<PromptTemplateService> logger)
     {
-        var dbName = config["CosmosDb:DatabaseName"] ?? "BankingDemo";
-        var containerName = config["CosmosDb:TemplatesContainerName"] ?? "PromptTemplates";
-        _container = cosmosClient.GetContainer(dbName, containerName);
+        _repository = repository;
         _logger = logger;
     }
 
-    private static readonly PartitionKey GlobalPartition = new("global");
-
     public async Task<List<PromptTemplate>> GetAllAsync()
     {
-        var query = new QueryDefinition(
-            "SELECT * FROM c WHERE c.userId = 'global' ORDER BY c.updatedAt DESC");
-
-        var results = new List<PromptTemplate>();
-        var queryOptions = new QueryRequestOptions { MaxItemCount = 100 };
-        using var iterator = _container.GetItemQueryIterator<PromptTemplate>(query, requestOptions: queryOptions);
-        while (iterator.HasMoreResults)
-        {
-            var response = await iterator.ReadNextAsync();
-            results.AddRange(response);
-        }
-        return results;
+        return await _repository.GetAllAsync();
     }
 
     public async Task<PromptTemplate?> GetByIdAsync(string id)
     {
-        try
-        {
-            var response = await _container.ReadItemAsync<PromptTemplate>(id, GlobalPartition);
-            return response.Resource;
-        }
-        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            return null;
-        }
+        return await _repository.GetByIdAsync(id);
     }
 
     public async Task<PromptTemplate> CreateAsync(PromptTemplate template)
     {
         template.UserId = "global";
-        var response = await _container.CreateItemAsync(template, GlobalPartition);
+        var created = await _repository.CreateAsync(template);
         _logger.LogInformation("Created prompt template {Name} (v{Version}) for user {UserId}", template.Name, template.Version, template.UserId);
-        return response.Resource;
+        return created;
     }
 
     public async Task<PromptTemplate> UpdateAsync(string id, UpdatePromptTemplateRequest request)
@@ -67,14 +44,14 @@ public class PromptTemplateService : IPromptTemplateService
         existing.Version++;
         existing.UpdatedAt = DateTime.UtcNow;
 
-        var response = await _container.ReplaceItemAsync(existing, id, GlobalPartition);
+        var updated = await _repository.ReplaceAsync(id, existing);
         _logger.LogInformation("Updated prompt template {Name} to v{Version}", existing.Name, existing.Version);
-        return response.Resource;
+        return updated;
     }
 
     public async Task DeleteAsync(string id)
     {
-        await _container.DeleteItemAsync<PromptTemplate>(id, GlobalPartition);
+        await _repository.DeleteAsync(id);
         _logger.LogInformation("Deleted prompt template {Id}", id);
     }
 }
