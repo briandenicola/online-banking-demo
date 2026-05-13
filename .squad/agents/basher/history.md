@@ -1503,3 +1503,37 @@ Existing cluster has no seed admin (the seed-data.sh creates `admin/Password123!
 
 **Verification:** After next deployment, running `kubectl logs deploy/<svc>` should show pod startup logs timestamped *after* the deploy command finished (not old logs from pre-deploy pod).
 
+
+## Backend Follow-ups from Linus Guards (#119, #120)
+
+**Flagged:** 2026-05-13T17:28:46Z  
+**Source:** Linus frontend defensive guards (issues #119 & #120)  
+**Status:** Pending backend implementation
+
+### #119 — Avg Risk Score Tile: Redis Cleanup
+
+**Problem:** Frontend displays poisoned historical risk data (timestamps instead of probabilities) from pre-#118 entries in `scored-transactions` sorted set.
+
+**Action for Basher:**
+1. Purge legacy timestamp-based scores from `scored-transactions` sorted set on deployed Redis
+   - Option A: `DEL scored-transactions` (transactions will re-score on next ingest)
+   - Option B: Rebuild from per-transaction JSON keys if re-scoring is infeasible
+2. Verify all post-#118 transactions land with `score ∈ [0, 1]` in the sorted set
+
+**Why:** Frontend added defensive `formatRiskScore()` guard to hide the corrupted values, but source data must be cleaned for real fix.
+
+### #120 — Active AI Prompts: Add systemPrompt to Response
+
+**Problem:** `GET /api/admin/prompts` response omits `systemPrompt` field; frontend gracefully falls back with placeholder, but data should be exposed.
+
+**Action for Basher:**
+1. Include `systemPrompt: analyzer.SYSTEM_PROMPT` in the response JSON for each prompt (`src/ai-service/app/routes/api.py:285-311`)
+2. Clarify semantics of `analyzer.enabled` field:
+   - Should it mean "agent reachable" (truly operational)?
+   - Or "agent constructed" (initialized but not necessarily live)?
+   - Frontend badge logic assumes the former; verify alignment
+
+**Why:** Frontend now renders placeholder when `systemPrompt` is undefined; exposing the field completes the UI and removes placeholder.
+
+---
+
