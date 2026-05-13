@@ -90,11 +90,11 @@ builder.Services.AddSingleton<CosmosClient>(sp =>
     
     var clientOptions = new CosmosClientOptions
     {
-        Serializer = new CosmosSystemTextJsonSerializer(
-            new System.Text.Json.JsonSerializerOptions
-            {
-                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-            })
+        SerializerOptions = new CosmosSerializationOptions
+        {
+            PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase,
+            IgnoreNullValues = true
+        }
     };
     
     if (!string.IsNullOrEmpty(endpoint))

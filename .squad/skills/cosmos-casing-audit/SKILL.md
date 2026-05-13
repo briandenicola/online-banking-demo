@@ -112,11 +112,11 @@ builder.Services.AddSingleton<CosmosClient>(sp =>
     
     var clientOptions = new CosmosClientOptions
     {
-        Serializer = new CosmosSystemTextJsonSerializer(
-            new System.Text.Json.JsonSerializerOptions
-            {
-                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-            })
+        SerializerOptions = new CosmosSerializationOptions
+        {
+            PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase,
+            IgnoreNullValues = true
+        }
     };
     
     if (!string.IsNullOrEmpty(endpoint))
@@ -126,6 +126,8 @@ builder.Services.AddSingleton<CosmosClient>(sp =>
     return new CosmosClient(configuration["CosmosDb:ConnectionString"], clientOptions);
 });
 ```
+
+**⚠️ DO NOT USE `CosmosSystemTextJsonSerializer`** — it is an **internal type** in Microsoft.Azure.Cosmos and will cause build failures. Always use the public `CosmosSerializationOptions` API shown above.
 
 **Why camelCase?**
 - Matches API surface (ASP.NET Core defaults to camelCase JSON)

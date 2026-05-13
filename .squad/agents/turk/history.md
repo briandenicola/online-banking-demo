@@ -7,6 +7,33 @@
 - **Joined:** 2026-05-07
 - **Focus:** Python service config fixes and cross-service consistency
 
+## Session Log
+
+### 2026-05-12 — Build Break Fix: Internal Serializer Type
+
+**Issue:** Commit 243457f (#125) used `CosmosSystemTextJsonSerializer`, which is **internal** in Microsoft.Azure.Cosmos. Build failed with CS0122 protection level error across all 5 .NET services.
+
+**Learning:** `CosmosSystemTextJsonSerializer` is internal. The **public API** for camelCase pinning is:
+
+```csharp
+CosmosClientOptions.SerializerOptions = new CosmosSerializationOptions
+{
+    PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase,
+    IgnoreNullValues = true
+}
+```
+
+**Fix:** Replaced internal type usage in:
+- user-service/Program.cs
+- account-service/Program.cs
+- transaction-service/Program.cs
+- transfer-service/Program.cs
+- prompt-eval-service/Program.cs
+
+Updated skill document with DO NOT USE warning. Decision logged in `.squad/decisions/turk-serializer-public-api.md`.
+
+**Verification:** `dotnet build` on user-service succeeded with 0 errors (5 warnings unrelated to serializer).
+
 ## Core Context
 
 **Core Python/FastAPI Patterns:**
