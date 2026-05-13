@@ -429,3 +429,30 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 
 **Commit:** `b565fd5`
 
+
+### 2026-05-13 — Registration Smoke Failure (Stale Bundle / :latest Tag Trap)
+
+**Context:** After commit b565fd5 ("repair dashboard auth context + registration redirect"), 20/21 smoke tests passed. The Registration test continued to fail reliably with `waitForURL('**/login')` timeout.
+
+**Investigation:**
+- Pulled the live `main.<hash>.js` from https://onlinebankingdemo.bjdazure.tech and grepped the registration POST payload.
+- Bundle showed `post("/users/register",{username:a, firstName:e, lastName:n, email:a, password:l})` — both `username` and `email` mapped to the **same minified variable `a`**, which is the raw email state. The sanitization regex `[^a-zA-Z0-9._-]` was absent from the bundle.
+- That matches the **pre-b565fd5** source (`username: email`), confirming the deployed bundle was stale.
+- API replay with `email: <local-part-only>` returned `400 "The Email field is not a valid e-mail address."` — exact root cause of the "Registration failed. Please try again." alert seen in the Playwright snapshot.
+
+**Why the fix didn't deploy:**
+- ACR had a newer `ui-app:latest` digest (16:44 UTC) than the running pod (started 14:01 UTC on the older 13:57 digest).
+- Kustomize manifests pin `ui-app:latest` (no SHA, no per-build tag). `task cloud:deploy` runs `kubectl apply -k`, which is a **no-op** when the manifest hasn't changed — so even after `cloud:build:ui-app` pushed a fresh image, the deployment spec didn't roll and pods never re-pulled.
+- `imagePullPolicy: Always` only matters on **pod creation**; without a pod restart, an updated `:latest` is invisible.
+
+**Fix:**
+1. `task cloud:build:ui-app` — rebuilt + pushed (digest `sha256:55794a77...`).
+2. `task cloud:deploy` — applied manifests (no-op for ui-app spec, but config/secrets refreshed).
+3. `kubectl -n banking-demo rollout restart deployment/ui-app` — forced new pod to pull fresh `:latest`.
+4. Verified live bundle: new minified POST is `{username:t, ..., email:a, ...}` — distinct variables, proving the `.replace(...)` survived minification this time.
+5. Registration smoke passes (2.2s).
+
+**Lessons:**
+- **`:latest` + `kubectl apply` ≠ rolling deploy.** When kustomize image tags don't change, Apply alone won't restart pods — even with `imagePullPolicy: Always`. The deploy task needs either (a) digest-pinned tags per build, or (b) an explicit `rollout restart` step. This bit us once already and will keep biting until fixed in the Taskfile.
+- **Always sanity-check the served bundle** when a frontend smoke fails post-deploy. `curl` the JS from `asset-manifest.json` and grep for a known marker from the latest source — it takes 30 seconds and immediately tells you "deployed code ≠ source".
+- **Terser variable aliasing risk:** when two adjacent shorthand object properties (`{username, email}`) are derived from the same source value, the minifier may emit them with the same variable name in the output. The b565fd5 fix (introducing a derived `const username = ...replace(...)`) breaks that aliasing because `username` and `email` now hold different values.
