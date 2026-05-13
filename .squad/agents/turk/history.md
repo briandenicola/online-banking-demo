@@ -284,3 +284,25 @@ Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com
 - `opentelemetry-instrumentation-azure` is a non-existent package; the correct name is `azure-core-tracing-opentelemetry`
 - Poetry-core as build backend works with plain `pip install .` — pip auto-installs build deps from `[build-system].requires`
 - Local environment has Python 3.10 but Docker images use 3.11-slim — can't do full local pip install validation
+
+### 2026-05-12 — Deep Code Quality Audit (All Python/FastAPI Services)
+
+**Scope:** budget-service, chatbot-service, ai-service, account-opening-service
+
+**Key findings (45 total: 5 critical, 26 medium, 14 low):**
+
+1. **All 4 services are monolithic** — routes, business logic, data access, config, and telemetry live in single main.py files (ai-service is 1,400+ lines)
+2. **account-opening-service has hardcoded JWT fallback secret** — anyone reading source can mint valid tokens (🔴 P0)
+3. **budget-service has broken user-data isolation** — `accountId.startswith(userId[:8])` prefix matching can cross user boundaries (🔴 P0)
+4. **All 4 services block the event loop** — sync `DefaultAzureCredential.get_token()`, Cosmos sync SDK, and blob uploads called inside async handlers
+5. **All 4 services swallow exceptions broadly** — `except Exception` catch-all blocks mask real failures; ai-service has 12+ such blocks
+6. **All 4 services use module-global mutable state** — incompatible with multi-worker deploys, hard to test
+7. **Env var naming is inconsistent** — account-opening uses .NET-style `CosmosDb__Endpoint`, others use SCREAMING_SNAKE; should standardize
+
+**Output:** Full findings written to `.squad/decisions/inbox/turk-python-audit.md`
+
+**Learnings:**
+- All Python services share the same structural anti-patterns — any refactoring should establish a common template/cookiecutter
+- `asyncio.to_thread()` is the right wrapper for unavoidable sync SDK calls in async FastAPI handlers
+- FastAPI tuple-return `(dict, status_code)` pattern doesn't work — must use `Response(status_code=...)` or `HTTPException`
+- Pydantic mutable defaults (`flags: list[str] = []`) are still a common bug source; need `Field(default_factory=list)`

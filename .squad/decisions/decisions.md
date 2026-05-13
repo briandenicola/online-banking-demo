@@ -1359,3 +1359,275 @@ The provisioning agent will mint a short-lived JWT using the shared `Jwt__Key`, 
 - Account provisioning does not depend on user-service issuing a token.
 - Requires the worker container to have the JWT secret env vars available (already provided in kustomize).
 - If JWT settings change, the worker must be updated to keep tokens aligned.
+
+
+---
+
+## Decision: Standardized error response format across .NET services
+
+**Status:** Implemented  
+**Context:** Multiple controllers leaked raw `ex.Message` to API clients, exposing stack details, account IDs, and balances.  
+**Decision:** All .NET API errors now follow `{ error: string, correlationId?: string }`. Business exceptions return safe messages; unknown exceptions return "An internal error occurred" with `HttpContext.TraceIdentifier` for log correlation.  
+**Alternatives considered:** Global exception filter middleware — deferred as it requires more coordination across services.
+
+---
+
+## Decision: Centralized NuGet version management via Directory.Packages.props
+
+**Status:** Implemented  
+**Context:** 5 services + 4 test projects + shared lib all had duplicated package versions, with Cosmos SDK on a pre-release version.  
+**Decision:** Created `Directory.Packages.props` at repo root. All shared packages managed centrally. Cosmos SDK set to stable `3.58.0`. Azure.Identity unified to `1.16.0`.  
+**Risk:** New services must reference packages without `Version=` attribute. Devs unfamiliar with central package management may add versions inline — needs a CI check or PR review convention.
+
+---
+
+## Decision: Admin bootstrap via config, not anonymous endpoint
+
+**Status:** Implemented  
+**Context:** `POST /api/admin/promote` was `[AllowAnonymous]`, allowing unauthenticated admin promotion when no admins existed.  
+**Decision:** Removed `[AllowAnonymous]`. Admin bootstrap happens at startup via `Admin__BootstrapEmail` env var. Falls back to first-user convention. Endpoint now requires admin JWT.  
+**For Danny:** No architecture change needed — this is a config-based bootstrap, not a new service or infra dependency.
+
+---
+
+## Decision: Demo passwords from config
+
+**Status:** Implemented  
+**Context:** `InMemoryUserService` hardcoded `password123` for seed users.  
+**Decision:** Password read from `Demo__Password` config. Defaults to random 16-char string logged at startup. Convention over Configuration.
+
+---
+
+# Decision: Option C — Move Balance Updates Into Transaction-Service
+
+**Date:** 2026-05-12  
+**Author:** Basher (Backend Dev)  
+**Status:** Implemented  
+**Priority:** P0  
+
+## Context
+
+Transaction-service previously called account-service via HTTP to validate and update account balances during transaction creation. During transfers, the sender's JWT was forwarded, but account-service's ownership check rejected credit transactions to the destination account because the sender doesn't own it. This is a fundamental service-identity problem with JWT forwarding.
+
+## Decision
+
+Brian chose **Option C**: transaction-service now reads/writes account balances directly in Cosmos DB (same database, accounts container), bypassing the HTTP call to account-service entirely.
+
+## Changes
+
+- Transaction-service gets a second Cosmos container reference (`_accountsContainer`) via `CosmosDb:AccountsContainerName` config
+- `ValidateBalanceAsync` and `UpdateAccountBalanceAsync` replaced HTTP calls with direct Cosmos reads/writes
+- Removed `IHttpClientFactory`, `IHttpContextAccessor` dependencies from both `TransactionService` and `InMemoryTransactionService`
+- `InMemoryTransactionService` uses a local `ConcurrentDictionary<string, decimal>` for account balances
+- Account-service's `POST /api/accounts/{id}/balance` endpoint remains but is no longer called by transaction-service
+- Transfer-service is unchanged — it still calls transaction-service via HTTP to create debit/credit transactions
+
+## Impact
+
+- Eliminates the service-identity/JWT ownership problem for transfers
+- Reduces inter-service HTTP latency for balance operations
+- Transaction-service now has direct write access to the accounts container (acceptable tradeoff for atomicity)
+- All 11 transaction-service tests pass; no regressions in other services
+
+---
+
+# Decision: Input Validation Standards
+
+**Date:** 2026-05-12  
+**Author:** Basher  
+**Priority:** P1  
+**Status:** Implemented  
+**Issue:** #45
+
+## Context
+
+All request DTOs across .NET and Python services lacked comprehensive input validation, allowing unbounded strings and missing required field enforcement. Account number generation used `System.Random`, which is predictable and enables enumeration attacks.
+
+## Decision
+
+1. **.NET services** use `System.ComponentModel.DataAnnotations` attributes (`[Required]`, `[StringLength]`, `[Range]`, `[RegularExpression]`, `[EmailAddress]`) on all request DTOs. The `[ApiController]` attribute (already present) provides automatic 400 responses for invalid input.
+
+2. **Python services** use Pydantic `Field()` constraints (`min_length`, `max_length`, `pattern`, `gt`, `ge`, `le`) on all `BaseModel` request classes.
+
+3. **Standard limits:**
+   - String IDs: max 128 chars
+   - Names: max 100-200 chars
+   - Descriptions/notes: max 500-2000 chars
+   - Messages/prompts: max 10000 chars
+   - Passwords: 8-128 chars
+   - Emails: max 255 chars, validated format
+
+4. **Cryptographic randomness** required for any security-sensitive value generation (account numbers, tokens, etc.) — use `System.Security.Cryptography.RandomNumberGenerator` in .NET, `secrets` module in Python.
+
+## Impact
+
+- All services now reject malformed input at the framework level before hitting business logic
+- No changes to valid input behavior or API contracts
+- Account numbers are no longer predictable
+
+---
+
+# Decision: CI/CD Pipeline Architecture
+
+**Date:** 2026-05-12
+**Author:** Danny (Lead/Architect)
+**Status:** Implemented
+**Issues:** #33, #34
+
+## Context
+
+The project had no CI pipeline, no dependency management, and no code ownership rules. Issue #33 reported a Dockerfile bug (already resolved in prior work). Issue #34 requested comprehensive CI/CD.
+
+## Decision
+
+### CI Workflow (`.github/workflows/ci.yml`)
+
+**Triggers:** Push to main, PRs to main.
+
+**Jobs:**
+| Job | Strategy | Services | Notes |
+|-----|----------|----------|-------|
+| dotnet-build-test | Matrix (5) | user, account, transaction, transfer, prompt-eval | Conditional test step (4 have test projects) |
+| python-lint | Matrix (4) | ai, budget, chatbot, account-opening | ruff linter; conditional pytest |
+| go-build | Single | event-processor | Build + test |
+| frontend-build | Single | ui-app | npm ci + build |
+| docker-build | Matrix (12) | All services | Build-only verification, no push |
+
+**Security:** All GitHub Actions pinned to full commit SHA hashes (not tags).
+
+**Build contexts:** .NET services use repo root (they need `src/shared/`); Python/Go/React use service directory.
+
+### Dependabot
+
+Weekly schedule across all ecosystems. Minor/patch updates grouped to reduce PR noise. Covers: nuget, pip, gomod, npm, docker, terraform, github-actions.
+
+### CODEOWNERS
+
+Simple two-rule setup: repo owner on everything, extra protection on `.github/`.
+
+## Trade-offs
+
+- **No push/deploy stage** — This is a demo project; deployment is via Flux GitOps, not CI push.
+- **Graceful test failures** — Some test jobs use `|| true` because not all services have tests yet. This avoids blocking builds while test coverage grows.
+- **No Docker image caching to registry** — Uses GHA cache only. Sufficient for demo scale.
+
+## Future Considerations
+
+- Add `terraform validate` + `tflint` job when infra changes stabilize
+- Add integration test job once docker-compose-based E2E tests exist
+- Consider adding `actionlint` to validate workflow files
+
+---
+
+# Decision: Demo Mode Environment Variable for Credential Gating
+
+**Proposed by:** Linus (Frontend Dev)
+**Date:** 2026-05-12
+**Issue:** #32
+
+## Context
+
+Login.tsx had hardcoded demo credentials (`password123`, `demo@banking-demo.com`) exposed in three places: useState init, empty-submit fallback, and plain-text display. This was flagged as a critical security finding in the frontend audit.
+
+## Decision
+
+Introduced `REACT_APP_DEMO_MODE=true` as the environment variable gate for demo login functionality.
+
+### What it controls:
+- **Demo Login button** — only rendered when env var is `true`
+- **Demo mode hint text** — replaces the old plain-text credential display
+- Without the env var, the login page is a standard email/password form with no demo artifacts
+
+### Why this approach:
+- CRA injects `REACT_APP_*` vars at build time — no runtime config needed
+- Demo credentials still exist in the `handleDemoLogin` handler code, but are never displayed to users and the button is only rendered in demo builds
+- Zero impact on production builds where the var is unset
+
+## Action Needed
+
+- **Turk/Danny (Infra):** Set `REACT_APP_DEMO_MODE=true` in the demo/dev environment build args (Dockerfile or CI pipeline) if demo login is desired
+- **Basher (Backend):** Coordinate — if backend demo user provisioning changes, update the credentials in `handleDemoLogin`
+- **Livingston (QA):** Update e2e login tests to either set the env var or use explicit credentials instead of relying on the old auto-fill behavior
+
+---
+
+# Decision: prompt-eval-service.Tests Project Structure
+
+**Author:** Livingston (QA)  
+**Date:** 2026-05-12  
+**Status:** Implemented  
+
+## Context
+Issue #48 required test coverage for prompt-eval-service, which had zero tests. The service has two controllers (PromptsController, EvaluationsController) behind admin-only authorization.
+
+## Decision
+Created `src/prompt-eval-service.Tests/` following the established xUnit + Moq + FluentAssertions pattern from other .NET test projects. The test project references only the prompt-eval-service.csproj (no Contracts dependency needed since this service doesn't use shared DTOs).
+
+Security tests verify:
+- Error responses don't leak internal details (stack traces, connection strings)
+- Correlation IDs are returned for debugging
+- Input validation rejects whitespace-only fields
+- Target field is restricted to 'risk-scoring' or 'categorization' allowlist
+
+## Impact
+- 31 new tests for prompt-eval-service
+- 16 new unit tests for event-processor pure functions
+- Total test count across the repo increased significantly
+
+---
+
+## Decision: Dead-Letter Stream Naming Convention
+**Context:** Both Go event-processor and Python ai-service now use dead-letter queues for failed Redis stream messages.
+**Decision:** Use `{stream-name}-dlq` convention (e.g., `banking-events-dlq`). Configurable retry count via `DLQ_MAX_RETRIES` env var (default 3).
+**Status:** Implemented — needs Danny's review for architecture alignment.
+
+---
+
+## Decision: Redis TLS ServerName Verification
+**Context:** Go event-processor used `InsecureSkipVerify: true` and Python used `ssl_cert_reqs=None`, disabling TLS certificate verification.
+**Decision:** Use proper TLS verification. Go extracts hostname from connection string for `ServerName`. Python uses `ssl_cert_reqs="required"` with system CA bundle. Local docker-compose (no AZURE_CLIENT_ID) uses plain connections.
+**Risk:** Azure Managed Redis cluster nodes may use internal IPs for node-to-node communication. The previous `InsecureSkipVerify` comment mentioned this. If cluster MOVED/ASK redirects fail TLS verification, we may need to revisit with a custom dialer that maps cluster node IPs to the original hostname. Monitor after deployment.
+**Status:** Implemented — needs validation in Azure environment.
+
+---
+
+## Decision: LLM Tool Functions Use JWT Forwarding
+**Context:** chatbot-service tool functions accepted `user_id` as an LLM-provided parameter, allowing prompt injection for cross-user data access.
+**Decision:** Remove all user identity parameters from tool function signatures. Use `_current_auth_token` ContextVar to forward the JWT to downstream services, which resolve user identity from the token. This is consistent with the "never trust client-supplied user_id" pattern from issue #26.
+**Status:** Implemented.
+
+## Observation: ai-service Admin Prompts Already Fixed
+The `/api/admin/prompts` endpoint was already gated behind `require_admin` and returns only names/types (no system prompt text) — this was done in issue #26. No further changes needed.
+
+---
+
+# Decision: Python Dependency Management — Single Source of Truth
+
+**Author:** Turk  
+**Date:** 2026-05-12  
+**Status:** Implemented  
+**Issue:** #42
+
+## Decision
+
+All Python service dependencies are now pinned to exact versions (`==x.y.z`) in `pyproject.toml`. Dockerfiles use `pip install .` to install from pyproject.toml — no more inline package lists.
+
+## Rationale
+
+- Inline pip install in Dockerfiles duplicated dependency lists, causing drift (packages in Dockerfile but not pyproject.toml and vice versa)
+- Wildcard (`*`) and range (`^`, `>=`) specs allowed uncontrolled version drift between builds
+- `opentelemetry-instrumentation-azure` was a non-existent package in budget-service and chatbot-service; replaced with `azure-core-tracing-opentelemetry`
+
+## Impact
+
+- **pyproject.toml is the single source of truth** for each Python service's dependencies
+- Docker builds are now reproducible (exact versions)
+- To update a dependency version, change it in pyproject.toml only
+- Poetry lockfiles not generated (poetry not available); recommend adding `poetry lock` to CI when poetry is set up
+
+## Services Affected
+
+- `src/ai-service/`
+- `src/budget-service/`
+- `src/chatbot-service/`
+- `src/account-opening-service/`

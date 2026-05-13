@@ -222,3 +222,22 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 - **Demo mode:** Added `REACT_APP_DEMO_MODE` env var gate. When `true`, shows a "Demo Login" button (outlined, small, below Sign In) and a subtle hint. When unset/false, no demo artifacts visible at all
 - **Tests:** Updated 8 tests — replaced pre-filled credential assertions with empty-field checks, added validation error test, updated API call tests to use explicit credentials
 - **Pattern:** Environment-gated demo features keep demo UX accessible without leaking credentials in production builds
+
+### 2026-05-12 — Deep Frontend & Documentation Audit
+- **Scope:** Full code quality + documentation audit across `src/ui-app/` and all repo-level docs
+- **Findings:** 2 critical, 14 medium, 13 low/positive — 29 total findings
+- **Critical:** JWT in localStorage (F-09, previously flagged), zero service-level READMEs (F-23)
+- **Key medium issues:**
+  - AdminPage.tsx (718 lines) and AdminEvalTab.tsx (661 lines) are monolith components — first two admin tabs still inline
+  - Transactions.tsx calls `/admin/transactions` for ALL users (line 94), generating unnecessary 403s
+  - No React ErrorBoundary anywhere — white screen on uncaught render errors
+  - No nginx security headers (CSP, X-Frame-Options, etc.)
+  - 4 instances of `any` type in production code (Login, RegisterPage, DocumentUpload)
+  - 5 `console.error` calls in production code
+  - Duplicate/legacy API functions in accountOpening.ts (submitApplication vs createApplication, etc.)
+  - Minimal ARIA labels — only 6 across entire app
+  - Chat page lacks `role="log"` / `aria-live` for screen readers
+  - ui-app README is default CRA boilerplate — no project-specific content
+  - No CONTRIBUTING.md, no API documentation (OpenAPI/Swagger specs)
+- **Positive findings:** Clean context split, TypeScript strict mode, CRA boilerplate cleaned, root README comprehensive, architecture docs excellent, mobile-responsive AppShell, form validation present
+- **Report:** `.squad/decisions/inbox/linus-frontend-audit.md`

@@ -628,3 +628,23 @@ Basher implemented the Redis architecture decision:
 - Cosmos DB already had public access disabled — no change needed
 - **ACR risk:** `az acr build` (used for all 10 services in Taskfile.build.yml) will fail without public access. Filed decision inbox (`danny-public-access.md`) with options: IP allowlist, self-hosted agent, or toggle access during builds.
 - Key Vault already had `network_acls` with `default_action = "Deny"` + deployer IP rule — disabling public access adds defense-in-depth on top of that.
+
+### Comprehensive Repo Hygiene Audit (2025-07-16)
+
+**Scope:** Full-repo scan for dead files, structural issues, pattern inconsistencies, documentation gaps.
+
+**Key findings (16 total, 3 critical):**
+1. 🔴 `src/shared/auth.py` is dead code — never imported by any Python service. Each service has its own diverged copy.
+2. 🔴 `transaction-service` sets `ValidateIssuer = false` — security gap allowing JWTs from any issuer.
+3. 🔴 `account-opening-service` auth uses case-sensitive role check (`!= "Admin"`) while all others use `.lower() != "admin"` — inconsistent authorization behavior.
+4. 🟡 `scripts/seed-data.sh` and `scripts/test.sh` are orphaned — not referenced from Taskfile or CI.
+5. 🟡 7 duplicate frontend test files exist in both colocated and `__tests__/` directories.
+6. 🟡 10 of 11 services lack README files.
+7. 🟡 No global exception handlers in any service (.NET or Python).
+8. 🟡 Health endpoint inconsistency: Python exposes `/health` + `/healthz` + `/readyz`, .NET/Go only `/healthz` + `/readyz`.
+9. 🟡 Go event-processor uses unstructured `log.Printf` while .NET (Serilog) and Python (structlog) are structured.
+10. 🟡 Docs/specs reference stale Taskfile commands and unimplemented tasks.
+
+**Positives:** CI covers all services, .gitignore/.dockerignore are clean, Dockerfile patterns are consistent per language family, Poetry used consistently across Python services.
+
+**Output:** Full findings written to `.squad/decisions/inbox/danny-repo-audit.md`

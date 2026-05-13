@@ -1182,3 +1182,28 @@ All `.NET` controllers now return generic error messages with `correlationId` (f
 - `src/account-opening-service/app/routes.py` — ReviewRequest
 
 **Pattern:** Shared .NET DTOs in `src/shared/Contracts/Dtos/` already have DataAnnotations validation. Service-local DTOs (defined in Controllers/ or Models/) need validation added manually. Python services use Pydantic `Field()` for the same purpose.
+
+### 2026-05 — Deep Code Quality Audit (All Backend Services)
+
+**Scope:** user-service, account-service, transaction-service, transfer-service, prompt-eval-service, event-processor (Go)
+
+**Total findings: 64** — 6 🔴 Critical, 39 🟡 Medium, 19 🟢 Low
+
+**Critical findings:**
+- transaction-service: Transaction persisted before balance update — partial failure causes data inconsistency (`Services/TransactionService.cs:58-68,220-239`)
+- transaction-service: `UpdateAccountBalanceAsync` swallows exceptions — balance not updated but txn recorded
+- transaction-service: No account ownership check on `GetAccountTransactions` — authorization bypass
+- transfer-service: `Encoding.UTF8.GetBytes(config["Jwt:Key"])` crashes on missing config (`Program.cs:61-65`)
+- transfer-service: Cosmos DB config used without null checks — startup crash (`Services/TransferService.cs:36-44`)
+- prompt-eval-service: Fire-and-forget `Task.Run` loses exceptions silently (`Services/EvaluationService.cs:56-70`)
+
+**Cross-cutting anti-patterns (all services):**
+1. No repository/data-access abstraction — every service talks directly to Cosmos containers
+2. Swallowed exceptions in Redis publish / event handlers
+3. Static health endpoints — no dependency checks
+4. Magic strings instead of enums/constants for status, event types, claims
+5. InMemory services duplicate business logic from Cosmos-backed services
+6. No input validation on DTOs/request bodies
+7. Hardcoded config fallbacks
+
+**Full report:** `.squad/decisions/inbox/basher-code-audit.md`
