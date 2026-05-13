@@ -178,7 +178,7 @@
 
 **Goal**: Modularize Terraform, enhance Taskfile, add chaos engineering
 
-**Independent Test**: `terraform plan` works with modules; `task deploy` is idempotent; chaos experiment runs without breaking health checks
+**Independent Test**: `terraform plan` works with modules; `task cloud:deploy` is idempotent; chaos experiment runs without breaking health checks
 
 ### Implementation for User Story 7
 
@@ -189,9 +189,9 @@
 - [ ] T065 [P] [US7] Create Terraform module infra/cloud/modules/ai-foundry/ — extract AI resources from infra/cloud/ai.tf
 - [ ] T066 [US7] Refactor infra/cloud/main.tf to use module blocks with outputs wiring between modules
 - [ ] T067 [US7] Verify `terraform plan` and `terraform apply` work correctly with modularized structure — no resource changes
-- [ ] T068 [P] [US7] Enhance Taskfile.cloud.yml — add `deploy:cluster-config`, `deploy:observability`, `test:smoke`, `test:e2e` tasks for composable deployment
+- [ ] T068 [P] [US7] Enhance Taskfile.cloud.yml — add `cloud:deploy:cluster-config`, `cloud:deploy:observability`, `e2e:smoke`, `e2e:cloud` tasks for composable deployment <!-- Note: e2e:smoke and e2e:cloud already exist -->
 - [ ] T069 [P] [US7] Add chaos engineering experiment — pod failure test using `kubectl delete pod` with readiness verification in scripts/chaos/
-- [ ] T070 [US7] Validate `task deploy` is idempotent — run twice, confirm no errors and same end state
+- [ ] T070 [US7] Validate `task cloud:deploy` is idempotent — run twice, confirm no errors and same end state
 
 **Checkpoint**: Infrastructure modernized — Terraform modularized, Taskfile composable, chaos tested
 

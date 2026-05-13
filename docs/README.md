@@ -58,9 +58,9 @@ docker-compose up -d              # Start all services
 docker-compose logs -f ai-service # Follow specific service
 
 # Cloud deployment
-task -t Taskfile.cloud.yml up     # Provision Azure infra
-task -t Taskfile.cloud.yml cloud:build   # Build all containers
-task -t Taskfile.cloud.yml cloud:deploy  # Deploy to AKS
+task cloud:up          # Provision Azure infra
+task cloud:build       # Build all containers
+task cloud:deploy      # Deploy to AKS
 
 # Testing
 task e2e:run                      # Run Playwright E2E tests
