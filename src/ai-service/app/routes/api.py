@@ -293,19 +293,23 @@ async def get_active_prompts(
 
     prompts = []
     for analyzer in state.analyzer_pipeline.analyzers:
-        if getattr(analyzer, "SYSTEM_PROMPT", None):
+        system_prompt = getattr(analyzer, "SYSTEM_PROMPT", None)
+        if system_prompt:
             prompts.append({
                 "name": analyzer.name,
                 "type": "risk-scoring",
                 "enabled": analyzer.enabled,
+                "systemPrompt": system_prompt,
             })
 
     for categorizer in state.analyzer_pipeline.categorizers:
-        if getattr(categorizer, "SYSTEM_PROMPT", None):
+        system_prompt = getattr(categorizer, "SYSTEM_PROMPT", None)
+        if system_prompt:
             prompts.append({
                 "name": categorizer.name,
                 "type": "categorization",
                 "enabled": categorizer.enabled,
+                "systemPrompt": system_prompt,
             })
 
     return prompts

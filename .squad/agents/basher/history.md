@@ -1537,3 +1537,46 @@ Existing cluster has no seed admin (the seed-data.sh creates `admin/Password123!
 
 ---
 
+
+## Historical Context (2025)
+
+**Note:** This section summarizes learnings from pre-2026 audits and fixes. See dated subsections below for full details.
+
+### 2025 Audit Summary
+
+From full system audits conducted in 2025-01 and 2025-07:
+- **Architecture:** 4 C# (ASP.NET Core + Cosmos), 1 Go (event-processor), 3 Python (FastAPI)
+- **Key bugs fixed:** Partition key misses, missing balance updates, missing awaits, endpoint mismatches, lifespan init issues
+- **Anti-patterns resolved:** SHA256→bcrypt, DTO validation, saga patterns, async/await discipline, telemetry fixes, container hardening
+- **Infrastructure:** Evolved from Event Hub to Redis Streams; added cert-manager for TLS; implemented Istio exclusions for port 10000
+
+For specific dates and detailed fixes from these entries, refer to the dated learning sections (###) above.
+
+
+### 2026-05-13 — #119 / #120 Backend Follow-ups (Linus Wave 3)
+
+**#120 — `systemPrompt` exposure in `/api/admin/prompts`:**
+Trivial dict-key addition in `src/ai-service/app/routes/api.py`. Each analyzer/categorizer entry now includes `systemPrompt` sourced from the class-level `SYSTEM_PROMPT` constant on `FoundryRiskAnalyzer` / `FoundryCategorizer` (defined in `app/services/anomaly_service.py:87` and `:241`). Refactored to capture the prompt once into a local var since the existing `getattr` was being called twice. Frontend already optional-renders the field, so no UI coordination needed.
+
+**#119 — Redis poisoned `scored-transactions` purge:**
+Pre-#118 entries had unix timestamps (~1.78e9) where probabilities (0–1) belong. Write path at `anomaly_service.py:617` is already clamped, so a one-shot `DEL` was sufficient. Did the deletion via `kubectl exec` into the ai-service pod (already has Entra workload-identity creds + redis-py installed). 157 entries flushed, ZCARD before/after confirmed 157→0.
+
+**Reusable Redis-from-pod pattern (Azure Managed Redis, Entra):**
+```python
+from azure.identity.aio import DefaultAzureCredential
+import redis.asyncio as redis_async, jwt
+cred = DefaultAzureCredential()
+token = await cred.get_token('https://redis.azure.com/.default')
+user = jwt.decode(token.token, options={'verify_signature': False}).get('oid')
+r = redis_async.Redis(host='<redis-host>', port=10000, ssl=True,
+                      username=user, password=token.token, decode_responses=True)
+```
+Username **must** be the workload identity's `oid` claim from the AAD token, not a literal name. Same pattern works for any one-shot Redis maintenance task — no need to bounce through the portal or hardcode a connection string.
+
+**Verification path:**
+1. `task cloud:build:ai-service` (build pushed image to ACR — got via terraform output, no hardcode)
+2. `task cloud:deploy` (auto-restarts all deploys per coordinator's commit e57d5f0 — confirmed working)
+3. `kubectl rollout status deploy/ai-service` blocked until new pod ready
+4. `kubectl exec ... grep` against the pod's on-disk source confirmed the new code shipped (no need to replicate ingress + JWT to curl the endpoint for trivial dict additions)
+
+**Why we didn't pursue the `enabled` semantics question (raised in Scribe's flag):** Out of scope for these issues; both `analyzer.enabled` semantics ("constructed" vs "reachable") would require a separate health-probe round-trip per agent on every admin request. If the UI badge ever shows misleading state we'll revisit, but Linus's panel is functional with the current value. Logged here for next pass.
