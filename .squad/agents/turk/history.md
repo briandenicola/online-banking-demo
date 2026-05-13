@@ -7,6 +7,23 @@
 - **Joined:** 2026-05-07
 - **Focus:** Python service config fixes and cross-service consistency
 
+## Core Context
+
+**Core Python/FastAPI Patterns:**
+- Env vars: All Python services use SCREAMING_SNAKE_CASE (JWT_KEY, REDIS_CONNECTION_STRING, COSMOS_DB_ENDPOINT). Referenced in kustomize manifests and docker-compose.
+- Layered architecture: `app/config.py` (logging/telemetry), `app/models/`, `app/services/`, `app/routes/`, with `main.py` only wiring app/middleware/routers/lifespan.
+- Service modules retain shared state (analyzer pipeline, agent sessions, in-memory stores) for behavior preservation.
+
+**Core Cross-Service Patterns:**
+- Balance validation: Transaction/transfer services call account-service before debit. Fail-open if unreachable (graceful degradation).
+- Events: InsufficientFundsAttempt events published to Redis "banking-events" stream for anomaly/audit consumption.
+- Kustomize ConfigMap: `deploy/kustomize/base/configmap.yaml` — central source of truth for env vars, services, replicas, image refs.
+
+**Core Infrastructure Patterns:**
+- Redis: Azure Managed (port 10000, TLS). Dual-mode auth: AZURE_CLIENT_ID → Entra token (AKS), else password from conn string (local).
+- Secrets: KeyVault + CSI driver syncs to K8s Secret `banking-secrets` via `SecretProviderClass`. Kubelet identity RBAC needed.
+- Go slog: event-processor uses stdlib slog with JSON handler for structured logging.
+
 ## Learnings
 - Azure Managed Redis (Balanced B0) uses port 10000 with TLS, not standard 6379
 - Redis auth is dual-mode: AZURE_CLIENT_ID presence triggers Entra ID token auth (cloud/AKS), absence uses connection string password (local docker-compose)
@@ -359,3 +376,19 @@ Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com
 - Keep `[build-system]` and `[project].dependencies` in sync with Dockerfiles
 - Review .dockerignore before building images
 - Check env var references in health probes and startup configs
+
+---
+
+## 2026-05-12 — P2 Wave 1 Completion
+
+**Wave:** squad/p2-wave-1 (with Basher, Linus)  
+**Issues:** #108, #93, #106
+
+**Scope:**
+- #108: Standardized Python env vars to SCREAMING_SNAKE_CASE across all FastAPI services
+- #93: Extracted layered architecture (config, models, services, routes) for Python services
+- #106: Migrated Go event-processor from log.Printf to stdlib slog with JSON handler
+
+**Outcome:** ✓ All Python services import, Go builds clean, test pass. Commits: 3e215af, 9b0912d, 512db07, 065994c.
+
+**Team:** Coordinated with Basher (.NET standardization) and Linus (frontend cleanup) to ensure cross-service consistency. Wave complete; PR pending merge to main.

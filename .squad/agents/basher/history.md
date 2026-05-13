@@ -6,6 +6,21 @@
 - **Stack:** C#/.NET + Python/FastAPI microservices, Redis, Docker Compose, Azure
 - **Services:** user-service, account-service, transaction-service, transfer-service (C#), ai-service, budget-service, chatbot-service, event-processor (Python)
 
+## Core Context
+
+**Core .NET Patterns:**
+- Cosmos DB: Use partition key `id` for unique lookups; email lookups via deterministic `email-lookup:{email}` documents for atomic duplicate detection. Exclude these lookups from queries with ID prefix filters.
+- InMemory services: Deduplicate via storage-only adapters pattern (P2 Wave 1). Use ConcurrentDictionary for thread-safe in-memory collections.
+- Constants: Centralize all magic strings in per-service Constants classes (P2 Wave 1).
+- DataAnnotations: Validate request DTOs strictly at model boundary (P2 Wave 1).
+- Redis on Azure Managed: Uses port 10000 with TLS; exclude from Istio sidecar with `traffic.sidecar.istio.io/excludeOutboundPorts: "10000"`.
+- Graceful degradation: Account-service balance checks are fail-open; if unreachable, transaction proceeds with warning.
+
+**AI/Agent Patterns:**
+- Foundry agents: Provisioned at init via `AIProjectClient.create_version` in init container; runtime uses `FoundryAgent` class.
+- Content Understanding: Uses `ContentUnderstandingClient` with prebuilt analyzers; call `update_defaults()` at startup.
+- Account-opening pipeline: Four Redis-stream consumers (extraction, identity, compliance, provisioning) running concurrently.
+
 ## Learnings
 
 ### 2026-05 — Account-opening agent pipeline (Foundry + Content Understanding)
@@ -1277,3 +1292,19 @@ Fixed `account-opening-service/app/main.py` Cosmos init to catch `CosmosHttpResp
 - Update Taskfile if new services are added
 - Document all DI-managed dependencies in Program.cs registration comments
 - Test service startup with production-like container images before deploying
+
+---
+
+## 2026-05-12 — P2 Wave 1 Completion
+
+**Wave:** squad/p2-wave-1 (with Turk, Linus)  
+**Issues:** #107, #96, #97
+
+**Scope:**
+- #107: Centralized magic strings into Constants class across all 4 .NET services
+- #96: Deduplicated InMemory services via storage-only adapters pattern
+- #97: Tightened DataAnnotations validation on all request DTOs
+
+**Outcome:** ✓ All 4 .NET services build clean, storage layer refactoring improves testability. Commits: 87953d8, 9be97bb, c1c08f9.
+
+**Team:** Coordinated with Turk (Python env vars) and Linus (frontend types/tests) for cross-service consistency. Wave complete; PR pending merge to main.

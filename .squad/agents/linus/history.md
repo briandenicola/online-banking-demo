@@ -6,6 +6,26 @@
 - **Stack:** React/TypeScript, MUI, Create React App
 - **App:** ui-app — the frontend banking interface
 
+## Core Context
+
+**Core Frontend Patterns:**
+- Test convention: Colocated tests. `Component.tsx` + `Component.test.tsx` in same directory. No `__tests__/` directories (P2 Wave 1).
+- Error handling: Central `logger` module (`src/utils/logger.ts`). All error logging goes through `logger.error()` — not direct `console.error`. No-ops in test; swallowed in prod pending telemetry.
+- Type guards: Use `unknown` + inline casts instead of `any`. Pattern: `(err as { response?: { data?: { message?: string } } })?.response?.data?.message`.
+- API client: Canonical names per operation (createApplication, getApplication, listApplications, etc.). Single name per endpoint, no aliases.
+- Admin checks: Guarded with `isAdmin` from AuthContext before calling /admin/* endpoints. Non-admin users see partial UI (no risk scores/AI explanations).
+
+**Current Tech Stack:**
+- CRA + React 19 + MUI 9 + react-router-dom 7, TypeScript strict mode
+- Nginx reverse proxy: `/api/` → `http://gateway:80/`
+- AuthContext: Global auth state + accounts + transfers (god object — P3 refactoring)
+
+**Critical Bugs (Pre-Wave 1):**
+- Transfer API client had wrong shape (wrapped formData, FastAPI expects flat)
+- Duplicate test files: 7 pairs, __tests__/ vs. colocated versions out of sync
+- Any types: 4 instances without type guards
+- Admin endpoint noise: 403s on every load for non-admin users
+
 ## Learnings
 
 ### 2025-07-18 — Frontend Code Quality Audit
@@ -312,3 +332,20 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 - **Don't confuse `src/components/AdminApplicationsTab.tsx` with `src/components/account-opening/AdminApplicationsTab.tsx`** — only the latter is live; the former is orphaned dead code (now removed). Watch for similar duplicate-name traps if more "admin tabs" appear.
 - **Colocated tests are the convention now** for ui-app: `Component.tsx` next to `Component.test.tsx`. No `__tests__/` directories remain (`ErrorBoundary.test.tsx` aside, which has no colocated dup yet — moving it later is a P3 nit).
 - **Logger pattern**: import `logger` from `'../utils/logger'`. Use `logger.error('what failed', err)`. In production it currently no-ops; that is the intentional seam.
+
+---
+
+## 2026-05-12 — P2 Wave 1 Completion
+
+**Wave:** squad/p2-wave-1 (with Turk, Basher)  
+**Issues:** #95, #100, #98, #111
+
+**Scope:**
+- #95: Deleted 7 duplicate test pairs, killed __tests__/ directories, moved to colocated .test.tsx pattern
+- #100: Consolidated duplicate accountOpening API functions (removed 5 legacy aliases, fixed submitApplication bug)
+- #98: Guarded admin-only /admin/transactions call with isAdmin check from AuthContext
+- #111: Removed all 4 `any` types, replaced with `unknown` + inline guards; centralized console.error via logger module
+
+**Outcome:** ✓ Test count optimized 290→118, builds clean, no new warnings. Commits: 6b1dec2, 1c7d6f0, 7ee344b, 08f86de, d49ad86.
+
+**Team:** Coordinated with Turk (Python services) and Basher (.NET storage) for cross-service consistency. Wave complete; PR pending merge to main.

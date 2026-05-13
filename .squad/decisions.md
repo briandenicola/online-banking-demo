@@ -4270,3 +4270,170 @@ Implemented a **two-layer ErrorBoundary strategy**:
 **By:** Brian (via Copilot)  
 **Directive:** After build and deploy, close resolved GitHub issues as part of the PR (use "Closes #N" in PR body).  
 **Status:** Captured for team memory
+
+---
+
+# Turk — P2 Wave 1 Decisions
+
+**Date:** 2026-05-12  
+**Branch:** squad/p2-wave-1  
+**Issues:** #108, #93, #106
+
+## D1 — Python env var standardization (Issue #108)
+
+**Decision.** Python/FastAPI services now use SCREAMING_SNAKE_CASE for all environment variables:
+- JWT_KEY, JWT_ISSUER, JWT_AUDIENCE
+- REDIS_CONNECTION_STRING
+- COSMOS_DB_ENDPOINT
+
+**Rationale.** Aligns Python naming with Go event-processor and .NET services, improves consistency across the fleet. Kustomize now wires these names directly from secrets/configmap without transformation.
+
+**Impact.** docker-compose/.env.example and docs updated; .NET conventions unchanged.
+
+## D2 — Layered architecture extraction for Python services (Issue #93)
+
+**Decision.** All Python services refactored into layers:
+- `main.py` now only wires app/middleware/routers/lifespan
+- Per-service `config.py` handles logging/telemetry
+- New packages: `models/`, `services/`, `routes/` for separation of concerns
+- Service modules retain shared state (e.g., analyzer pipeline, agent sessions)
+
+**Rationale.** Improves testability and reduces `main.py` cognitive load. Preserves existing behavior via module-level state.
+
+## D3 — Go slog adoption (Issue #106)
+
+**Decision.** event-processor migrated from log.Printf/Println/Fatalf to stdlib `slog` with JSON handler.
+
+**Rationale.** Structured logging aligns Go with Python/Rust/Node initiatives. JSON output easier to parse in observability platforms.
+
+---
+
+# Basher — P2 Wave 1 Decisions
+
+**Date:** 2026-05-12  
+**Branch:** squad/p2-wave-1  
+**Issues:** #107, #96, #97
+
+## D1 — Constants centralization in .NET services (Issue #107)
+
+**Decision.** Replace all magic strings across all 4 .NET services with centralized Constants class.
+
+**Impact.** Reduces maintenance burden, improves discoverability. All .NET services build clean.
+
+## D2 — InMemory service deduplication (Issue #96)
+
+**Decision.** Deduplicate InMemory services via storage-only adapters. Consolidates test/mock plumbing.
+
+**Impact.** Improves testability and reduces boilerplate.
+
+## D3 — DataAnnotations validation tightening (Issue #97)
+
+**Decision.** Tighten DataAnnotations on all request DTOs for stricter validation at the model boundary.
+
+**Impact.** Catches invalid payloads earlier, improves API robustness.
+
+---
+
+# Linus — P2 Wave 1 Decisions
+
+**Date:** 2026-05-12  
+**Branch:** squad/p2-wave-1  
+**Issues:** #95, #100, #98, #111
+
+## D1 — Test file convention: COLOCATED (Issue #95)
+
+**Decision.** All ui-app component tests live next to the component:
+`src/components/Foo.tsx` + `src/components/Foo.test.tsx`. The
+`src/components/__tests__/`, `src/pages/__tests__/`, and `src/api/__tests__/`
+directories are deprecated and removed.
+
+**Rationale.** Pairs had genuinely diverged — colocated versions matched the
+real component APIs (e.g. mocking `createApplication` as the actual component
+imports it), while `__tests__/` versions tested an older imagined `onSubmit`
+callback API. Colocated also matches CRA defaults and most React project
+templates. One orphan note: `ErrorBoundary.test.tsx` still lives in
+`src/components/__tests__/` because it has no colocated dup — moving it is
+a P3 cleanup, not blocking.
+
+**Side effect.** Test count dropped 290 → 118. The removed tests were either
+duplicates against the same component or tests against
+`src/components/AdminApplicationsTab.tsx`, which was orphaned dead code (only
+`account-opening/AdminApplicationsTab.tsx` is wired to AdminPage). Both the
+dead component and its tests were removed.
+
+## D2 — accountOpening API canonical names (Issue #100)
+
+**Decision.** Single canonical name per operation; legacy aliases removed.
+
+| Operation                  | Canonical name        | Removed                          |
+|----------------------------|-----------------------|----------------------------------|
+| POST /applications         | `createApplication`   | `submitApplication` (wrong shape)|
+| GET  /applications/{id}    | `getApplication`      | `getApplicationStatus`           |
+| GET  /applications/{id}/audit | `getAuditTrail`    | `getApplicationAudit`            |
+| GET  /applications         | `listApplications`    | `listApplicationsLegacy`         |
+| PATCH /applications/{id}/review | `reviewApplication` | `reviewApplicationLegacy`     |
+
+Also removed: `ReviewRequest` interface (only used by the legacy review),
+`accountOpeningApi` default export.
+
+**Rationale.** `submitApplication` was an actual bug — it wrapped the body
+as `{ formData: payload }` but the FastAPI `ApplicationCreate` model expects
+the flat object, so any caller would 422. The other pairs were aliases of
+identical implementations. Canonical names follow the resource-noun pattern
+(`createApplication`, `listApplications`) except `getAuditTrail`, which was
+kept because it's the name already used in the consolidated test contract
+and reads more naturally than `getApplicationAudit`.
+
+## D3 — Admin endpoint UX for non-admin users (Issue #98)
+
+**Decision.** Non-admin users on `/transactions` skip the
+`/admin/transactions` enrichment call entirely (guarded by `isAdmin` from
+`AuthContext`). They see transactions without risk-score chips or AI
+explanations.
+
+**Rationale.** Silently catching a 403 worked but generated noise on every
+load. Skipping the call is honest and removes a backend round-trip for the
+common case (most users are not admin).
+
+## D4 — Frontend error logging: central `logger` seam (Issue #111)
+
+**Decision.** New module `src/ui-app/src/utils/logger.ts`. All places that
+previously used `console.error` now import `logger` and call
+`logger.error('msg', err)`. The logger:
+- no-ops in `NODE_ENV === 'test'` (no test pollution),
+- in `NODE_ENV === 'production'` no-ops for non-error levels and routes
+  errors to `console.error` only in dev — in prod they're swallowed pending
+  real telemetry,
+- in dev passes through to the matching `console` method.
+
+**Why not just rethrow to `ErrorBoundary`?** React `ErrorBoundary` does not
+catch async errors thrown from event handlers, effects, or callbacks. A
+rethrow there would have been silent in practice. The logger preserves the
+error and the existing UI `setError` state surfaces it to the user.
+
+**Future work.** When telemetry is wired (App Insights / OTEL browser SDK),
+the swap is one file. No call sites change.
+
+## D5 — `any` → `unknown` + inline type guards (Issue #111)
+
+**Decision.** Removed all four `any` usages flagged in #111 by replacing
+with `unknown` plus an inline cast to a narrow shape, e.g.:
+
+```ts
+const serverMessage =
+  (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+```
+
+**Rationale.** Already the pattern in `AccountOpeningPage.tsx`. Avoids
+pulling in axios's `isAxiosError` type guard everywhere and keeps the
+narrowing local to the call site. If we later adopt `axios.isAxiosError`
+project-wide, that's a follow-up sweep.
+
+---
+
+# User Directive: Wave Branching & PR Workflow
+
+**Date:** 2026-05-13T11:03:00Z  
+**By:** Brian (via Copilot)  
+**Directive:** Each wave of work must be done on its own dedicated branch (e.g., `squad/p2-wave-1`). At the end of each wave, open a PR and merge to main before starting the next wave.  
+**Status:** Captured for team memory
