@@ -543,3 +543,33 @@ if (user == null)
 
 **Commit:** `25fe743`
 
+
+### 2026-05-13 — Issue #118: ai-service Foundry agents 'Agent not initialized'
+
+**Branch:** squad/p2-wave-3  
+**Commit:** 0cb17b8
+
+**Symptom:** Admin AI Foundry Connectivity panel reported both `transaction-categorizer` and `risk-assessor` as 🔴 ERROR / "Agent not initialized".
+
+**Diagnosis path:**
+1. Init container `provision-agents` succeeded — agents exist in Foundry project ✅ (rules out possibility #1)
+2. Main container startup logs revealed: `❌ Foundry initialization failed: No module named 'aiohttp'`
+3. Health-check code in `app/routes/api.py::_check_agent` correctly detects `_ready=False` (rules out possibility #3)
+
+**Root cause:** `agent-framework-foundry`'s `FoundryAgent` uses `aiohttp.ClientSession` internally but does not declare it transitively. ai-service's `pyproject.toml` was missing `aiohttp`. The `try/except` in lifespan swallowed the ImportError, leaving both `FoundryRiskAnalyzer` and `FoundryCategorizer` with `_ready=False`.
+
+**Fix:** Added `aiohttp = "^3.10.0"` to `src/ai-service/pyproject.toml`. Built via `task cloud:build:ai-service`, deployed via `task cloud:deploy`, then `kubectl rollout restart` (image tag `:latest` → deployment otherwise unchanged).
+
+**Verification:**
+```
+✅ Foundry risk agent created (persistent)
+✅ Foundry categorizer agent created (persistent)
+
+GET /api/admin/foundry-status
+{"status":"ok","agents":{"transaction-categorizer":{"status":"ok"},"risk-assessor":{"status":"ok"}}}
+```
+
+**Pattern (recurring — third time now):**
+Azure AI / agent-framework Python SDKs frequently rely on `aiohttp` without declaring it. Whenever a service depends on `agent-framework-foundry` or related packages, **explicitly add `aiohttp` to pyproject.toml**. chatbot-service had it; account-opening-service was fixed earlier; ai-service was the latest miss. Suggests a checklist item for any new Python AI service.
+
+**Gotcha:** `task cloud:deploy` after a rebuild leaves the Deployment manifest "unchanged" because the `:latest` image tag and yaml are identical — `kubectl rollout restart` is required to pull the freshly-pushed image. Worth considering image digests in the deploy task.
