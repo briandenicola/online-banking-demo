@@ -667,3 +667,15 @@ Note `[request.system_prompt]` (list-wrapped) — `Message`'s `contents` is a `S
 - **Verification trick:** `kubectl exec deploy/<svc> -- python -c "import inspect; from X import Y; print(inspect.signature(Y.__init__))"` is the fastest way to nail down a prerelease SDK's true API when docs are stale.
 
 **Commit:** (see #126)
+
+---
+
+### 2026-05-13 — Wave 3 Closeout — Issue #126 Merged (Scribe Orchestration)
+
+**Status:** Wave 3 orchestration complete. Issue #126 (ai-service Message API drift) now documented in decisions.md and live-verified on onlinebankingdemo.bjdazure.tech.
+
+**Related:** Basher shipped concurrent fixes #123 (dashboard zeros) and #125 (accounts regression). Foundry raisvc 403 follow-up from #126 now tracked on Danny's infra plate.
+
+**Decision Drop:** Merged turk-126-message-api.md into decisions.md. Bonus learning: `EvalItem` kwarg drift (input → conversation) caught and fixed in same session.
+
+**Live Verification:** `/api/admin/evaluate` now passes request validation and reaches Foundry backend. 403 is infra-side (role assignment), not Python API usage.

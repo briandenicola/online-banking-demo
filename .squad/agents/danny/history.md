@@ -740,3 +740,22 @@ Basher implemented the Redis architecture decision:
 - Local tasks use `deps: [_init-env]` for Terraform output wiring
 - Internal tasks prefixed with `_` (e.g., `_init`, `_init-env`)
 - Test scope split: `local:test` = unit tests, `local:smoke` = health/functional checks
+
+---
+
+### 2026-05-13 — Foundry raisvc 403 — Infra Follow-up from #126 (Turk)
+
+**Context:** Turk fixed the ai-service `/api/admin/evaluate` 500 (Message API drift, #126). The endpoint now reaches the Foundry evaluator backend but surfaces HTTP 403 (Forbidden) from the `raisvc` service.
+
+```
+openai.BadRequestError: 400 - {'error': {'code': 'UserError',
+  'message': 'Response status code does not indicate success: 403 (Forbidden)',
+  'innerError': {'code': 'UnauthorizedUserAction'},
+  'componentName': 'raisvc', ...}}
+```
+
+**Root Cause:** Azure AI Foundry RBAC / role-assignment issue. The workload identity running ai-service does not have the appropriate role on the AI Foundry project's evaluation service.
+
+**Action Required:** Grant the workload identity the necessary role(s) on the AI Foundry project's `raisvc` plane. Turk's decision drop (merged into decisions.md) documents the Python-side validation + live verification; this is the infrastructure ownership piece.
+
+**Issue Tracking:** Separate from #126 (which is closed). Recommend filing a new issue and tagging for architecture/Terraform review.

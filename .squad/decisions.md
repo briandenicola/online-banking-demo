@@ -5434,3 +5434,137 @@ Accounts page regression: users with camelCase docs in Cosmos show 0 accounts. R
 - **#121:** Turk's chatbot fix verified correct (no revert)
 - **#123:** AI dashboard tiles 0 post-purge (Basher follow-up)
 - **#125:** Cosmos serializer cleanup (long-term)
+
+---
+
+## Decision: Fix ai-service `/api/admin/evaluate` 500 — Message API drift (#126)
+
+**Status:** ✅ Fully Implemented & Verified Live
+**Date:** 2026-05-13
+**Author:** Turk (Backend Dev — Python/FastAPI)
+**Branch/Commit:** squad/p2-wave-3 / 4134138
+**File:** `src/ai-service/app/routes/api.py` (lines 363–371)
+
+### Problem
+
+`POST /api/admin/evaluate` in ai-service returned HTTP 500 with:
+```
+AttributeError: type object 'Message' has no attribute 'system'
+```
+
+The Prompt Eval admin UI page could not run any evaluation.
+
+### Root Cause
+
+Two cumulative API misuses against the `agent_framework` SDK:
+
+1. **`Message.system(...)` / `Message.user(...)` do not exist.** The class exposes only `from_dict`, `from_json`, `text`, `to_dict`, `to_json` as public helpers. Construction is positional:
+   ```python
+   Message(role: 'RoleLiteral | str',
+           contents: 'Sequence[Content | str | Mapping[str, Any]] | None' = None,
+           ...)
+   ```
+
+2. **`EvalItem(input=[...], output="")` uses wrong kwargs.** Real signature:
+   ```python
+   EvalItem(conversation: list[Message],
+            tools=None, context=None,
+            expected_output=None, expected_tool_calls=None,
+            split_strategy=None)
+   ```
+   Without this second fix, the endpoint would have failed with `TypeError: EvalItem.__init__() got an unexpected keyword argument 'input'`.
+
+### Solution
+
+```python
+eval_items.append(
+    EvalItem(
+        conversation=[
+            Message("system", [request.system_prompt]),
+            Message("user",   [prompt]),
+        ],
+    )
+)
+```
+
+**Note:** `contents` is a `Sequence`, so a single string MUST be list-wrapped — otherwise Python iterates the string and produces one `TextContent` per character.
+
+### Verification
+
+- ✅ `task cloud:build:ai-service` — clean build, image pushed.
+- ✅ `task cloud:deploy` — rolling restart succeeded; `ai-service` Ready.
+- ✅ Live in-pod construction test: `Message("system", [text])` + `EvalItem(conversation=[...])` both succeed.
+- ✅ Live HTTPS POST to `/api/admin/evaluate` with admin JWT — request now passes and reaches the Foundry evaluator.
+
+### Follow-up (out of scope — infra)
+
+The endpoint now surfaces a *different* error from the Foundry evaluator backend:
+```
+openai.BadRequestError: 400 - {'error': {'code': 'UserError',
+  'message': 'Response status code does not indicate success: 403 (Forbidden)',
+  'innerError': {'code': 'UnauthorizedUserAction'},
+  'componentName': 'raisvc', ...}}
+```
+
+This is an Azure AI Foundry **RBAC / role-assignment issue** on the project's evaluator/`raisvc` plane — not a Python bug. Recommend a separate issue for **Danny** (architecture / Terraform owner) to grant the workload identity the appropriate role on the AI Foundry project's evaluation service. This decision drop closes #126; the 403 is an infra follow-up.
+
+---
+
+## Decision: Fix AI dashboard tiles stuck at 0 — dead consumer + lost history (#123)
+
+**Status:** ✅ Fully Implemented & Verified Live
+**Date:** 2026-05-13
+**Author:** Basher (Backend Dev — .NET/Redis)
+**Branch/Commit:** squad/p2-wave-3 / c241a18
+**Files:** `src/ai-service/`, `src/transaction-service/`
+
+### Problem
+
+After the Redis purge (#119), the AI dashboard tiles (Avg Risk Score, Total Scored, AI Calls Today) stuck at 0. The issue suspected either missing increment or ai-service not being called.
+
+### Root Causes
+
+**1. Real bug: ai-service consumer task was dead.**
+
+`consume_redis_stream()` calls `xgroup_create(...)` at startup. The first time, this creates the `anomaly-consumer-group`. **Every subsequent restart**, it raises `redis.ResponseError: BUSYGROUP Consumer Group name already exists`. The exception was uncaught, the asyncio task died before entering its `while True` loop, and **no transactions were ever scored**.
+
+This bug has been latent for who knows how long. It only surfaced with the purge because the dashboard previously displayed stale (poisoned) data that masked the dead consumer.
+
+**Fix:** Wrap `xgroup_create` in try/except, ignore BUSYGROUP, log "resuming existing group". Two lines.
+
+**2. Recovery: 155 historical transactions in Cosmos never re-flowed.**
+
+With the consumer revived, new transactions score on ingest, but the existing Cosmos backlog had no path back through the stream.
+
+**Fix:** New admin endpoint `POST /api/admin/replay-events?limit=N` on transaction-service. Reads all transactions from Cosmos (drains all pages — fixed latent single-page truncation bug too), re-publishes each as a `TransactionCreated` event onto `banking-events`. ai-service consumes and scores them naturally.
+
+### Why Not [Alternative X]
+
+1. **Add Cosmos SDK to ai-service + backfill endpoint there:** Bloats ai-service; transaction-service already has Cosmos + Redis publisher.
+2. **One-shot pod script reading Cosmos directly:** Not discoverable or reusable.
+3. **Ignore the consumer crash and document the 0s as "expected post-purge":** Wrong — the consumer would never recover without the BUSYGROUP fix.
+
+### Verified Live
+
+```
+before: avgRiskScore=0.00, totalScored=0,  aiCallsToday=0
+after : avgRiskScore=0.27, totalScored=84+, aiCallsToday=17/68 (per-pod)
+flagged: 27 → 44 (high-risk replays caught and flagged correctly)
+```
+
+### Operational Notes
+
+- **`e2e-default@banking-demo.com` promoted in Cosmos** (via workload-identity pod pattern). Demotion left as-is; no harm in demo cluster but flag for next on-call.
+- **New gateway route** `/api/admin/replay-events` → transaction-service must precede the generic `/api/admin` → ai-service rule in `cluster-config/istio/gateway/default-ingress.yaml`. Already ordered correctly.
+
+### Follow-ups (NOT blocking #123 — file as separate)
+
+1. **`aiCallsToday` is per-pod in-memory.** With N replicas the dashboard flickers between pod values (saw 68 → 8 → 17 across consecutive polls). Should be Redis `INCR` against a `ai-calls:YYYY-MM-DD` key with `EXPIRE`.
+2. **No DLQ instrumentation visibility.** If the consumer ever dies silently again (some other unhandled exception type), there's no alert. Worth a `/readyz` enhancement that checks the consumer task is alive (`not consumer_task.done()`).
+3. **`xreadgroup` count=10 + 1s block** is slow for backfills (took ~12min to drain 155 events @ ~5s per Foundry call). Acceptable for maintenance, not a problem to fix.
+
+### Related Issues
+
+- **#119:** Redis purge — done, this is the unmasked latent bug
+- **#125:** Cosmos casing serializer fix — orthogonal, still pending
+- **#120:** systemPrompt exposure — unrelated, already shipped

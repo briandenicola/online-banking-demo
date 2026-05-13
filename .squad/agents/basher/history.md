@@ -1701,3 +1701,15 @@ issue but not in scope here.
 5. **Admin endpoint > one-shot pod script** for maintenance ops, even
    if it costs slightly more code. Discoverable, reusable, auditable
    via standard logs.
+
+---
+
+### 2026-05-13 — Wave 3 Closeout — Issues #123 & #125 Merged (Scribe Orchestration)
+
+**Status:** Wave 3 orchestration complete. Both #123 (dashboard zeros) and #125 (accounts regression) are now documented in decisions.md and live-verified.
+
+**Related:** Turk shipped concurrent fix #126 (ai-service Message API drift); Foundry raisvc 403 follow-up now tracked on Danny's infra plate.
+
+**Decision Drops:** Merged basher-123-dashboard-zeros.md and basher-accounts-regression.md into decisions.md. Related follow-ups (aiCallsToday Redis backing, consumer DLQ visibility) filed as separate issues.
+
+**Next Wave:** Cosmos serializer pinning (#125) and per-pod counter refactor (aiCallsToday) remain in backlog.
