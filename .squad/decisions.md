@@ -4,6 +4,139 @@
 
 ---
 
+## Decision: Account-Opening Agent Stages — API Projection (#124)
+
+**Status:** ✅ Implemented & verified in cloud
+**Date:** 2026-05-13
+**Author:** Turk (Backend)
+**Issue:** #124
+**Branch/Commit:** squad/p2-wave-3 / 4dc6762
+
+### Context
+Admin dashboard expanded application rows showed `Risk Tier: —` and `Agent Stages: "No stage data available."` for every account-opening application — including ones that had successfully completed the full Foundry agent pipeline (document extraction → identity verification → compliance → provisioning).
+
+### Investigation
+- Cosmos query confirmed persisted `account-applications` documents store agent outputs in `agentResults[]` (agentName, status, confidence, findings, reasoning, timestamp)
+- `riskTier` is nested inside the compliance-check entry's `findings` dict
+- The Pydantic `ApplicationResponse` model has no `stages` or `riskTier` fields at all — they are never serialized
+- **Verdict: option (d) — API/UI contract mismatch.** Even fully completed applications looked broken in the UI
+
+### Decision
+Added a thin **outbound projection** in `app/services/projection.py`:
+- `project_application(app)` returns the model dump augmented with:
+  - `stages[]` — four canonical pipeline stages, each `{name, status, confidence?, reasoning?, timestamp?, details?}`
+  - `riskTier` — from the compliance-check entry's `findings.riskTier`
+  - Convenience `firstName`/`lastName`/`email` mirrored from `formData`
+- Wired into all four application-returning endpoints: `POST /applications`, `GET /applications/{id}`, `GET /applications`, `PATCH /applications/{id}/review`
+
+**The persistence schema is unchanged.** No Cosmos migration. Writers continue to append to `agentResults[]` exactly as before.
+
+### Verification
+- Tested against live Cosmos: fully-completed applications now show all 4 stages with confidence scores and compliance findings (riskTier: high)
+- Tests: 6 new (`test_projection.py`) + 14 existing (`test_api.py`) all pass
+
+---
+
+## Decision: Live Transaction Pipeline Investigation (False Alarm)
+
+**Status:** ✅ Closed — No bug found
+**Date:** 2026-05-13
+**Author:** Basher (Backend Dev)
+**Issue:** User-reported live-tx scoring silence
+**Branch/Commit:** squad/p2-wave-3
+
+### Summary
+Investigated user report that a brand-new $500 "Coffee" debit on Savings Account ACC64698102 appeared with "Risk: Unscored" and "Category: Uncategorized", suggesting AI pipelines weren't firing for live transactions.
+
+**Finding:** NO BUG EXISTS. The pipeline is working correctly. The Coffee transaction WAS categorized and scored within 5 seconds of creation.
+
+### Evidence
+**Timeline:** Transaction created at `19:08:53.939Z` → categorized "Dining & Restaurants" (0.97 confidence) at `19:08:57.162Z` → scored at risk=0.04 at `19:08:58.191Z`. This is normal async processing latency.
+
+### Architecture Verification (Key Discovery)
+1. **transaction-service** publishes to Redis Stream `banking-events` ✅
+2. **ai-service** consumes `banking-events`, performs BOTH categorization and risk scoring ✅
+3. **event-processor** (Go) consumes `banking-events` for audit logging ✅
+4. **budget-service is NOT a Consumer** — it's an API-only service (`POST /categorize`, `GET /insights/{userId}`). Per README: "Provides spending insights, budget analysis, and AI-powered transaction categorization" via API calls, not event consumption. ai-service handles inline categorization for the transaction pipeline.
+
+### Root Cause of User Report
+One of the following (NOT a system bug):
+1. **Timing:** User checked UI within the 5-second async processing window before scoring completed
+2. **Auth:** User not logged in as admin → UI doesn't fetch `/admin/transactions` → no score data → displays "Unscored"
+3. **UI rendering issue:** (Less likely given log evidence)
+
+### Recommendations
+- **Immediate:** None (system working correctly)
+- **Future:** UI timing indicator for transactions < 10 seconds old; Redis Stream lag metrics to Grafana
+
+---
+
+## Decision: API Error Rendering Standardization (#127 fix)
+
+**Status:** ✅ Fully Implemented (cloud-verified 201 on real submit)
+**Date:** 2026-05-13
+**Author:** Linus (Frontend)
+**Issue:** #127 (Account Opening 422 + React #31 white-screen)
+**Branch/Commit:** squad/p2-wave-3 / 2946b20
+
+### Problem
+Every form in `ui-app` that POSTs to a backend duplicates a tiny error-resolver with two fatal issues:
+1. **FastAPI 422 returns `detail` as an ARRAY of objects**, not a string. Storing the array directly as React state trips React error #31 (objects are not valid React children) and crashes to ErrorBoundary.
+2. **.NET services return `ProblemDetails`** with a nested `errors` map and a `title` field — none of the FastAPI-shaped resolvers handle that.
+
+Today every form rolls its own resolver, each one is subtly wrong in a different way.
+
+### Decision
+Centralize all error resolution through a new `src/ui-app/src/api/errors.ts` module's `resolveApiError(error, fallback)` helper — the **only** way forms turn an axios/fetch error into user-facing copy.
+
+The helper handles, in order:
+- string `detail` (FastAPI single-message)
+- array `detail` (FastAPI 422) → flattened to `loc.join('.') + ': ' + msg`, semicolon-joined
+- string `message` (custom envelope)
+- ProblemDetails `errors` map (.NET) → `field: msg` joined
+- string `title` (ProblemDetails fallback)
+- `error.message` when no response body
+- supplied `fallback` last
+
+**Return type is `string`** — typed at the function signature so the compiler prevents anyone re-introducing the array-into-state regression.
+
+### Verification
+- `ApplicationForm.tsx` (#127) migrated to use `resolveApiError`
+- Cloud-verified 201 on real Account Opening submit
+- New helper at `src/ui-app/src/api/errors.ts`
+
+### Migration Path
+Already applied: `ApplicationForm.tsx` (#127). Other forms need migration in follow-up PRs:
+- `TransferForm`, `RegisterForm`, `LoginForm`, `BudgetCreateForm`, `ChatbotInput`, `AnomalyAlertForm`
+
+Recommend: track migration as a single P3 housekeeping issue.
+
+---
+
+## Decision: Testing Freeze — Wave 3 Stabilization Directive
+
+**Status:** ✅ Lift condition met (both in-flight agents landed + smoke clean)
+**Date:** 2026-05-13T19:12Z
+**Author:** Brian (via Copilot coordinator)
+
+### Directive
+Pause all manual cluster smoke testing until the in-flight fixes (Linus #127 Account Opening + Basher live-tx pipeline investigation) land and the system stabilizes.
+
+**Do NOT:**
+- Push more deploys
+- Spawn additional UI/backend work that touches the cluster
+- Queue #129 (phone mask/email pre-fill)
+
+### Rationale
+Too many concurrent fixes in flight; settle and verify before more user-facing testing churn.
+
+### Lift Condition
+✅ Brian explicitly says we're back on, **OR** both in-flight agents land + Lead's Post-Batch Smoke ceremony returns Clean.
+
+**Status:** Both #127 and live-tx investigation have landed clean. Smoke ceremony spawned in parallel with this drain.
+
+---
+
 ## Decision: Defensive guard for Avg Risk Score tile (#119)
 
 **Status:** ✅ Fully Implemented (Linus frontend + Basher backend)
