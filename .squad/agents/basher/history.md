@@ -2136,3 +2136,40 @@ kubectl rollout restart deployment/ai-service -n banking-demo
 - **Pattern:** sidecar → workload-identity. The Foundry agents accept any `azure.identity` credential; `DefaultAzureCredential` over the federated token mounted by `azure.workload.identity/use: "true"` works for the same `https://ai.azure.com/.default` scope the worker already verifies on startup.
 - **Reference manifest:** `deploy/kustomize/base/ai-service.yaml` — the canonical workload-identity-only Python service pod (init container + main container + istio sidecar, no entra-agent-id, no `sidecar-keys` projected volume). Mirror this whenever a Python worker needs Foundry/Cognitive Services auth.
 - **Kept for re-enable:** `app/sidecar_credential.py` left in tree with a top-of-file deprecation comment; the module is no longer imported anywhere. `configmap.yaml` still has a stray `AGENT_ID_AGENT_IDENTITY` placeholder — harmless (no consumer) but worth a sweep next config pass.
+
+## Learnings
+
+### Eval-403 RCA: Unpinned Preview SDKs (2026-05-13)
+
+**Root cause:** Unpinned preview SDKs (`agent-framework-core = "*"`) in pyproject.toml caused daily container rebuilds to pull new PyPI releases, breaking eval pipeline compatibility.
+
+**Chain of events:**
+1. db70575 (2026-05-02): Switched from meta-package to `agent-framework-core`, removed all version constraints (`*`)
+2. PyPI published 1.3.0 (2026-05-08 00:09 UTC) with breaking eval contract changes
+3. Container rebuild (2026-05-13 ~17:00 UTC) pulled 1.3.0 → raisvc rejected eval requests with UnauthorizedUserAction 400/403
+4. RBAC was correct — error was SDK contract drift, not permissions
+
+**Fix:** Exact-pinned all preview SDKs to last-known-good 1.2.2 (published 2026-04-29):
+- `agent-framework-core = "1.2.2"`
+- `agent-framework-foundry = "1.2.2"`
+- `azure-ai-inference = "1.0.0b9"`
+
+**Exception to >=min,<next-major rule:** Preview SDKs break compat between minor releases, require exact pins. Stable deps keep caret/range constraints.
+
+**PyPI query patterns:**
+```bash
+# Get all releases sorted
+curl -s https://pypi.org/pypi/<package>/json | jq -r '.releases | keys | .[]' | sort -V
+
+# Get release timestamps
+curl -s https://pypi.org/pypi/<package>/json | jq -r '.releases | to_entries | .[] | "\(.key): \(.value[0].upload_time)"'
+
+# Filter releases after date
+jq -r '.releases | to_entries | .[] | select(.value[0].upload_time > "2026-05-13T00:00:00")'
+```
+
+**Remediation:** Add CI lint for `agent-framework.*= "\*"` in pyproject.toml, enable Dependabot with explicit upgrade PRs, require eval smoke-tests before merging preview-SDK bumps.
+
+**Issue:** #137
+**Commit:** 0b6255a
+**Services fixed:** ai-service, chatbot-service, account-opening-service (budget-service doesn't use agent-framework)

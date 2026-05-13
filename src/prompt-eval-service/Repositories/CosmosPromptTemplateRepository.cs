@@ -19,7 +19,7 @@ public class CosmosPromptTemplateRepository : IPromptTemplateRepository
     public async Task<List<PromptTemplate>> GetAllAsync()
     {
         var query = new QueryDefinition(
-            "SELECT * FROM c WHERE c.userId = 'global' ORDER BY c.updatedAt DESC");
+            "SELECT * FROM c WHERE c.userId = 'global' OR c.UserId = 'global' ORDER BY c.updatedAt DESC, c.UpdatedAt DESC");
 
         var results = new List<PromptTemplate>();
         var queryOptions = new QueryRequestOptions { MaxItemCount = 100 };

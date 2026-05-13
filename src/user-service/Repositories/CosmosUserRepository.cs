@@ -30,23 +30,35 @@ public class CosmosUserRepository : IUserRepository
 
     public async Task<Models.User?> GetByUsernameAsync(string username)
     {
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.Username = @username")
+        var query = new QueryDefinition(
+                "SELECT * FROM c WHERE c.Username = @username OR c.username = @username")
             .WithParameter("@username", username);
 
         var iterator = _container.GetItemQueryIterator<UserModel>(query);
-        var results = await iterator.ReadNextAsync();
-        return results.FirstOrDefault();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            var first = page.FirstOrDefault();
+            if (first != null) return first;
+        }
+        return null;
     }
 
     public async Task<Models.User?> GetByEmailAsync(string email)
     {
         var normalizedEmail = email.ToLowerInvariant();
-        var query = new QueryDefinition("SELECT * FROM c WHERE LOWER(c.Email) = @email")
+        var query = new QueryDefinition(
+                "SELECT * FROM c WHERE LOWER(c.Email) = @email OR LOWER(c.email) = @email")
             .WithParameter("@email", normalizedEmail);
 
         var iterator = _container.GetItemQueryIterator<UserModel>(query);
-        var results = await iterator.ReadNextAsync();
-        return results.FirstOrDefault();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            var first = page.FirstOrDefault();
+            if (first != null) return first;
+        }
+        return null;
     }
 
     public async Task<Models.User> CreateAsync(Models.User user)
@@ -84,7 +96,8 @@ public class CosmosUserRepository : IUserRepository
 
     public async Task<int> GetAdminCountAsync()
     {
-        var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.Role = 'admin'");
+        var query = new QueryDefinition(
+            "SELECT VALUE COUNT(1) FROM c WHERE c.Role = 'admin' OR c.role = 'admin'");
         var iterator = _container.GetItemQueryIterator<int>(query);
         var response = await iterator.ReadNextAsync();
         return response.FirstOrDefault();
@@ -92,7 +105,8 @@ public class CosmosUserRepository : IUserRepository
 
     public async Task<List<Models.User>> GetAllUsersAsync()
     {
-        var query = new QueryDefinition("SELECT * FROM c WHERE NOT STARTSWITH(c.id, 'email-lookup:') ORDER BY c.CreatedAt DESC");
+        var query = new QueryDefinition(
+            "SELECT * FROM c WHERE NOT STARTSWITH(c.id, 'email-lookup:') ORDER BY c.CreatedAt DESC, c.createdAt DESC");
         var iterator = _container.GetItemQueryIterator<UserModel>(query);
         var users = new List<Models.User>();
 

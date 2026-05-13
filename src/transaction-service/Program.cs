@@ -108,11 +108,21 @@ else
     {
         var configuration = sp.GetRequiredService<IConfiguration>();
         var endpoint = configuration["CosmosDb:Endpoint"];
+        
+        var clientOptions = new CosmosClientOptions
+        {
+            Serializer = new CosmosSystemTextJsonSerializer(
+                new System.Text.Json.JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+                })
+        };
+        
         if (!string.IsNullOrEmpty(endpoint))
         {
-            return new CosmosClient(endpoint, new DefaultAzureCredential());
+            return new CosmosClient(endpoint, new DefaultAzureCredential(), clientOptions);
         }
-        return new CosmosClient(configuration["CosmosDb:ConnectionString"]);
+        return new CosmosClient(configuration["CosmosDb:ConnectionString"], clientOptions);
     });
 
     // Repositories
