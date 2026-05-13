@@ -9,12 +9,13 @@ Verifies that:
 
 import pytest
 import inspect
-from app.main import (
+from app.config import AGENT_FRAMEWORK_AVAILABLE
+from app.services.agent_service import FINANCIAL_ADVISOR_INSTRUCTIONS
+from app.services.agent_tools import (
     get_user_transactions,
     get_user_accounts,
     get_budget_insights,
     get_spending_pattern,
-    AGENT_FRAMEWORK_AVAILABLE,
 )
 
 
@@ -93,13 +94,13 @@ class TestToolFunctionSecurityIssue36:
         SECURITY (Issue #36): Verifies tool functions use ContextVar for JWT token.
         Tool functions should call _current_auth_token.get() to retrieve JWT.
         """
-        import app.main as main_module
+        import app.services.agent_tools as tools_module
         
-        assert hasattr(main_module, "_current_auth_token"), \
+        assert hasattr(tools_module, "_current_auth_token"), \
             "Module should define _current_auth_token ContextVar"
         
         from contextvars import ContextVar
-        assert isinstance(main_module._current_auth_token, ContextVar), \
+        assert isinstance(tools_module._current_auth_token, ContextVar), \
             "_current_auth_token should be a ContextVar"
 
     def test_tool_decorators_present(self):
@@ -123,7 +124,7 @@ class TestAccountDataSanitization:
 
     def test_mask_account_number_function_exists(self):
         """Verify _mask_account_number function exists for security."""
-        from app.main import _mask_account_number
+        from app.services.agent_tools import _mask_account_number
         
         # Test masking logic
         masked = _mask_account_number("ACC1234567890")
@@ -137,7 +138,7 @@ class TestAccountDataSanitization:
 
     def test_sanitize_account_data_function_exists(self):
         """Verify _sanitize_account_data function exists and works."""
-        from app.main import _sanitize_account_data
+        from app.services.agent_tools import _sanitize_account_data
         
         test_accounts = [
             {
@@ -161,7 +162,7 @@ class TestAccountDataSanitization:
 
     def test_sanitize_transaction_description(self):
         """Verify _sanitize_transaction_description removes PII."""
-        from app.main import _sanitize_transaction_description
+        from app.services.agent_tools import _sanitize_transaction_description
         
         # Test email removal
         desc_with_email = "Payment to john.doe@example.com for services"
@@ -187,8 +188,6 @@ class TestPromptInjectionResistance:
 
     def test_system_prompt_defines_scope_boundaries(self):
         """Verify system prompt includes scope restriction instructions."""
-        from app.main import FINANCIAL_ADVISOR_INSTRUCTIONS
-        
         assert "SCOPE RESTRICTION" in FINANCIAL_ADVISOR_INSTRUCTIONS, \
             "System prompt should define scope boundaries"
         assert "ONLY answer questions about personal finances" in FINANCIAL_ADVISOR_INSTRUCTIONS, \
@@ -196,8 +195,6 @@ class TestPromptInjectionResistance:
 
     def test_system_prompt_resists_prompt_injection(self):
         """Verify system prompt includes prompt injection resistance."""
-        from app.main import FINANCIAL_ADVISOR_INSTRUCTIONS
-        
         assert "PROMPT INJECTION RESISTANCE" in FINANCIAL_ADVISOR_INSTRUCTIONS, \
             "System prompt should include injection resistance"
         assert "ignore previous instructions" in FINANCIAL_ADVISOR_INSTRUCTIONS.lower(), \
@@ -205,8 +202,6 @@ class TestPromptInjectionResistance:
 
     def test_system_prompt_protects_pii(self):
         """Verify system prompt includes PII protection instructions."""
-        from app.main import FINANCIAL_ADVISOR_INSTRUCTIONS
-        
         assert "PII PROTECTION" in FINANCIAL_ADVISOR_INSTRUCTIONS, \
             "System prompt should include PII protection"
         assert "Never repeat full account numbers" in FINANCIAL_ADVISOR_INSTRUCTIONS, \
@@ -216,8 +211,6 @@ class TestPromptInjectionResistance:
 
     def test_system_prompt_restricts_tool_usage(self):
         """Verify system prompt includes tool usage restrictions."""
-        from app.main import FINANCIAL_ADVISOR_INSTRUCTIONS
-        
         assert "TOOL USAGE" in FINANCIAL_ADVISOR_INSTRUCTIONS, \
             "System prompt should include tool usage guidelines"
         assert "authenticated by the system" in FINANCIAL_ADVISOR_INSTRUCTIONS, \
