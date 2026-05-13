@@ -37,6 +37,11 @@ public class EvaluationsController : ControllerBase
         {
             return NotFound(new { error = "Template not found" });
         }
+        catch (UnauthorizedAccessException ex)
+        {
+            _logger.LogWarning(ex, "Downstream auth failure during evaluation run");
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "Downstream service rejected request", detail = ex.Message });
+        }
         catch (Exception ex)
         {
             var correlationId = HttpContext.TraceIdentifier;

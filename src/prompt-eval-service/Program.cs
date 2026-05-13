@@ -16,6 +16,7 @@ builder.Host.UseBankingSerilog("prompt-eval-service");
 builder.Services.AddBankingOpenTelemetry("prompt-eval-service");
 
 builder.Services.AddControllers();
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {

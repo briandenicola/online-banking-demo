@@ -4,7 +4,7 @@ using PromptEvalService.Repositories;
 
 namespace PromptEvalService.Services;
 
-public record EvaluationWorkItem(EvaluationRun Run, PromptTemplate Template, List<TransactionData> Transactions);
+public record EvaluationWorkItem(EvaluationRun Run, PromptTemplate Template, List<TransactionData> Transactions, string? BearerToken = null);
 
 public class EvaluationQueue
 {
@@ -61,7 +61,7 @@ public class EvaluationBackgroundService : BackgroundService
 
         if (evaluationService is EvaluationService svc)
         {
-            await svc.ExecuteFoundryEvaluationAsync(workItem.Run, workItem.Template, workItem.Transactions);
+            await svc.ExecuteFoundryEvaluationAsync(workItem.Run, workItem.Template, workItem.Transactions, workItem.BearerToken);
         }
     }
 
