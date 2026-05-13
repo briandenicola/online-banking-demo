@@ -75,20 +75,10 @@ export interface DocumentUploadResponse {
   uploadedAt?: string;
 }
 
-export interface ReviewRequest {
-  action: 'approve' | 'reject' | 'pending_review';
-  notes?: string;
-}
-
 export interface ReviewDecisionRequest {
   decision: 'approved' | 'rejected' | 'pending_review';
   notes?: string;
 }
-
-export const submitApplication = async (formData: ApplicationFormData): Promise<ApplicationResponse> => {
-  const response = await apiClient.post('/account-opening/applications', { formData });
-  return response.data;
-};
 
 export const createApplication = async (applicationData: ApplicationFormData): Promise<ApplicationResponse> => {
   const response = await apiClient.post('/account-opening/applications', applicationData);
@@ -117,22 +107,14 @@ export const uploadDocument = async (
   return uploadDocuments(applicationId, [file], documentType);
 };
 
-export const getApplicationStatus = async (applicationId: string): Promise<ApplicationResponse> => {
+export const getApplication = async (applicationId: string): Promise<ApplicationResponse> => {
   const response = await apiClient.get(`/account-opening/applications/${applicationId}`);
   return response.data;
 };
 
-export const getApplication = async (applicationId: string): Promise<ApplicationResponse> => {
-  return getApplicationStatus(applicationId);
-};
-
-export const getApplicationAudit = async (applicationId: string) => {
+export const getAuditTrail = async (applicationId: string) => {
   const response = await apiClient.get(`/account-opening/applications/${applicationId}/audit`);
   return response.data;
-};
-
-export const getAuditTrail = async (applicationId: string) => {
-  return getApplicationAudit(applicationId);
 };
 
 export const listApplications = async (
@@ -152,26 +134,3 @@ export const reviewApplication = async (
   const response = await apiClient.patch(`/account-opening/applications/${applicationId}/review`, review);
   return response.data;
 };
-
-const listApplicationsLegacy = async (status?: ApplicationStatus) => {
-  const response = await apiClient.get('/account-opening/applications', {
-    params: status ? { status } : {},
-  });
-  return response.data;
-};
-
-const reviewApplicationLegacy = async (applicationId: string, review: ReviewRequest) => {
-  const response = await apiClient.patch(`/account-opening/applications/${applicationId}/review`, review);
-  return response.data;
-};
-
-const accountOpeningApi = {
-  submitApplication,
-  uploadDocument,
-  getApplicationStatus,
-  getApplicationAudit,
-  listApplications: listApplicationsLegacy,
-  reviewApplication: reviewApplicationLegacy,
-};
-
-export default accountOpeningApi;

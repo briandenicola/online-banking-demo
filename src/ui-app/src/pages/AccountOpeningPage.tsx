@@ -19,8 +19,8 @@ import ApplicationStatus, { ApplicationStatusData } from '../components/account-
 import {
   ApplicationFormData,
   ApplicationResponse,
-  getApplicationStatus,
-  submitApplication,
+  createApplication,
+  getApplication,
 } from '../api/accountOpening';
 
 type StepKey = 'form' | 'upload' | 'processing' | 'status';
@@ -50,7 +50,7 @@ const AccountOpeningPage: React.FC = () => {
   };
 
   const handleSimpleSubmit = async (payload: ApplicationFormData) => {
-    const response = await submitApplication(payload);
+    const response = await createApplication(payload);
     setApplication(response);
     setStatusData(null);
     setCreatedViaSimpleForm(true);
@@ -73,7 +73,7 @@ const AccountOpeningPage: React.FC = () => {
     setProcessingLoading(true);
     setProcessingError(null);
     try {
-      const latest = await getApplicationStatus(application.id);
+      const latest = await getApplication(application.id);
       setApplication(latest);
       const normalized = normalizeStatusData(latest);
       setStatusData(normalized);
