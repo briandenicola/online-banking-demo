@@ -25,6 +25,7 @@ from app.models import (
     DocumentType,
 )
 from app.repository import ApplicationRepository
+from app.services.projection import project_application, project_applications
 from app.state_machine import ApplicationStateMachine
 
 router = APIRouter(prefix="/api/account-opening", tags=["account-opening"])
@@ -50,7 +51,7 @@ async def create_application(
         },
     )
 
-    return application
+    return project_application(application)
 
 
 @router.post("/applications/{application_id}/documents", status_code=status.HTTP_201_CREATED)
@@ -137,7 +138,7 @@ async def get_application(
     if user.role.lower() != "admin" and owner != user.user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    return application
+    return project_application(application)
 
 
 @router.get("/applications")
@@ -146,7 +147,7 @@ async def list_applications(
     status: ApplicationStatus | None = None,
     repository: ApplicationRepository = Depends(get_repository),
 ):
-    return repository.get_all(status)
+    return project_applications(repository.get_all(status))
 
 
 class ReviewRequest(BaseModel):
@@ -207,7 +208,7 @@ async def review_application(
         },
     )
 
-    return application
+    return project_application(application)
 
 
 @router.get("/applications/{application_id}/audit")
