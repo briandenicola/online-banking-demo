@@ -362,11 +362,10 @@ async def run_foundry_evaluation(
         )
         eval_items.append(
             EvalItem(
-                input=[
-                    Message.system(request.system_prompt),
-                    Message.user(prompt),
+                conversation=[
+                    Message("system", [request.system_prompt]),
+                    Message("user", [prompt]),
                 ],
-                output="",
             )
         )
 

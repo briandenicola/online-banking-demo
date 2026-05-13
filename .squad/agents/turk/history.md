@@ -640,3 +640,30 @@ After: `"Here are your current balances by account, using masked account numbers
 **Workflow gating note:** Many applications stuck at `submitted` are not a bug — Document Extraction triggers on the `document_uploaded` event, so applications where the user never uploaded ID/proof-of-address legitimately never advance. The new projection now surfaces this state as four `pending` stages instead of an empty placeholder.
 
 **Commit:** 4dc6762
+
+### 2026-05-13 — Foundry Eval 500 (Issue #126)
+
+**Issue:** `POST /api/admin/evaluate` in ai-service returned 500 with `AttributeError: type object 'Message' has no attribute 'system'`.
+
+**Root cause:** Code used `Message.system(...)` / `Message.user(...)` factory methods that the `agent_framework.Message` class does not expose. Verified live signature in pod: `Message(role: 'RoleLiteral | str', contents: 'Sequence[Content | str | Mapping[str, Any]] | None' = None, ...)`. Only public Message helpers are `from_dict`, `from_json`, `text`, `to_dict`, `to_json` — no role-named factories.
+
+**Bonus bug found while verifying:** The same `EvalItem(input=[...], output="")` call also used wrong kwargs. Live signature: `EvalItem(conversation: list[Message], tools=None, context=None, expected_output=None, ...)`. Without this fix the 500 would just turn into a different `TypeError`.
+
+**Fix (single hunk in `src/ai-service/app/routes/api.py`):**
+```python
+EvalItem(
+    conversation=[
+        Message("system", [request.system_prompt]),
+        Message("user", [prompt]),
+    ],
+)
+```
+Note `[request.system_prompt]` (list-wrapped) — `Message`'s `contents` is a `Sequence`, so passing a bare string causes Python to iterate it character-by-character and produce N `TextContent` parts.
+
+## Learnings
+
+- **`agent_framework.Message` API shape:** Construct positionally as `Message(role, contents)` where `role` is `"system"|"user"|"assistant"` (string literal) and `contents` is a **list** of strings / `Content` objects. Do NOT use `Message.system(...)` or `Message.user(...)` — those don't exist. Always wrap a single string in a list, otherwise iteration over the string produces one TextContent per character.
+- **`agent_framework._evaluation.EvalItem` API shape:** `EvalItem(conversation=[...messages...], expected_output=..., tools=..., context=...)`. Not `input=`/`output=`.
+- **Verification trick:** `kubectl exec deploy/<svc> -- python -c "import inspect; from X import Y; print(inspect.signature(Y.__init__))"` is the fastest way to nail down a prerelease SDK's true API when docs are stale.
+
+**Commit:** (see #126)
