@@ -49,7 +49,7 @@ interface NewTransaction {
 }
 
 const Transactions: React.FC = () => {
-  const { token } = useAuthContext();
+  const { token, isAdmin } = useAuthContext();
   const { accounts, addAccount } = useAccountContext();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -91,7 +91,9 @@ const Transactions: React.FC = () => {
       setLoading(true);
       const [txResponse, scoredResponse] = await Promise.all([
         apiClient.get('/transactions/my'),
-        apiClient.get('/admin/transactions').catch(() => ({ data: [] })),
+        isAdmin
+          ? apiClient.get('/admin/transactions').catch(() => ({ data: [] }))
+          : Promise.resolve({ data: [] }),
       ]);
       const data = Array.isArray(txResponse.data) ? txResponse.data : (txResponse.data.transactions || []);
       const scored = Array.isArray(scoredResponse.data) ? scoredResponse.data : [];
@@ -125,7 +127,7 @@ const Transactions: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => {
     if (token) {
