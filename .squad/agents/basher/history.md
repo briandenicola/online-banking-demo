@@ -1447,3 +1447,42 @@ Commit: `babe94d` - "fix: align account/transaction/registration DTOs with deplo
 
 **Commit:** `babe94d`
 
+
+## 2026-05-13 — Issue #117: prompt-eval-service /api/evaluations/run 500
+
+**Branch:** squad/p2-wave-3 — Commit `4fd2cfa`
+
+**Root cause (NOT what the issue suspected):**
+The 500 wasn't Foundry config or Cosmos RBAC — it was missing inter-service JWT propagation. `EvaluationService.FetchTransactionsAsync` called `http://ai-service/api/admin/transactions` with no Authorization header. ai-service `require_admin` rejected with 401, `EnsureSuccessStatusCode()` threw, and the controller's generic catch turned it into a 500.
+
+Pod logs were the smoking gun — saw the upstream 401 immediately. **Always check pod logs before chasing config theories.**
+
+**Fix pattern — JWT forwarding for inter-service .NET → Python admin calls:**
+1. Register `IHttpContextAccessor` in Program.cs.
+2. In the service, read `HttpContext.Request.Headers.Authorization`, strip the `Bearer ` prefix, set on outbound `HttpRequestMessage`.
+3. For **background work** (queued via Channel), capture the token at enqueue time and add it to the work item record. The HttpContext is gone by the time the BackgroundService picks up the item.
+4. Distinguish downstream auth failures (502 Bad Gateway) from generic 500s — gives UI/clients actionable errors and makes monitoring cleaner.
+
+**Cosmos query gotcha during verification:**
+Cosmos has Local Auth disabled (Entra-only RBAC) and is behind a private endpoint. To query from the laptop you need an in-cluster pod that uses the workload identity. Pattern that worked:
+```bash
+kubectl run -n banking-demo --image=python:3.11-alpine ... \
+  --overrides='{"spec":{"serviceAccountName":"banking-workload-identity",...},
+                "metadata":{"labels":{"azure.workload.identity/use":"true"}}}'
+```
+Inside the pod, exchange the federated token at `AZURE_FEDERATED_TOKEN_FILE` for a Cosmos AAD token, then call the Cosmos REST API with `Authorization: type=aad&ver=1.0&sig=<token>`. **Don't use master keys** — they're disabled.
+
+**Admin bootstrap:**
+Existing cluster has no seed admin (the seed-data.sh creates `admin/Password123!` but it never ran on this cluster). `Admin__BootstrapEmail` only runs when zero admins exist, and the first-user-becomes-admin convention had already fired. To grant admin to a test user mid-cluster, you have to flip the Role field directly in Cosmos via the workload-identity pod pattern above.
+
+**Routing follow-up noted (not blocking):**
+`cluster-config/istio/gateway/default-ingress.yaml` only routes `/api/evaluations` to prompt-eval-service. `/api/prompts` falls through to the UI 404. If the UI needs to manage templates this needs a route addition.
+
+**Files changed:**
+- `src/prompt-eval-service/Services/EvaluationService.cs` — IHttpContextAccessor, GetInboundBearerToken(), forward token to both ai-service calls, throw UnauthorizedAccessException on 401/403
+- `src/prompt-eval-service/Services/EvaluationBackgroundService.cs` — `EvaluationWorkItem` gains `BearerToken` field
+- `src/prompt-eval-service/Controllers/EvaluationsController.cs` — explicit catch for `UnauthorizedAccessException` → 502
+- `src/prompt-eval-service/Program.cs` — `AddHttpContextAccessor()`
+
+**Deploy gotcha confirmed (re-learned):**
+`task cloud:deploy` doesn't bounce pods when image tag is unchanged (`:latest` digest may be different but kustomize won't trigger a rollout). Always follow with `kubectl rollout restart deploy/<service> -n banking-demo` after a `task cloud:build:<svc>` to pick up the new image.
