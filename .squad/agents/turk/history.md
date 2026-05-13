@@ -31,6 +31,9 @@
 - key_vault_name output added to infra/cloud/outputs.tf for Taskfile consumption
 - Content Understanding Service uses the same three AI private DNS zones (cogservices/openai/services.ai) even when deployed cross-region with a local PE
 - Taskfile.build.yml builds Python services using service-directory contexts; account-opening-service now follows this pattern.
+- Python/FastAPI services now use SCREAMING_SNAKE env vars (`JWT_KEY`, `REDIS_CONNECTION_STRING`, `COSMOS_DB_ENDPOINT`) with docker-compose + kustomize updated in deploy/kustomize/base/*-service.yaml
+- Python services follow layered layout: `app/config.py`, `app/routes/`, `app/services/`, `app/models/` with `main.py` as entrypoint (src/{ai,budget,chatbot,account-opening}-service/app/)
+- Go event-processor logs via stdlib slog JSON handler (src/event-processor/main.go)
 
 ### 2026-05-08 — KeyVault CSI Driver Secrets Migration
 
