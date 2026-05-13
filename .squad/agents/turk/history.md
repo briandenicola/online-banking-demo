@@ -621,3 +621,22 @@ After: `"Here are your current balances by account, using masked account numbers
 ---
 
 **2026-05-13 18:17:36Z** — Scribe note: Basher proved your #121 chatbot fix was correct (no revert needed). The Accounts page regression was unrelated (pre-existing Cosmos serializer-casing drift in account-service). Now tracking #124 (Account Opening Agent Stages).
+
+### 2026-05-13 — Account-Opening Stages Projection (Issue #124)
+
+**Issue:** Admin dashboard rendered "No stage data available" and "Risk Tier: —" for every account-opening application — even those that had successfully run the full Foundry agent pipeline.
+
+**Root cause (option d — API field-name mismatch):** The persisted document stores agent outputs in `agentResults[]` (one entry per agent, with `riskTier` nested inside the compliance-check entry's `findings` dict). The admin UI in `AdminApplicationsTab.tsx` reads top-level `application.stages[]` (with `name/status/confidence/reasoning`) and `application.riskTier`. Neither field was ever projected on the API response, so completed pipelines looked broken.
+
+**Fix:** Added `app/services/projection.py` with `project_application()` that derives the four canonical pipeline stages (document-extraction → identity-verification → compliance-check → provisioning) from `agentResults`. Completed entries surface confidence/reasoning/timestamp plus a `details` summary string (KYC, Risk, Flags); missing entries fall back to `in_progress` (when the application status maps to that agent) or `pending`. `riskTier` is pulled from the compliance-check `findings.riskTier`. Wired into all four application-returning endpoints. Persistence schema unchanged.
+
+**Key files:**
+- `src/account-opening-service/app/services/projection.py` — new projection helper
+- `src/account-opening-service/app/routes/api.py` — call `project_application()` / `project_applications()` on the way out
+- `src/account-opening-service/tests/test_projection.py` — 6 unit tests
+
+**Pattern (reusable):** When the storage schema and the UI contract diverge, add a thin **outbound projection** in `app/services/` rather than mutating the model or the persisted documents. Keeps reads/writes symmetric and lets the UI evolve without a Cosmos migration.
+
+**Workflow gating note:** Many applications stuck at `submitted` are not a bug — Document Extraction triggers on the `document_uploaded` event, so applications where the user never uploaded ID/proof-of-address legitimately never advance. The new projection now surfaces this state as four `pending` stages instead of an empty placeholder.
+
+**Commit:** 4dc6762
