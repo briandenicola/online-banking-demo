@@ -27,6 +27,8 @@ azure-ai-contentunderstanding = "*"
 azure-ai-projects = ">=2.1.0"
 azure-cosmos = "^4.7.0"
 azure-storage-blob = "^12.26.0"
+python-multipart = ">=0.0.9,<1.0.0"
+aiohttp = ">=3.9.0,<4.0.0"
 
 [build-system]
 requires = ["poetry-core"]
