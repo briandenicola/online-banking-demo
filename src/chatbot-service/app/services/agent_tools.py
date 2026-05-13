@@ -38,7 +38,7 @@ def _sanitize_account_data(accounts: list[dict]) -> list[dict]:
         sanitized.append({
             "id": acct.get("id", ""),
             "accountNumber": _mask_account_number(acct.get("accountNumber", "")),
-            "type": acct.get("type", ""),
+            "type": acct.get("accountType", acct.get("type", "")),
             "balance": acct.get("balance", 0),
             "currency": acct.get("currency", "USD"),
         })
@@ -161,7 +161,7 @@ def get_user_accounts() -> str:
         return json.dumps({"error": "No auth token available to fetch accounts"})
     try:
         headers = {"Authorization": f"Bearer {token}"}
-        response = httpx.get(f"{ACCOUNT_SERVICE_URL}/api/accounts/my", headers=headers, timeout=10.0)
+        response = httpx.get(f"{ACCOUNT_SERVICE_URL}/api/accounts", headers=headers, timeout=10.0)
         if response.is_success:
             accounts = response.json()
             # Sanitize account data before passing to agent

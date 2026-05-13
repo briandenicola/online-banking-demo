@@ -590,3 +590,30 @@ Azure AI / agent-framework Python SDKs frequently rely on `aiohttp` without decl
 
 **Verification:** After next deployment, running `kubectl logs deploy/<svc>` should show pod startup logs timestamped *after* the deploy command finished (not old logs from pre-deploy pod).
 
+
+### 2026-05-13 — Issue #121: Chatbot "couldn't retrieve your accounts" — wrong endpoint URL
+
+**Branch:** squad/p2-wave-3
+
+**Symptom:** Chatbot replied "I'm sorry, I couldn't retrieve your account balances right now because the account service returned an error." for every "what's my balance" question.
+
+**Initial hypothesis (wrong):** Suspected JWT was not being forwarded (per #117 pattern). It actually was — `chat_service.handle_chat` extracts the bearer token and `agent_tools.get_user_accounts` reads it from a ContextVar and sets `Authorization: Bearer <jwt>` on the httpx call.
+
+**Root cause:** The chatbot's `get_user_accounts` tool called `GET {ACCOUNT_SERVICE_URL}/api/accounts/my` — a path that does **not** exist on `account-service`. The .NET `AccountsController` exposes `[HttpGet] /api/accounts` (it derives the user from the JWT `userId` claim — there is no `/my` suffix). Result: 404 from account-service → tool returned `{"error":"Account service returned 404"}` → agent translated it to the friendly "couldn't retrieve" message.
+
+**Secondary issue spotted in same function:** Sanitizer read `acct["type"]`, but the account-service JSON field is `accountType`. Every sanitized account would have had an empty `type`. Fixed in the same patch with a fallback (`accountType` → `type`) so contract drift in either direction won't break it.
+
+**Fix:** `src/chatbot-service/app/services/agent_tools.py`:
+- Changed URL `/api/accounts/my` → `/api/accounts`.
+- `_sanitize_account_data` now reads `accountType` first, falls back to `type`.
+
+**Verification (live, https://onlinebankingdemo.bjdazure.tech):**
+Before: `"I'm sorry, I couldn't retrieve your account balances right now because the account service returned an error."`
+After: `"Here are your current balances by account, using masked account numbers: - Checking ****5852: $28,033.96 - Savings ****8917: $350,000.00 ..."` — masked account numbers, real balances, all 29 accounts returned.
+
+**Deploy:** `task cloud:build:chatbot-service` → `task cloud:deploy` (auto rollout restart per Coordinator integration in Taskfile commit e57d5f0).
+
+## Learnings
+- Always verify the **exact** downstream URL/path against the producing controller before assuming a deeper auth/identity bug. The #117 JWT-forwarding pattern was a tempting hypothesis but a `git grep` of the controller's routes ruled it out in 30 seconds.
+- The chatbot tool error path swallows the HTTP status code into a generic "couldn't retrieve" message visible to users. Worth considering surfacing the status (or at least logging at error not warning) so the next 4xx vs 5xx is faster to triage from logs alone — current logger emits at WARN with the body truncated to 200 chars, which was sufficient here but only because we re-reproduced from the cluster.
+- Cross-service JSON contract drift (`accountType` vs `type`) silently produced empty fields. Defensive `.get(primary, .get(legacy, default))` is the lightweight fix until a shared schema/types story exists. A future improvement would be Pydantic models for inbound data in chatbot tools, mirroring what frontend already enforces.
