@@ -19,7 +19,7 @@ class TestDetectEndpointSecurityIssue36:
         SECURITY (Issue #36): Verify DetectRequest Pydantic model exists.
         This prevents malformed JSON from reaching the LLM.
         """
-        from app.main import DetectRequest
+        from app.models import DetectRequest
         
         # Verify it's a Pydantic model
         assert hasattr(DetectRequest, "model_fields"), \
@@ -30,7 +30,7 @@ class TestDetectEndpointSecurityIssue36:
         SECURITY (Issue #36): Verify DetectRequest defines required fields.
         Missing fields should cause validation error.
         """
-        from app.main import DetectRequest
+        from app.models import DetectRequest
         
         # Test with all required fields (camelCase as defined in the model)
         valid_request = DetectRequest(
@@ -47,7 +47,7 @@ class TestDetectEndpointSecurityIssue36:
         """
         SECURITY (Issue #36): Verify DetectRequest rejects missing transactionId.
         """
-        from app.main import DetectRequest
+        from app.models import DetectRequest
         
         with pytest.raises(ValidationError) as exc_info:
             DetectRequest(
@@ -66,7 +66,7 @@ class TestDetectEndpointSecurityIssue36:
         """
         SECURITY (Issue #36): Verify DetectRequest rejects missing accountId.
         """
-        from app.main import DetectRequest
+        from app.models import DetectRequest
         
         with pytest.raises(ValidationError) as exc_info:
             DetectRequest(
@@ -85,7 +85,7 @@ class TestDetectEndpointSecurityIssue36:
         """
         SECURITY (Issue #36): Verify DetectRequest rejects missing amount.
         """
-        from app.main import DetectRequest
+        from app.models import DetectRequest
         
         with pytest.raises(ValidationError) as exc_info:
             DetectRequest(
@@ -104,7 +104,7 @@ class TestDetectEndpointSecurityIssue36:
         """
         SECURITY (Issue #36): Verify DetectRequest rejects missing type.
         """
-        from app.main import DetectRequest
+        from app.models import DetectRequest
         
         with pytest.raises(ValidationError) as exc_info:
             DetectRequest(

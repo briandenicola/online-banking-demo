@@ -23,10 +23,13 @@ class TestRedisTLSConfigurationIssue38:
         # In production code, Redis client should be initialized with:
         # redis.Redis(..., ssl_cert_reqs="required") when Azure mode is enabled
         
-        # Check ai-service main.py for Redis initialization
+        # Check ai-service anomaly service for Redis initialization
         import os
         repo_root = "/home/brian/code/online-banking-demo"
-        ai_service_path = os.path.join(repo_root, "src/ai-service/app/main.py")
+        ai_service_path = os.path.join(
+            repo_root,
+            "src/ai-service/app/services/anomaly_service.py",
+        )
         
         with open(ai_service_path, 'r') as f:
             content = f.read()
@@ -48,7 +51,10 @@ class TestRedisTLSConfigurationIssue38:
         repo_root = "/home/brian/code/online-banking-demo"
         
         # Check that code checks AZURE_MODE or similar before enabling TLS
-        ai_service_path = os.path.join(repo_root, "src/ai-service/app/main.py")
+        ai_service_path = os.path.join(
+            repo_root,
+            "src/ai-service/app/services/anomaly_service.py",
+        )
         
         with open(ai_service_path, 'r') as f:
             content = f.read()
