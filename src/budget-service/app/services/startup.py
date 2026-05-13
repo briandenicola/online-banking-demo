@@ -2,17 +2,15 @@ import asyncio
 import os
 
 import structlog
+from typing import Optional
 
-from app.config import DefaultAzureCredential
-from app.services import budget_service
+from app.config import DefaultAzureCredential, EmbeddingsClient
 
 logger = structlog.get_logger("budget-service")
 
 
-async def startup_event() -> None:
+async def startup_event(embeddings_client: Optional[EmbeddingsClient]) -> None:
     """Initialize event processor and AI client with validation."""
-    budget_service.init_embeddings_client()
-
     # Validate Entra ID token acquisition for Azure OpenAI (Foundry) Embeddings
     if DefaultAzureCredential and os.getenv("AZURE_OPENAI_ENDPOINT"):
         logger.info("=" * 50)
@@ -23,10 +21,10 @@ async def startup_event() -> None:
             logger.info(f"✅ Azure OpenAI token acquired (expires {token.expires_on})")
 
             # Test embeddings connectivity with a simple ping
-            if budget_service.embeddings_client:
+            if embeddings_client:
                 try:
                     test_response = await asyncio.to_thread(
-                        budget_service.embeddings_client.embed,
+                        embeddings_client.embed,
                         model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "text-embedding-ada-002"),
                         input=["ping"],
                     )

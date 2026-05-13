@@ -1,9 +1,13 @@
+import asyncio
 import json
 import os
 from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import Optional
 
 import structlog
+from fastapi import Request
 from opentelemetry import trace
 
 from app.config import DefaultAzureCredential, EmbeddingsClient
@@ -11,11 +15,10 @@ from app.models import BudgetInsight
 
 logger = structlog.get_logger("budget-service")
 
-# In-memory storage for transactions (in production, use Cosmos DB)
-user_transactions = defaultdict(list)
-
-# AI Client for categorization
-embeddings_client = None
+@dataclass
+class BudgetState:
+    user_transactions: defaultdict[str, list[dict]] = field(default_factory=lambda: defaultdict(list))
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 # Category definitions for embedding-based classification
 CATEGORIES = {
@@ -30,15 +33,27 @@ CATEGORIES = {
 }
 
 
-def init_embeddings_client() -> None:
+def create_budget_state() -> BudgetState:
+    return BudgetState()
+
+
+def init_embeddings_client() -> Optional[EmbeddingsClient]:
     """Initialize embeddings client for categorization using RBAC."""
-    global embeddings_client
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     if endpoint and EmbeddingsClient and DefaultAzureCredential:
-        embeddings_client = EmbeddingsClient(
+        return EmbeddingsClient(
             endpoint=endpoint,
             credential=DefaultAzureCredential()
         )
+    return None
+
+
+def get_budget_state(request: Request) -> BudgetState:
+    return request.app.state.budget_state
+
+
+def get_embeddings_client(request: Request) -> Optional[EmbeddingsClient]:
+    return request.app.state.embeddings_client
 
 
 def cosine_similarity(a, b):
@@ -49,7 +64,7 @@ def cosine_similarity(a, b):
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
 
-async def categorize_transaction(description: str) -> str:
+async def categorize_transaction(description: str, embeddings_client: Optional[EmbeddingsClient]) -> str:
     """Use embeddings to categorize transaction description."""
     if not embeddings_client:
         return "Uncategorized"
@@ -150,7 +165,12 @@ def analyze_spending(transactions: list[dict], period: str = "30d") -> BudgetIns
     )
 
 
-async def process_events(partition_context, event) -> None:
+async def process_events(
+    partition_context,
+    event,
+    budget_state: BudgetState,
+    embeddings_client: Optional[EmbeddingsClient],
+) -> None:
     """Process incoming transaction events."""
     try:
         event_data = event.body_as_str()
@@ -164,10 +184,12 @@ async def process_events(partition_context, event) -> None:
 
             if needs_categorization or not current_category or current_category == "Uncategorized":
                 transaction["aiCategory"] = await categorize_transaction(
-                    transaction.get("description", "")
+                    transaction.get("description", ""),
+                    embeddings_client,
                 )
 
-            user_transactions[accountId].append(transaction)
+            async with budget_state.lock:
+                budget_state.user_transactions[accountId].append(transaction)
             logger.info(f"Stored transaction for account {accountId}")
 
         await partition_context.update_checkpoint(event)
