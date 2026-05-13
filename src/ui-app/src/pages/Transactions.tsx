@@ -26,6 +26,7 @@ import { useAuthContext } from '../contexts/AuthContext';
 import { useAccountContext } from '../contexts/AccountContext';
 import AddAccountDialog from '../components/AddAccountDialog';
 import apiClient from '../api/client';
+import { logger } from '../utils/logger';
 
 interface Transaction {
   id: string;
@@ -176,7 +177,8 @@ const Transactions: React.FC = () => {
       await addAccount(account);
       setAccountDialogOpen(false);
     } catch (e) {
-      console.error('Failed to add account:', e);
+      logger.error('Failed to add account', e);
+      setError('Failed to add account. Please try again.');
     }
   };
 

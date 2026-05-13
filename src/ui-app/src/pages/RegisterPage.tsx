@@ -78,8 +78,9 @@ const RegisterPage: React.FC = () => {
         password,
       });
       navigate('/login', { state: { message: 'Registration successful! Please sign in.' } });
-    } catch (err: any) {
-      if (err.response?.status === 409) {
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      if (status === 409) {
         setServerError('Email already registered. Please use a different email or sign in.');
       } else {
         setServerError('Registration failed. Please try again.');

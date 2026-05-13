@@ -25,7 +25,7 @@ const Login: React.FC = () => {
   const { login } = useAuthContext();
   const navigate = useNavigate();
   const location = useLocation();
-  const successMessage = (location.state as any)?.message || '';
+  const successMessage = (location.state as { message?: string } | null)?.message || '';
 
   const validate = (): boolean => {
     const errors: { email?: string; password?: string } = {};
@@ -41,8 +41,9 @@ const Login: React.FC = () => {
     try {
       await login(loginEmail, loginPassword);
       navigate('/');
-    } catch (err: any) {
-      const serverMessage = err.response?.data?.message;
+    } catch (err: unknown) {
+      const serverMessage =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
       setError(serverMessage || 'Unable to connect. Please try again later.');
     }
   };
