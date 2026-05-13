@@ -306,3 +306,18 @@ Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com
 - `asyncio.to_thread()` is the right wrapper for unavoidable sync SDK calls in async FastAPI handlers
 - FastAPI tuple-return `(dict, status_code)` pattern doesn't work — must use `Response(status_code=...)` or `HTTPException`
 - Pydantic mutable defaults (`flags: list[str] = []`) are still a common bug source; need `Field(default_factory=list)`
+
+### 2026-05-12 — Python P1 Fixes (Issues #86, #87, #88, #90)
+
+**Issues fixed:**
+1. **#86 — Dead shared/auth.py + diverged copies**: Deleted unused `src/shared/auth.py`. Fixed account-opening-service's case-sensitive `!= "Admin"` role check to use `.lower()` (auth.py + routes.py). All 4 services now use case-insensitive role checks.
+2. **#87 — Blocking sync I/O**: Wrapped all `credential.get_token()`, `CosmosClient()`, `upsert_item()`, `query_items()`, `upload_blob()`, and `embeddings_client.embed()` calls with `asyncio.to_thread()` across all 4 Python services.
+3. **#88 — Broad except-Exception**: Narrowed catches where genuinely harmful (httpx tool calls → `httpx.RequestError|HTTPStatusError`, Redis ops → `redis.RedisError`, JSON parsing → `json.JSONDecodeError|KeyError|ValueError`, token decode → `json.JSONDecodeError|ValueError`). Kept broad catches for startup graceful degradation and consumer loop last-resort handlers.
+4. **#90 — No global exception handler**: Added `@app.exception_handler(Exception)` to all 4 Python services. Standardized error response: `{"error": ExcType, "message": "... Correlation ID: ...", "status_code": 500}`.
+
+**Key patterns established:**
+- `asyncio.to_thread()` is the standard wrapper for Azure SDK sync calls (get_token, CosmosClient, blob upload)
+- Global exception handlers use structlog correlation ID from contextvars
+- Error response shape: `{"error": str, "message": str, "status_code": int}`
+- Broad catches acceptable in: startup init (graceful degradation), background loop outer handler, health checks
+- Narrow catches required in: request handlers, tool functions, data parsing
