@@ -482,3 +482,64 @@ This pattern applies to all Python services using the FastAPI DI pattern introdu
 - Azure AI SDK emits experimental warnings at import time for preview features (MemoryStore, SkillResource) — suppress with PYTHONWARNINGS=ignore if needed
 - Committed OpenAPI specs serve as API contract documentation for frontend developers without requiring service runtime access
 - Pattern: Store specs in `docs/api/{service-name}-openapi.json` for cross-team discoverability
+
+### 2026-05-13 — JWT Email-Based Login Support (Dashboard Smoke Test Fix)
+
+**Issue:** All E2E dashboard smoke tests failing with 401 Unauthorized. Frontend sends `username: email` in login requests, but backend only supported username lookup.
+
+**Root cause:** Frontend `AuthContext.tsx` POSTs to `/api/auth/login` with `{ username: email, password }` (line 2 of login function). Backend `AuthController.Login` called `GetUserByUsernameAsync(request.Username)` which only queries the Username field in Cosmos DB, not the Email field. When users registered with a different username than their email, login failed.
+
+**Why it surfaced now:** E2E test fixtures were recently updated to extract usernames from emails ("e2e-default@banking-demo.com" → "e2e-default"), but database had existing users registered with the full email as username. This created a mismatch:
+- Test registers user with username="e2e-default" → 409 (email already exists)
+- Test ignores 409 error (intended behavior)
+- Test tries to login with username="e2e-default@banking-demo.com" → user not found
+
+**Fix:** Updated `AuthController.Login` to try email lookup if username lookup fails:
+```csharp
+var user = await _userService.GetUserByUsernameAsync(request.Username);
+if (user == null)
+{
+    user = await _userService.GetUserByEmailAsync(request.Username);
+}
+```
+
+**Verification:**
+- Manual curl tests confirm both username and email login now work
+- All 4 dashboard smoke tests pass: `BASE_URL=https://onlinebankingdemo.bjdazure.tech NODE_TLS_REJECT_UNAUTHORIZED=0 npx playwright test --project=smoke --grep "Dashboard"`
+- JWT structure unchanged (still uses actual username in claims, not the login identifier)
+
+**Pattern:** Backend now supports login with EITHER username OR email, matching common auth UX patterns. Password validation always uses the actual username from the user record.
+
+**Commit:** 25fe743
+**Files modified:** `src/user-service/Controllers/AuthController.cs`
+**Deployment:** Built and deployed user-service:latest to AKS via `task cloud:build:user-service && task cloud:deploy`
+
+### 2026-05-13 — Login Email Fallback (Smoke Test Support)
+
+**Issue:** Dashboard smoke tests failing with 401 Unauthorized after frontend test fixture updates. Frontend sends email as login identifier (`username` parameter), backend only checks Username field against Cosmos DB.
+
+**Problem:** User registered with `username="e2e-default"`, `email="e2e-default@banking-demo.com"`. Frontend tried to login with `username="e2e-default@banking-demo.com"`. Backend lookup failed because no user had that username exactly.
+
+**Fix:** Updated `AuthController.Login` to fall back to email lookup if username lookup fails:
+```csharp
+var user = await _userService.GetUserByUsernameAsync(request.Username);
+if (user == null)
+{
+    user = await _userService.GetUserByEmailAsync(request.Username);
+}
+```
+
+**Rationale:**
+- Frontend compatibility — UI already sends email; changing frontend would add complexity
+- Common UX pattern — Most auth systems accept email OR username
+- Minimal change — 3 lines in AuthController; no schema changes
+- No security regression — Password still validated, JWT still contains actual username
+
+**Files changed:** `src/user-service/Controllers/AuthController.cs`
+
+**Deployment:** Built user-service:latest, pushed to ACR, deployed to AKS
+
+**Result:** ✅ Dashboard smoke tests now pass; users can login with either username or email; backward-compatible
+
+**Commit:** `25fe743`
+

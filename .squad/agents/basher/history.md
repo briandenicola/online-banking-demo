@@ -1384,3 +1384,66 @@ Updated `docs/README.md` with:
 **Turk** is handling Python/FastAPI services in parallel (ai-service, budget-service, chatbot-service, account-opening-service). Both portions will merge to complete #109.
 
 **Commit:** ff310d0
+
+## 2026-05-13: Cloud Smoke Test Failures - DTO Enum Capitalization
+
+### Investigation
+Diagnosed 3 failing cloud smoke tests returning 400 errors:
+- POST /api/accounts (Account lifecycle test)
+- POST /api/transactions (Create transactions test)
+- POST /api/users/register → default account provisioning (Registration test)
+
+### Root Cause
+API DTOs enforce capitalized enum values via `RegularExpression` validation:
+- `CreateAccountRequest.AccountType`: `^(Checking|Savings|...)$` (capital C/S)
+- `CreateTransactionRequest.Type`: `^(Debit|Credit|...)$` (capital D/C)
+
+Tests and `AccountProvisioningService` were sending lowercase values (`'savings'`, `'checking'`, `'debit'`), triggering ASP.NET Core model validation failures before controller execution.
+
+### Resolution
+Fixed at test/service layer to match API contract:
+1. Smoke tests: Changed all enum values to capitalized form
+2. `AccountProvisioningService.cs`: `"checking"` → `"Checking"`
+
+### Key Learnings
+- **Always check DTO validation attributes** when debugging 400s — validation fails before controller logs
+- **Internal services must follow API contracts** — service-to-service calls aren't exempt from validation
+- **Case-sensitive enum validation is good** — catches integration bugs early
+- **Use deployed logs to confirm errors** — checked k8s logs for actual validation failures
+- **Fix tests to match production**, not the other way around
+
+### Files Changed
+- `tests/e2e/specs/smoke/smoke.spec.ts` (enum capitalization)
+- `src/user-service/Services/AccountProvisioningService.cs` (default account type)
+
+### Results
+✅ Account lifecycle test: PASS  
+✅ Create transactions test: PASS  
+✅ Registration test: PASS (default account provisioning now succeeds)
+
+Commit: `babe94d` - "fix: align account/transaction/registration DTOs with deployed API schema"
+
+### 2026-05-13 — Cloud Smoke Test DTOs (Enum Capitalization)
+
+**Issue:** Three critical cloud smoke tests failing with 400 Bad Request:
+- POST /api/accounts — Account lifecycle test
+- POST /api/transactions — Create transactions test  
+- POST /api/users/register — Default account provisioning failed
+
+**Root cause:** API DTOs use regex validation attributes requiring capitalized enum values (`Checking`, `Savings`, `Debit`, `Credit`, etc.). Tests and `AccountProvisioningService` were sending lowercase values (`checking`, `savings`, `debit`), triggering ASP.NET model validation failures before controller execution.
+
+**Fix at test/service layer** to match API contract:
+1. Smoke tests: Changed all enum values to capitalized form
+2. `AccountProvisioningService.cs`: `"checking"` → `"Checking"`
+
+**Key learnings:**
+- Always check DTO validation attributes when debugging 400s — validation fails before controller logs
+- Internal services must follow API contracts — service-to-service calls aren't exempt from validation
+- Case-sensitive enum validation catches integration bugs early
+
+**Files changed:** `tests/e2e/specs/smoke/smoke.spec.ts`, `src/user-service/Services/AccountProvisioningService.cs`
+
+**Result:** ✅ All 3 tests now pass; account lifecycle test: PASS; create transactions test: PASS; registration test: PASS
+
+**Commit:** `babe94d`
+

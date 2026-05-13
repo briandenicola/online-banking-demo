@@ -373,3 +373,59 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 **Verification:** `npx tsc --noEmit` clean; `npm test` 118/118 passing; build only fails on pre-existing eslint warnings in ApplicationStatus.tsx + RegisterPage.tsx (not from this change — confirmed against baseline before edits).
 
 **Cross-team:** Pushed to `squad/p2-wave-2`. Basher and Turk also working on the branch — picked up their commits via fast-forward push (no rebase needed).
+
+### 2026-05-13 — Cloud Smoke Test Failures (Dashboard + Registration)
+
+**Context:**
+- 3 of 5 cloud smoke test failures traced to frontend root causes
+- Tests running against deployed URL: https://onlinebankingdemo.bjdazure.tech
+- Branch: squad/p2-wave-3
+
+**Failure A — Dashboard redirect after authenticated load (2 tests):**
+- Tests: "should load dashboard successfully after authentication", "should display accounts list on dashboard"
+- Root cause: `AuthContext` initialized `user` state as `null`, then restored from localStorage in `useEffect`
+- Impact: On page load, React rendered with `user=null`, causing `AppContent` to redirect to `/login` before the effect ran
+- Fix: Initialize `user` state synchronously from localStorage in `useState` initializer
+- Files: `src/ui-app/src/contexts/AuthContext.tsx`
+
+**Failure B — Registration redirect missing:**
+- Test: "@smoke Registration — new user can register"
+- Root cause: Backend username validation rejects @ symbols (only allows letters, digits, underscore, dot, hyphen)
+- `RegisterPage` sent `username: email` (e.g., "smoke-1778687559@banking-demo.com"), causing 400 validation error
+- Registration form showed "Registration failed. Please try again." alert, never navigated to /login
+- Fix: Extract local part of email (before @) and sanitize to create valid username
+- Files: `src/ui-app/src/pages/RegisterPage.tsx`, `tests/e2e/fixtures/authFixture.ts`
+
+**Key Insight:**
+- Synchronous state initialization is critical for SSR-like behavior (localStorage → state on mount)
+- Backend validation rules must be documented or inferred from API responses (username regex not in OpenAPI)
+- Test fixtures must match production validation constraints
+
+**Commit:** `b565fd5` — "fix(ui): repair dashboard auth context + registration redirect"
+
+### 2026-05-13 — Cloud Smoke Test Auth & Registration Fixes
+
+**Issue:** Cloud smoke tests failing with redirect loops and registration failures:
+- Dashboard: Redirect loop after authenticated page load (2 tests)
+- Registration: Form failing silently without redirect to /login (1 test)
+
+**Root cause 1 — Async auth state restoration:** `AuthContext.tsx` initialized `user` as `null`, then restored it in `useEffect`. On mount, `AppContent` saw `!user` and redirected to `/login` before `useEffect` ran (async). Broken for tests that pre-populated localStorage via `page.addInitScript`.
+
+**Root cause 2 — Username validation mismatch:** Frontend sent email addresses (e.g., "smoke-user@banking-demo.com") as the username parameter. Backend validates `Username: ^[a-zA-Z0-9._-]+$` — the @ symbol caused 400 validation error. RegisterPage caught the error but didn't redirect.
+
+**Fix 1 — Synchronous auth state restoration:**
+- Moved user restoration from `useEffect` to `useState` initializer
+- Read localStorage synchronously during component initialization
+- Prevents redirect flash; supports test fixtures
+
+**Fix 2 — Username generation from email:**
+- Extract local part (before @) and sanitize
+- Applied to RegisterPage + authFixture.ts: `email.split('@')[0].replace(/[^a-zA-Z0-9._-]/g, '')`
+- Matches backend regex without API docs
+
+**Files changed:** `src/ui-app/src/contexts/AuthContext.tsx`, `src/ui-app/src/pages/RegisterPage.tsx`, `tests/e2e/fixtures/authFixture.ts`
+
+**Result:** ✅ Dashboard redirect flash resolved; registration username validation fixed; auth flow now matches backend contract
+
+**Commit:** `b565fd5`
+
