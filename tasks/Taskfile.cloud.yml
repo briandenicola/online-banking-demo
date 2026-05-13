@@ -85,6 +85,11 @@ tasks:
       - kubectl apply -f cluster-config/istio/gateway/istio-ingress-gateway.yaml
       - kubectl apply -f cluster-config/istio/gateway/default-ingress.yaml
       - task: tls:enable
+      # Force pods to re-pull :latest images. kustomize pins :latest, so when no
+      # manifest field changes, `kubectl apply` is a no-op and pods keep running
+      # the previously-pulled digest even though imagePullPolicy=Always — that
+      # policy only fires on pod creation. Rollout restart guarantees fresh pulls.
+      - kubectl rollout restart deployment -n banking-demo
 
   # === One-time infra configuration ===
   # Run after Terraform creates AKS. Sets up credentials, namespaces, secrets,
