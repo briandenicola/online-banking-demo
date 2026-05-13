@@ -1,46 +1,112 @@
-# Getting Started with Create React App
+# UI App
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Frontend web application for the Online Banking Demo.
 
-## Available Scripts
+## Purpose
 
-In the project directory, you can run:
+React-based single-page application providing the user interface for banking operations. Includes authentication, account management, transaction history, transfers, budget insights, and AI chatbot integration.
 
-### `npm start`
+## Technology Stack
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+- React 19
+- TypeScript
+- Material-UI (MUI) v9
+- React Router (client-side routing)
+- Axios (HTTP client)
+- Vite (build tool)
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+## Features
 
-### `npm test`
+- **Authentication**: Login/register flows with JWT token management
+- **Dashboard**: Account overview and balance summaries
+- **Transactions**: Transaction history with filtering and search
+- **Transfers**: Peer-to-peer and account-to-account transfers
+- **Budget Insights**: Spending analysis and category breakdowns
+- **AI Chatbot**: Natural language banking assistant
+- **Account Opening**: New account application workflow with document upload
+- **Admin Panel**: User management and transaction review (admin-only)
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## Configuration
 
-### `npm run build`
+### Environment Variables
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+Create a `.env` file in the root directory:
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+```env
+REACT_APP_API_BASE_URL=http://localhost:6001
+REACT_APP_USER_SERVICE_URL=http://localhost:6001
+REACT_APP_ACCOUNT_SERVICE_URL=http://localhost:6002
+REACT_APP_TRANSACTION_SERVICE_URL=http://localhost:6003
+REACT_APP_TRANSFER_SERVICE_URL=http://localhost:6004
+REACT_APP_CHATBOT_SERVICE_URL=http://localhost:8001
+REACT_APP_AI_SERVICE_URL=http://localhost:8002
+REACT_APP_BUDGET_SERVICE_URL=http://localhost:8003
+REACT_APP_ACCOUNT_OPENING_SERVICE_URL=http://localhost:8004
+```
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+## Local Development
 
-### `npm run eject`
+### Prerequisites
+- Node.js 18+
+- npm 9+
 
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
+### Run Locally
 
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+```bash
+cd src/ui-app
+npm install
+npm start
+```
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
+Application will start on `http://localhost:3000`.
 
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
+### Build for Production
 
-## Learn More
+```bash
+npm run build
+```
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+Production build output in `build/` directory.
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+### Docker
+
+```bash
+docker build -t ui-app .
+docker run -p 8080:80 ui-app
+```
+
+Docker image uses Nginx to serve the static build.
+
+## Testing
+
+```bash
+npm test
+```
+
+Launches the test runner in interactive watch mode.
+
+### End-to-End Tests
+
+E2E tests are located in `../../tests/e2e` (Playwright).
+
+## Project Structure
+
+```
+src/
+├── components/       # Reusable React components
+├── pages/           # Page-level components (routes)
+├── services/        # API client services
+├── hooks/           # Custom React hooks
+├── contexts/        # React context providers
+├── utils/           # Utility functions
+├── types/           # TypeScript type definitions
+└── App.tsx          # Root component with routing
+```
+
+## Notes
+
+- All API calls include JWT token from localStorage
+- MUI theming configured for banking brand colors
+- React Router handles client-side navigation
+- Axios interceptors handle auth errors and token refresh
+- Production build served via Nginx on port 80 in Docker
