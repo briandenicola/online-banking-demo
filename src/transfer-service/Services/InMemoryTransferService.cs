@@ -22,12 +22,11 @@ public sealed class InMemoryTransferService : TransferService
         IConfiguration configuration,
         ILogger<InMemoryTransferService> logger)
         : base(
+            new TransferValidator(httpClientFactory, httpContextAccessor, configuration),
+            new TransferExecutor(httpClientFactory, httpContextAccessor, configuration),
+            new TransferEventPublisher(new RedisEventPublisher(redis), NullLogger<TransferEventPublisher>.Instance),
             new InMemoryTransferRepository(),
-            new RedisEventPublisher(redis),
-            NullLogger<TransferService>.Instance,
-            configuration,
-            httpClientFactory,
-            httpContextAccessor)
+            NullLogger<TransferService>.Instance)
     {
         logger.LogInformation("InMemoryTransferService initialised (in-memory transfer store)");
     }
