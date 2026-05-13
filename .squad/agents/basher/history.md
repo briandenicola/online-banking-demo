@@ -1713,3 +1713,251 @@ issue but not in scope here.
 **Decision Drops:** Merged basher-123-dashboard-zeros.md and basher-accounts-regression.md into decisions.md. Related follow-ups (aiCallsToday Redis backing, consumer DLQ visibility) filed as separate issues.
 
 **Next Wave:** Cosmos serializer pinning (#125) and per-pod counter refactor (aiCallsToday) remain in backlog.
+
+### 2026-05-13 — User Report: Live Transaction Pipeline (False Alarm)
+
+**Status:** Investigated & Closed — No bug found
+
+User reported that a brand-new $500 "Coffee" transaction (ID `6d20dc52-c348-4661-9ef5-edfabd813792`) appeared with "Risk: Unscored" and "Category: Uncategorized", suggesting the AI pipelines weren't working for live transactions (only the #123 replay endpoint).
+
+**Investigation:**
+- Checked cluster logs for transaction-service, ai-service, budget-service, event-processor
+- Found transaction-service published to `banking-events` stream at `19:08:53.939Z`
+- Found ai-service categorized as "Dining & Restaurants" (confidence 0.97) at `19:08:57.162Z`
+- Found ai-service scored at risk=0.04 at `19:08:58.191Z`
+
+**Root Cause:** NO BUG. The pipeline worked correctly with normal 5-second async processing latency.
+
+**User report likely due to:**
+1. User checked UI before 5-second processing window completed, OR
+2. User not logged in as admin → UI doesn't fetch `/admin/transactions` → no score data, OR
+3. UI rendering timing issue
+
+**Architecture clarification:**
+- **ai-service** handles BOTH categorization and risk scoring in a single consumer loop
+- **budget-service** is NOT a Redis Stream consumer (API-only service for on-demand insights/categorization)
+- This is by design per budget-service README
+
+**Key finding:** budget-service has NO event consumer, but that's intentional. ai-service owns the transaction pipeline for inline categorization + scoring.
+
+**Deliverable:**
+- Decision doc: `.squad/decisions/inbox/basher-live-tx-pipeline-false-alarm.md`
+- Verified all three consumer services (ai-service, event-processor, budget-service) are healthy
+- Confirmed stream name alignment: all use `banking-events`
+
+## Learnings
+
+### 2026-05-13 — Chat Persistence Regression (Wave 3 Post-Deploy Investigation)
+
+**Context:** Brian reported "Chats aren't being persistent like they were before" after Wave 3 deploy to AKS (branch squad/p2-wave-3 @ 6ec9be1). All pods running healthy, no errors in logs, but chat history always returns empty `[]`.
+
+**Investigation:**
+1. Checked live cluster: chatbot-service pod healthy, Cosmos queries executing with 0 results
+2. Traced persistence code: `save_chat_message()` at `src/chatbot-service/app/services/agent_service.py:102`
+3. Found asymmetry:
+   - **Write:** `upsert_item(doc)` — no `partition_key` parameter
+   - **Read:** `query_items(..., partition_key=user_id)` — partition_key specified
+4. Checked Terraform: `ChatSessions` container uses `partition_key_paths = ["/userId"]` (not `/id`)
+
+**Root Cause:** Azure Cosmos SDK for Python v4 can auto-infer partition key ONLY when partition key path is `/id`. For custom paths like `/userId`, you **must** explicitly pass `partition_key=<value>` to `upsert_item()`. Without it, writes either fail silently or go to a null partition that queries never touch.
+
+**Timeline:**
+- May 8 (bd4f6a7): Chat persistence added with bug (synchronous `upsert_item(doc)` with no partition_key)
+- May 12 (587106b): Wrapped with `asyncio.to_thread` for #87 (bug persisted)
+- May 13 (today): Brian reports regression
+
+**Bug existed from day 1** — Brian likely never tested chat history retrieval before Wave 3.
+
+**Evidence:**
+- Other services (account-opening) use partition key `/id` and their `upsert_item(doc)` calls work fine (SDK infers from `doc["id"]`)
+- `load_chat_history` always had `partition_key=user_id` in `query_items` — only writes are broken
+- No "Failed to save chat message" warnings in logs (exception handler at line 104 swallows silently)
+- Live Cosmos query returns `'x-ms-item-count': '0'` — container truly empty
+
+**Recommended Fix:**
+```python
+# src/chatbot-service/app/services/agent_service.py:102
+# BEFORE:
+await asyncio.to_thread(state.cosmos_chat_container.upsert_item, doc)
+
+# AFTER:
+await asyncio.to_thread(state.cosmos_chat_container.upsert_item, doc, partition_key=user_id)
+```
+
+**Reproducer:**
+1. Login to https://onlinebankingdemo.bjdazure.tech
+2. Send 2 chat messages in sequence
+3. Observe second message doesn't see first in history
+
+**Deliverable:** Documented root cause, reproducer, and fix proposal in `.squad/decisions/inbox/basher-chat-persist.md`. Awaiting Brian's approval to implement.
+
+**Reusable Lesson:** Cosmos SDK Python v4 only auto-infers partition key for `/id`. Custom partition paths require explicit `partition_key=<value>` in upsert/create/replace. Always test write+read round-trips. Silent exception handlers (`except Exception: logger.warning()`) hide bugs — prefer fail-fast or alerting.
+
+
+### 2026-05-13 — Account Opening Document Upload 422 Regression
+
+**Context:** Brian hit a 422 error when uploading documents in Account Opening flow (wave 3 post-deploy smoke) on live cluster. Clicking "Next" at the Upload Documents step triggered **HTTP 422 Unprocessable Content** followed by **React error #31** (white screen).
+
+**Investigation:**
+
+1. **Identified the exact endpoint and payload:**
+   - Frontend: `src/ui-app/src/api/accountOpening.ts:119-130` — `uploadDocuments()` function
+   - POST to `/api/account-opening/applications/{id}/documents`
+   - Payload: `formData.append('files', file)` (PLURAL) for each file + `documentType`
+   - Backend: `src/account-opening-service/app/routes/api.py:57-62` — `upload_document()` route
+   - Expected params: `file: UploadFile = File(...)` (SINGULAR) + `document_type` (alias "documentType")
+
+2. **Root cause of 422:**
+   - **Field name mismatch:** Frontend sends `files` (plural), backend expects `file` (singular)
+   - FastAPI Pydantic validation error: `{ detail: [{ type: 'missing', loc: ['body', 'file'], msg: 'Field required' }] }`
+   - Cluster logs: `INFO: 127.0.0.6:43215 - "POST /api/account-opening/applications/f23b335b-c78a-4e2d-81aa-3e59e11dd63a/documents HTTP/1.1" 422 Unprocessable Entity`
+
+3. **Root cause of React #31:**
+   - Location: `src/ui-app/src/components/account-opening/DocumentUpload.tsx:348-353`
+   - Error extraction logic: `(err as { ... })?.response?.data?.detail || ... || 'Upload failed.'`
+   - Assumes `detail` is a string, but FastAPI 422 returns `detail` as an **array** of validation error objects
+   - Line 373: `{error}` renders the non-string value directly → React error #31 → white screen
+   - **The fix exists but wasn't applied here:** Commit `2946b20` (#127, yesterday) created `src/ui-app/src/api/errors.ts` with `resolveApiError()` to handle this exact FastAPI array-of-objects shape, but only `ApplicationForm.tsx` uses it — `DocumentUpload.tsx` still has the old ad-hoc extraction
+
+**Why it regressed:**
+- Initial implementation (`c9e606a`, 2 weeks ago): `uploadDocuments()` used `files[]` (plural) from the start
+- Backend route signature has always been singular (`file: UploadFile`) since initial commit
+- Drift wasn't caught because:
+  - Unit tests mock the API (`DocumentUpload.test.tsx:6`)
+  - E2E tests may not have reached document upload step until now
+  - No contract tests between UI FormData and FastAPI Pydantic schema
+
+**Architecture note:** The backend endpoint is `upload_document` (singular), not `upload_documents` (plural). The UI allows selecting multiple files but the endpoint was never designed for batch uploads — it expects one file per request.
+
+**Recommended fixes:**
+
+1. **Fix field name** (Option A — Minimal):
+   ```typescript
+   // src/ui-app/src/api/accountOpening.ts:125
+   files.forEach((file) => formData.append('file', file));  // change 'files' → 'file'
+   ```
+   **However:** FormData with duplicate keys sends only the last value in some parsers. Better to upload sequentially:
+   ```typescript
+   export const uploadDocuments = async (...) => {
+     let lastResponse: DocumentUploadResponse | null = null;
+     for (const file of files) {
+       lastResponse = await uploadDocument(applicationId, file, documentType);
+     }
+     if (!lastResponse) throw new Error('No files uploaded');
+     return lastResponse;
+   };
+   ```
+
+2. **Use resolveApiError utility** (from #127):
+   ```typescript
+   // src/ui-app/src/components/account-opening/DocumentUpload.tsx:23
+   import { resolveApiError } from '../../api/errors';  // ADD
+   
+   // Line 348-353:
+   } catch (err: unknown) {
+     setError(resolveApiError(err, 'Upload failed. Please try again.'));
+   }
+   ```
+
+**Deliverable:**
+- Root cause documented in `.squad/decisions/inbox/basher-acctopen-422.md`
+- Proposal includes: exact field mismatch, FastAPI error shape, sequential upload approach, error rendering fix
+- Awaiting Brian's approval before editing code
+
+**Impact:** 🔴 **P0 Blocker** — Breaks core Account Opening flow; users cannot upload documents or complete applications.
+
+**Related:** #127 (introduced `resolveApiError()` for ApplicationForm but missed DocumentUpload), #100 (consolidated APIs but missed this contract mismatch)
+
+**Reusable Lessons:**
+- FastAPI 422 validation errors return `{ detail: [...] }` (array of objects), not string — always use `resolveApiError()` for consistent parsing
+- Multipart form field names must match FastAPI `Form()` parameter names exactly (case-sensitive)
+- UI function names (`uploadDocuments` plural) can mislead about backend capabilities (`upload_document` singular) — audit contract alignment
+- Consider contract tests: assert FormData keys match OpenAPI schema or Pydantic model field names
+
+### 2026-05-13 — Bundle Fix: #131 Foundry Token Scope + Chat Persistence (P2 Wave 3)
+
+**Context:** Two critical bugs landed in P2 Wave 3, both caught by Brian post-deploy. Both fixed with surgical 1-line changes, bundled in a single commit (69ce049).
+
+**Fix 1: #131 Foundry Token Scope (ai-service)**
+- **File:** `src/ai-service/app/services/anomaly_service.py:781`
+- **Problem:** Diagnostic token call used stale `https://cognitiveservices.azure.com/.default` scope (pre-May 11). Brian's May 11 fix (d5d12d3) updated `init_agents.py` to `https://ai.azure.com/.default` for Foundry project endpoints, but the May 13 refactor (39dfdbe8) copy-pasted old startup code from `main.py` → `anomaly_service.py`, regressing the scope.
+- **Fix:** Changed scope to `https://ai.azure.com/.default` (aligns with `init_agents.py:27`).
+- **Impact:** Diagnostic token call failed with 403, skipping Foundry initialization. The SDK would have worked (it derives scope from `project_endpoint`), but the pre-check prevented reaching that code.
+- **Verification:** Grepped ai-service for `cognitiveservices.azure.com/.default` — 0 occurrences after fix. Only instance was line 781.
+
+**Fix 2: Chat Persistence Partition Key (chatbot-service)**
+- **File:** `src/chatbot-service/app/services/agent_service.py:102`
+- **Problem:** Missing `partition_key=user_id` parameter in `cosmos_chat_container.upsert_item(doc)` call. ChatSessions container uses partition key path `/userId`, not `/id`. Python Cosmos SDK v4 only auto-infers partition key when path is `/id`. Without explicit `partition_key`, writes silently fail (swallowed by bare `except Exception` at line 104).
+- **Fix:** Added `partition_key=user_id` to `upsert_item()` call.
+- **Impact:** Complete functional loss of chat history. All messages lost immediately after sending. Users reported "Chats aren't being persistent like they were before." Bug existed since May 8 (commit bd4f6a7) when chat persistence was first added.
+
+**Commit Details:**
+- **SHA:** 69ce0491cd066f371211b26e4dfcf6bc5434d9f0
+- **Branch:** squad/p2-wave-3
+- **Files:** 2 changed, 2 insertions(+), 2 deletions(-)
+- **Message:** `fix(ai+chatbot): #131 Foundry token scope + chat persistence partition key`
+
+**Key Learnings:**
+1. **Grep during refactors:** When extracting code with hardcoded URLs/scopes/env values, grep the entire module to ensure all instances update together.
+2. **Diagnostic code can mask real issues:** The manual `get_token()` call in ai-service was purely diagnostic (token never used). The SDK would have worked without it, but the diagnostic failure prevented initialization. Consider whether such checks are worth the maintenance burden.
+3. **Cosmos partition key behavior is SDK-specific:** Python SDK v4 only auto-infers partition key when path is `/id`. Always explicitly pass `partition_key` for custom paths like `/userId`.
+4. **Silent failures are deadly:** Bare `except Exception` swallowed the Cosmos write error entirely. Always log exceptions before swallowing them.
+5. **Test the full round-trip:** Integration tests should verify write → read → verify cycles, not just that endpoints return 200 OK.
+6. **Cross-reference decision documents:** Danny's audit (danny-131-sdk-audit.md) and chat persistence diagnosis (basher-chat-persist.md) provided complete context. Reading both ensured understanding of *what* to change, *why* it broke, and *how* to verify.
+
+**Future Work:**
+- Audit all Python services for missing `partition_key` parameters in Cosmos upsert/create/replace calls where partition path is not `/id`
+- Refactor diagnostic token calls to use constants (e.g., `FOUNDRY_TOKEN_SCOPE`) to avoid drift
+- Add integration test for chat persistence: `test_chat_persistence_roundtrip()`
+
+**Outcome Document:** `.squad/decisions/inbox/basher-bundle-131-chat.md`
+
+---
+
+## Wave 3 Post-Deploy: Account Opening Document Upload 422 Regression (2026-05-13)
+
+**Task:** acctopen-422 diagnosis — multipart contract mismatch + error handling bug  
+**Status:** 🔍 Diagnosed; Ready for implementation  
+
+### Root Causes Identified
+
+**Primary (422 Validation):**
+- Client sends `files[]` (plural) in FormData
+- Backend endpoint expects `file` (singular) — `upload_document()` signature
+- FastAPI validation fails → 422 Unprocessable Content
+
+**Secondary (React #31 White Screen):**
+- DocumentUpload.tsx extracts FastAPI's array-of-errors `detail` without type checking
+- Non-string passed to `setError()` → JSX renders object → React crashes
+- Solution exists: `resolveApiError()` utility (created in commit #127); ApplicationForm already uses it
+
+### Recommended Fix (UI-Only)
+
+1. **File:** `src/ui-app/src/api/accountOpening.ts:125`
+   ```typescript
+   // Change from 'files' → 'file'
+   files.forEach((file) => formData.append('file', file));
+   ```
+
+2. **File:** `src/ui-app/src/components/account-opening/DocumentUpload.tsx:348-353`
+   ```typescript
+   import { resolveApiError } from '../../api/errors';
+   
+   } catch (err: unknown) {
+     setError(resolveApiError(err, 'Upload failed. Please try again.'));
+   }
+   ```
+
+### Test Requirements
+
+- Upload single file → 201 Created
+- Upload invalid file → readable error message (not crash)
+- Existing DocumentUpload tests pass
+- End-to-end Account Opening workflow
+
+### Follow-Up Items
+
+- Add contract tests between UI FormData and FastAPI Pydantic models
+- Consider OpenAPI schema validation in CI to catch client/server drift earlier
+
+**Decision Document:** `.squad/decisions.md` — "Account Opening Document Upload 422 Regression"

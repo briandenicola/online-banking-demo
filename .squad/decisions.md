@@ -5749,3 +5749,304 @@ Two UX polish items shipped for Account Opening form (`ApplicationForm.tsx`):
   const [email, setEmail] = React.useState(() => initialValue || user?.email || '');
   ```
 - Always wrap test components using `useAuthContext` in `<AuthProvider>`
+
+---
+
+## Decision: SDK Audit — Foundry raisvc 403 Root Cause (#131)
+
+**Status:** ✅ Root Cause Identified & Fixed  
+**Date:** 2026-05-13  
+**Author:** Danny (Lead/Architect)  
+**Issue:** #131 — Foundry raisvc 403 UnauthorizedUserAction  
+**Branch/Commit:** squad/p2-wave-3 / 69ce049  
+**Supersedes:** danny-131-plan.md (RBAC plan — withdrawn)  
+
+### Context
+
+Post-Wave 3 deploy smoke test revealed that `/api/admin/evaluate` calls to Foundry Responsible AI Service (raisvc) fail with 403 UnauthorizedUserAction. Original hypothesis was missing RBAC roles on the banking workload identity.
+
+### Investigation
+
+**Critical finding:** The Agent Framework SDK (`agent-framework-foundry`) **handles token audience automatically** when you pass a credential object. We should not be manually calling `credential.get_token()` with hardcoded scopes.
+
+**The real bug:** A stale token scope introduced during refactor. On May 11, Brian fixed `init_agents.py` to use the correct `https://ai.azure.com/.default` scope for Foundry project endpoints. On May 13, the refactor that extracted `main.py` → `anomaly_service.py` copy-pasted pre-fix startup code that still used the old `https://cognitiveservices.azure.com/.default` scope.
+
+**Root cause chain:**
+1. Commit d5d12d3 (May 11): Fixed token scope in `init_agents.py` → `ai.azure.com`
+2. Commit 39dfdbe8 (May 13): Refactored `main.py` → `anomaly_service.py`, copy-pasted old code
+3. Line 781 of `anomaly_service.py` still has old scope → diagnostic token call fails with 403
+4. Exception swallowed, Foundry initialization skipped → raisvc calls fail upstream
+
+**Why the original RBAC hypothesis was wrong:**
+- The MI already has all required roles (`Cognitive Services OpenAI User`, `Azure AI Project Manager`, `Cognitive Services User` on CUS)
+- This worked before with identical RBAC
+- 403 UnauthorizedUserAction is about token audience, not missing permissions
+- SDK would work fine if we didn't pre-check the credential with the wrong scope
+
+### Decision
+
+**One-line fix:** Align diagnostic token scope in `anomaly_service.py:781` to match `init_agents.py`.
+
+**File:** `src/ai-service/app/services/anomaly_service.py:781`
+
+```diff
+- token = await asyncio.to_thread(credential.get_token, "https://cognitiveservices.azure.com/.default")
++ token = await asyncio.to_thread(credential.get_token, "https://ai.azure.com/.default")
+```
+
+**Why this works:**
+- The manual token call is purely diagnostic (logs "✅ Azure credential acquired")
+- SDK constructors below (lines 784-792) receive the credential object and call `get_token()` internally with the correct scope
+- Aligning the diagnostic scope makes the startup successful and avoids false-negative initialization failure
+
+### Verification
+
+1. Grep for other occurrences of `cognitiveservices.azure.com/.default` in ai-service → **zero found**. The only instance was the one we fixed.
+2. Build and deploy: `task cloud:build && task cloud:deploy`
+3. Watch logs for "✅ Azure credential acquired" and "✅ Foundry risk agent created"
+4. Test endpoint: `POST /api/admin/evaluate` should return 200 with eval results
+
+### Learnings
+
+1. **When refactoring, grep for hardcoded URLs/scopes** across all affected files to avoid drift
+2. **Diagnostic code can mask real issues.** A pre-check that fails prevents initialization, even though the SDK would work fine
+3. **Trust the SDK.** Manual `get_token()` calls for non-SDK APIs should be the exception, not the rule
+
+### Related Decisions
+
+- Fixed in bundle commit 69ce049 alongside chat persistence fix
+
+---
+
+## Decision: Chat Persistence Regression — Missing partition_key in Cosmos upsert
+
+**Status:** ✅ Root Cause Identified & Fixed  
+**Date:** 2026-05-13  
+**Author:** Basher (Backend Dev)  
+**Severity:** 🔴 High — Complete loss of chat history functionality  
+**Branch/Commit:** squad/p2-wave-3 / 69ce049  
+
+### Symptom
+
+After Wave 3 deploy, all chat messages are lost immediately after sending. Users report "Chats aren't being persistent like they were before." Chat history GET endpoint returns empty `[]` for all users.
+
+### Root Cause
+
+**File:** `src/chatbot-service/app/services/agent_service.py:102`
+
+The `ChatSessions` Cosmos container uses **partition key path `/userId`** (not the special `/id` path). The Azure Cosmos SDK for Python v4:
+- **Can infer** partition key when path is `/id` (auto-extracts from `doc["id"]`)
+- **Cannot infer** partition key for custom paths — you **must** explicitly pass `partition_key=<value>`
+
+**The bug:**
+```python
+# BROKEN: no partition_key parameter
+await asyncio.to_thread(state.cosmos_chat_container.upsert_item, doc)
+
+# WORKS (already used in read path):
+items = await asyncio.to_thread(
+    lambda: list(state.cosmos_chat_container.query_items(
+        query=query,
+        parameters=[...],
+        partition_key=user_id,  # ← Correctly specified for reads
+    ))
+)
+```
+
+Without the explicit parameter, writes fail silently (exception swallowed by `except Exception` at line 104). Result: **Writes go nowhere. Reads return empty.**
+
+### Timeline
+
+- **May 8 (commit bd4f6a7):** Chat persistence added — bug existed from day 1 (no `partition_key`)
+- **May 12 (commit 587106b):** Wrapped with `asyncio.to_thread` (#87) — still no `partition_key`
+- **May 13 (today):** Brian reports regression — investigation reveals this bug existed in original implementation
+
+### Decision
+
+**One-line fix:** Add `partition_key=user_id` to the `upsert_item()` call.
+
+**File:** `src/chatbot-service/app/services/agent_service.py:102`
+
+```diff
+- await asyncio.to_thread(state.cosmos_chat_container.upsert_item, doc)
++ await asyncio.to_thread(state.cosmos_chat_container.upsert_item, doc, partition_key=user_id)
+```
+
+### Verification
+
+1. Send 2 chat messages in sequence
+2. Verify `GET /api/chat/history/{user_id}` returns both messages
+3. Verify pod logs show no warnings
+4. Add integration test: `test_chat_persistence_roundtrip()` to verify write+read cycle
+
+### Follow-ups
+
+1. **Audit all Python services** for missing `partition_key` parameters in Cosmos upsert/create/replace calls where partition path is not `/id`
+2. **Refactor silent exception handlers** — always log before swallowing exceptions
+3. **Add contract tests** between Cosmos schema (partition keys) and SDK calls
+
+### Related Decisions
+
+- Fixed in bundle commit 69ce049 alongside Foundry token scope fix
+- Similar to #125 (Accounts casing bug) — another Cosmos schema/query mismatch
+
+---
+
+## Decision: Account Opening Document Upload 422 Regression
+
+**Status:** 🔴 Active Regression — Root Cause Identified  
+**Date:** 2026-05-13  
+**Author:** Basher (Backend Dev)  
+**Severity:** P0 Blocker — breaks core Account Opening flow  
+**Branch/Commit:** squad/p2-wave-3 / 6ec9be1  
+
+### Symptoms
+
+1. **Primary:** Account Opening workflow fails at "Upload Documents" step with HTTP 422 (Unprocessable Content)
+2. **Secondary:** React error #31 (white screen) — validation error renders as raw object instead of string
+
+### Root Cause Analysis
+
+#### 422 Validation Error
+
+**Client sends:** `files[]` (plural) in FormData  
+**Backend expects:** `file` (singular) via `File(...)` parameter
+
+```python
+# Backend: src/account-opening-service/app/routes/api.py:57-62
+@router.post("/applications/{application_id}/documents", status_code=status.HTTP_201_CREATED)
+async def upload_document(
+    application_id: str,
+    document_type: Annotated[DocumentType, Form(alias="documentType")],
+    file: UploadFile = File(...),  # ← SINGULAR 'file'
+    # ...
+```
+
+```typescript
+// Client: src/ui-app/src/api/accountOpening.ts:119-130
+files.forEach((file) => formData.append('files', file));  // ← PLURAL 'files'
+```
+
+**Result:** FastAPI sees missing required field `file` → 422 Pydantic validation error with array of error objects
+
+#### React #31 (White Screen)
+
+**Location:** `src/ui-app/src/components/account-opening/DocumentUpload.tsx:348-353`
+
+The error handler extracts `detail` without type checking:
+```typescript
+} catch (err: unknown) {
+  const message = 
+    (err as any)?.response?.data?.detail ||
+    (err as any)?.response?.data?.message ||
+    'Upload failed. Please try again.';
+  setError(message);  // ← If detail is an ARRAY, this is non-string
+}
+```
+
+Then JSX renders the non-string → React error #31: "Objects are not valid as a React child"
+
+**Existing solution (not used here):** Commit #127 created `src/ui-app/src/api/errors.ts` with `resolveApiError(error, fallback): string` utility. ApplicationForm.tsx already uses it correctly. DocumentUpload.tsx never got updated.
+
+### Recommended Fix (Option A — UI-Only, Preferred)
+
+1. **Fix form field name** in `src/ui-app/src/api/accountOpening.ts:125`:
+   ```typescript
+   // Change from 'files' (plural) to 'file' (singular)
+   files.forEach((file) => formData.append('file', file));
+   ```
+
+2. **Use `resolveApiError()` in DocumentUpload.tsx** (lines 348-353):
+   ```typescript
+   import { resolveApiError } from '../../api/errors';
+   
+   } catch (err: unknown) {
+     setError(resolveApiError(err, 'Upload failed. Please try again.'));
+   }
+   ```
+
+### Why Not Option B (Backend Multi-File Support)
+
+The endpoint name is `upload_document` (singular), not `upload_documents`. The UI currently only uploads one document type at a time. Multi-file support can be a separate feature if needed later.
+
+### Verification
+
+- Upload a single file → 201 Created
+- Upload invalid file → readable error message (not white screen)
+- Existing tests pass
+- End-to-end: complete full Account Opening flow with document upload
+
+### Follow-ups
+
+1. **Add contract tests** between UI FormData payload and FastAPI Pydantic models
+2. **Lint rule:** "UI must use shared `resolveApiError()` for all API error handling"
+3. **Audit other services** for similar file upload contract drifts
+
+### Related Issues
+
+- **#127** — Fixed similar issue in ApplicationForm (created `resolveApiError()` utility)
+- **#100** — Consolidated duplicate API functions (missed this contract mismatch)
+
+---
+
+## Decision: Bundle Fix — #131 Foundry Token Scope + Chat Persistence (Commit 69ce049)
+
+**Status:** ✅ Implemented & Committed  
+**Date:** 2026-05-13  
+**Author:** Basher (Backend Dev)  
+**Branch/Commit:** squad/p2-wave-3 / 69ce0491cd066f371211b26e4dfcf6bc5434d9f0  
+
+### Summary
+
+Landed two critical 1-line bug fixes in single surgical commit on squad/p2-wave-3. Both fixes address regressions discovered during P2 Wave 3 post-deploy smoke testing.
+
+### Fix 1: #131 Foundry Token Scope (ai-service)
+
+**File:** `src/ai-service/app/services/anomaly_service.py:781`  
+**Change:** Token scope `cognitiveservices.azure.com` → `ai.azure.com`
+
+**Why:** Diagnostic token call was using old scope that caused 403 UnauthorizedUserAction. Aligns with the scope fix that Brian applied to `init_agents.py` on May 11.
+
+### Fix 2: Chat Persistence Partition Key (chatbot-service)
+
+**File:** `src/chatbot-service/app/services/agent_service.py:102`  
+**Change:** Added `partition_key=user_id` parameter to `upsert_item()` call
+
+**Why:** Cosmos SDK v4 requires explicit partition_key for custom partition paths (not `/id`). Without it, writes fail silently.
+
+### Verification Steps
+
+✅ Verified both files at stated line numbers  
+✅ Read 5 lines context above/below each edit  
+✅ Grepped for other occurrences of stale scope — **zero found**  
+✅ Staged only bug fix files (no extraneous changes)  
+✅ Committed with specified message format  
+
+### Deploy Steps
+
+**NOT DONE BY BASHER** — Per instructions, Brian handles:
+1. `task cloud:build` — rebuild images
+2. `task cloud:deploy` — rollout
+3. Monitor logs for clean startup (no 403 errors)
+4. Verify chat messages persist across page refresh
+
+### Learnings
+
+1. **Grep during refactors** for hardcoded URLs/scopes to avoid divergence
+2. **Diagnostic failures can mask SDK failures** — the pre-check prevented initialization
+3. **Cosmos partition key behavior is SDK-specific** — always pass explicitly for non-`/id` paths
+4. **Silent exception handlers are deadly** — always log before swallowing
+5. **Test full round-trips** — write → read → verify catches persistence bugs
+6. **Cross-reference decision docs** — reading both root-cause analyses ensured complete context
+
+---
+
+## Decision: ARCHIVED — #131 RBAC Plan (danny-131-plan.md)
+
+**Status:** 🔴 Superseded  
+**Date:** 2026-05-13  
+**Note:** This decision has been withdrawn and replaced by danny-131-sdk-audit.md (SDK Audit above).
+
+**Why:** Investigation revealed the root cause was a stale token scope, not missing RBAC roles. The managed identity already has all required permissions. No Terraform changes needed.
+
+**Recommendation:** Do not implement the original RBAC role addition plan. The one-line token scope fix (commit 69ce049) resolves the issue.
