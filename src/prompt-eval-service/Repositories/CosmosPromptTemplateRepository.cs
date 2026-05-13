@@ -19,7 +19,7 @@ public class CosmosPromptTemplateRepository : IPromptTemplateRepository
     public async Task<List<PromptTemplate>> GetAllAsync()
     {
         var query = new QueryDefinition(
-            "SELECT * FROM c WHERE c.userId = 'global' OR c.UserId = 'global' ORDER BY c.updatedAt DESC, c.UpdatedAt DESC");
+            "SELECT * FROM c WHERE c.userId = 'global' OR c.UserId = 'global'");
 
         var results = new List<PromptTemplate>();
         var queryOptions = new QueryRequestOptions { MaxItemCount = 100 };
@@ -29,7 +29,9 @@ public class CosmosPromptTemplateRepository : IPromptTemplateRepository
             var response = await iterator.ReadNextAsync();
             results.AddRange(response);
         }
-        return results;
+        
+        // Sort in-memory to avoid composite index requirement
+        return results.OrderByDescending(t => t.UpdatedAt).ToList();
     }
 
     public async Task<PromptTemplate?> GetByIdAsync(string id)

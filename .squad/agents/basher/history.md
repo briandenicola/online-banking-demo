@@ -262,6 +262,26 @@ These bugs are end-to-end blockers: partition key mismatch means transaction ser
 
 **Infrastructure Changes:**
 - docker-compose.yml: Redis now central to event pipeline (not placeholder)
+
+### 2026-05 — agent-framework @tool decorator dependency fix
+
+**Problem:** chatbot-service crashed with `TypeError: 'NoneType' object is not callable` after 0b6255a repin to 1.2.2. The `@tool(approval_mode="never_require")` decorator in `agent_tools.py` was `None`.
+
+**Root cause:** `pyproject.toml` only pinned `agent-framework-foundry = "1.2.2"` but omitted `agent-framework-core`, which provides the `tool` decorator imported in `config.py` via `from agent_framework import Agent, tool`.
+
+**Fix:** Added `agent-framework-core = "1.2.2"` to chatbot-service `pyproject.toml`, aligning with ai-service and account-opening-service which already pinned BOTH core and foundry.
+
+**Version range established:**
+- **Floor:** 1.2.2 (has `@tool` decorator with `approval_mode` kwarg)
+- **Ceiling:** < 1.3.0 (1.3.0 breaks eval contract, causing 403 errors — ref #137)
+
+**Pattern:** All Python services using agent-framework must pin BOTH core AND foundry to the SAME version. The `tool` decorator lives in `-core`, not `-foundry`.
+
+**Key files:**
+- `src/chatbot-service/pyproject.toml` — added `agent-framework-core = "1.2.2"`
+- `.squad/decisions/inbox/basher-tool-decorator-pin.md` — version floor/ceiling documentation
+
+**Commit:** 65f6c9f
 - Removed Event Hub client libraries from services (Azure.Messaging.EventHubs)
 - Added StackExchange.Redis NuGet package to .NET services
 - Added redis Python client to requirements.txt

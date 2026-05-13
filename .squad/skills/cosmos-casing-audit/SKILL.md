@@ -155,8 +155,48 @@ After deploying the fix:
 ## Gotchas
 
 - **Don't forget Program.cs startup queries:** Some services have admin-promotion logic or seed queries that run at startup. Those need the OR-pattern too.
-- **ORDER BY needs both casings:** If you ORDER BY a dual-casing field, you need `ORDER BY c.CreatedAt DESC, c.createdAt DESC` or results will be partially sorted.
 - **COUNT queries:** `SELECT VALUE COUNT(1) FROM c WHERE c.Role = 'admin'` → `WHERE c.Role = 'admin' OR c.role = 'admin'`
+
+### ORDER BY Pitfall (Composite Index Requirement)
+
+**CRITICAL:** Combining the OR-both-casings pattern with `ORDER BY` forces Cosmos DB to require a **composite index**:
+
+```sql
+-- ❌ WRONG — requires composite index [userId, createdAt] + [UserId, CreatedAt]
+SELECT * FROM c 
+WHERE c.userId = @x OR c.UserId = @x 
+ORDER BY c.createdAt DESC, c.CreatedAt DESC
+```
+
+**Why?** Cosmos can't use the OR-pattern index efficiently with ORDER BY. It needs composite indexes on each field combination, which:
+1. Must be pre-defined in Terraform (`azurerm_cosmosdb_sql_container.indexing_policy.composite_index`)
+2. Blocks deployment until Brian runs `terraform apply`
+3. Couples code changes to infra changes (bad)
+
+**Solution:** For **admin tables** (small, global-scoped data like templates, settings, evaluation runs), prefer **in-memory sorting**:
+
+```csharp
+// ✅ CORRECT — fetch all, sort in-memory
+var query = new QueryDefinition("SELECT * FROM c WHERE c.userId = 'global' OR c.UserId = 'global'");
+
+var results = new List<T>();
+using var iterator = _container.GetItemQueryIterator<T>(query);
+while (iterator.HasMoreResults)
+{
+    var response = await iterator.ReadNextAsync();
+    results.AddRange(response);
+}
+
+// Sort in-memory to avoid composite index requirement
+return results.OrderByDescending(r => r.CreatedAt).ToList();
+```
+
+**When NOT to use in-memory sort:**
+- User-scoped queries that return 100s-1000s of docs per user
+- High-traffic endpoints where RU cost matters
+- Pagination scenarios (need server-side ORDER BY + OFFSET/LIMIT)
+
+In those cases, you MUST add the composite index to Terraform and document the infra dependency.
 
 ## Related Skills
 

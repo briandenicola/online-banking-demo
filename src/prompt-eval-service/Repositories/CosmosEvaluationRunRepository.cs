@@ -34,7 +34,6 @@ public class CosmosEvaluationRunRepository : IEvaluationRunRepository
         var queryText = "SELECT * FROM c WHERE c.userId = 'global' OR c.UserId = 'global'";
         if (!string.IsNullOrEmpty(templateId))
             queryText += " AND (c.templateId = @templateId OR c.TemplateId = @templateId)";
-        queryText += " ORDER BY c.createdAt DESC, c.CreatedAt DESC";
 
         var queryDef = new QueryDefinition(queryText);
         if (!string.IsNullOrEmpty(templateId))
@@ -48,7 +47,8 @@ public class CosmosEvaluationRunRepository : IEvaluationRunRepository
             allRuns.AddRange(response);
         }
 
-        return allRuns;
+        // Sort in-memory to avoid composite index requirement
+        return allRuns.OrderByDescending(r => r.CreatedAt).ToList();
     }
 
     public async Task<EvaluationRun> CreateAsync(EvaluationRun run)
