@@ -254,3 +254,28 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 - **Tests:** 6 tests in `__tests__/ErrorBoundary.test.tsx` — renders children, shows fallback, section name, reset, custom fallback, console logging
 - **MUI v9 gotcha:** `ErrorOutline` icon doesn't exist in MUI v9 icons — use `ErrorOutlineRounded` instead
 - **Pattern:** Per-route boundaries keep AppShell navigation alive when a single page crashes; top-level boundary is the last-resort safety net
+
+### 2026-05-13 — Deployment Lessons from P1 Wave (Session 2026-05-13T02:47)
+
+**Lessons learned during containerization and AKS deployment:**
+
+1. **Always use `task cloud:deploy` — never `kubectl apply -k` directly**
+   - The Taskfile handles critical placeholder substitution for `configmap.yaml` and `secret-provider-class.yaml`
+   - Direct kubectl apply skips this substitution, leaving broken configs in the cluster
+   - Risk: Services fail to connect to backends or have incorrect API URLs due to unresolved placeholders
+
+2. **Frontend images must include all necessary dependencies**
+   - Verify `npm install` completes successfully in Dockerfile before runtime
+   - Dependency version conflicts in package.json should be resolved locally before pushing
+   - Frontend builds should be cached in early Docker layers to avoid repeated installs
+
+3. **Test error states before deploying**
+   - ErrorBoundary now catches page-level crashes, preventing white screens
+   - This is critical in production where users can't see console errors
+   - Always validate fallback UI renders correctly in actual container environment
+
+**Implications for future work:**
+- Always validate builds complete in container environment, not just local dev
+- Test error scenarios (network failures, API 500s, render crashes) before shipping
+- Review Taskfile for any placeholder patterns that might be missing
+- Monitor application errors in production using AppInsights/Observability stack

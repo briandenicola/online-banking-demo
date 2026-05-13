@@ -321,3 +321,38 @@ Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com
 - Error response shape: `{"error": str, "message": str, "status_code": int}`
 - Broad catches acceptable in: startup init (graceful degradation), background loop outer handler, health checks
 - Narrow catches required in: request handlers, tool functions, data parsing
+
+### 2026-05-13 — Deployment Lessons from P1 Wave (Session 2026-05-13T02:47)
+
+**Lessons learned during containerization and AKS deployment:**
+
+1. **Always use `task cloud:deploy` — never `kubectl apply -k` directly**
+   - The Taskfile handles critical placeholder substitution for `configmap.yaml` and `secret-provider-class.yaml`
+   - Direct kubectl apply skips this substitution, leaving broken configs in the cluster
+   - Risk: Services fail to connect to Cosmos, Redis, or KeyVault due to unresolved placeholders like `REPLACE_WITH_KEYVAULT_NAME`
+
+2. **Python service dependencies must be declared in both pyproject.toml and Dockerfile**
+   - `account-opening-service` was missing `python-multipart` (needed for multipart form uploads) and `aiohttp` (async HTTP client)
+   - Added both to pyproject.toml; Docker images now install via `pip install .`
+
+3. **.dockerignore must exclude stale build artifacts**
+   - Old .NET builds accumulate in `obj.old/` directories as root-owned files
+   - These bloat layers unnecessarily; added `**/obj.old/` to .dockerignore
+   - Impact: Smaller images, faster builds
+
+4. **Entra agent sidecar listens on port 8080, not 5000**
+   - `account-opening-worker` was probing the sidecar on port 5000 but it listens on port 8080
+   - Updated sidecar port mapping and health probe config
+   - Impact: Worker now successfully obtains Entra-authenticated tokens via sidecar
+
+5. **Beta package versions must be explicitly allowed**
+   - `azure-ai-inference` has no stable release; only beta versions exist (>=1.0.0b9)
+   - Constraint was `>=1.0.0,<2.0.0` which excluded betas; changed to `>=1.0.0b9,<2.0.0`
+   - This applies to any Azure preview service SDK
+
+**Implications for future work:**
+- Always validate placeholder substitution in configmaps after deployment
+- Update Taskfile if new services are added
+- Keep `[build-system]` and `[project].dependencies` in sync with Dockerfiles
+- Review .dockerignore before building images
+- Check env var references in health probes and startup configs

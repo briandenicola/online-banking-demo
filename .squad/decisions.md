@@ -4016,3 +4016,257 @@ Issue #21 requires E2E tests for account-opening service workflow with state mac
 **Details:** VirtualService redeploy removes TLS routes/certs
 **Status:** Captured for team memory
 
+
+---
+
+## Session: 2026-05-13 (P1 Wave — Issues #86-#92)
+
+---
+
+## Decision: Python Service P1 Patterns (Issues #86, #87, #88, #90)
+
+**Author:** Turk (Backend Dev)  
+**Date:** 2026-05-12  
+**Status:** Implemented  
+**Priority:** P1
+
+### Context
+
+Four cross-cutting issues affected all Python/FastAPI services (ai-service, budget-service, chatbot-service, account-opening-service). These established foundational patterns for the project.
+
+### Decisions
+
+#### 1. Case-insensitive role checks (standard)
+
+All role comparisons use `.lower()` — never case-sensitive string equality.
+
+```python
+# ✅ Correct
+if user.role.lower() != "admin":
+
+# ❌ Wrong — breaks if JWT has "admin", "ADMIN", etc.
+if user.role != "Admin":
+```
+
+**Rationale:** JWT role claims can vary in casing depending on the issuing identity provider. Case-insensitive checks are defensive and correct.
+
+#### 2. asyncio.to_thread() for sync SDK calls
+
+All synchronous Azure SDK calls inside async handlers must be wrapped with `asyncio.to_thread()`:
+
+```python
+# ✅ Non-blocking
+token = await asyncio.to_thread(credential.get_token, scope)
+client = await asyncio.to_thread(CosmosClient, endpoint, credential=credential)
+await asyncio.to_thread(blob_client.upload_blob, content, overwrite=True)
+
+# ❌ Blocks the event loop
+token = credential.get_token(scope)
+```
+
+**Applies to:** `DefaultAzureCredential.get_token()`, `CosmosClient()` constructor, `container.upsert_item()`, `container.query_items()`, `blob_client.upload_blob()`, `embeddings_client.embed()`
+
+#### 3. Exception handling tiers
+
+| Context | Pattern | Rationale |
+|---------|---------|-----------|
+| Request handlers | Narrow specific types | Let unexpected errors propagate to global handler |
+| Tool functions (httpx) | `except (httpx.RequestError, httpx.HTTPStatusError)` | Don't swallow non-HTTP errors |
+| Redis operations | `except redis.RedisError` | Covers connection, timeout, response errors |
+| JSON/data parsing | `except (json.JSONDecodeError, KeyError, ValueError)` | Covers malformed data |
+| Startup/lifespan | `except Exception` (with logging) | Graceful degradation is correct here |
+| Background loop outer | `except Exception` (with backoff) | Must not crash the consumer |
+| Health/readyz | `except Exception` (with fallback) | Must always return a response |
+
+#### 4. Global exception handler (standard shape)
+
+All Python services register `@app.exception_handler(Exception)` returning:
+
+```json
+{
+  "error": "ExceptionTypeName",
+  "message": "Internal server error. Correlation ID: abc123",
+  "status_code": 500
+}
+```
+
+Correlation ID is pulled from structlog contextvars (set by `CorrelationIdMiddleware`).
+
+#### 5. Dead code policy
+
+`src/shared/auth.py` was deleted — it claimed to be canonical but was imported by zero services. Each service owns its own `app/auth.py`. If shared modules are needed in the future, they should be published as an internal package with proper versioning, not copy-pasted.
+
+### Impact
+
+- All 4 Python services now have consistent error handling, non-blocking I/O, and global exception middleware
+- No breaking changes to API contracts
+- Docker Compose local development continues to work (no env var changes)
+
+---
+
+## Decision: .NET Exception Handling Patterns (#88, #90, #91)
+
+**Date:** 2026-05-12
+**Author:** Basher (Backend Dev)
+**Priority:** P1
+**Status:** Implemented
+
+### Context
+
+Three related issues identified across .NET services:
+1. Broad `catch (Exception)` blocks swallowing failures in Redis publish and transfer flows
+2. No global exception-handling middleware — raw 500s with stack traces in production
+3. Cosmos DB init in account-opening-service silently falling back to in-memory on any error
+
+### Decisions
+
+#### 1. Shared GlobalExceptionHandlerMiddleware (Issue #90)
+
+All .NET services now use `UseGlobalExceptionHandler()` from `Banking.Observability`. This establishes a **single, standardized error response shape** across all services:
+
+```json
+{
+  "error": "InternalError",
+  "message": "An unexpected error occurred. Please try again later.",
+  "statusCode": 500
+}
+```
+
+**Exception-to-status mapping:**
+| Exception Type | HTTP Status | Error Code |
+|---|---|---|
+| ArgumentException / ArgumentNullException | 400 | ValidationError |
+| UnauthorizedAccessException | 401 | Unauthorized |
+| InvalidOperationException | 422 | OperationFailed |
+| KeyNotFoundException | 404 | NotFound |
+| OperationCanceledException | 503 | RequestCancelled |
+| Everything else | 500 | InternalError |
+
+**Pipeline placement:** After `UseCorrelationId()`, before `UseCors()`. This ensures correlation IDs are available for error logging.
+
+**Stack trace policy:** Full exception messages shown in Development; generic message in production to prevent info leakage.
+
+#### 2. Specific Exception Catches (Issue #88)
+
+**Pattern for fire-and-forget Redis publishes:** Catch `RedisConnectionException` and `RedisException` only. Let unexpected exceptions propagate to the global handler. This is intentional — event publishing should not break the main operation (transaction/transfer), but serialization errors or null refs should surface.
+
+**Pattern for business-critical operations (transfers):** Catch `HttpRequestException`, `InvalidOperationException`, `CosmosException` separately with distinct failure reasons. Inner persist-failure catches narrowed to `CosmosException` only.
+
+#### 3. Production-Fail-Fast for Cosmos Init (Issue #91)
+
+**Rule:** When `AZURE_CLIENT_ID` is set (production/Azure), Cosmos init failures must abort startup. Silent degradation to in-memory is only acceptable in local/dev mode.
+
+**Specific exceptions caught:** `CosmosHttpResponseError`, `ConnectionError`/`OSError`, then `Exception` as final fallback — all with the production-vs-dev branching.
+
+**Verification:** .NET services do NOT have this anti-pattern — they use an explicit `UseInMemoryDatabase` configuration toggle, not exception-based fallback.
+
+### Convention Going Forward
+
+- **New services** must register `UseGlobalExceptionHandler()` in their pipeline
+- **Catch blocks** should target the most specific exception type; use the global handler as the safety net for unexpected failures
+- **Error response shape** `{ error, message, statusCode }` is the standard for all .NET services — do not deviate
+- **Production startup:** Infrastructure dependencies (Cosmos, Redis) must fail-fast in production; silent fallbacks are dev-only
+
+---
+
+## Decision: Repository/Data-Access Abstraction (Issue #89)
+
+**Date:** 2026-05-12
+**Author:** Basher (backend specialist)
+**Status:** Implemented
+
+### Context
+
+All 5 .NET services (user, account, transaction, transfer, prompt-eval) directly used `CosmosClient`, `Container`, and `IConnectionMultiplexer` in their service classes. This tight coupling meant:
+
+- No seam for unit testing without infrastructure
+- Business logic intertwined with data-access concerns
+- No abstraction for caching, retry policies, or future storage migration
+
+### Decision
+
+Extract repository interfaces and implementations for each service:
+
+| Service | Interfaces Created | Implementations |
+|---------|-------------------|-----------------|
+| user-service | `IUserRepository`, `ILoginAuditRepository`, `IEventPublisher` | `CosmosUserRepository`, `CosmosLoginAuditRepository`, `RedisEventPublisher` |
+| account-service | `IAccountRepository` | `CosmosAccountRepository` |
+| transaction-service | `ITransactionRepository`, `IAccountBalanceRepository`, `IEventPublisher` | `CosmosTransactionRepository`, `CosmosAccountBalanceRepository`, `RedisEventPublisher` |
+| transfer-service | `ITransferRepository`, `IEventPublisher` | `CosmosTransferRepository`, `RedisEventPublisher` |
+| prompt-eval-service | `IPromptTemplateRepository`, `IEvaluationRunRepository` | `CosmosPromptTemplateRepository`, `CosmosEvaluationRunRepository` |
+
+### Design Principles
+
+1. **Repository owns data access only** — no business logic in repositories. Queries, reads, writes, deletes.
+2. **Service owns business logic** — validation, password hashing, event composition, error handling stay in the service layer.
+3. **Event publishing abstracted** — `IEventPublisher` decouples Redis Stream details from service logic.
+4. **Separate repositories for separate containers** — transaction-service has `ITransactionRepository` (transactions container) and `IAccountBalanceRepository` (accounts container), keeping concerns distinct.
+5. **DI registrations mirror existing patterns** — repositories registered as `Scoped` (matching service lifetime), except `IEventPublisher` which is `Singleton` (matching `IConnectionMultiplexer`).
+
+### Files Changed
+
+- `src/*/Repositories/` — new interface + implementation files (6 services × 1-3 repos each)
+- `src/*/Services/*Service.cs` — updated constructors to accept repository interfaces
+- `src/*/Program.cs` — added DI registrations for repositories
+- `src/prompt-eval-service/Services/EvaluationBackgroundService.cs` — replaced direct `CosmosClient` with `IEvaluationRunRepository`
+
+### What Was NOT Changed
+
+- **InMemory*Service implementations** — these are already separate implementations of the service interfaces and don't use Cosmos/Redis directly in the same way
+- **Program.cs startup logic** (e.g., user-service bootstrap admin promotion) — this remains direct CosmosClient usage as it runs outside the DI-managed request scope
+- **No behavior changes** — this is a pure structural refactoring
+
+### Risks
+
+- None significant. All changes are additive (new files) or structural (constructor injection). No behavioral changes.
+
+---
+
+## Decision: ErrorBoundary Architecture (Issue #92)
+
+**Author:** Linus (Frontend Dev)
+**Date:** 2026-05-12
+**Status:** Implemented
+
+### Context
+No React ErrorBoundary existed in the app. Any uncaught render error caused a full white screen — unacceptable for a banking application.
+
+### Decision
+Implemented a **two-layer ErrorBoundary strategy**:
+
+1. **Top-level boundary** in `App()` wrapping all providers and router — catches catastrophic failures (context crashes, router errors). This is the last-resort safety net.
+
+2. **Per-route boundaries** on every authenticated page route (Dashboard, Accounts, Transactions, Transfers, Chat, Settings, Account Opening, Admin). Each boundary is section-aware and isolated — a crash in Chat won't take down Dashboard. The AppShell navigation stays alive.
+
+### Fallback UI
+- Professional, reassuring tone: "Your accounts and data are safe"
+- Section-specific messaging (e.g., "unexpected issue in Dashboard")
+- "Try Again" resets the error state, "Go to Dashboard" provides an escape hatch
+- MUI-styled, consistent with existing banking theme
+
+### Alternatives Considered
+- **Single top-level boundary only:** Simpler but kills navigation on any page error. Rejected for a banking app.
+- **react-error-boundary library:** Adds a dependency for what's ultimately ~100 lines of code. Class component is fine since ErrorBoundary requires `componentDidCatch` (no hooks equivalent).
+
+### Files Changed
+- `src/ui-app/src/components/ErrorBoundary.tsx` — new component
+- `src/ui-app/src/components/__tests__/ErrorBoundary.test.tsx` — 6 tests
+- `src/ui-app/src/App.tsx` — wired top-level + per-route boundaries
+
+---
+
+## User Directive: Phase Progression Approval Required
+
+**Date:** 2026-05-13T01:42:00Z  
+**By:** Brian (via Copilot)  
+**Directive:** Always ask Brian before moving on to another phase. Never auto-proceed to the next phase without confirmation.  
+**Status:** Captured for team memory
+
+---
+
+## User Directive: GitHub Issue Closure in PR Body
+
+**Date:** 2026-05-13T01:47:00Z  
+**By:** Brian (via Copilot)  
+**Directive:** After build and deploy, close resolved GitHub issues as part of the PR (use "Closes #N" in PR body).  
+**Status:** Captured for team memory
