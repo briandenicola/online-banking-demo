@@ -1308,3 +1308,79 @@ Fixed `account-opening-service/app/main.py` Cosmos init to catch `CosmosHttpResp
 **Outcome:** ✓ All 4 .NET services build clean, storage layer refactoring improves testability. Commits: 87953d8, 9be97bb, c1c08f9.
 
 **Team:** Coordinated with Turk (Python env vars) and Linus (frontend types/tests) for cross-service consistency. Wave complete; PR pending merge to main.
+
+---
+
+## 2026-05-13 — OpenAPI/Swagger Documentation for .NET Services
+
+**Issue:** #109 — Add OpenAPI/Swagger API documentation  
+**Branch:** squad/p2-wave-3
+
+**Context:**
+Architecture.md referenced Swagger endpoints, but no OpenAPI specs were committed to the repo. All 5 .NET services already had Swagger enabled at runtime, but needed:
+1. Enhanced Swagger configuration with proper API titles and security definitions
+2. Committed OpenAPI specs for reference
+3. Regeneration script for future updates
+
+**Implementation:**
+
+**Swagger Configuration Pattern:**
+All .NET services now use this standardized Swashbuckle configuration:
+```csharp
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo { Title = "Service Name", Version = "v1" });
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer"
+    });
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme { Reference = new OpenApiReference { Id = "Bearer", Type = ReferenceType.SecurityScheme } },
+            Array.Empty<string>()
+        }
+    });
+});
+```
+
+**OpenAPI Spec Generation:**
+- Tool: `Swashbuckle.AspNetCore.Cli` 6.9.0 (installed globally via `dotnet tool install`)
+- Command: `swagger tofile --output <path> <dll> v1`
+- Environment: Requires minimal config (UseInMemoryDatabase=true, Jwt__Key, etc.) to allow DLL startup
+- Special case: prompt-eval-service requires temporary commenting of Cosmos init code (lines 108-113) due to startup initialization that runs before Swagger can be extracted
+
+**Regeneration Script:**
+Created `scripts/generate-openapi-specs.sh`:
+- Builds each service in isolated output directory
+- Generates OpenAPI spec using swagger tofile
+- Handles prompt-eval-service's startup initialization automatically
+- Outputs to `docs/api/{service-name}-openapi.json`
+
+**Committed Specs:**
+- `docs/api/user-service-openapi.json` (14 KB)
+- `docs/api/account-service-openapi.json` (4.7 KB)
+- `docs/api/transaction-service-openapi.json` (4.3 KB)
+- `docs/api/transfer-service-openapi.json` (3.2 KB)
+- `docs/api/prompt-eval-service-openapi.json` (21 KB)
+
+**Documentation:**
+Updated `docs/README.md` with:
+- API Documentation section listing all service specs
+- Runtime Swagger UI URLs for local development
+- Instructions for regenerating specs
+
+**Key Files:**
+- `src/user-service/Program.cs` — enhanced Swagger config
+- `src/prompt-eval-service/Program.cs` — enhanced Swagger config
+- `scripts/generate-openapi-specs.sh` — regeneration script
+- `docs/README.md` — API documentation section
+- `docs/api/*.json` — committed OpenAPI specs
+
+**Turk** is handling Python/FastAPI services in parallel (ai-service, budget-service, chatbot-service, account-opening-service). Both portions will merge to complete #109.
+
+**Commit:** ff310d0
