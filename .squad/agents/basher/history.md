@@ -1611,3 +1611,93 @@ c.userId = '<brian>'  → 4 hits  (PascalCase: 0)
 **Reusable lesson:** Cosmos JSON field paths are case-sensitive. **Always** prefer `[JsonProperty("camelName")]` on every persisted field (or a `CosmosClientOptions.Serializer` pinned to camelCase) instead of relying on Cosmos SDK v3 default Newtonsoft preserve-case behaviour. Default behaviour can drift across SDK package updates and create silent multi-casing data — a single-row read still works (Newtonsoft deserialize is case-insensitive on the `<T>`) so the bug only surfaces on queries.
 
 **Smoke-domain reminder for next on-call:** `e2e-default@banking-demo.com / password123` works from `tests/e2e/fixtures/authFixture.ts` and is the cheapest way to land an authenticated curl against `https://${CUSTOM_DOMAIN}` without spinning up Playwright.
+
+
+### 2026-05-13 — Issue #123: AI dashboard tiles stuck at 0 (TWO bugs, not one)
+
+**Branch/Commit:** `squad/p2-wave-3` / `c241a18`
+
+**Root cause hidden behind the obvious one.** The issue read like a
+post-purge recovery question — "the tiles are 0, do we backfill or
+wait?" — but the *actual* primary bug was that **the ai-service Redis
+Stream consumer task was dead on every restart after the first**.
+
+`consume_redis_stream()` calls `xgroup_create(...)` at startup. First
+time succeeds; every subsequent run raises `redis.ResponseError:
+BUSYGROUP Consumer Group name already exists`. The exception was
+uncaught, the asyncio task created in `lifespan()` died **before
+entering its `while True` loop**, and no transactions were ever scored.
+This bug was latent for an unknown amount of time — the dashboard's
+poisoned stale data was masking it. The #119 purge unmasked it.
+
+Confirmed via Redis state from inside the ai-service pod (workload-identity
++ AAD-token Redis pattern from the previous entry):
+- `anomaly-consumer-group`: `lag=199, last-delivered-id=1778620475113-0`
+  (~21h prior to the check — i.e. the previous deploy)
+- `event-processor-group`: `lag=0` (separate consumer, separate code,
+  unaffected — ruled out a Redis-side problem)
+
+**Fix:** wrap `xgroup_create` in `try/except redis.ResponseError`,
+ignore `BUSYGROUP`, log "resuming". Two-line fix that should have
+been there from day one. Anywhere else in the codebase that creates
+a consumer group needs the same guard — worth a sweep.
+
+**Recovery (the secondary "obvious" issue):**
+With the consumer revived, new transactions score on ingest, but the
+155 historical Cosmos transactions had no path back through the stream.
+Built `POST /api/admin/replay-events?limit=N` on transaction-service:
+- New `ITransactionRepository.GetAllAsync(limit)` — Cosmos cross-partition
+  scan, **drains all pages** (uses `while iterator.HasMoreResults` —
+  do NOT copy the single-`ReadNextAsync` truncation pattern from
+  pre-#125 code).
+- New `AdminController` with `[Authorize(Roles="admin,Admin")]`,
+  re-publishes each transaction via the existing `IEventPublisher`
+  using the exact same payload shape as `PublishTransactionCreatedEvent`.
+- Istio gateway rule `/api/admin/replay-events` → transaction-service,
+  ordered **before** the generic `/api/admin` → ai-service rule.
+
+**Pattern: do NOT add Cosmos to ai-service.** Tempting design was an
+ai-service backfill endpoint that pulls from Cosmos directly, but
+ai-service has no Cosmos SDK and shouldn't (it's a stream consumer +
+LLM gateway). transaction-service owns persistence; the replay belongs
+there. Reuses the existing publish path instead of duplicating it.
+
+**Verification:**
+- Built + deployed both services via `task cloud:build:transaction-service`,
+  `task cloud:build:ai-service`, `task cloud:deploy` (auto-restarts).
+- Promoted `e2e-default@banking-demo.com` to admin via the workload-identity
+  Cosmos pod pattern. Note: Users container's PK is `/id`, NOT `/Username`
+  as I initially guessed — first promotion attempt 404'd because PK didn't
+  match. Easy fix once I checked `CosmosUserRepository`.
+- `curl POST /api/admin/replay-events` → `{"published":155,"limit":10000}`.
+- Watched ai-service logs: "Processing event: TransactionCreated" + "Scored
+  transaction X: risk=Y" cadence proved the consumer was alive.
+- Final stats: `avgRiskScore=0.27, totalScored=84+, aiCallsToday=17–68
+  (flickering per pod), totalFlagged=27→44`.
+
+**Latent bug spotted (filed as follow-up):** `aiCallsToday` is an
+in-memory per-pod counter on `FoundryRiskAnalyzer`. With 2 replicas the
+dashboard flickered between pod values (saw 68 → 8 → 17 across consecutive
+polls). Should be a Redis `INCR ai-calls:YYYY-MM-DD` with `EXPIRE`.
+~10 lines, properly resilient to restarts and replicas. Worth a follow-up
+issue but not in scope here.
+
+**Reusable lessons:**
+1. **`xgroup_create` ALWAYS needs BUSYGROUP guard** — same applies to
+   `xgroup_createconsumer`, `xgroup_setid` etc. when running them
+   defensively at startup.
+2. **A "data is empty" symptom can be a "consumer is dead" bug.** Always
+   check stream/consumer-group health (`XINFO GROUPS`, `XPENDING`)
+   before assuming the upstream system is just quiet.
+3. **In-memory counters in stateless services are a footgun.** They
+   reset on restart, undercount across replicas, and hide real
+   telemetry needs. Default to Redis INCR when the counter is the
+   thing being observed.
+4. **Cosmos PK ≠ what you'd guess from the field that looks like a
+   username.** Always check `CosmosClient.GetContainer(...).ReadContainerAsync()`
+   or grep `new PartitionKey(...)` in the repository. For Users
+   container it's `/id`. For Accounts it's `/id`. For Transactions
+   it's `/accountId`.
+5. **Admin endpoint > one-shot pod script** for maintenance ops, even
+   if it costs slightly more code. Discoverable, reusable, auditable
+   via standard logs.
