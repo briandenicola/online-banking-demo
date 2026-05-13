@@ -6,7 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -55,10 +55,14 @@ type BankingEvent struct {
 }
 
 func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	slog.SetDefault(logger)
+
 	// Initialize OpenTelemetry
 	tp, err := initTracer()
 	if err != nil {
-		log.Fatalf("Failed to initialize tracer: %v", err)
+		slog.Error("Failed to initialize tracer", "error", err)
+		os.Exit(1)
 	}
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
@@ -79,7 +83,8 @@ func main() {
 
 	rdb, err := newRedisClient(ctx, redisConnStr)
 	if err != nil {
-		log.Fatalf("Failed to create Redis client: %v", err)
+		slog.Error("Failed to create Redis client", "error", err)
+		os.Exit(1)
 	}
 	defer func() {
 		if c, ok := rdb.(interface{ Close() error }); ok {
@@ -122,16 +127,16 @@ func main() {
 				fmt.Fprint(w, `{"status":"not_ready","reason":"redis_connecting"}`)
 			}
 		})
-		log.Println("Health probe server listening on :8080")
+		slog.Info("Health probe server listening", "port", 8080)
 		if err := http.ListenAndServe(":8080", mux); err != nil {
-			log.Printf("Health server error: %v", err)
+			slog.Error("Health server error", "error", err)
 		}
 	}()
 
 	// Verify Redis connectivity with retry (no fatal on failure — keep trying)
 	for i := 0; ; i++ {
 		if err := rdb.Ping(ctx).Err(); err == nil {
-			log.Println("✅ Redis connectivity verified")
+			slog.Info("Redis connectivity verified")
 			processor.redisReady = true
 			break
 		} else {
@@ -139,10 +144,10 @@ func main() {
 			if backoff > 30*time.Second {
 				backoff = 30 * time.Second
 			}
-			log.Printf("Redis not ready (attempt %d): %v — retrying in %v...", i+1, err, backoff)
+			slog.Warn("Redis not ready, retrying", "attempt", i+1, "error", err, "backoff", backoff)
 			select {
 			case <-ctx.Done():
-				log.Println("Context cancelled during Redis startup retry")
+				slog.Info("Context cancelled during Redis startup retry")
 				return
 			case <-time.After(backoff):
 			}
@@ -152,19 +157,20 @@ func main() {
 	// Create consumer group (idempotent)
 	err = rdb.XGroupCreateMkStream(ctx, streamName, consumerGroup, "0").Err()
 	if err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
-		log.Fatalf("Failed to create consumer group: %v", err)
+		slog.Error("Failed to create consumer group", "error", err)
+		os.Exit(1)
 	}
-	log.Printf("Consumer group '%s' ready on stream '%s'", consumerGroup, streamName)
+	slog.Info("Consumer group ready", "group", consumerGroup, "stream", streamName)
 
 	go processor.consumeEvents(ctx)
 
-	log.Println("Event processor started — consuming from Redis Stream")
+	slog.Info("Event processor started — consuming from Redis Stream")
 
 	<-sigChan
-	log.Println("Shutting down event processor — draining in-flight messages...")
+	slog.Info("Shutting down event processor — draining in-flight messages...")
 	cancel()
 	processor.wg.Wait()
-	log.Println("All in-flight messages drained. Shutdown complete.")
+	slog.Info("All in-flight messages drained. Shutdown complete.")
 }
 
 // newRedisClient creates a Redis client. If AZURE_CLIENT_ID is set (workload identity),
@@ -189,7 +195,7 @@ func newRedisClient(ctx context.Context, connStr string) (redis.Cmdable, error) 
 		}
 
 		oid := extractOIDFromToken(token.Token)
-		log.Printf("Using Entra ID token for Redis ClusterClient (OID: %s)", oid)
+		slog.Info("Using Entra ID token for Redis ClusterClient", "oid", oid)
 
 		clusterOpts := &redis.ClusterOptions{
 			Addrs:    []string{opts.Addr},
@@ -216,7 +222,7 @@ func newRedisClient(ctx context.Context, connStr string) (redis.Cmdable, error) 
 		return client, nil
 	}
 
-	log.Println("Using connection string for Redis authentication (local dev)")
+	slog.Info("Using connection string for Redis authentication (local dev)")
 	return redis.NewClient(opts), nil
 }
 
@@ -231,16 +237,16 @@ func refreshRedisToken(ctx context.Context, client *redis.ClusterClient, cred *a
 				Scopes: []string{redisCacheScope},
 			})
 			if err != nil {
-				log.Printf("⚠️ Failed to refresh Redis token: %v", err)
+				slog.Warn("Failed to refresh Redis token", "error", err)
 				continue
 			}
 			oid := extractOIDFromToken(token.Token)
 			if err := client.ForEachShard(ctx, func(ctx context.Context, shard *redis.Client) error {
 				return shard.Do(ctx, "AUTH", oid, token.Token).Err()
 			}); err != nil {
-				log.Printf("⚠️ Failed to re-auth Redis with new token: %v", err)
+				slog.Warn("Failed to re-auth Redis with new token", "error", err)
 			} else {
-				log.Println("✅ Redis token refreshed")
+				slog.Info("Redis token refreshed")
 			}
 		}
 	}
@@ -259,14 +265,14 @@ func extractOIDFromToken(token string) string {
 	}
 	decoded, err := base64.URLEncoding.DecodeString(payload)
 	if err != nil {
-		log.Printf("Failed to decode token payload: %v", err)
+		slog.Warn("Failed to decode token payload", "error", err)
 		return ""
 	}
 	var claims struct {
 		OID string `json:"oid"`
 	}
 	if err := json.Unmarshal(decoded, &claims); err != nil {
-		log.Printf("Failed to parse token claims: %v", err)
+		slog.Warn("Failed to parse token claims", "error", err)
 		return ""
 	}
 	return claims.OID
@@ -299,7 +305,7 @@ func (p *EventProcessor) consumeEvents(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			log.Printf("Error reading from stream: %v. Retrying in %v...", err, backoff)
+			slog.Error("Error reading from stream, retrying", "error", err, "backoff", backoff)
 			select {
 			case <-ctx.Done():
 				return
@@ -325,8 +331,12 @@ func (p *EventProcessor) consumeEvents(ctx context.Context) {
 						count := p.failureCounts[msg.ID]
 						p.mu.Unlock()
 
-						log.Printf("Error processing message %s (attempt %d/%d): %v",
-							msg.ID, count, p.maxRetries, err)
+					slog.Error("Error processing message",
+						"message_id", msg.ID,
+						"attempt", count,
+						"max_retries", p.maxRetries,
+						"error", err,
+					)
 
 						if count >= p.maxRetries {
 							// Dead-letter: move to DLQ stream, then ACK original
@@ -342,16 +352,16 @@ func (p *EventProcessor) consumeEvents(ctx context.Context) {
 								Stream: dlqStreamName,
 								Values: dlqFields,
 							}).Err(); dlqErr != nil {
-								log.Printf("Failed to move %s to DLQ: %v", msg.ID, dlqErr)
+								slog.Error("Failed to move message to DLQ", "message_id", msg.ID, "error", dlqErr)
 								return
 							}
 							if ackErr := p.client.XAck(ctx, streamName, consumerGroup, msg.ID).Err(); ackErr != nil {
-								log.Printf("Failed to ACK dead-lettered message %s: %v", msg.ID, ackErr)
+								slog.Error("Failed to ACK dead-lettered message", "message_id", msg.ID, "error", ackErr)
 							}
 							p.mu.Lock()
 							delete(p.failureCounts, msg.ID)
 							p.mu.Unlock()
-							log.Printf("Message %s moved to DLQ after %d failed attempts", msg.ID, count)
+							slog.Warn("Message moved to DLQ after failed attempts", "message_id", msg.ID, "attempts", count)
 						}
 						// Do NOT ACK — message stays in pending list for retry
 						return
@@ -359,7 +369,7 @@ func (p *EventProcessor) consumeEvents(ctx context.Context) {
 
 					// ACK only after successful processing
 					if err := p.client.XAck(ctx, streamName, consumerGroup, msg.ID).Err(); err != nil {
-						log.Printf("Failed to ACK message %s: %v", msg.ID, err)
+						slog.Error("Failed to ACK message", "message_id", msg.ID, "error", err)
 					}
 					p.mu.Lock()
 					delete(p.failureCounts, msg.ID)
@@ -392,13 +402,19 @@ func (p *EventProcessor) processMessage(ctx context.Context, message redis.XMess
 
 	switch evt.EventType {
 	case "TransactionCreated":
-		log.Printf("[AUDIT] TransactionCreated: account=%v amount=%v type=%v",
-			evt.Data["accountId"], evt.Data["amount"], evt.Data["type"])
+		slog.Info("Audit TransactionCreated",
+			"account", evt.Data["accountId"],
+			"amount", evt.Data["amount"],
+			"type", evt.Data["type"],
+		)
 	case "TransferInitiated":
-		log.Printf("[AUDIT] TransferInitiated: from=%v to=%v amount=%v",
-			evt.Data["fromAccountId"], evt.Data["toAccountId"], evt.Data["amount"])
+		slog.Info("Audit TransferInitiated",
+			"from_account", evt.Data["fromAccountId"],
+			"to_account", evt.Data["toAccountId"],
+			"amount", evt.Data["amount"],
+		)
 	default:
-		log.Printf("[AUDIT] Unknown event type: %s — data: %+v", evt.EventType, evt.Data)
+		slog.Warn("Audit Unknown event type", "event_type", evt.EventType, "data", evt.Data)
 	}
 
 	return nil
