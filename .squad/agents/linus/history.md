@@ -279,3 +279,36 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 - Test error scenarios (network failures, API 500s, render crashes) before shipping
 - Review Taskfile for any placeholder patterns that might be missing
 - Monitor application errors in production using AppInsights/Observability stack
+
+### 2026-05-12 — P2 Wave 1 (#95, #100, #98, #111)
+
+**#95 — Duplicate test files (7 pairs):**
+- Confirmed `__tests__/` versions and colocated versions had genuinely diverged (different mock strategies, different assumed APIs); not just identical copies.
+- Colocated tests aligned with the actual component imports (e.g., `ApplicationForm` colocated test mocks `createApplication`, matching the real component); `__tests__/` versions tested an older imagined `onSubmit` callback API.
+- Special case: `src/components/__tests__/AdminApplicationsTab.test.tsx` actually tested `src/components/AdminApplicationsTab.tsx` — a fully orphaned dead component (only `account-opening/AdminApplicationsTab.tsx` is wired into AdminPage). Deleted both the dead test and the dead component.
+- Result: kept colocated only. 18 suites/290 tests → 11 suites/118 tests, all green. ~170 deleted tests were redundant or testing dead code.
+
+**#100 — API consolidation in `accountOpening.ts`:**
+- Backend `ApplicationCreate` model expects a flat object — `submitApplication` was sending `{ formData: payload }` which would 422. `createApplication` posts the flat object correctly. Removed `submitApplication` and updated the only caller (`AccountOpeningPage.handleSimpleSubmit`).
+- Other consolidation was naming only (same endpoint, identical payloads): kept `getApplication`, `getAuditTrail`, `listApplications`, `reviewApplication`, removed `getApplicationStatus`, `getApplicationAudit`, `listApplicationsLegacy`, `reviewApplicationLegacy`, the `ReviewRequest` interface, and the default export object.
+- Naming convention chosen: prefer the name already used in the consolidated test contract (`getAuditTrail` not `getApplicationAudit`), and the resource-noun name for the rest.
+
+**#98 — Admin endpoint guard on Transactions:**
+- Wrapped the `/admin/transactions` enrichment call in `isAdmin ? … : Promise.resolve({ data: [] })`.
+- Added `isAdmin` to the `useCallback` dep list so the fetch re-runs if the user's role flips (rare but correct).
+- Non-admin users now silently lose risk scores / AI explanations — no 403, no thrown errors.
+
+**#111 — `any` and `console.error` cleanup:**
+- Created `src/utils/logger.ts` — a tiny centralized logger that no-ops in tests, suppresses non-error logs in prod, and wraps `console.error` in dev. This is the single seam for swapping in real telemetry later.
+- Considered rethrowing async errors to ErrorBoundary, but React ErrorBoundary doesn't catch errors from async event handlers / effects — would have been silent in practice. The logger preserves error info and `setError` UI state surfaces it to the user.
+- `any` removals used the `(err as { response?: { data?: { message?: string } } })?.response?.data?.message` pattern for axios error narrowing — same pattern already in use in `AccountOpeningPage.tsx`. Type-safe without requiring axios's `AxiosError` type guard import.
+
+## Learnings
+
+- **MUI v9 reminder:** confirmed by inspection — use `ErrorOutlineRounded`, not `ErrorOutline`. Did not encounter this in the wave but kept in mind.
+- **Symlinks in `node_modules/.bin/` can dangle** if a sibling install (e.g. by another agent) prunes a package's `bin/` directory. `npm install` from the package dir restores them. Worth a `npm install` baseline check before running tests in shared workspaces.
+- **`react-scripts test --watchAll=false` + `CI=true`** is the canonical CI invocation for the ui-app suite; runs in ~6s.
+- **Backend payload shape for account opening:** the FastAPI `ApplicationCreate` model accepts the flat form fields directly — no `formData` wrapper. Frontend submits via `createApplication`.
+- **Don't confuse `src/components/AdminApplicationsTab.tsx` with `src/components/account-opening/AdminApplicationsTab.tsx`** — only the latter is live; the former is orphaned dead code (now removed). Watch for similar duplicate-name traps if more "admin tabs" appear.
+- **Colocated tests are the convention now** for ui-app: `Component.tsx` next to `Component.test.tsx`. No `__tests__/` directories remain (`ErrorBoundary.test.tsx` aside, which has no colocated dup yet — moving it later is a P3 nit).
+- **Logger pattern**: import `logger` from `'../utils/logger'`. Use `logger.error('what failed', err)`. In production it currently no-ops; that is the intentional seam.
