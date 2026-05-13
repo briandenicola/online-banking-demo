@@ -76,12 +76,14 @@ async def _refresh_token_loop(
     while True:
         await asyncio.sleep(TOKEN_REFRESH_SECONDS)
         try:
-            token_response = credential.get_token(REDIS_SCOPE)
+            token_response = await asyncio.to_thread(credential.get_token, REDIS_SCOPE)
             new_token = token_response.token
             oid = _extract_oid_from_token(new_token)
             # Re-authenticate every node in the cluster
             await cluster_client.execute_command("AUTH", oid, new_token)
             logger.info("Redis token refreshed")
+        except aioredis.RedisError as exc:
+            logger.warning("Failed to refresh Redis auth", error=str(exc))
         except Exception as exc:
             logger.warning("Failed to refresh Redis token", error=str(exc))
 
@@ -112,7 +114,7 @@ async def _create_entra_redis_client(parsed: dict) -> aioredis.RedisCluster | No
 
     try:
         credential = DefaultAzureCredential()
-        token_response = credential.get_token(REDIS_SCOPE)
+        token_response = await asyncio.to_thread(credential.get_token, REDIS_SCOPE)
         token = token_response.token
         oid = _extract_oid_from_token(token)
         logger.info("Entra ID token acquired for Redis", oid=oid)

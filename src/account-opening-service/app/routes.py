@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import datetime, timezone
 from typing import Annotated
 
+import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel, Field
 
@@ -21,6 +23,7 @@ from .state_machine import ApplicationStateMachine
 
 router = APIRouter(prefix="/api/account-opening", tags=["account-opening"])
 state_machine = ApplicationStateMachine()
+logger = structlog.get_logger("account-opening-routes")
 
 
 @router.post("/applications", status_code=status.HTTP_201_CREATED)
@@ -76,8 +79,14 @@ async def upload_document(
     try:
         blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
         file_content = await file.read()
-        blob_client.upload_blob(file_content, overwrite=True)
+        await asyncio.to_thread(blob_client.upload_blob, file_content, overwrite=True)
+    except (ConnectionError, OSError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to upload document to blob storage: {exc}",
+        )
     except Exception as exc:
+        logger.error("Unexpected blob upload error", error=str(exc), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to upload document to blob storage: {exc}",

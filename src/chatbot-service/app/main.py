@@ -6,6 +6,7 @@ Uses agent-framework-foundry:
 - Agent with @tool-decorated functions for financial data
 - AgentSession for multi-turn conversation history
 """
+import asyncio
 import logging
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -205,7 +206,7 @@ def get_budget_insights(
         response = httpx.get(f"{BUDGET_SERVICE_URL}/insights/me?period={period}", headers=headers, timeout=10.0)
         if response.is_success:
             return json.dumps(response.json())
-    except Exception as e:
+    except (httpx.RequestError, httpx.HTTPStatusError) as e:
         logger.warning(f"Failed to get budget insights: {e}")
     return json.dumps({"error": "Unable to retrieve budget insights"})
 
@@ -221,7 +222,7 @@ def get_spending_pattern() -> str:
         response = httpx.get(f"{BUDGET_SERVICE_URL}/insights/me?period=7d", headers=headers, timeout=10.0)
         if response.is_success:
             return json.dumps(response.json())
-    except Exception as e:
+    except (httpx.RequestError, httpx.HTTPStatusError) as e:
         logger.warning(f"Failed to get spending patterns: {e}")
     return json.dumps({"error": "Unable to retrieve spending patterns"})
 
@@ -242,7 +243,7 @@ def analyze_transaction(
                 "suggested_category": data.get("category", "Uncategorized"),
                 "note": "Transaction analyzed successfully",
             })
-    except Exception as e:
+    except (httpx.RequestError, httpx.HTTPStatusError) as e:
         logger.warning(f"Failed to analyze transaction: {e}")
     return json.dumps({"error": "Unable to analyze transaction"})
 
@@ -276,7 +277,7 @@ def get_user_transactions() -> str:
         else:
             logger.warning(f"Transaction service returned {response.status_code}: {response.text[:200]}")
             return json.dumps({"error": f"Account service returned {response.status_code}"})
-    except Exception as e:
+    except (httpx.RequestError, httpx.HTTPStatusError) as e:
         logger.warning(f"Failed to get transactions: {e}")
     return json.dumps({"error": "Unable to retrieve transactions"})
 
@@ -298,7 +299,7 @@ def get_user_accounts() -> str:
         else:
             logger.warning(f"Account service returned {response.status_code}: {response.text[:200]}")
             return json.dumps({"error": f"Account service returned {response.status_code}"})
-    except Exception as e:
+    except (httpx.RequestError, httpx.HTTPStatusError) as e:
         logger.warning(f"Failed to get accounts: {e}")
     return json.dumps({"error": "Unable to retrieve accounts"})
 
@@ -325,25 +326,27 @@ async def _save_chat_message(user_id: str, role: str, text: str):
             "text": text,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        cosmos_chat_container.upsert_item(doc)
+        await asyncio.to_thread(cosmos_chat_container.upsert_item, doc)
     except Exception as e:
         logger.warning(f"Failed to save chat message: {e}")
 
 
-def _load_chat_history(user_id: str, limit: int = 50) -> list[dict]:
+async def _load_chat_history(user_id: str, limit: int = 50) -> list[dict]:
     """Load recent chat history from Cosmos DB."""
     if not cosmos_chat_container:
         return []
     try:
         query = "SELECT * FROM c WHERE c.userId = @uid ORDER BY c.timestamp DESC OFFSET 0 LIMIT @limit"
-        items = list(cosmos_chat_container.query_items(
-            query=query,
-            parameters=[
-                {"name": "@uid", "value": user_id},
-                {"name": "@limit", "value": limit},
-            ],
-            partition_key=user_id,
-        ))
+        items = await asyncio.to_thread(
+            lambda: list(cosmos_chat_container.query_items(
+                query=query,
+                parameters=[
+                    {"name": "@uid", "value": user_id},
+                    {"name": "@limit", "value": limit},
+                ],
+                partition_key=user_id,
+            ))
+        )
         items.reverse()
         return [{"role": i["role"], "text": i["text"], "timestamp": i.get("timestamp", "")} for i in items]
     except Exception as e:
@@ -381,7 +384,7 @@ async def lifespan(app: FastAPI):
         logger.info("🔐 Acquiring Azure credential...")
         try:
             credential = DefaultAzureCredential()
-            token = credential.get_token("https://cognitiveservices.azure.com/.default")
+            token = await asyncio.to_thread(credential.get_token, "https://cognitiveservices.azure.com/.default")
             logger.info(f"✅ Token acquired (expires: {token.expires_on})")
         except Exception as ex:
             logger.error(f"❌ Credential acquisition FAILED: {ex}")
@@ -416,7 +419,7 @@ async def lifespan(app: FastAPI):
         if cosmos_endpoint:
             try:
                 from azure.cosmos import CosmosClient
-                cosmos_client = CosmosClient(cosmos_endpoint, credential=credential)
+                cosmos_client = await asyncio.to_thread(CosmosClient, cosmos_endpoint, credential=credential)
                 db = cosmos_client.get_database_client("BankingDemo")
                 cosmos_chat_container = db.get_container_client("ChatSessions")
                 logger.info("💾 Cosmos chat persistence ready")
@@ -444,6 +447,21 @@ app.add_middleware(
 
 FastAPIInstrumentor.instrument_app(app)
 HTTPXClientInstrumentor().instrument()
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    from fastapi.responses import JSONResponse
+    correlation_id = structlog.contextvars.get_contextvars().get("correlation_id", uuid.uuid4().hex)
+    logger.error("Unhandled exception", error=str(exc), path=request.url.path, exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": type(exc).__name__,
+            "message": f"Internal server error. Correlation ID: {correlation_id}",
+            "status_code": 500,
+        },
+    )
 
 
 class ChatRequest(BaseModel):
@@ -531,7 +549,7 @@ async def get_chat_history(user_id: str, user: UserContext = Depends(verify_jwt)
     """Load persisted chat history for the authenticated user."""
     if user.user_id != user_id and user.role.lower() != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot access another user's history")
-    messages = _load_chat_history(user_id)
+    messages = await _load_chat_history(user_id)
     return {"messages": messages}
 
 
@@ -557,7 +575,7 @@ async def ready():
     if AGENT_FRAMEWORK_AVAILABLE and DefaultAzureCredential:
         try:
             credential = DefaultAzureCredential()
-            token = credential.get_token("https://cognitiveservices.azure.com/.default")
+            token = await asyncio.to_thread(credential.get_token, "https://cognitiveservices.azure.com/.default")
             checks["azure_credential"] = token is not None
         except Exception:
             checks["azure_credential"] = False

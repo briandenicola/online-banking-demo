@@ -279,8 +279,10 @@ async def process_events(partition_context, event):
         
         await partition_context.update_checkpoint(event)
     
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        logger.error(f"Error processing event (malformed data): {e}")
     except Exception as e:
-        logger.error(f"Error processing event: {e}")
+        logger.error(f"Unexpected error processing event: {e}", exc_info=True)
 
 
 @app.on_event("startup")
@@ -294,15 +296,16 @@ async def startup_event():
         logger.info("Validating Azure OpenAI (Foundry) Embeddings connectivity...")
         try:
             credential = DefaultAzureCredential()
-            token = await credential.get_token("https://cognitiveservices.azure.com/.default")
+            token = await asyncio.to_thread(credential.get_token, "https://cognitiveservices.azure.com/.default")
             logger.info(f"✅ Azure OpenAI token acquired (expires {token.expires_on})")
             
             # Test embeddings connectivity with a simple ping
             if embeddings_client:
                 try:
-                    test_response = embeddings_client.embed(
+                    test_response = await asyncio.to_thread(
+                        embeddings_client.embed,
                         model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "text-embedding-ada-002"),
-                        input=["ping"]
+                        input=["ping"],
                     )
                     logger.info(f"✅ Azure OpenAI Embeddings connectivity verified - {len(test_response.data[0].embedding)} dimensions")
                 except Exception as ping_ex:
@@ -329,7 +332,7 @@ async def ready():
     if AZURE_AVAILABLE and DefaultAzureCredential:
         try:
             credential = DefaultAzureCredential()
-            token = credential.get_token("https://cognitiveservices.azure.com/.default")
+            token = await asyncio.to_thread(credential.get_token, "https://cognitiveservices.azure.com/.default")
             checks["azure_credential"] = token is not None
         except Exception:
             checks["azure_credential"] = False
@@ -361,6 +364,21 @@ async def categorize(description: str, user: UserContext = Depends(verify_jwt)):
     """Categorize a transaction description"""
     category = await categorize_transaction(description)
     return {"description": description, "category": category}
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    from fastapi.responses import JSONResponse
+    correlation_id = structlog.contextvars.get_contextvars().get("correlation_id", uuid.uuid4().hex)
+    logger.error("Unhandled exception", error=str(exc), path=request.url.path, exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": type(exc).__name__,
+            "message": f"Internal server error. Correlation ID: {correlation_id}",
+            "status_code": 500,
+        },
+    )
 
 
 if __name__ == "__main__":

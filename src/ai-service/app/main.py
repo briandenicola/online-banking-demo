@@ -23,6 +23,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
+import httpx
 import redis.asyncio as redis
 import structlog
 
@@ -610,7 +611,7 @@ def _extract_oid_from_token(token: str) -> str:
         decoded = base64.urlsafe_b64decode(payload)
         claims = json.loads(decoded)
         return claims.get("oid", "")
-    except Exception as e:
+    except (json.JSONDecodeError, ValueError) as e:
         logger.error(f"Failed to decode token payload: {e}")
         return ""
 
@@ -620,12 +621,14 @@ async def _refresh_redis_token(client, credential):
     while True:
         await asyncio.sleep(45 * 60)
         try:
-            token = credential.get_token(REDIS_SCOPE)
+            token = await asyncio.to_thread(credential.get_token, REDIS_SCOPE)
             oid = _extract_oid_from_token(token.token)
             await client.execute_command("AUTH", oid, token.token)
             logger.info("✅ Redis token refreshed")
         except asyncio.CancelledError:
             raise
+        except redis.RedisError as e:
+            logger.warning(f"⚠️ Failed to refresh Redis auth command: {e}")
         except Exception as e:
             logger.warning(f"⚠️ Failed to refresh Redis token: {e}")
 
@@ -641,7 +644,7 @@ async def _create_redis_client():
     if azure_client_id and AGENT_FRAMEWORK_AVAILABLE:
         # Azure Managed Redis uses OSS Cluster mode — must use RedisCluster
         credential = DefaultAzureCredential()
-        token = credential.get_token(REDIS_SCOPE)
+        token = await asyncio.to_thread(credential.get_token, REDIS_SCOPE)
         oid = _extract_oid_from_token(token.token)
         logger.info(f"Using Entra ID token for Redis authentication (OID: {oid})")
 
@@ -695,7 +698,7 @@ async def _fetch_user_category_hints(user_id: str | None) -> list[str]:
                 if hints:
                     logger.info(f"📋 Loaded {len(hints)} category hints for user {user_id}")
                 return hints
-    except Exception as e:
+    except (httpx.RequestError, httpx.HTTPStatusError) as e:
         logger.warning(f"Failed to fetch category hints for user {user_id}: {e}")
     return []
 
@@ -780,7 +783,7 @@ async def score_and_store_transaction(transaction: dict) -> ScoredTransaction:
                     f"(score: {assessment.riskScore:.2f}, flags: {assessment.flags})"
                 )
 
-        except Exception as e:
+        except redis.RedisError as e:
             logger.error(f"Error storing scored transaction: {e}")
 
     return scored_tx
@@ -850,7 +853,7 @@ async def consume_redis_stream(redis_client: redis.Redis):
                         await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
                         _failure_counts.pop(message_id, None)
 
-                    except Exception as e:
+                    except (json.JSONDecodeError, KeyError, ValueError) as e:
                         # Do NOT ACK — message stays in pending list for retry
                         fail_count = _failure_counts.get(message_id, 0) + 1
                         _failure_counts[message_id] = fail_count
@@ -872,7 +875,7 @@ async def consume_redis_stream(redis_client: redis.Redis):
                                     f"Message {message_id} moved to DLQ after "
                                     f"{fail_count} failed attempts"
                                 )
-                            except Exception as dlq_err:
+                            except redis.RedisError as dlq_err:
                                 logger.error(f"Failed to move {message_id} to DLQ: {dlq_err}")
 
         except redis.ConnectionError as e:
@@ -930,7 +933,7 @@ async def lifespan(app: FastAPI):
             _foundry_credential = credential
             _foundry_endpoint = endpoint
             _foundry_model = model_name
-            token = credential.get_token("https://cognitiveservices.azure.com/.default")
+            token = await asyncio.to_thread(credential.get_token, "https://cognitiveservices.azure.com/.default")
             logger.info(f"✅ Azure credential acquired (expires: {token.expires_on})")
 
             risk_agent = FoundryAgent(
@@ -1015,6 +1018,21 @@ FastAPIInstrumentor.instrument_app(app)
 HTTPXClientInstrumentor().instrument()
 
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    from fastapi.responses import JSONResponse
+    correlation_id = structlog.contextvars.get_contextvars().get("correlation_id", uuid.uuid4().hex)
+    logger.error("Unhandled exception", error=str(exc), path=request.url.path, exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": type(exc).__name__,
+            "message": f"Internal server error. Correlation ID: {correlation_id}",
+            "status_code": 500,
+        },
+    )
+
+
 # ============================================================
 # Health Endpoints
 # ============================================================
@@ -1042,7 +1060,7 @@ async def ready():
         try:
             await _redis_client.ping()
             checks["redis"] = True
-        except Exception:
+        except redis.RedisError:
             pass
 
     if _analyzer_pipeline and any(a.enabled for a in _analyzer_pipeline.analyzers):
