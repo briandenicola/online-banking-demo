@@ -617,3 +617,7 @@ After: `"Here are your current balances by account, using masked account numbers
 - Always verify the **exact** downstream URL/path against the producing controller before assuming a deeper auth/identity bug. The #117 JWT-forwarding pattern was a tempting hypothesis but a `git grep` of the controller's routes ruled it out in 30 seconds.
 - The chatbot tool error path swallows the HTTP status code into a generic "couldn't retrieve" message visible to users. Worth considering surfacing the status (or at least logging at error not warning) so the next 4xx vs 5xx is faster to triage from logs alone — current logger emits at WARN with the body truncated to 200 chars, which was sufficient here but only because we re-reproduced from the cluster.
 - Cross-service JSON contract drift (`accountType` vs `type`) silently produced empty fields. Defensive `.get(primary, .get(legacy, default))` is the lightweight fix until a shared schema/types story exists. A future improvement would be Pydantic models for inbound data in chatbot tools, mirroring what frontend already enforces.
+
+---
+
+**2026-05-13 18:17:36Z** — Scribe note: Basher proved your #121 chatbot fix was correct (no revert needed). The Accounts page regression was unrelated (pre-existing Cosmos serializer-casing drift in account-service). Now tracking #124 (Account Opening Agent Stages).

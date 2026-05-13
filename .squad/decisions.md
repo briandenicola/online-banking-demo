@@ -5387,3 +5387,50 @@ For error mapping:
 1. **ai-service `/api/admin/evaluate` returns 422** when the transactions list is empty/non-existent. Background queue then logs an unhandled exception. Worth ai-service-side input validation hardening + a friendlier failure path on the prompt-eval BackgroundService.
 2. **Istio gateway routing** (`cluster-config/istio/gateway/default-ingress.yaml`) only sends `/api/evaluations` to prompt-eval-service. `/api/prompts` falls through to the UI 404. If the UI needs template management, a route addition is required.
 3. **`task cloud:deploy` doesn't trigger rollouts** when the image tag is unchanged (kustomize sees `:latest` as identical). Either bump tags via build, or have the deploy task `kubectl rollout restart` services whose images were just built. Recurring footgun across the team.
+
+---
+
+## Decision: Reader-side OR-pattern for Cosmos casing drift (#121 → #125)
+
+**Status:** ✅ Hot Fix Deployed (long-term fix tracked as #125)
+**Date:** 2026-05-13
+**Author:** Basher
+**Branch/Commit:** squad/p2-wave-3 / fb96f47
+
+### Problem Statement
+
+Accounts page regression: users with camelCase docs in Cosmos show 0 accounts. Root cause: `CosmosAccountRepository` queries filter on `UserId` and `AccountNumber` (PascalCase), but live container has mixed casing:
+- Docs created 2026-05-12: PascalCase
+- Docs created 2026-05-13: camelCase
+- Cosmos WHERE clauses are case-sensitive on property paths
+
+**Misclassification Note:** Turk's #121 chatbot fix is correct and properly shipped. This regression is unrelated and pre-existing.
+
+### Solution
+
+**Hot fix** (deployed to squad/p2-wave-3 / main):
+- `GetAccountsAsync()` now queries `WHERE c.UserId = @v OR c.userId = @v` (both casings)
+- Fixed latent bug: iterator now properly drained (was truncating to first page)
+
+**Long-term fix** (filed as #125, deferred to next wave):
+- Pin `CosmosClientOptions.Serializer` to deterministic camelCase (Newtonsoft)
+- One-shot migration of PascalCase docs to camelCase
+- Remove OR-pattern after migration
+
+### Why Not [Alternative X]
+
+1. **Migrate all docs immediately:** Leaves writer casing ambiguous; if writes flip again, we're back in the same hole. OR-pattern is defensive.
+2. **Add `[JsonProperty("camelName")]` + revert nothing:** Serializer writes camelCase; existing 29 PascalCase docs become unreadable on UPSERT (creates new docs). Breaks any service expecting PascalCase fields.
+3. **Use LINQ `GetItemLinqQueryable<>`:** Still emits single-casing field path; LINQ provider doesn't help.
+4. **Ignore as test data loss:** Bug affects every user provisioned via the `account-opening-service` flow (demo headline feature).
+
+### Deployment & Verification
+
+- Built + deployed + verified live
+- Smoke test: `/api/accounts` for `e2e-default@banking-demo.com` now returns 38+ accounts (previously 0)
+
+### Related Issues
+
+- **#121:** Turk's chatbot fix verified correct (no revert)
+- **#123:** AI dashboard tiles 0 post-purge (Basher follow-up)
+- **#125:** Cosmos serializer cleanup (long-term)
