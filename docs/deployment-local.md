@@ -80,10 +80,10 @@ cp .env.example .env
 
 ```bash
 # JWT Secret - Change from default for production, but default works for local dev
-Jwt__Key=YourSuperSecretKeyForJWTTokenGeneration12345
+JWT_KEY=YourSuperSecretKeyForJWTTokenGeneration12345
 
 # JWT Token Issuer
-Jwt__Issuer=user-service
+JWT_ISSUER=user-service
 ```
 
 #### Database
@@ -103,7 +103,7 @@ UseInMemoryDatabase=true
 # Local Redis - docker-compose runs Redis internally on port 6379
 # Accessible from other containers as 'redis:6379'
 # Externally exposed on 'localhost:6380'
-REDIS__CONNECTIONSTRING=redis:6379
+REDIS_CONNECTION_STRING=redis:6379
 ```
 
 #### Service-to-Service URLs
@@ -148,7 +148,7 @@ If you just want to run the app without AI features:
 
 ```bash
 # Only JWT secret is truly required; docker-compose provides defaults for everything else
-Jwt__Key=YourSuperSecretKeyForJWTTokenGeneration12345
+JWT_KEY=YourSuperSecretKeyForJWTTokenGeneration12345
 UseInMemoryDatabase=true
 ```
 

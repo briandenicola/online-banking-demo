@@ -276,7 +276,7 @@ Pods mount the CSI volume and reference `banking-secrets` for environment variab
 Non-sensitive configuration is stored in `deploy/kustomize/base/configmap.yaml`:
 
 - Inter-service URLs (`Services__AccountService`, `Services__TransactionService`)
-- Cosmos DB endpoint (`CosmosDb__Endpoint`)
+- Cosmos DB endpoint (`COSMOS_DB_ENDPOINT`)
 - OTEL collector endpoint
 - `task cloud:infra:config` patches the Cosmos DB endpoint from Terraform output
 

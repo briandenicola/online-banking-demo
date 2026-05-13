@@ -89,7 +89,7 @@ init_telemetry()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    cosmos_endpoint = os.getenv("CosmosDb__Endpoint")
+    cosmos_endpoint = os.getenv("COSMOS_DB_ENDPOINT")
     is_production = bool(os.getenv("AZURE_CLIENT_ID"))
     if cosmos_endpoint and cosmos_endpoint != "REPLACE_WITH_COSMOS_ENDPOINT":
         try:
@@ -121,7 +121,7 @@ async def lifespan(app: FastAPI):
             logger.warning("Unexpected Cosmos DB init error, falling back to in-memory", error=str(exc))
             app.state.repository = InMemoryApplicationRepository()
     else:
-        logger.warning("CosmosDb__Endpoint not set — using in-memory repository")
+        logger.warning("COSMOS_DB_ENDPOINT not set — using in-memory repository")
         app.state.repository = InMemoryApplicationRepository()
 
     app.state.redis = await create_redis_client()

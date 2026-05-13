@@ -61,7 +61,7 @@ The Online Banking Demo is a microservices-based banking platform built on .NET 
    
 2. User Service returns JWT token:
    - Issuer: "user-service"
-   - Key: Environment variable (Jwt__Key)
+   - Key: Environment variable (JWT_KEY, mapped to Jwt__Key for .NET services)
    - Contains: user_id, email, roles
    
 3. Client includes Bearer token in Authorization header:

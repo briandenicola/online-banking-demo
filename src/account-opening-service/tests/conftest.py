@@ -11,7 +11,7 @@ from jose import jwt
 
 # JWT settings matching user-service appsettings.json
 JWT_SECRET = os.getenv(
-    "JWT_SECRET", "YourSuperSecretKeyForJWTTokenGeneration12345"
+    "JWT_KEY", "YourSuperSecretKeyForJWTTokenGeneration12345"
 )
 JWT_ALGORITHM = "HS256"
 JWT_ISSUER = "user-service"

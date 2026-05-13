@@ -95,7 +95,7 @@ async def create_redis_client() -> aioredis.Redis | aioredis.RedisCluster | None
     In Azure (AZURE_CLIENT_ID set): uses RedisCluster with Entra ID auth.
     Locally: uses plain Redis client from connection string.
     """
-    conn_str = os.getenv("REDIS__CONNECTIONSTRING", "redis:6379")
+    conn_str = os.getenv("REDIS_CONNECTION_STRING", "redis:6379")
     parsed = _parse_redis_connection_string(conn_str)
 
     if os.getenv("AZURE_CLIENT_ID"):

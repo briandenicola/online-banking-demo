@@ -26,9 +26,9 @@ dotnet run
 |----------|-------------|---------|
 | `FOUNDRY_PROJECT_ENDPOINT` | Azure AI Foundry endpoint | `https://xxx.services.ai.azure.com` |
 | `FOUNDRY_MODEL` | Model deployment name | `gpt-5.4-mini` |
-| `CosmosDb__Endpoint` | Cosmos DB endpoint | `https://xxx.documents.azure.com:443/` |
+| `COSMOS_DB_ENDPOINT` | Cosmos DB endpoint | `https://xxx.documents.azure.com:443/` |
 | `CosmosDb__DatabaseId` | Cosmos DB database name | `banking-demo` |
-| `JWT__SecretKey` | JWT signing key (local dev) | `your-secret-key` |
+| `JWT_KEY` | JWT signing key (local dev) | `your-secret-key` |
 | `AI_SERVICE_URL` | ai-service base URL | `http://ai-service:80` |
 
 ## Key Workflows

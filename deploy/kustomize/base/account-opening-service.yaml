@@ -38,7 +38,7 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: appinsights-connection-string
-        - name: REDIS__CONNECTIONSTRING
+        - name: REDIS_CONNECTION_STRING
           valueFrom:
             secretKeyRef:
               name: banking-secrets
@@ -55,13 +55,18 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: content-understanding-endpoint
-        - name: Jwt__Key
+        - name: JWT_KEY
           valueFrom:
             secretKeyRef:
               name: banking-secrets
               key: jwt-key
-        - name: Jwt__Issuer
+        - name: JWT_ISSUER
           value: "user-service"
+        - name: COSMOS_DB_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: banking-demo-config
+              key: COSMOS_DB_ENDPOINT
         envFrom:
         - configMapRef:
             name: banking-demo-config
@@ -167,7 +172,7 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: appinsights-connection-string
-        - name: REDIS__CONNECTIONSTRING
+        - name: REDIS_CONNECTION_STRING
           valueFrom:
             secretKeyRef:
               name: banking-secrets
@@ -184,13 +189,18 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: content-understanding-endpoint
-        - name: Jwt__Key
+        - name: JWT_KEY
           valueFrom:
             secretKeyRef:
               name: banking-secrets
               key: jwt-key
-        - name: Jwt__Issuer
+        - name: JWT_ISSUER
           value: "user-service"
+        - name: COSMOS_DB_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: banking-demo-config
+              key: COSMOS_DB_ENDPOINT
         - name: AGENT_ID_SIDECAR_URL
           value: "http://localhost:8080"
         envFrom:

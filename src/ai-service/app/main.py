@@ -636,7 +636,7 @@ async def _refresh_redis_token(client, credential):
 async def _create_redis_client():
     """Create a Redis client supporting both Azure Managed Redis (Entra ID cluster)
     and local docker-compose connections (standard single-node)."""
-    conn_str = os.getenv("REDIS__CONNECTIONSTRING", "redis:6379")
+    conn_str = os.getenv("REDIS_CONNECTION_STRING", "redis:6379")
     parsed = _parse_redis_connection_string(conn_str)
 
     azure_client_id = os.getenv("AZURE_CLIENT_ID")

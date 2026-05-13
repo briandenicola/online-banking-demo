@@ -61,10 +61,10 @@ def _admin_token() -> str:
 
 @pytest.fixture
 def client():
-    """Create a test client with Jwt__Key configured."""
-    os.environ["Jwt__Key"] = JWT_SECRET
-    os.environ["Jwt__Issuer"] = JWT_ISSUER
-    os.environ["Jwt__Audience"] = JWT_AUDIENCE
+    """Create a test client with JWT_KEY configured."""
+    os.environ["JWT_KEY"] = JWT_SECRET
+    os.environ["JWT_ISSUER"] = JWT_ISSUER
+    os.environ["JWT_AUDIENCE"] = JWT_AUDIENCE
     from app.main import app
     return TestClient(app, raise_server_exceptions=False)
 

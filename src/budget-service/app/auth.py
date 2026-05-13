@@ -4,10 +4,10 @@ Shared JWT authentication module for Python/FastAPI services.
 Validates JWTs issued by the .NET user-service using symmetric HMAC-SHA256.
 This is the canonical source — copies live in each service's app/auth.py.
 
-Config env vars (matching .NET Jwt__ convention):
-  Jwt__Key       — HMAC signing key (required)
-  Jwt__Issuer    — expected issuer (default: user-service)
-  Jwt__Audience  — expected audience (default: banking-demo)
+Config env vars (SCREAMING_SNAKE_CASE):
+  JWT_KEY       — HMAC signing key (required)
+  JWT_ISSUER    — expected issuer (default: user-service)
+  JWT_AUDIENCE  — expected audience (default: banking-demo)
 """
 
 import logging
@@ -33,18 +33,18 @@ class UserContext:
 
 
 def _get_jwt_key() -> str:
-    key = os.environ.get("Jwt__Key", "")
+    key = os.environ.get("JWT_KEY", "")
     if not key:
-        raise RuntimeError("Jwt__Key environment variable is not set")
+        raise RuntimeError("JWT_KEY environment variable is not set")
     return key
 
 
 def _get_jwt_issuer() -> str:
-    return os.environ.get("Jwt__Issuer", "user-service")
+    return os.environ.get("JWT_ISSUER", "user-service")
 
 
 def _get_jwt_audience() -> str:
-    return os.environ.get("Jwt__Audience", "banking-demo")
+    return os.environ.get("JWT_AUDIENCE", "banking-demo")
 
 
 def _decode_token(token: str) -> dict:

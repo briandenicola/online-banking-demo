@@ -415,7 +415,7 @@ async def lifespan(app: FastAPI):
             return
 
         # Initialize Cosmos DB for chat persistence
-        cosmos_endpoint = os.getenv("CosmosDb__Endpoint")
+        cosmos_endpoint = os.getenv("COSMOS_DB_ENDPOINT")
         if cosmos_endpoint:
             try:
                 from azure.cosmos import CosmosClient
