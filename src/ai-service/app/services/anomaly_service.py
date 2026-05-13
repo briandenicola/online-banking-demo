@@ -8,13 +8,14 @@ import json
 import os
 import uuid
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 import redis.asyncio as redis
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from opentelemetry import trace
 
 from app.config import AGENT_FRAMEWORK_AVAILABLE, Agent, DefaultAzureCredential, FoundryAgent, FoundryChatClient
@@ -33,14 +34,18 @@ SCORED_TRANSACTION_PREFIX = "scored-tx:"
 SCORED_TX_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
 FLAGGING_THRESHOLD = 0.7
 
-# Module-level state
-_redis_client: Optional[redis.Redis] = None
-_analyzer_pipeline: Optional["AnalyzerPipeline"] = None
-_foundry_credential = None
-_foundry_endpoint: Optional[str] = None
-_foundry_model: Optional[str] = None
-_ai_calls_today: int = 0
-_ai_calls_date: str = ""
+@dataclass
+class AnomalyState:
+    redis_client: Optional[redis.Redis] = None
+    analyzer_pipeline: Optional["AnalyzerPipeline"] = None
+    foundry_credential: Any = None
+    foundry_endpoint: Optional[str] = None
+    foundry_model: Optional[str] = None
+    token_refresh_task: Optional[asyncio.Task] = None
+
+
+def get_anomaly_state(request: Request) -> AnomalyState:
+    return request.app.state.anomaly_state
 
 
 class BaseAnalyzer(abc.ABC):
@@ -106,6 +111,9 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
     def __init__(self):
         self._agent: Optional["FoundryAgent"] = None
         self._ready = False
+        self._ai_calls_today = 0
+        self._ai_calls_date = ""
+        self._ai_calls_lock = asyncio.Lock()
 
     @property
     def name(self) -> str:
@@ -121,12 +129,11 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
         self._ready = True
 
     async def analyze(self, transaction: dict) -> RiskAssessment:
-        global _ai_calls_today, _ai_calls_date
-
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        if _ai_calls_date != today:
-            _ai_calls_today = 0
-            _ai_calls_date = today
+        async with self._ai_calls_lock:
+            if self._ai_calls_date != today:
+                self._ai_calls_today = 0
+                self._ai_calls_date = today
 
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("foundry.risk-assessment") as span:
@@ -151,8 +158,10 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
                 session = self._agent.create_session()
                 response = await self._agent.run(user_message, session=session)
 
-                _ai_calls_today += 1
-                span.set_attribute("ai.calls_today", _ai_calls_today)
+                async with self._ai_calls_lock:
+                    self._ai_calls_today += 1
+                    calls_today = self._ai_calls_today
+                span.set_attribute("ai.calls_today", calls_today)
 
                 result = self._parse_response(str(response))
                 span.set_attribute("risk.score", result.riskScore)
@@ -166,6 +175,10 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
                     explanation="AI scoring unavailable — assigned default moderate risk",
                     flags=["ai_unavailable"]
                 )
+
+    @property
+    def ai_calls_today(self) -> int:
+        return self._ai_calls_today
 
     def _parse_response(self, response: str) -> RiskAssessment:
         """Parse the AI response into a RiskAssessment."""
@@ -331,6 +344,15 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
             )
 
 
+def get_ai_calls_today(analyzer_pipeline: Optional["AnalyzerPipeline"]) -> int:
+    if not analyzer_pipeline:
+        return 0
+    for analyzer in analyzer_pipeline.analyzers:
+        if isinstance(analyzer, FoundryRiskAnalyzer):
+            return analyzer.ai_calls_today
+    return 0
+
+
 class AnalyzerPipeline:
     """Pipeline for combining multiple analyzers."""
 
@@ -397,7 +419,6 @@ class AnalyzerPipeline:
 # ============================================================
 
 REDIS_SCOPE = "acca5fbb-b7e4-4009-81f1-37e38fd66d78/.default"
-_token_refresh_task: Optional[asyncio.Task] = None
 
 
 def _parse_redis_connection_string(conn_str: str) -> dict:
@@ -463,7 +484,7 @@ async def _refresh_redis_token(client, credential):
             logger.warning(f"⚠️ Failed to refresh Redis token: {e}")
 
 
-async def _create_redis_client():
+async def _create_redis_client() -> tuple[redis.Redis, Optional[asyncio.Task]]:
     """Create a Redis client supporting both Azure Managed Redis (Entra ID cluster)
     and local docker-compose connections (standard single-node)."""
     conn_str = os.getenv("REDIS_CONNECTION_STRING", "redis:6379")
@@ -488,9 +509,8 @@ async def _create_redis_client():
             decode_responses=True,
         )
 
-        global _token_refresh_task
-        _token_refresh_task = asyncio.create_task(_refresh_redis_token(client, credential))
-        return client
+        token_refresh_task = asyncio.create_task(_refresh_redis_token(client, credential))
+        return client, token_refresh_task
 
     # Local dev: standard single-node Redis
     kwargs = {
@@ -505,7 +525,7 @@ async def _create_redis_client():
         kwargs["password"] = parsed["password"]
 
     logger.info("Using connection string for Redis authentication (local dev)")
-    return redis.Redis(**kwargs)
+    return redis.Redis(**kwargs), None
 
 
 # ============================================================
@@ -533,14 +553,20 @@ async def _fetch_user_category_hints(user_id: str | None) -> list[str]:
     return []
 
 
-async def score_and_store_transaction(transaction: dict) -> ScoredTransaction:
+async def score_and_store_transaction(
+    transaction: dict,
+    analyzer_pipeline: "AnalyzerPipeline",
+    redis_client: Optional[redis.Redis],
+) -> ScoredTransaction:
     """Categorize and score a transaction, then store results."""
+    if not analyzer_pipeline:
+        raise ValueError("Analyzer pipeline not initialized")
 
     # Step 1: Categorize first (separate concern from risk)
     existing_category = transaction.get("category", "")
     if not existing_category or existing_category == "Uncategorized":
         user_hints = await _fetch_user_category_hints(transaction.get("userId"))
-        cat_result = await _analyzer_pipeline.categorize(transaction, hints=user_hints or None)
+        cat_result = await analyzer_pipeline.categorize(transaction, hints=user_hints or None)
         category = cat_result.category
         logger.info(
             f"🏷️ Categorized transaction: {category} "
@@ -555,7 +581,7 @@ async def score_and_store_transaction(transaction: dict) -> ScoredTransaction:
     transaction_with_category = {**transaction, "category": category}
 
     # Step 2: Score for risk (uses category context)
-    assessment = await _analyzer_pipeline.assess(transaction_with_category)
+    assessment = await analyzer_pipeline.assess(transaction_with_category)
     logger.info(
         f"📊 Scored transaction: risk={assessment.riskScore:.2f}, "
         f"flags={assessment.flags}, explanation={assessment.explanation[:80]}"
@@ -583,12 +609,12 @@ async def score_and_store_transaction(transaction: dict) -> ScoredTransaction:
     )
 
     # Store in Redis
-    if _redis_client:
+    if redis_client:
         scored_key = f"{SCORED_TRANSACTION_PREFIX}{scored_id}"
-        await _redis_client.set(scored_key, scored_tx.json(), ex=SCORED_TX_TTL_SECONDS)
+        await redis_client.set(scored_key, scored_tx.json(), ex=SCORED_TX_TTL_SECONDS)
 
         # Add to sorted set (by score)
-        await _redis_client.zadd(SCORED_TRANSACTIONS_KEY, {scored_id: assessment.riskScore})
+        await redis_client.zadd(SCORED_TRANSACTIONS_KEY, {scored_id: assessment.riskScore})
 
         # If high risk, flag it
         if assessment.riskScore >= FLAGGING_THRESHOLD:
@@ -605,14 +631,14 @@ async def score_and_store_transaction(transaction: dict) -> ScoredTransaction:
                 "status": "pending",
             }
             flagged_key = f"{FLAGGED_TRANSACTION_PREFIX}{scored_id}"
-            await _redis_client.set(flagged_key, json.dumps(flagged_tx))
-            await _redis_client.zadd(FLAGGED_TRANSACTIONS_KEY, {scored_id: assessment.riskScore})
+            await redis_client.set(flagged_key, json.dumps(flagged_tx))
+            await redis_client.zadd(FLAGGED_TRANSACTIONS_KEY, {scored_id: assessment.riskScore})
             logger.info(f"🚩 Transaction flagged for review: {scored_id}")
 
     return scored_tx
 
 
-async def consume_redis_stream(redis_client: redis.Redis):
+async def consume_redis_stream(redis_client: redis.Redis, analyzer_pipeline: "AnalyzerPipeline"):
     """Consume transactions from Redis Stream and analyze them."""
     await redis_client.xgroup_create(name=STREAM_NAME, groupname=CONSUMER_GROUP, id="0", mkstream=True)
     backoff = 1
@@ -650,7 +676,7 @@ async def consume_redis_stream(redis_client: redis.Redis):
 
                             logger.info(f"Processing event: {event_type}")
 
-                            scored = await score_and_store_transaction(data)
+                            scored = await score_and_store_transaction(data, analyzer_pipeline, redis_client)
                             logger.info(
                                 f"Scored transaction {scored.transactionId}: "
                                 f"risk={scored.riskScore:.2f}"
@@ -711,14 +737,15 @@ async def consume_redis_stream(redis_client: redis.Redis):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: initialize analyzer pipeline and start consumer."""
-    global _redis_client, _analyzer_pipeline, _foundry_credential, _foundry_endpoint, _foundry_model
+    state = AnomalyState()
+    app.state.anomaly_state = state
 
     logger.info("=" * 60)
     logger.info("🔍 Anomaly Detection Service — Startup (v2.0 Foundry)")
     logger.info("=" * 60)
 
     # Initialize analyzer pipeline
-    _analyzer_pipeline = AnalyzerPipeline()
+    state.analyzer_pipeline = AnalyzerPipeline()
 
     # Initialize Foundry analyzer
     endpoint = (
@@ -737,9 +764,9 @@ async def lifespan(app: FastAPI):
     if endpoint and AGENT_FRAMEWORK_AVAILABLE:
         try:
             credential = DefaultAzureCredential()
-            _foundry_credential = credential
-            _foundry_endpoint = endpoint
-            _foundry_model = model_name
+            state.foundry_credential = credential
+            state.foundry_endpoint = endpoint
+            state.foundry_model = model_name
             token = await asyncio.to_thread(credential.get_token, "https://cognitiveservices.azure.com/.default")
             logger.info(f"✅ Azure credential acquired (expires: {token.expires_on})")
 
@@ -769,8 +796,8 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("⚠️ Foundry not available — using fallback scoring")
 
-    _analyzer_pipeline.register(foundry_analyzer)
-    _analyzer_pipeline.register_categorizer(foundry_categorizer)
+    state.analyzer_pipeline.register(foundry_analyzer)
+    state.analyzer_pipeline.register_categorizer(foundry_categorizer)
 
     # Future analyzers/categorizers can be registered here:
     # _analyzer_pipeline.register(EvalAnalyzer())
@@ -778,8 +805,9 @@ async def lifespan(app: FastAPI):
     # _analyzer_pipeline.register_categorizer(UserHintCategorizer())
 
     # Initialize Redis
-    redis_client = await _create_redis_client()
-    _redis_client = redis_client
+    redis_client, token_refresh_task = await _create_redis_client()
+    state.redis_client = redis_client
+    state.token_refresh_task = token_refresh_task
 
     try:
         await redis_client.ping()
@@ -788,7 +816,7 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Redis connection failed: {e}")
 
     # Start the consumer as a background task
-    consumer_task = asyncio.create_task(consume_redis_stream(redis_client))
+    consumer_task = asyncio.create_task(consume_redis_stream(redis_client, state.analyzer_pipeline))
     logger.info("🟢 Anomaly detection service ready — consuming from Redis Stream")
     logger.info("=" * 60)
 
@@ -796,11 +824,11 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     consumer_task.cancel()
-    if _token_refresh_task:
-        _token_refresh_task.cancel()
+    if state.token_refresh_task:
+        state.token_refresh_task.cancel()
     try:
         await consumer_task
     except asyncio.CancelledError:
         pass
     await redis_client.aclose()
-    _redis_client = None
+    state.redis_client = None
