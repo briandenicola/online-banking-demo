@@ -43,17 +43,20 @@ describe('Account Opening API', () => {
       dateOfBirth: '1990-01-15',
       email: 'jane@example.com',
       phone: '555-0100',
-      ssnLastFour: '1234',
-      street: '123 Main St',
-      city: 'Springfield',
-      state: 'IL',
-      zip: '62701',
-      employer: 'Acme Corp',
-      title: 'Engineer',
-      annualIncome: 85000,
-      employmentStatus: 'employed',
+      ssn: '1234',
+      address: {
+        street: '123 Main St',
+        city: 'Springfield',
+        state: 'IL',
+        zip: '62701',
+        country: 'US',
+      },
+      employment: {
+        employer: 'Acme Corp',
+        title: 'Engineer',
+        annualIncome: 85000,
+      },
       accountType: 'checking' as const,
-      initialDeposit: 500,
     };
 
     test('calls POST /account-opening/applications with application data', async () => {

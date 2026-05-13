@@ -544,3 +544,27 @@ From frontend code quality audits conducted in 2025-07:
 
 For specific dates and detailed fixes from these entries, refer to the dated learning sections (###) above.
 
+
+## Learnings — 2026-05-13 — issue #127 (Account Opening 422 + React #31)
+
+**The FastAPI 422 `detail` array gotcha** — Pydantic validation errors come back as
+`{ detail: [{ type, loc, msg, input, ctx }, ...] }`. The previous `resolveSubmitError`
+returned `error.response.data.detail` directly, which set React state to an array of
+objects. Rendering that in JSX trips React error #31 (objects are not valid as a
+React child) and falls through to ErrorBoundary, producing a white screen. **Always
+coerce to string before `setSubmitError(...)`** — and always type the resolver as
+`(error: unknown) => string` so the compiler catches the regression.
+
+This pattern is going to bite us again on every other Pydantic-validated POST:
+- `account-service` (transfer/account create endpoints — .NET ProblemDetails shape, but the form-level `setError` fallback is the same risk)
+- `transfer-service` (.NET — ProblemDetails returns `errors: { field: ["msg"] }`)
+- `chatbot-service`, `budget-service`, `ai-service`, `account-opening-service` (all FastAPI — array `detail`)
+
+**Reusable pattern landed:** `src/ui-app/src/api/errors.ts` exports `resolveApiError(error, fallback)`
+which handles: string detail, array detail (FastAPI), `message`/`title`, ProblemDetails
+`errors` map. Tested in `errors.test.ts`. Use it from every form's catch block.
+
+**Wire-vs-form payload separation** — the form's `FormState` / `ApplicationFormData`
+is a flat UI-friendly shape. The backend wire contract (`ApplicationCreateRequest`)
+is nested. Keep them as separate TypeScript types and convert at the API boundary
+(`buildCreateRequest`). Conflating them is what let the contract drift unnoticed.

@@ -35,6 +35,37 @@ export interface ApplicationFormData {
   initialDeposit?: number;
 }
 
+/**
+ * Wire-shape payload for POST /account-opening/applications.
+ * Mirrors the FastAPI `ApplicationCreate` model in
+ * `src/account-opening-service/app/models/__init__.py` — keep these in sync.
+ */
+export interface AddressPayload {
+  street: string;
+  city: string;
+  state: string;
+  zip: string;
+  country: string;
+}
+
+export interface EmploymentPayload {
+  employer: string;
+  title: string;
+  annualIncome: number;
+}
+
+export interface ApplicationCreateRequest {
+  firstName: string;
+  lastName: string;
+  dateOfBirth: string;
+  email: string;
+  phone: string;
+  ssn: string;
+  address: AddressPayload;
+  employment?: EmploymentPayload;
+  accountType: AccountType;
+}
+
 export interface AgentStage {
   name: string;
   status: 'pending' | 'in_progress' | 'completed' | 'failed';
@@ -80,7 +111,7 @@ export interface ReviewDecisionRequest {
   notes?: string;
 }
 
-export const createApplication = async (applicationData: ApplicationFormData): Promise<ApplicationResponse> => {
+export const createApplication = async (applicationData: ApplicationCreateRequest): Promise<ApplicationResponse> => {
   const response = await apiClient.post('/account-opening/applications', applicationData);
   return response.data;
 };

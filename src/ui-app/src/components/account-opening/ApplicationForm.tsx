@@ -14,9 +14,11 @@ import {
 } from '@mui/material';
 import {
   ApplicationFormData as ApiApplicationFormData,
+  ApplicationCreateRequest,
   ApplicationResponse,
   createApplication,
 } from '../../api/accountOpening';
+import { resolveApiError } from '../../api/errors';
 
 export type ApplicationFormData = ApiApplicationFormData;
 
@@ -288,6 +290,31 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
     };
   };
 
+  // Wire-shape payload for the backend. Backend `ApplicationCreate` requires
+  // nested `address` (with country) and `employment`, and field name `ssn`.
+  // Country is hard-coded to 'US' until a country picker is added (see #127).
+  const buildCreateRequest = (formData: ApplicationFormData): ApplicationCreateRequest => ({
+    firstName: formData.firstName,
+    lastName: formData.lastName,
+    dateOfBirth: formData.dateOfBirth,
+    email: formData.email,
+    phone: (formData.phone ?? '').trim(),
+    ssn: (formData.ssnLastFour ?? '').trim(),
+    address: {
+      street: (formData.street ?? '').trim(),
+      city: (formData.city ?? '').trim(),
+      state: (formData.state ?? '').trim(),
+      zip: (formData.zip ?? '').trim(),
+      country: 'US',
+    },
+    employment: {
+      employer: (formData.employer ?? '').trim(),
+      title: (formData.title ?? '').trim(),
+      annualIncome: Number(formData.annualIncome ?? 0),
+    },
+    accountType: formData.accountType,
+  });
+
   const handleNext = () => {
     if (validateStep(activeStep)) {
       setActiveStep((prev) => prev + 1);
@@ -298,11 +325,6 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
     setActiveStep((prev) => prev - 1);
   };
 
-  const resolveSubmitError = (error: unknown) =>
-    (error as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.detail ||
-    (error as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.message ||
-    'Failed to submit application. Please try again.';
-
   const handleSubmit = async () => {
     if (!validateStep(activeStep)) return;
     const payload = buildPayload();
@@ -311,10 +333,10 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
     try {
       await Promise.resolve(onSubmit?.(payload));
       if (resolvedMode === 'simple') return;
-      const application = await createApplication(payload);
+      const application = await createApplication(buildCreateRequest(payload));
       onApplicationCreated?.(application);
     } catch (error: unknown) {
-      setSubmitError(resolveSubmitError(error));
+      setSubmitError(resolveApiError(error, 'Failed to submit application. Please try again.'));
     } finally {
       setSubmitting(false);
     }

@@ -17,6 +17,7 @@ import ApplicationForm from '../components/account-opening/ApplicationForm';
 import DocumentUpload from '../components/account-opening/DocumentUpload';
 import ApplicationStatus, { ApplicationStatusData } from '../components/account-opening/ApplicationStatus';
 import {
+  ApplicationCreateRequest,
   ApplicationFormData,
   ApplicationResponse,
   createApplication,
@@ -50,7 +51,33 @@ const AccountOpeningPage: React.FC = () => {
   };
 
   const handleSimpleSubmit = async (payload: ApplicationFormData) => {
-    const response = await createApplication(payload);
+    // Simple-mode form lacks several backend-required fields; build a best-effort
+    // wire payload. Simple mode is only used in tests (see formMode below);
+    // production uses the full form which builds its own ApplicationCreateRequest.
+    const wirePayload: ApplicationCreateRequest = {
+      firstName: payload.firstName,
+      lastName: payload.lastName,
+      dateOfBirth: payload.dateOfBirth,
+      email: payload.email,
+      phone: (payload.phone ?? '').trim(),
+      ssn: (payload.ssnLastFour ?? '').trim(),
+      address: {
+        street: (payload.street ?? payload.address ?? '').trim(),
+        city: (payload.city ?? '').trim(),
+        state: (payload.state ?? '').trim(),
+        zip: (payload.zip ?? payload.zipCode ?? '').trim(),
+        country: 'US',
+      },
+      employment: payload.employer || payload.employment
+        ? {
+            employer: (payload.employer ?? payload.employment ?? '').trim(),
+            title: (payload.title ?? '').trim(),
+            annualIncome: Number(payload.annualIncome ?? 0),
+          }
+        : undefined,
+      accountType: payload.accountType,
+    };
+    const response = await createApplication(wirePayload);
     setApplication(response);
     setStatusData(null);
     setCreatedViaSimpleForm(true);
