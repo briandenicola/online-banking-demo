@@ -5701,3 +5701,51 @@ flagged: 27 → 44 (high-risk replays caught and flagged correctly)
 - **#119:** Redis purge — done, this is the unmasked latent bug
 - **#125:** Cosmos casing serializer fix — orthogonal, still pending
 - **#120:** systemPrompt exposure — unrelated, already shipped
+
+---
+
+## 2026-05-13 Linus — #129 Ship
+
+### Decision: Account Opening Phone Mask + Email Pre-fill (#129)
+
+**Status:** ✅ Implemented  
+**Date:** 2026-05-13  
+**Author:** Linus (Frontend Dev)  
+**Issue:** #129  
+**Commits:** c834253, 6ec9be1  
+**Tests:** 15/15 pass  
+
+Two UX polish items shipped for Account Opening form (`ApplicationForm.tsx`):
+
+**1. Phone Input Mask**
+- Hand-rolled ~30 lines (no new deps)
+- Restricts input to digits, `+`, space, `-`, `(`, `)`, `.`
+- US format mask: `(555) 123-4567`
+- International entries preserve leading `+` (bypasses US mask)
+- Strip non-allowed chars on paste
+- Validation on blur: inline error if value doesn't match backend regex `^\+?[\d\s\-().]{7,30}$`
+- Server-side 422 surfaces unchanged (defense-in-depth)
+- Both phone fields (full mode step 0, simple mode step 1) updated with `onBlur={handlePhoneBlur}` + placeholder
+
+**2. Email Pre-fill from Auth Context**
+- Pattern: `useAuthContext()` from `src/ui-app/src/contexts/AuthContext.tsx`
+- **State-init pattern (no flicker):** Initializes form state as `React.useState(() => { ... if (!initial.email && user?.email) initial.email = user.email; ... })`
+- Defensive fallback if `user?.email` is null/undefined
+- Field remains editable (user can change if needed)
+- **Test requirement:** All test cases must wrap `ApplicationForm` in `<AuthProvider>` — the hook throws "must be used within AuthProvider" otherwise
+- All 3 submission tests + helper `renderForm` wrapped (15/15 pass)
+
+**Implementation Files:**
+- `src/ui-app/src/components/account-opening/ApplicationForm.tsx` (+67 lines: phone formatter, validator, state init)
+- `src/ui-app/src/components/account-opening/ApplicationForm.test.tsx` (+4 wraps: `<AuthProvider>`)
+
+**Auth Context Notes for Future Agents:**
+- Hook: `useAuthContext()` from `src/ui-app/src/contexts/AuthContext.tsx`
+- User shape: `{ id, email, firstName, lastName, role }`
+- Provider: `<AuthProvider>` wraps app root at `src/ui-app/src/App.tsx`
+- Pattern for other forms needing email pre-fill:
+  ```typescript
+  const { user } = useAuthContext();
+  const [email, setEmail] = React.useState(() => initialValue || user?.email || '');
+  ```
+- Always wrap test components using `useAuthContext` in `<AuthProvider>`

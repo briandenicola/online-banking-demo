@@ -603,3 +603,12 @@ mocks, just wrap in the real provider. 15/15 tests passed after adding the wrapp
 isn't harassed mid-type, but still sees the error before submitting. Pattern:
 `handlePhoneBlur()` sets `errors.phone` if `validatePhoneFormat(values.phone)` fails.
 Client-side regex must match backend regex exactly to avoid false positives.
+
+### 2026-05-13 — Form Pre-fill from Auth Context (#129)
+- **Pattern:** Use `useAuthContext()` hook for reactive form initialization without flicker
+- **Implementation:** State-init pattern via `React.useState(() => { ... const { user } = useAuthContext(); ... })` 
+- **Key:** Initialize in the state-init callback (not `useEffect`) to avoid re-render on mount
+- **Defensive:** Always check `user?.email` and fall back to empty string (`user?.email || ''`) — avoid assuming auth state exists
+- **Test wrapper requirement:** Any component using `useAuthContext()` must be wrapped in `<AuthProvider>` during tests or will throw "must be used within AuthProvider"
+- **Reusable:** For future forms needing user-derived pre-fills (email, firstName, phone, etc.), import `useAuthContext` from `src/ui-app/src/contexts/AuthContext.tsx` and follow this pattern
+- **Phone input mask:** Hand-rolled ~30 lines. Formatter restricts to `[\d\+\-() .]`, applies US mask `(555) 123-4567` unless international (`+`), strips invalid chars on paste. Validator checks backend regex `^\+?[\d\s\-().]{7,30}$` on blur.
