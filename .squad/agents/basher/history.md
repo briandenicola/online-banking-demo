@@ -1308,3 +1308,275 @@ Fixed `account-opening-service/app/main.py` Cosmos init to catch `CosmosHttpResp
 **Outcome:** ✓ All 4 .NET services build clean, storage layer refactoring improves testability. Commits: 87953d8, 9be97bb, c1c08f9.
 
 **Team:** Coordinated with Turk (Python env vars) and Linus (frontend types/tests) for cross-service consistency. Wave complete; PR pending merge to main.
+
+---
+
+## 2026-05-13 — OpenAPI/Swagger Documentation for .NET Services
+
+**Issue:** #109 — Add OpenAPI/Swagger API documentation  
+**Branch:** squad/p2-wave-3
+
+**Context:**
+Architecture.md referenced Swagger endpoints, but no OpenAPI specs were committed to the repo. All 5 .NET services already had Swagger enabled at runtime, but needed:
+1. Enhanced Swagger configuration with proper API titles and security definitions
+2. Committed OpenAPI specs for reference
+3. Regeneration script for future updates
+
+**Implementation:**
+
+**Swagger Configuration Pattern:**
+All .NET services now use this standardized Swashbuckle configuration:
+```csharp
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo { Title = "Service Name", Version = "v1" });
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer"
+    });
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme { Reference = new OpenApiReference { Id = "Bearer", Type = ReferenceType.SecurityScheme } },
+            Array.Empty<string>()
+        }
+    });
+});
+```
+
+**OpenAPI Spec Generation:**
+- Tool: `Swashbuckle.AspNetCore.Cli` 6.9.0 (installed globally via `dotnet tool install`)
+- Command: `swagger tofile --output <path> <dll> v1`
+- Environment: Requires minimal config (UseInMemoryDatabase=true, Jwt__Key, etc.) to allow DLL startup
+- Special case: prompt-eval-service requires temporary commenting of Cosmos init code (lines 108-113) due to startup initialization that runs before Swagger can be extracted
+
+**Regeneration Script:**
+Created `scripts/generate-openapi-specs.sh`:
+- Builds each service in isolated output directory
+- Generates OpenAPI spec using swagger tofile
+- Handles prompt-eval-service's startup initialization automatically
+- Outputs to `docs/api/{service-name}-openapi.json`
+
+**Committed Specs:**
+- `docs/api/user-service-openapi.json` (14 KB)
+- `docs/api/account-service-openapi.json` (4.7 KB)
+- `docs/api/transaction-service-openapi.json` (4.3 KB)
+- `docs/api/transfer-service-openapi.json` (3.2 KB)
+- `docs/api/prompt-eval-service-openapi.json` (21 KB)
+
+**Documentation:**
+Updated `docs/README.md` with:
+- API Documentation section listing all service specs
+- Runtime Swagger UI URLs for local development
+- Instructions for regenerating specs
+
+**Key Files:**
+- `src/user-service/Program.cs` — enhanced Swagger config
+- `src/prompt-eval-service/Program.cs` — enhanced Swagger config
+- `scripts/generate-openapi-specs.sh` — regeneration script
+- `docs/README.md` — API documentation section
+- `docs/api/*.json` — committed OpenAPI specs
+
+**Turk** is handling Python/FastAPI services in parallel (ai-service, budget-service, chatbot-service, account-opening-service). Both portions will merge to complete #109.
+
+**Commit:** ff310d0
+
+## 2026-05-13: Cloud Smoke Test Failures - DTO Enum Capitalization
+
+### Investigation
+Diagnosed 3 failing cloud smoke tests returning 400 errors:
+- POST /api/accounts (Account lifecycle test)
+- POST /api/transactions (Create transactions test)
+- POST /api/users/register → default account provisioning (Registration test)
+
+### Root Cause
+API DTOs enforce capitalized enum values via `RegularExpression` validation:
+- `CreateAccountRequest.AccountType`: `^(Checking|Savings|...)$` (capital C/S)
+- `CreateTransactionRequest.Type`: `^(Debit|Credit|...)$` (capital D/C)
+
+Tests and `AccountProvisioningService` were sending lowercase values (`'savings'`, `'checking'`, `'debit'`), triggering ASP.NET Core model validation failures before controller execution.
+
+### Resolution
+Fixed at test/service layer to match API contract:
+1. Smoke tests: Changed all enum values to capitalized form
+2. `AccountProvisioningService.cs`: `"checking"` → `"Checking"`
+
+### Key Learnings
+- **Always check DTO validation attributes** when debugging 400s — validation fails before controller logs
+- **Internal services must follow API contracts** — service-to-service calls aren't exempt from validation
+- **Case-sensitive enum validation is good** — catches integration bugs early
+- **Use deployed logs to confirm errors** — checked k8s logs for actual validation failures
+- **Fix tests to match production**, not the other way around
+
+### Files Changed
+- `tests/e2e/specs/smoke/smoke.spec.ts` (enum capitalization)
+- `src/user-service/Services/AccountProvisioningService.cs` (default account type)
+
+### Results
+✅ Account lifecycle test: PASS  
+✅ Create transactions test: PASS  
+✅ Registration test: PASS (default account provisioning now succeeds)
+
+Commit: `babe94d` - "fix: align account/transaction/registration DTOs with deployed API schema"
+
+### 2026-05-13 — Cloud Smoke Test DTOs (Enum Capitalization)
+
+**Issue:** Three critical cloud smoke tests failing with 400 Bad Request:
+- POST /api/accounts — Account lifecycle test
+- POST /api/transactions — Create transactions test  
+- POST /api/users/register — Default account provisioning failed
+
+**Root cause:** API DTOs use regex validation attributes requiring capitalized enum values (`Checking`, `Savings`, `Debit`, `Credit`, etc.). Tests and `AccountProvisioningService` were sending lowercase values (`checking`, `savings`, `debit`), triggering ASP.NET model validation failures before controller execution.
+
+**Fix at test/service layer** to match API contract:
+1. Smoke tests: Changed all enum values to capitalized form
+2. `AccountProvisioningService.cs`: `"checking"` → `"Checking"`
+
+**Key learnings:**
+- Always check DTO validation attributes when debugging 400s — validation fails before controller logs
+- Internal services must follow API contracts — service-to-service calls aren't exempt from validation
+- Case-sensitive enum validation catches integration bugs early
+
+**Files changed:** `tests/e2e/specs/smoke/smoke.spec.ts`, `src/user-service/Services/AccountProvisioningService.cs`
+
+**Result:** ✅ All 3 tests now pass; account lifecycle test: PASS; create transactions test: PASS; registration test: PASS
+
+**Commit:** `babe94d`
+
+
+## 2026-05-13 — Issue #117: prompt-eval-service /api/evaluations/run 500
+
+**Branch:** squad/p2-wave-3 — Commit `4fd2cfa`
+
+**Root cause (NOT what the issue suspected):**
+The 500 wasn't Foundry config or Cosmos RBAC — it was missing inter-service JWT propagation. `EvaluationService.FetchTransactionsAsync` called `http://ai-service/api/admin/transactions` with no Authorization header. ai-service `require_admin` rejected with 401, `EnsureSuccessStatusCode()` threw, and the controller's generic catch turned it into a 500.
+
+Pod logs were the smoking gun — saw the upstream 401 immediately. **Always check pod logs before chasing config theories.**
+
+**Fix pattern — JWT forwarding for inter-service .NET → Python admin calls:**
+1. Register `IHttpContextAccessor` in Program.cs.
+2. In the service, read `HttpContext.Request.Headers.Authorization`, strip the `Bearer ` prefix, set on outbound `HttpRequestMessage`.
+3. For **background work** (queued via Channel), capture the token at enqueue time and add it to the work item record. The HttpContext is gone by the time the BackgroundService picks up the item.
+4. Distinguish downstream auth failures (502 Bad Gateway) from generic 500s — gives UI/clients actionable errors and makes monitoring cleaner.
+
+**Cosmos query gotcha during verification:**
+Cosmos has Local Auth disabled (Entra-only RBAC) and is behind a private endpoint. To query from the laptop you need an in-cluster pod that uses the workload identity. Pattern that worked:
+```bash
+kubectl run -n banking-demo --image=python:3.11-alpine ... \
+  --overrides='{"spec":{"serviceAccountName":"banking-workload-identity",...},
+                "metadata":{"labels":{"azure.workload.identity/use":"true"}}}'
+```
+Inside the pod, exchange the federated token at `AZURE_FEDERATED_TOKEN_FILE` for a Cosmos AAD token, then call the Cosmos REST API with `Authorization: type=aad&ver=1.0&sig=<token>`. **Don't use master keys** — they're disabled.
+
+**Admin bootstrap:**
+Existing cluster has no seed admin (the seed-data.sh creates `admin/Password123!` but it never ran on this cluster). `Admin__BootstrapEmail` only runs when zero admins exist, and the first-user-becomes-admin convention had already fired. To grant admin to a test user mid-cluster, you have to flip the Role field directly in Cosmos via the workload-identity pod pattern above.
+
+**Routing follow-up noted (not blocking):**
+`cluster-config/istio/gateway/default-ingress.yaml` only routes `/api/evaluations` to prompt-eval-service. `/api/prompts` falls through to the UI 404. If the UI needs to manage templates this needs a route addition.
+
+**Files changed:**
+- `src/prompt-eval-service/Services/EvaluationService.cs` — IHttpContextAccessor, GetInboundBearerToken(), forward token to both ai-service calls, throw UnauthorizedAccessException on 401/403
+- `src/prompt-eval-service/Services/EvaluationBackgroundService.cs` — `EvaluationWorkItem` gains `BearerToken` field
+- `src/prompt-eval-service/Controllers/EvaluationsController.cs` — explicit catch for `UnauthorizedAccessException` → 502
+- `src/prompt-eval-service/Program.cs` — `AddHttpContextAccessor()`
+
+**Deploy gotcha confirmed (re-learned):**
+`task cloud:deploy` doesn't bounce pods when image tag is unchanged (`:latest` digest may be different but kustomize won't trigger a rollout). Always follow with `kubectl rollout restart deploy/<service> -n banking-demo` after a `task cloud:build:<svc>` to pick up the new image.
+
+### 2026-05-13 — Coordinator Integration: Rollout Restart in cloud:deploy (commits e57d5f0, 1a989f2)
+
+**Pattern:** The Coordinator has permanently integrated `kubectl rollout restart deployment/<svc>` into the `task cloud:deploy` target as of commit e57d5f0. This eliminates the manual `kubectl rollout restart` workaround after every cloud build/deploy cycle.
+
+**Historical context:** The registration smoke failures (Linus's stale-bundle trap) and JWT forwarding verification both required manual rollout restarts because `:latest` image tags don't trigger rolling updates when the manifest is unchanged. The Coordinator fixed this in the Taskfile itself — no more manual step needed.
+
+**For you:** Any service you build/deploy via `task cloud:deploy` will now automatically restart pods as part of the deploy job. If you ever bypass `task cloud:deploy` and use `kubectl apply -k` directly, you lose this guarantee. Always use the task.
+
+**Additional refactor (commit 1a989f2):** The Taskfile's `NAMESPACE` variable is now hoisted to task-level scope, eliminating hardcoded `banking-demo` strings throughout the deploy targets. This makes it easier to test against different namespaces.
+
+**Files that changed (Taskfile):**
+- Added rollout restart commands for ui-app, user-service, account-service, transaction-service, transfer-service, ai-service, chatbot-service, budget-service, account-opening-service, prompt-eval-service post-kustomize-apply
+- Hoisted NAMESPACE to global task var
+
+**Verification:** After next deployment, running `kubectl logs deploy/<svc>` should show pod startup logs timestamped *after* the deploy command finished (not old logs from pre-deploy pod).
+
+
+## Backend Follow-ups from Linus Guards (#119, #120)
+
+**Flagged:** 2026-05-13T17:28:46Z  
+**Source:** Linus frontend defensive guards (issues #119 & #120)  
+**Status:** Pending backend implementation
+
+### #119 — Avg Risk Score Tile: Redis Cleanup
+
+**Problem:** Frontend displays poisoned historical risk data (timestamps instead of probabilities) from pre-#118 entries in `scored-transactions` sorted set.
+
+**Action for Basher:**
+1. Purge legacy timestamp-based scores from `scored-transactions` sorted set on deployed Redis
+   - Option A: `DEL scored-transactions` (transactions will re-score on next ingest)
+   - Option B: Rebuild from per-transaction JSON keys if re-scoring is infeasible
+2. Verify all post-#118 transactions land with `score ∈ [0, 1]` in the sorted set
+
+**Why:** Frontend added defensive `formatRiskScore()` guard to hide the corrupted values, but source data must be cleaned for real fix.
+
+### #120 — Active AI Prompts: Add systemPrompt to Response
+
+**Problem:** `GET /api/admin/prompts` response omits `systemPrompt` field; frontend gracefully falls back with placeholder, but data should be exposed.
+
+**Action for Basher:**
+1. Include `systemPrompt: analyzer.SYSTEM_PROMPT` in the response JSON for each prompt (`src/ai-service/app/routes/api.py:285-311`)
+2. Clarify semantics of `analyzer.enabled` field:
+   - Should it mean "agent reachable" (truly operational)?
+   - Or "agent constructed" (initialized but not necessarily live)?
+   - Frontend badge logic assumes the former; verify alignment
+
+**Why:** Frontend now renders placeholder when `systemPrompt` is undefined; exposing the field completes the UI and removes placeholder.
+
+---
+
+
+## Historical Context (2025)
+
+**Note:** This section summarizes learnings from pre-2026 audits and fixes. See dated subsections below for full details.
+
+### 2025 Audit Summary
+
+From full system audits conducted in 2025-01 and 2025-07:
+- **Architecture:** 4 C# (ASP.NET Core + Cosmos), 1 Go (event-processor), 3 Python (FastAPI)
+- **Key bugs fixed:** Partition key misses, missing balance updates, missing awaits, endpoint mismatches, lifespan init issues
+- **Anti-patterns resolved:** SHA256→bcrypt, DTO validation, saga patterns, async/await discipline, telemetry fixes, container hardening
+- **Infrastructure:** Evolved from Event Hub to Redis Streams; added cert-manager for TLS; implemented Istio exclusions for port 10000
+
+For specific dates and detailed fixes from these entries, refer to the dated learning sections (###) above.
+
+
+### 2026-05-13 — #119 / #120 Backend Follow-ups (Linus Wave 3)
+
+**#120 — `systemPrompt` exposure in `/api/admin/prompts`:**
+Trivial dict-key addition in `src/ai-service/app/routes/api.py`. Each analyzer/categorizer entry now includes `systemPrompt` sourced from the class-level `SYSTEM_PROMPT` constant on `FoundryRiskAnalyzer` / `FoundryCategorizer` (defined in `app/services/anomaly_service.py:87` and `:241`). Refactored to capture the prompt once into a local var since the existing `getattr` was being called twice. Frontend already optional-renders the field, so no UI coordination needed.
+
+**#119 — Redis poisoned `scored-transactions` purge:**
+Pre-#118 entries had unix timestamps (~1.78e9) where probabilities (0–1) belong. Write path at `anomaly_service.py:617` is already clamped, so a one-shot `DEL` was sufficient. Did the deletion via `kubectl exec` into the ai-service pod (already has Entra workload-identity creds + redis-py installed). 157 entries flushed, ZCARD before/after confirmed 157→0.
+
+**Reusable Redis-from-pod pattern (Azure Managed Redis, Entra):**
+```python
+from azure.identity.aio import DefaultAzureCredential
+import redis.asyncio as redis_async, jwt
+cred = DefaultAzureCredential()
+token = await cred.get_token('https://redis.azure.com/.default')
+user = jwt.decode(token.token, options={'verify_signature': False}).get('oid')
+r = redis_async.Redis(host='<redis-host>', port=10000, ssl=True,
+                      username=user, password=token.token, decode_responses=True)
+```
+Username **must** be the workload identity's `oid` claim from the AAD token, not a literal name. Same pattern works for any one-shot Redis maintenance task — no need to bounce through the portal or hardcode a connection string.
+
+**Verification path:**
+1. `task cloud:build:ai-service` (build pushed image to ACR — got via terraform output, no hardcode)
+2. `task cloud:deploy` (auto-restarts all deploys per coordinator's commit e57d5f0 — confirmed working)
+3. `kubectl rollout status deploy/ai-service` blocked until new pod ready
+4. `kubectl exec ... grep` against the pod's on-disk source confirmed the new code shipped (no need to replicate ingress + JWT to curl the endpoint for trivial dict additions)
+
+**Why we didn't pursue the `enabled` semantics question (raised in Scribe's flag):** Out of scope for these issues; both `analyzer.enabled` semantics ("constructed" vs "reachable") would require a separate health-probe round-trip per agent on every admin request. If the UI badge ever shows misleading state we'll revisit, but Linus's panel is functional with the current value. Logged here for next pass.

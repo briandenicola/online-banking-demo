@@ -76,5 +76,5 @@ export interface ActivePrompt {
   name: string;
   type: string;
   enabled: boolean;
-  systemPrompt: string;
+  systemPrompt?: string;
 }

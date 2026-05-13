@@ -40,6 +40,17 @@ interface AdminStats {
   aiCallsToday: number;
 }
 
+// Risk scores are 0.0–1.0 from the model. Anything outside that range is
+// almost certainly poisoned data (e.g., legacy rows where the sorted-set
+// score was a Unix timestamp instead of a probability — see issue #119).
+// Render a dash so the dashboard never advertises a 10-digit "risk score".
+function formatRiskScore(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value) || value < 0 || value > 1) {
+    return '—';
+  }
+  return value.toFixed(2);
+}
+
 const AdminPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -156,7 +167,7 @@ const AdminPage: React.FC = () => {
               <CardContent sx={{ textAlign: 'center' }}>
                 <SecurityIcon color="info" sx={{ fontSize: 40 }} />
                 <Typography variant="h4" sx={{ mt: 1 }}>
-                  {stats.avgRiskScore.toFixed(2)}
+                  {formatRiskScore(stats.avgRiskScore)}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   Avg Risk Score

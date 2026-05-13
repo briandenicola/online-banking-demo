@@ -2,6 +2,7 @@
 
 import os
 import time
+from contextlib import asynccontextmanager
 
 import pytest
 import jwt as pyjwt
@@ -45,4 +46,16 @@ def client():
     os.environ["JWT_ISSUER"] = JWT_ISSUER
     os.environ["JWT_AUDIENCE"] = JWT_AUDIENCE
     from app.main import app
-    return TestClient(app, raise_server_exceptions=False)
+    from app.services.agent_service import AgentState, get_agent_state
+
+    @asynccontextmanager
+    async def _no_lifespan(_: object):
+        yield
+
+    original_lifespan = app.router.lifespan_context
+    app.router.lifespan_context = _no_lifespan
+    app.dependency_overrides[get_agent_state] = lambda: AgentState()
+    with TestClient(app, raise_server_exceptions=False) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+    app.router.lifespan_context = original_lifespan

@@ -19,9 +19,27 @@ Auto-generated from all feature plans. Last updated: 2026-05-12
 ## Project Structure
 
 ```text
-backend/
-frontend/
+src/
+├── account-opening-service/   # Python/FastAPI - Account opening workflow with AI doc processing
+├── account-service/            # .NET 9 - Account management CRUD
+├── ai-service/                 # Python/FastAPI - AI anomaly detection and risk scoring
+├── budget-service/             # Python/FastAPI - Budget insights and transaction categorization
+├── chatbot-service/            # Python/FastAPI - AI financial advice chatbot
+├── event-processor/            # Go - Background Redis Stream consumer for audit logging
+├── prompt-eval-service/        # .NET 9 - Prompt template management and evaluation
+├── transaction-service/        # .NET 9 - Transaction recording and retrieval
+├── transfer-service/           # .NET 9 - Peer-to-peer and account transfers
+├── user-service/               # .NET 9 - Authentication and user management
+├── ui-app/                     # React 19 + TypeScript - Frontend web application
+└── shared/                     # Shared contracts and utilities
+
+infrastructure/
+├── terraform/                  # Azure infrastructure-as-code
+└── local/                      # Local development infrastructure
+
 tests/
+├── e2e/                        # End-to-end Playwright tests
+└── fixtures/                   # Test data and fixtures
 ```
 
 ## Commands

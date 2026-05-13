@@ -531,3 +531,71 @@ Created comprehensive security tests for all Round 2 fixes:
 - .NET: Moq for service mocking, FluentAssertions, xUnit [Theory]/[InlineData] for parameterized tests
 - Go: Table-driven tests with t.Run subtests, no external test dependencies
 - Python: FastAPI TestClient with JWT fixtures, pytest classes for test organization
+
+## Cloud Smoke Suite — Deployed Environment (2026-05-13)
+
+### Execution Summary
+- **Target:** https://onlinebankingdemo.bjdazure.tech (deployed test environment)
+- **Command:** `task e2e:cloud:smoke` 
+- **Duration:** 46.3s
+- **Results:** 16 passed, 5 failed
+- **Total Tests:** 21 smoke-tagged tests
+
+### Failures Analysis
+
+**1. Dashboard Load Authentication (2 failures)**
+- `E2E-205: Dashboard Load & Account Display › @smoke should load dashboard successfully after authentication`
+- `E2E-205: Dashboard Load & Account Display › @smoke should display accounts list on dashboard`
+- **Root Cause:** Auth fixture's `apiLogin()` is not working against deployed environment — page redirects back to `/login` instead of staying on dashboard. Test receives 401, localStorage token not set, authentication context fails.
+- **Verdict:** Infrastructure/auth configuration issue — deployed JWT validation appears broken or misconfigured.
+
+**2. Registration Flow (1 failure)**
+- `Smoke Tests › @smoke Registration — new user can register`
+- **Root Cause:** After successful registration, expected navigation to `/login` times out — page stays on registration form. Could be 200 response without redirect, or registration endpoint returning error.
+- **Verdict:** Backend/frontend integration issue — registration success flow not working end-to-end in deployed environment.
+
+**3. Transaction & Account Creation (2 failures)**
+- `Smoke Tests › @smoke Create transactions — realistic banking transactions via API` (400 error on funding deposit)
+- `Smoke Tests › @smoke Account lifecycle — savings, transfer, and car purchase` (400 error on savings creation)
+- **Root Cause:** Both fail with HTTP 400 on account/transaction creation. Likely validation errors or DTO mismatch between test request and deployed API schema.
+- **Verdict:** API schema drift or missing request fields — tests may be using outdated DTOs or deployed services have stricter validation.
+
+### Passing Tests (16)
+✅ Health checks (core services respond)
+✅ Login with valid credentials (returns JWT)
+✅ Dashboard loads with account data
+✅ Accounts visible (accounts page lists user accounts)
+✅ Transactions visible (transactions page renders)
+✅ Login audit (admin page accessible)
+✅ AI service health (readyz reports agent status)
+✅ AI categorization (transactions get categorized)
+✅ Account opening — submit application
+✅ Account opening — upload document
+✅ Logout (user can log out)
+✅ Transfer page loads successfully
+✅ Transfer form displays required fields
+✅ Transaction list loads successfully
+✅ Transaction table displays
+
+### Infrastructure Assessment
+- **DNS/TLS:** Working correctly (NODE_TLS_REJECT_UNAUTHORIZED=0 warnings only)
+- **Service Health:** All core services responding to health checks
+- **AI Services:** Responding (403 auth/degraded is expected for unauthenticated readyz)
+- **Auth Token Issuance:** Login endpoint returns JWT successfully
+- **Auth Token Validation:** FAILING — authenticated requests return 401/400
+
+### Learnings
+- **Cloud environment divergence:** Deployed environment has authentication middleware or validation logic differences from local docker-compose setup
+- **Test isolation:** Smoke tests that use UI-level auth (`authenticatedPage` fixture) fail, but tests using direct JWT in API calls succeed for non-auth-required endpoints
+- **API contract drift:** 400 errors on account/transaction creation suggest request DTO changes or new required fields not reflected in tests
+- **Timing:** 46.3s for 21 tests is excellent — smoke suite is fast enough for CI/deployment health checks
+
+### Recommendations for Team
+1. **Turk (Infrastructure):** Verify JWT validation in deployed nginx/ingress — middleware may be rejecting valid tokens
+2. **Basher (Backend):** Check account-service and transaction-service validation logic for 400 errors — logs needed to identify missing/invalid fields
+3. **Linus (Frontend):** Test registration flow against deployed environment — verify redirect logic after successful registration
+4. **Livingston (QA):** Update tests to use deployed API schemas once DTOs are confirmed — may need environment-specific fixtures
+
+### Report Location
+- **HTML Report:** `/home/brian/code/online-banking-demo/tests/e2e/playwright-report/index.html`
+- **Test Results:** `/home/brian/code/online-banking-demo/tests/e2e/test-results/`

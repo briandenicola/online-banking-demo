@@ -208,3 +208,20 @@ async def review_application(
     )
 
     return application
+
+
+@router.get("/applications/{application_id}/audit")
+async def get_audit_trail(
+    application_id: str,
+    _: Annotated[UserClaims, Depends(require_admin)],
+    repository: ApplicationRepository = Depends(get_repository),
+):
+    """Retrieve audit trail for an application (admin only)."""
+    application = repository.get(application_id)
+    if not application:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Application not found",
+        )
+
+    return application.auditTrail

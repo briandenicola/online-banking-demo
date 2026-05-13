@@ -11,6 +11,7 @@ These tests verify that:
 
 import time
 import os
+from contextlib import asynccontextmanager
 
 import jwt as pyjwt
 import pytest
@@ -66,7 +67,20 @@ def client():
     os.environ["JWT_ISSUER"] = JWT_ISSUER
     os.environ["JWT_AUDIENCE"] = JWT_AUDIENCE
     from app.main import app
-    return TestClient(app, raise_server_exceptions=False)
+    from app.services.anomaly_service import AnomalyState, get_anomaly_state
+
+    @asynccontextmanager
+    async def _no_lifespan(_: object):
+        yield
+
+    state = AnomalyState()
+    original_lifespan = app.router.lifespan_context
+    app.router.lifespan_context = _no_lifespan
+    app.dependency_overrides[get_anomaly_state] = lambda: state
+    with TestClient(app, raise_server_exceptions=False) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+    app.router.lifespan_context = original_lifespan
 
 
 # =====================================================================

@@ -42,7 +42,10 @@ The Online Banking Demo is a microservices-based banking platform built on .NET 
 - **External clients** → Istio Ingress Gateway (HTTP/HTTPS) → Service via virtual service routing
 - **Frontend** → Istio Gateway → Services
 - **Service-to-service**: Direct internal HTTP calls with JWT forwarding (e.g., Transfer → Account, Transfer → Transaction)
-- **Swagger documentation**: Accessible through gateway at `/api/{service}/swagger/index.html`
+- **API Documentation**:
+  - .NET services: Swagger UI at `/swagger/index.html`, exposed via gateway at `/api/{service}/swagger/index.html`
+  - Python/FastAPI services: Swagger UI at `/docs`, OpenAPI JSON at `/openapi.json`
+  - Committed OpenAPI specs: `docs/api/{service-name}-openapi.json` (regenerate with `python scripts/generate-openapi.py`)
 
 ### Asynchronous (Event-Driven)
 

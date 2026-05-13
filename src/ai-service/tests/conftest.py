@@ -1,20 +1,54 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from contextlib import asynccontextmanager
 from fastapi.testclient import TestClient
 
-from app.main import (
-    RiskAssessment,
-    FoundryRiskAnalyzer,
-    AnalyzerPipeline,
-    BaseAnalyzer,
-)
+from app.models import RiskAssessment
+from app.services.anomaly_service import AnalyzerPipeline, AnomalyState, BaseAnalyzer, get_anomaly_state
 
 
 @pytest.fixture
 def client():
     """Create a test client for the anomaly service (no lifespan — no Redis/Foundry)."""
     from app.main import app
-    return TestClient(app, raise_server_exceptions=False)
+
+    @asynccontextmanager
+    async def _no_lifespan(_: object):
+        yield
+
+    state = AnomalyState()
+    original_lifespan = app.router.lifespan_context
+    app.router.lifespan_context = _no_lifespan
+    app.dependency_overrides[get_anomaly_state] = lambda: state
+    with TestClient(app, raise_server_exceptions=False) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+    app.router.lifespan_context = original_lifespan
+
+
+@pytest.fixture
+def client_with_auth():
+    """Create a test client with auth bypassed for pipeline-only behavior."""
+    from app.main import app
+    from app.auth import UserContext, verify_jwt
+
+    @asynccontextmanager
+    async def _no_lifespan(_: object):
+        yield
+
+    state = AnomalyState()
+    original_lifespan = app.router.lifespan_context
+    app.router.lifespan_context = _no_lifespan
+    app.dependency_overrides[get_anomaly_state] = lambda: state
+    app.dependency_overrides[verify_jwt] = lambda: UserContext(
+        user_id="usr-test-001",
+        username="testuser",
+        role="User",
+    )
+    with TestClient(app, raise_server_exceptions=False) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+    app.router.lifespan_context = original_lifespan
 
 
 @pytest.fixture

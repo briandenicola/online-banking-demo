@@ -3,15 +3,8 @@ import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.main import (
-    RiskAssessment,
-    FoundryRiskAnalyzer,
-    AnalyzerPipeline,
-    ScoredTransaction,
-    FlaggedTransaction,
-    AdminStats,
-    FLAGGING_THRESHOLD,
-)
+from app.models import AdminStats, FlaggedTransaction, RiskAssessment, ScoredTransaction
+from app.services.anomaly_service import AnalyzerPipeline, FoundryRiskAnalyzer, FLAGGING_THRESHOLD
 from tests.conftest import FakeAnalyzer
 
 
@@ -100,8 +93,8 @@ class TestFoundryRiskAnalyzer:
 
     def test_enabled_after_initialization(self):
         analyzer = FoundryRiskAnalyzer()
-        mock_client = MagicMock()
-        analyzer.initialize(mock_client, "gpt-5.4-mini")
+        mock_agent = MagicMock()
+        analyzer.initialize(mock_agent)
         assert analyzer.enabled is True
 
     def test_parse_valid_json_response(self):
@@ -154,9 +147,18 @@ class TestRiskAssessmentModel:
 class TestDetectEndpoint:
     """Test the synchronous /detect endpoint."""
 
-    def test_detect_returns_503_without_pipeline(self, client):
+    def test_detect_returns_503_without_pipeline(self, client_with_auth):
         """Without lifespan (no pipeline), detect returns 503."""
-        response = client.post("/detect", json={"amount": 100, "type": "Purchase"})
+        response = client_with_auth.post(
+            "/detect",
+            json={
+                "transactionId": "txn-001",
+                "accountId": "acc-001",
+                "amount": 100,
+                "type": "Purchase",
+                "description": "Coffee",
+            },
+        )
         assert response.status_code == 503
 
 
@@ -165,4 +167,3 @@ class TestFlaggingThreshold:
 
     def test_threshold_is_0_7(self):
         assert FLAGGING_THRESHOLD == 0.7
-

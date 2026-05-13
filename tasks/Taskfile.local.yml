@@ -84,6 +84,19 @@ tasks:
       - cd src/chatbot-service && poetry run pytest || true
       - cd src/event-processor && go test ./... || true
 
+  seed:
+    desc: Seed local environment with demo data
+    deps: [_init-env]
+    cmds:
+      - chmod +x scripts/seed-data.sh
+      - ./scripts/seed-data.sh
+
+  smoke:
+    desc: Run smoke tests against local services
+    cmds:
+      - chmod +x scripts/test.sh
+      - ./scripts/test.sh --smoke
+
   clean:
     desc: Clean build artifacts
     cmds:

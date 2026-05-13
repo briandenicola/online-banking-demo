@@ -85,10 +85,39 @@ def mock_redis():
 
 
 @pytest_asyncio.fixture
-async def app_client():
+async def app_client(mock_redis):
     """httpx.AsyncClient wired to the FastAPI app (no real server)."""
     from app.main import app
+    from app.dependencies import (
+        get_blob_service_client,
+        get_redis_client,
+        get_repository,
+        get_state_machine,
+    )
+    from app.repository import InMemoryApplicationRepository
+    from app.state_machine import ApplicationStateMachine
+
+    repository = InMemoryApplicationRepository()
+    state_machine = ApplicationStateMachine()
+    
+    async def override_repository():
+        return repository
+    
+    async def override_redis():
+        return mock_redis
+    
+    async def override_blob_client():
+        return None
+    
+    async def override_state_machine():
+        return state_machine
+    
+    app.dependency_overrides[get_repository] = override_repository
+    app.dependency_overrides[get_redis_client] = override_redis
+    app.dependency_overrides[get_blob_service_client] = override_blob_client
+    app.dependency_overrides[get_state_machine] = override_state_machine
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
+    app.dependency_overrides.clear()

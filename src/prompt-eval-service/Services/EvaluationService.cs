@@ -1,5 +1,7 @@
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Azure.Cosmos;
 using PromptEvalService.Models;
 using PromptEvalService.Repositories;
@@ -18,6 +20,7 @@ public class EvaluationService : IEvaluationService
     private readonly IConfiguration _config;
     private readonly ILogger<EvaluationService> _logger;
     private readonly EvaluationQueue _queue;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
     public EvaluationService(
         IEvaluationRunRepository runRepository,
@@ -25,7 +28,8 @@ public class EvaluationService : IEvaluationService
         IHttpClientFactory httpClientFactory,
         IConfiguration config,
         ILogger<EvaluationService> logger,
-        EvaluationQueue queue)
+        EvaluationQueue queue,
+        IHttpContextAccessor httpContextAccessor)
     {
         _runRepository = runRepository;
         _templateService = templateService;
@@ -33,6 +37,17 @@ public class EvaluationService : IEvaluationService
         _config = config;
         _logger = logger;
         _queue = queue;
+        _httpContextAccessor = httpContextAccessor;
+    }
+
+    private string? GetInboundBearerToken()
+    {
+        var authHeader = _httpContextAccessor.HttpContext?.Request.Headers.Authorization.ToString();
+        if (string.IsNullOrWhiteSpace(authHeader)) return null;
+        const string prefix = "Bearer ";
+        return authHeader.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            ? authHeader.Substring(prefix.Length).Trim()
+            : authHeader.Trim();
     }
 
     private static readonly PartitionKey GlobalPartition = new("global");
@@ -42,7 +57,8 @@ public class EvaluationService : IEvaluationService
         var template = await _templateService.GetByIdAsync(templateId)
             ?? throw new KeyNotFoundException($"Template {templateId} not found");
 
-        var transactions = await FetchTransactionsAsync(transactionIds);
+        var bearerToken = GetInboundBearerToken();
+        var transactions = await FetchTransactionsAsync(transactionIds, bearerToken);
 
         var run = new EvaluationRun
         {
@@ -55,16 +71,20 @@ public class EvaluationService : IEvaluationService
 
         await _runRepository.CreateAsync(run);
 
-        await _queue.Writer.WriteAsync(new EvaluationWorkItem(run, template, transactions));
+        await _queue.Writer.WriteAsync(new EvaluationWorkItem(run, template, transactions, bearerToken));
 
         return run;
     }
 
-    public async Task ExecuteFoundryEvaluationAsync(EvaluationRun run, PromptTemplate template, List<TransactionData> transactions)
+    public async Task ExecuteFoundryEvaluationAsync(EvaluationRun run, PromptTemplate template, List<TransactionData> transactions, string? bearerToken = null)
     {
         var aiServiceUrl = _config["AI_SERVICE_URL"] ?? "http://ai-service";
 
         var client = _httpClientFactory.CreateClient();
+        if (!string.IsNullOrWhiteSpace(bearerToken))
+        {
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+        }
         var evalPayload = new
         {
             eval_name = $"Eval: {template.Name} v{template.Version}",
@@ -196,10 +216,22 @@ public class EvaluationService : IEvaluationService
                $"- Account: {tx.AccountId}";
     }
 
-    private async Task<List<TransactionData>> FetchTransactionsAsync(List<string> transactionIds)
+    private async Task<List<TransactionData>> FetchTransactionsAsync(List<string> transactionIds, string? bearerToken = null)
     {
         var client = _httpClientFactory.CreateClient("AiService");
-        var response = await client.GetAsync("/api/admin/transactions");
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/admin/transactions");
+        if (!string.IsNullOrWhiteSpace(bearerToken))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+        }
+        var response = await client.SendAsync(request);
+        if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
+            response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            _logger.LogWarning("ai-service rejected admin/transactions call: {Status} {Body}", response.StatusCode, body);
+            throw new UnauthorizedAccessException($"ai-service returned {(int)response.StatusCode} when fetching transactions");
+        }
         response.EnsureSuccessStatusCode();
 
         var content = await response.Content.ReadAsStringAsync();

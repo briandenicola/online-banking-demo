@@ -35,10 +35,28 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
 }
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth_token'));
+  
+  // Initialize user synchronously from localStorage to avoid redirect flash
+  const [user, setUser] = useState<User | null>(() => {
+    const storedToken = localStorage.getItem('auth_token');
+    const email = localStorage.getItem('auth_email');
+    const role = localStorage.getItem('auth_role') || 'user';
+    
+    if (storedToken && email) {
+      const emailParts = email.split('@')[0].split('.');
+      return {
+        id: '1',
+        email,
+        firstName: emailParts[0] || 'User',
+        lastName: emailParts[1] || 'Name',
+        role,
+      };
+    }
+    return null;
+  });
 
-  // Restore user from token on mount
+  // Sync user state when token changes (e.g., after login)
   useEffect(() => {
     if (token && !user) {
       const email = localStorage.getItem('auth_email');

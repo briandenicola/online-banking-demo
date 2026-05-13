@@ -41,9 +41,9 @@ test_health() {
     fi
     
     if curl -sf http://localhost:8002/health | grep -q "healthy"; then
-        log_pass "Anomaly service health"
+        log_pass "AI service health"
     else
-        log_fail "Anomaly service health"
+        log_fail "AI service health"
     fi
     
     if curl -sf http://localhost:8003/health | grep -q "healthy"; then

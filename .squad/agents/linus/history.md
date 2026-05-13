@@ -373,3 +373,159 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 **Verification:** `npx tsc --noEmit` clean; `npm test` 118/118 passing; build only fails on pre-existing eslint warnings in ApplicationStatus.tsx + RegisterPage.tsx (not from this change — confirmed against baseline before edits).
 
 **Cross-team:** Pushed to `squad/p2-wave-2`. Basher and Turk also working on the branch — picked up their commits via fast-forward push (no rebase needed).
+
+### 2026-05-13 — Cloud Smoke Test Failures (Dashboard + Registration)
+
+**Context:**
+- 3 of 5 cloud smoke test failures traced to frontend root causes
+- Tests running against deployed URL: https://onlinebankingdemo.bjdazure.tech
+- Branch: squad/p2-wave-3
+
+**Failure A — Dashboard redirect after authenticated load (2 tests):**
+- Tests: "should load dashboard successfully after authentication", "should display accounts list on dashboard"
+- Root cause: `AuthContext` initialized `user` state as `null`, then restored from localStorage in `useEffect`
+- Impact: On page load, React rendered with `user=null`, causing `AppContent` to redirect to `/login` before the effect ran
+- Fix: Initialize `user` state synchronously from localStorage in `useState` initializer
+- Files: `src/ui-app/src/contexts/AuthContext.tsx`
+
+**Failure B — Registration redirect missing:**
+- Test: "@smoke Registration — new user can register"
+- Root cause: Backend username validation rejects @ symbols (only allows letters, digits, underscore, dot, hyphen)
+- `RegisterPage` sent `username: email` (e.g., "smoke-1778687559@banking-demo.com"), causing 400 validation error
+- Registration form showed "Registration failed. Please try again." alert, never navigated to /login
+- Fix: Extract local part of email (before @) and sanitize to create valid username
+- Files: `src/ui-app/src/pages/RegisterPage.tsx`, `tests/e2e/fixtures/authFixture.ts`
+
+**Key Insight:**
+- Synchronous state initialization is critical for SSR-like behavior (localStorage → state on mount)
+- Backend validation rules must be documented or inferred from API responses (username regex not in OpenAPI)
+- Test fixtures must match production validation constraints
+
+**Commit:** `b565fd5` — "fix(ui): repair dashboard auth context + registration redirect"
+
+### 2026-05-13 — Cloud Smoke Test Auth & Registration Fixes
+
+**Issue:** Cloud smoke tests failing with redirect loops and registration failures:
+- Dashboard: Redirect loop after authenticated page load (2 tests)
+- Registration: Form failing silently without redirect to /login (1 test)
+
+**Root cause 1 — Async auth state restoration:** `AuthContext.tsx` initialized `user` as `null`, then restored it in `useEffect`. On mount, `AppContent` saw `!user` and redirected to `/login` before `useEffect` ran (async). Broken for tests that pre-populated localStorage via `page.addInitScript`.
+
+**Root cause 2 — Username validation mismatch:** Frontend sent email addresses (e.g., "smoke-user@banking-demo.com") as the username parameter. Backend validates `Username: ^[a-zA-Z0-9._-]+$` — the @ symbol caused 400 validation error. RegisterPage caught the error but didn't redirect.
+
+**Fix 1 — Synchronous auth state restoration:**
+- Moved user restoration from `useEffect` to `useState` initializer
+- Read localStorage synchronously during component initialization
+- Prevents redirect flash; supports test fixtures
+
+**Fix 2 — Username generation from email:**
+- Extract local part (before @) and sanitize
+- Applied to RegisterPage + authFixture.ts: `email.split('@')[0].replace(/[^a-zA-Z0-9._-]/g, '')`
+- Matches backend regex without API docs
+
+**Files changed:** `src/ui-app/src/contexts/AuthContext.tsx`, `src/ui-app/src/pages/RegisterPage.tsx`, `tests/e2e/fixtures/authFixture.ts`
+
+**Result:** ✅ Dashboard redirect flash resolved; registration username validation fixed; auth flow now matches backend contract
+
+**Commit:** `b565fd5`
+
+
+### 2026-05-13 — Registration Smoke Failure (Stale Bundle / :latest Tag Trap)
+
+**Context:** After commit b565fd5 ("repair dashboard auth context + registration redirect"), 20/21 smoke tests passed. The Registration test continued to fail reliably with `waitForURL('**/login')` timeout.
+
+**Investigation:**
+- Pulled the live `main.<hash>.js` from https://onlinebankingdemo.bjdazure.tech and grepped the registration POST payload.
+- Bundle showed `post("/users/register",{username:a, firstName:e, lastName:n, email:a, password:l})` — both `username` and `email` mapped to the **same minified variable `a`**, which is the raw email state. The sanitization regex `[^a-zA-Z0-9._-]` was absent from the bundle.
+- That matches the **pre-b565fd5** source (`username: email`), confirming the deployed bundle was stale.
+- API replay with `email: <local-part-only>` returned `400 "The Email field is not a valid e-mail address."` — exact root cause of the "Registration failed. Please try again." alert seen in the Playwright snapshot.
+
+**Why the fix didn't deploy:**
+- ACR had a newer `ui-app:latest` digest (16:44 UTC) than the running pod (started 14:01 UTC on the older 13:57 digest).
+- Kustomize manifests pin `ui-app:latest` (no SHA, no per-build tag). `task cloud:deploy` runs `kubectl apply -k`, which is a **no-op** when the manifest hasn't changed — so even after `cloud:build:ui-app` pushed a fresh image, the deployment spec didn't roll and pods never re-pulled.
+- `imagePullPolicy: Always` only matters on **pod creation**; without a pod restart, an updated `:latest` is invisible.
+
+**Fix:**
+1. `task cloud:build:ui-app` — rebuilt + pushed (digest `sha256:55794a77...`).
+2. `task cloud:deploy` — applied manifests (no-op for ui-app spec, but config/secrets refreshed).
+3. `kubectl -n banking-demo rollout restart deployment/ui-app` — forced new pod to pull fresh `:latest`.
+4. Verified live bundle: new minified POST is `{username:t, ..., email:a, ...}` — distinct variables, proving the `.replace(...)` survived minification this time.
+5. Registration smoke passes (2.2s).
+
+**Lessons:**
+- **`:latest` + `kubectl apply` ≠ rolling deploy.** When kustomize image tags don't change, Apply alone won't restart pods — even with `imagePullPolicy: Always`. The deploy task needs either (a) digest-pinned tags per build, or (b) an explicit `rollout restart` step. This bit us once already and will keep biting until fixed in the Taskfile.
+- **Always sanity-check the served bundle** when a frontend smoke fails post-deploy. `curl` the JS from `asset-manifest.json` and grep for a known marker from the latest source — it takes 30 seconds and immediately tells you "deployed code ≠ source".
+- **Terser variable aliasing risk:** when two adjacent shorthand object properties (`{username, email}`) are derived from the same source value, the minifier may emit them with the same variable name in the output. The b565fd5 fix (introducing a derived `const username = ...replace(...)`) breaks that aliasing because `username` and `email` now hold different values.
+
+### 2026-05-13 — Coordinator Integration: Rollout Restart in cloud:deploy (commits e57d5f0, 1a989f2)
+
+**Pattern:** The Coordinator has permanently integrated `kubectl rollout restart deployment/<svc>` into the `task cloud:deploy` target as of commit e57d5f0. This eliminates the manual `kubectl rollout restart` workaround after every cloud build/deploy cycle.
+
+**Historical context:** Your stale-bundle trap discovery and the manual rollout restart fix prompted the Coordinator to bake this into the Taskfile itself. `:latest` image tags no longer require manual pod bouncing — `task cloud:deploy` now handles it automatically.
+
+**For you:** Any service you build/deploy via `task cloud:deploy` will now automatically restart pods as part of the deploy job. This means your next smoke test verification should see new bundles on deploy without requiring the manual `kubectl rollout restart` workaround.
+
+**Additional refactor (commit 1a989f2):** The Taskfile's `NAMESPACE` variable is now hoisted to task-level scope, eliminating hardcoded `banking-demo` strings throughout the deploy targets. This makes it easier to test against different namespaces.
+
+**Files that changed (Taskfile):**
+- Added rollout restart commands for ui-app, user-service, account-service, transaction-service, transfer-service, ai-service, chatbot-service, budget-service, account-opening-service, prompt-eval-service post-kustomize-apply
+- Hoisted NAMESPACE to global task var
+
+**Verification:** Your next E2E smoke run should pick up the deployed bundle immediately after `task cloud:deploy`, no manual restart needed.
+
+
+### 2026-05-13 — #119 + #120 Active AI panel + Avg Risk Score (P2 wave 3)
+
+**#119 — Avg Risk Score = 1,778,591,506.40**
+- Cause is backend, not frontend. `AdminPage` renders whatever `/api/admin/stats`
+  returns; backend averages a Redis sorted-set whose score *should* be the
+  clamped 0–1 `assessment.riskScore` (`anomaly_service.py:617`) but was
+  poisoned with timestamp values from before the Foundry agents were wired
+  (#118). Magnitude `1.78e9` ≈ `time.time()` for 2026 — dead giveaway.
+- Frontend defensive fix: added `formatRiskScore()` in `AdminPage.tsx`
+  that returns `'—'` for any value outside `[0, 1]` (also guards NaN/±∞).
+  The dashboard will never advertise a 10-digit "risk score" again, even
+  if more bad data sneaks in.
+- Real fix is a Redis cleanup of `scored-transactions` — flagged for
+  Brian/Basher in the issue comment.
+
+**#120 — Active AI Prompts blank + Disabled**
+- Confirmed backend `/api/admin/prompts` (`src/ai-service/app/routes/api.py:285`)
+  returns only `{name, type, enabled}` — no `systemPrompt` field at all.
+  That's why every card body is empty. The Disabled badge logic
+  (`prompt.enabled ? 'Active' : 'Disabled'`) is not inverted; if the badge
+  reads Disabled, that's what the analyzer object reports.
+- Frontend changes: made `ActivePrompt.systemPrompt` optional in
+  `components/eval/types.ts`; `PromptTemplateEditor.tsx` now renders an
+  italic placeholder with a hint pointing at #120 when the field is
+  missing, instead of an empty gray bar.
+- Backend fix (add `systemPrompt: analyzer.SYSTEM_PROMPT` to the response)
+  flagged for Basher in the issue comment. Issue stays open.
+
+**Deploy verification (don't trust `:latest` apply alone):**
+- `task cloud:deploy` now bakes in `kubectl rollout restart deployment -n {{.NAMESPACE}}`
+  (good — no more stale-bundle traps like the b565fd5 incident).
+- Pulled the live `main.<hash>.js` and grepped for the new marker
+  string `"Prompt body not returned"` (present, count 1) and the
+  minified `Number.isFinite(...)` from `formatRiskScore` (present).
+  Bundle deploy verified end-to-end, not just by trusting kubectl.
+
+## Learnings
+- **Backend-bug? Add a frontend defensive guard anyway.** The avg-risk
+  display was correct *given the data*, but the user-visible output was
+  garbage. A `formatRiskScore` clamp is a few lines and prevents
+  recurrence regardless of who poisons the source. Pattern: every
+  numeric tile that has a known domain ([0,1], [0,100], non-negative)
+  should have a tiny "in-range or em-dash" formatter.
+- **Field-missing vs field-wrong.** When a UI renders blank, the
+  null-coalesce / placeholder guard is just as important as fixing the
+  contract — it's how the user finds out *why* it's blank instead of
+  staring at an empty gray rectangle.
+- **TypeScript field optionality is a contract debugger.** Marking
+  `ActivePrompt.systemPrompt?: string` immediately surfaced "the API
+  doesn't actually send this" — the kind of thing that'd otherwise be
+  buried in a runtime undefined.
+- **Bundle-grep verification habit is paying off.** Same 30-second
+  `curl asset-manifest.json | grep marker` flow caught the stale
+  registration deploy two sessions ago; this time it confirmed the new
+  bundle landed before I left the issue alone.

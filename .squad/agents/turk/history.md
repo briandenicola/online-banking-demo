@@ -393,3 +393,227 @@ Always cross-reference the [Azure PE DNS zone table](https://learn.microsoft.com
 **Outcome:** ✓ All Python services import, Go builds clean, test pass. Commits: 3e215af, 9b0912d, 512db07, 065994c.
 
 **Team:** Coordinated with Basher (.NET standardization) and Linus (frontend cleanup) to ensure cross-service consistency. Wave complete; PR pending merge to main.
+
+---
+
+## 2026-05-13 — Issue #115: Python Test Repairs After Wave 1
+
+**Branch:** squad/p2-wave-3  
+**Issue:** #115 — Repair Python service tests after Wave 1 #93 service-layer extraction
+
+**Problem:**
+Wave 1 extraction moved Python service code from monolithic `app/main.py` into layered modules (`app/routes/`, `app/services/`, `app/models/`), but test fixtures still imported from old locations and relied on module-level globals that no longer existed. All 4 services (ai, budget, chatbot, account-opening) had failing tests.
+
+**Fixes Applied:**
+
+1. **ai-service** (002e24b):
+   - Updated test imports to use new module structure (`app.services.anomaly_service`, `app.models.*`)
+   - Result: All tests passing
+
+2. **budget-service** (3481962):
+   - Added JWT auth fixtures to `conftest.py` (matching user-service token format)
+   - Updated imports to match extracted routes
+   - Result: 21/21 tests passing
+
+3. **chatbot-service** (c7435e8):
+   - Updated test imports from `app.main` to `app.services.*`
+   - Result: All tests passing
+
+4. **account-opening-service** (e4fc3b4):
+   - Restored missing audit trail endpoint (`GET /applications/{id}/audit`) accidentally dropped during Wave 1 extraction
+   - Added FastAPI dependency overrides to `conftest.py` using async functions
+   - Overrode: `get_repository`, `get_redis_client`, `get_blob_service_client`, `get_state_machine`
+   - Result: 136/136 tests passing
+
+**Key Learning — FastAPI Dependency Override Pattern:**
+When FastAPI routes use `Depends()` with async dependency functions, test fixtures must override them with **async functions**, not lambda returns:
+
+```python
+# ❌ WRONG — sync lambda
+app.dependency_overrides[get_repository] = lambda: mock_repo
+
+# ✅ CORRECT — async function
+async def override_repository():
+    return mock_repo
+
+app.dependency_overrides[get_repository] = override_repository
+```
+
+This pattern applies to all Python services using the FastAPI DI pattern introduced in Wave 1 and refined in Wave 2 (#94).
+
+**Gotchas:**
+- Async dependency functions in `dependencies.py` require async override functions, even if the returned object is not itself awaitable
+- Missing endpoints from extraction can cause tests to pass with wrong status codes (e.g., 404 vs 403 when endpoint is missing entirely)
+- Always verify extracted routes against original monolithic `main.py` to ensure nothing was dropped
+
+**Outcome:** Issue #115 closed. All Python service tests green on branch `squad/p2-wave-3`.
+
+## 2026-05-13 — Issue #109: OpenAPI Specs for Python Services
+
+**Issue:** #109 — Add OpenAPI/Swagger API documentation (Python/FastAPI portion)
+
+**Context:** No OpenAPI spec files committed despite architecture.md referencing Swagger endpoints. Frontend developers must read backend source to understand API contracts.
+
+**What was done:**
+1. Verified all 4 FastAPI services already expose `/docs` (Swagger UI) and `/openapi.json` endpoints by default (FastAPI behavior)
+2. Created `scripts/generate-openapi.py` — Python script that imports each service's FastAPI app and calls `app.openapi()` to generate specs
+3. Generated and committed OpenAPI specs to `docs/api/` for:
+   - ai-service-openapi.json (24KB)
+   - budget-service-openapi.json (24KB)
+   - chatbot-service-openapi.json (24KB)
+   - account-opening-service-openapi.json (24KB)
+4. Updated `docs/architecture.md` with API documentation references and regen instructions
+5. Pushed to branch `squad/p2-wave-3`, commented on issue
+
+**Key files:**
+- `scripts/generate-openapi.py` — regenerates all 4 specs by importing each service's FastAPI app
+- `docs/api/{service}-openapi.json` — committed specs
+- `docs/architecture.md` — updated "Communication Patterns" section
+
+**Pattern:** FastAPI `app.openapi()` method generates full OpenAPI 3.1.0 spec with all routes, schemas, and metadata from the FastAPI app definition at import time. Script must add each service's `src/{service-name}` path to `sys.path` before importing `app.main.app`.
+
+**Gotcha:** Script emits experimental warnings from Azure AI SDK (`MemoryStore`, `SkillResource`) during import — these are harmless and don't affect spec generation.
+
+**Outcome:** Python portion of #109 complete. Waiting for Basher to finish .NET services.
+
+## Learnings
+- FastAPI automatically generates OpenAPI 3.1.0 specs at runtime via `app.openapi()` method — no external tools needed
+- OpenAPI generation requires importing the FastAPI app, which triggers all module-level code (logging setup, telemetry init, etc.) — acceptable for offline spec generation
+- Azure AI SDK emits experimental warnings at import time for preview features (MemoryStore, SkillResource) — suppress with PYTHONWARNINGS=ignore if needed
+- Committed OpenAPI specs serve as API contract documentation for frontend developers without requiring service runtime access
+- Pattern: Store specs in `docs/api/{service-name}-openapi.json` for cross-team discoverability
+
+### 2026-05-13 — JWT Email-Based Login Support (Dashboard Smoke Test Fix)
+
+**Issue:** All E2E dashboard smoke tests failing with 401 Unauthorized. Frontend sends `username: email` in login requests, but backend only supported username lookup.
+
+**Root cause:** Frontend `AuthContext.tsx` POSTs to `/api/auth/login` with `{ username: email, password }` (line 2 of login function). Backend `AuthController.Login` called `GetUserByUsernameAsync(request.Username)` which only queries the Username field in Cosmos DB, not the Email field. When users registered with a different username than their email, login failed.
+
+**Why it surfaced now:** E2E test fixtures were recently updated to extract usernames from emails ("e2e-default@banking-demo.com" → "e2e-default"), but database had existing users registered with the full email as username. This created a mismatch:
+- Test registers user with username="e2e-default" → 409 (email already exists)
+- Test ignores 409 error (intended behavior)
+- Test tries to login with username="e2e-default@banking-demo.com" → user not found
+
+**Fix:** Updated `AuthController.Login` to try email lookup if username lookup fails:
+```csharp
+var user = await _userService.GetUserByUsernameAsync(request.Username);
+if (user == null)
+{
+    user = await _userService.GetUserByEmailAsync(request.Username);
+}
+```
+
+**Verification:**
+- Manual curl tests confirm both username and email login now work
+- All 4 dashboard smoke tests pass: `BASE_URL=https://onlinebankingdemo.bjdazure.tech NODE_TLS_REJECT_UNAUTHORIZED=0 npx playwright test --project=smoke --grep "Dashboard"`
+- JWT structure unchanged (still uses actual username in claims, not the login identifier)
+
+**Pattern:** Backend now supports login with EITHER username OR email, matching common auth UX patterns. Password validation always uses the actual username from the user record.
+
+**Commit:** 25fe743
+**Files modified:** `src/user-service/Controllers/AuthController.cs`
+**Deployment:** Built and deployed user-service:latest to AKS via `task cloud:build:user-service && task cloud:deploy`
+
+### 2026-05-13 — Login Email Fallback (Smoke Test Support)
+
+**Issue:** Dashboard smoke tests failing with 401 Unauthorized after frontend test fixture updates. Frontend sends email as login identifier (`username` parameter), backend only checks Username field against Cosmos DB.
+
+**Problem:** User registered with `username="e2e-default"`, `email="e2e-default@banking-demo.com"`. Frontend tried to login with `username="e2e-default@banking-demo.com"`. Backend lookup failed because no user had that username exactly.
+
+**Fix:** Updated `AuthController.Login` to fall back to email lookup if username lookup fails:
+```csharp
+var user = await _userService.GetUserByUsernameAsync(request.Username);
+if (user == null)
+{
+    user = await _userService.GetUserByEmailAsync(request.Username);
+}
+```
+
+**Rationale:**
+- Frontend compatibility — UI already sends email; changing frontend would add complexity
+- Common UX pattern — Most auth systems accept email OR username
+- Minimal change — 3 lines in AuthController; no schema changes
+- No security regression — Password still validated, JWT still contains actual username
+
+**Files changed:** `src/user-service/Controllers/AuthController.cs`
+
+**Deployment:** Built user-service:latest, pushed to ACR, deployed to AKS
+
+**Result:** ✅ Dashboard smoke tests now pass; users can login with either username or email; backward-compatible
+
+**Commit:** `25fe743`
+
+
+### 2026-05-13 — Issue #118: ai-service Foundry agents 'Agent not initialized'
+
+**Branch:** squad/p2-wave-3  
+**Commit:** 0cb17b8
+
+**Symptom:** Admin AI Foundry Connectivity panel reported both `transaction-categorizer` and `risk-assessor` as 🔴 ERROR / "Agent not initialized".
+
+**Diagnosis path:**
+1. Init container `provision-agents` succeeded — agents exist in Foundry project ✅ (rules out possibility #1)
+2. Main container startup logs revealed: `❌ Foundry initialization failed: No module named 'aiohttp'`
+3. Health-check code in `app/routes/api.py::_check_agent` correctly detects `_ready=False` (rules out possibility #3)
+
+**Root cause:** `agent-framework-foundry`'s `FoundryAgent` uses `aiohttp.ClientSession` internally but does not declare it transitively. ai-service's `pyproject.toml` was missing `aiohttp`. The `try/except` in lifespan swallowed the ImportError, leaving both `FoundryRiskAnalyzer` and `FoundryCategorizer` with `_ready=False`.
+
+**Fix:** Added `aiohttp = "^3.10.0"` to `src/ai-service/pyproject.toml`. Built via `task cloud:build:ai-service`, deployed via `task cloud:deploy`, then `kubectl rollout restart` (image tag `:latest` → deployment otherwise unchanged).
+
+**Verification:**
+```
+✅ Foundry risk agent created (persistent)
+✅ Foundry categorizer agent created (persistent)
+
+GET /api/admin/foundry-status
+{"status":"ok","agents":{"transaction-categorizer":{"status":"ok"},"risk-assessor":{"status":"ok"}}}
+```
+
+**Pattern (recurring — third time now):**
+Azure AI / agent-framework Python SDKs frequently rely on `aiohttp` without declaring it. Whenever a service depends on `agent-framework-foundry` or related packages, **explicitly add `aiohttp` to pyproject.toml**. chatbot-service had it; account-opening-service was fixed earlier; ai-service was the latest miss. Suggests a checklist item for any new Python AI service.
+
+**Gotcha:** `task cloud:deploy` after a rebuild leaves the Deployment manifest "unchanged" because the `:latest` image tag and yaml are identical — `kubectl rollout restart` is required to pull the freshly-pushed image. Worth considering image digests in the deploy task.
+
+### 2026-05-13 — Coordinator Integration: Rollout Restart in cloud:deploy (commits e57d5f0, 1a989f2)
+
+**Pattern:** The Coordinator has permanently integrated `kubectl rollout restart deployment/<svc>` into the `task cloud:deploy` target as of commit e57d5f0. This eliminates the manual `kubectl rollout restart` workaround after every cloud build/deploy cycle.
+
+**Historical context:** The registration smoke failures (Linus's stale-bundle trap) and JWT forwarding verification both required manual rollout restarts because `:latest` image tags don't trigger rolling updates when the manifest is unchanged. The Coordinator fixed this in the Taskfile itself — no more manual step needed.
+
+**For you:** Any service you build/deploy via `task cloud:deploy` will now automatically restart pods as part of the deploy job. If you ever bypass `task cloud:deploy` and use `kubectl apply -k` directly, you lose this guarantee. Always use the task.
+
+**Additional refactor (commit 1a989f2):** The Taskfile's `NAMESPACE` variable is now hoisted to task-level scope, eliminating hardcoded `banking-demo` strings throughout the deploy targets. This makes it easier to test against different namespaces.
+
+**Files that changed (Taskfile):**
+- Added rollout restart commands for ui-app, user-service, account-service, transaction-service, transfer-service, ai-service, chatbot-service, budget-service, account-opening-service, prompt-eval-service post-kustomize-apply
+- Hoisted NAMESPACE to global task var
+
+**Verification:** After next deployment, running `kubectl logs deploy/<svc>` should show pod startup logs timestamped *after* the deploy command finished (not old logs from pre-deploy pod).
+
+
+### 2026-05-13 — Issue #121: Chatbot "couldn't retrieve your accounts" — wrong endpoint URL
+
+**Branch:** squad/p2-wave-3
+
+**Symptom:** Chatbot replied "I'm sorry, I couldn't retrieve your account balances right now because the account service returned an error." for every "what's my balance" question.
+
+**Initial hypothesis (wrong):** Suspected JWT was not being forwarded (per #117 pattern). It actually was — `chat_service.handle_chat` extracts the bearer token and `agent_tools.get_user_accounts` reads it from a ContextVar and sets `Authorization: Bearer <jwt>` on the httpx call.
+
+**Root cause:** The chatbot's `get_user_accounts` tool called `GET {ACCOUNT_SERVICE_URL}/api/accounts/my` — a path that does **not** exist on `account-service`. The .NET `AccountsController` exposes `[HttpGet] /api/accounts` (it derives the user from the JWT `userId` claim — there is no `/my` suffix). Result: 404 from account-service → tool returned `{"error":"Account service returned 404"}` → agent translated it to the friendly "couldn't retrieve" message.
+
+**Secondary issue spotted in same function:** Sanitizer read `acct["type"]`, but the account-service JSON field is `accountType`. Every sanitized account would have had an empty `type`. Fixed in the same patch with a fallback (`accountType` → `type`) so contract drift in either direction won't break it.
+
+**Fix:** `src/chatbot-service/app/services/agent_tools.py`:
+- Changed URL `/api/accounts/my` → `/api/accounts`.
+- `_sanitize_account_data` now reads `accountType` first, falls back to `type`.
+
+**Verification (live, https://onlinebankingdemo.bjdazure.tech):**
+Before: `"I'm sorry, I couldn't retrieve your account balances right now because the account service returned an error."`
+After: `"Here are your current balances by account, using masked account numbers: - Checking ****5852: $28,033.96 - Savings ****8917: $350,000.00 ..."` — masked account numbers, real balances, all 29 accounts returned.
+
+**Deploy:** `task cloud:build:chatbot-service` → `task cloud:deploy` (auto rollout restart per Coordinator integration in Taskfile commit e57d5f0).
+
+## Learnings
+- Always verify the **exact** downstream URL/path against the producing controller before assuming a deeper auth/identity bug. The #117 JWT-forwarding pattern was a tempting hypothesis but a `git grep` of the controller's routes ruled it out in 30 seconds.
+- The chatbot tool error path swallows the HTTP status code into a generic "couldn't retrieve" message visible to users. Worth considering surfacing the status (or at least logging at error not warning) so the next 4xx vs 5xx is faster to triage from logs alone — current logger emits at WARN with the body truncated to 200 chars, which was sufficient here but only because we re-reproduced from the cluster.
+- Cross-service JSON contract drift (`accountType` vs `type`) silently produced empty fields. Defensive `.get(primary, .get(legacy, default))` is the lightweight fix until a shared schema/types story exists. A future improvement would be Pydantic models for inbound data in chatbot tools, mirroring what frontend already enforces.

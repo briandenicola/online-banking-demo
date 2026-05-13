@@ -51,7 +51,12 @@ public class AuthController : ControllerBase
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
+        // Support login with either username or email
         var user = await _userService.GetUserByUsernameAsync(request.Username);
+        if (user == null)
+        {
+            user = await _userService.GetUserByEmailAsync(request.Username);
+        }
 
         if (user == null)
         {
@@ -65,7 +70,8 @@ public class AuthController : ControllerBase
             return Unauthorized(new { Message = "Account is locked. Please contact administrator." });
         }
 
-        var isValid = await _userService.ValidateCredentialsAsync(request.Username, request.Password);
+        // Validate password against the actual username (not the login identifier which might be email)
+        var isValid = await _userService.ValidateCredentialsAsync(user.Username, request.Password);
         if (!isValid)
         {
             await _loginAuditService.RecordAsync(user.Id, request.Username, false, global::UserService.Constants.FailureReasons.InvalidPassword);
