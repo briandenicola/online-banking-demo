@@ -779,3 +779,28 @@ if ttl == -1:  # Key exists but has no TTL
 
 **Alternative (if you need per-hour):** Use key pattern `ai:metrics:calls:{YYYY-MM-DD}:{HH}` with 25-hour TTL (covers hour overlap).
 
+
+## Cross-Agent Update — 2026-05-13 SDK Pinning Convention (Basher)
+
+**Relevant to:** Python service dependency management (your domain)
+
+Basher's eval-403 RCA (issue #137) established a **new exception to the repo's standard dependency versioning**:
+
+### Convention: Preview-Channel SDKs Require Exact Pins
+
+- **Stable dependencies** (fastapi, pydantic, redis, etc.) continue using range constraints (`^`, `>=min,<next-major`)
+- **Preview-channel SDKs** (agent-framework-core, agent-framework-foundry, azure-ai-inference beta releases) require exact pins (e.g., `"1.2.2"`, not `"*"` or `">=1.0.0,<2.0.0"`)
+- **Reason:** Preview channels break semver between minor versions (1.2.2 → 1.3.0 breaking change caused eval-403). Wildcard/range pins allow arbitrary upgrades on every rebuild, introducing non-determinism.
+
+### Applied To
+- src/ai-service/pyproject.toml: agent-framework-core/foundry pinned to 1.2.2, azure-ai-inference pinned to 1.0.0b9
+- src/chatbot-service/pyproject.toml: same
+- src/account-opening-service/pyproject.toml: same
+
+### Remediation Going Forward
+- Add pre-commit lint rule to block agent-framework wildcard constraints
+- Enable Dependabot with explicit upgrade PRs for preview SDKs
+- Require eval smoke-test before merging any preview-SDK version bump
+
+### Watch Out For
+If you touch any Python service's pyproject.toml and encounter agent-framework or azure-ai-inference dependencies, treat them as preview-channel and use exact pins. Don't fall back to range constraints.

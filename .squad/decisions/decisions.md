@@ -2009,3 +2009,311 @@ All Python service dependencies are now pinned to exact versions (`==x.y.z`) in 
 - `src/budget-service/`
 - `src/chatbot-service/`
 - `src/account-opening-service/`
+---
+
+# Decision: Exact-pin preview Azure AI SDKs (agent-framework-*, azure-ai-inference betas)
+
+**Date:** 2026-05-13  
+**Agent:** Basher  
+**Status:** Applied  
+**Issue:** #137  
+**Commit:** 0b6255a  
+
+## Context
+
+Eval prompt execution failed with `UnauthorizedUserAction` 400/403 after container rebuild on 2026-05-13. Investigation ruled out RBAC (all role assignments correct). Root cause: unpinned preview SDKs in pyproject.toml pulling new releases on every rebuild.
+
+Commits db70575 (2026-05-02) and eeda8ed (2026-05-08) removed version constraints:
+- `agent-framework-core = "*"`
+- `agent-framework-foundry = "*"`
+- `azure-ai-inference = ">=1.0.0b9,<2.0.0"`
+
+PyPI published agent-framework-* 1.3.0 on 2026-05-08 with breaking eval contract changes. Container rebuild pulled 1.3.0 → SDK constructed eval requests differently → raiserv rejected with 403.
+
+## Decision
+
+**Exact-pin all preview-channel Azure AI SDKs** to last-known-good versions:
+- `agent-framework-core = "1.2.2"`
+- `agent-framework-foundry = "1.2.2"`
+- `azure-ai-inference = "1.0.0b9"`
+
+Applied to:
+- src/ai-service/pyproject.toml
+- src/chatbot-service/pyproject.toml
+- src/account-opening-service/pyproject.toml
+
+(budget-service doesn't use agent-framework, no change needed)
+
+## Rationale
+
+1. **Preview SDKs break compat between minors:** Unlike stable releases, preview channels have no semver guarantees. 1.2.2 → 1.3.0 broke eval pipeline.
+2. **Wildcard pins allow arbitrary upgrades:** `"*"` resolves to latest on every `pip install`, causing non-deterministic builds.
+3. **Exception to >=min,<next-major rule:** Repo standard uses `^` or `>=min,<next-major` ranges to prevent transitive conflicts. This works for **stable** libs. Preview SDKs require exact pins due to frequent breaking changes.
+4. **Stable deps unchanged:** Keep caret/range constraints for fastapi, pydantic, redis, etc.
+
+## Alternatives Considered
+
+1. **Lock all deps to exact versions (==)** — Rejected. Causes transitive dependency hell. Only needed for preview SDKs.
+2. **Use Poetry lockfile** — Better determinism, but doesn't solve root cause (unpinned preview SDKs would still drift on lock updates). Lockfiles are a separate improvement.
+3. **Wait for agent-framework stable 2.x** — Unknown timeline, eval must work now.
+
+## Remediation Going Forward
+
+1. **CI lint:** Add pre-commit check that fails on `agent-framework.*= "\*"` in pyproject.toml
+2. **Dependabot:** Enable with explicit upgrade PRs for preview SDKs
+3. **Smoke-test requirement:** Eval pipeline must pass before merging any agent-framework bump
+4. **Upstream investigation:** Determine if 1.3.0 is intentionally breaking or a bug (file issue if latter)
+
+## Impact
+
+- **Immediate:** Eval pipeline stable again at 1.2.2
+- **Maintenance:** Preview SDK upgrades now require explicit commit + testing (good — prevents silent breakage)
+- **CI discipline:** Must add lint rule to enforce exact pins for preview SDKs
+
+## Verification
+
+After rebuild with pinned deps:
+```bash
+# Container logs should show:
+# agent-framework-core==1.2.2
+# agent-framework-foundry==1.2.2
+# azure-ai-inference==1.0.0b9
+
+# Eval prompt should succeed (no 403)
+```
+
+---
+
+# Decision: Cosmos DB Serializer Convention (camelCase)
+
+**Date:** 2026-05-13  
+**Author:** Turk  
+**Status:** Active (applied to all .NET services)  
+**Issue:** #125  
+
+## Decision
+
+All `CosmosClient` registrations in .NET services **MUST** pin an explicit camelCase serializer using `CosmosSystemTextJsonSerializer`. This prevents future serializer drift between writes and ensures consistency with the API surface (which already returns camelCase JSON).
+
+## Implementation
+
+In each service's `Program.cs`, configure the `CosmosClient` registration:
+
+```csharp
+builder.Services.AddSingleton<CosmosClient>(sp =>
+{
+    var configuration = sp.GetRequiredService<IConfiguration>();
+    var endpoint = configuration["CosmosDb:Endpoint"];
+    
+    var clientOptions = new CosmosClientOptions
+    {
+        Serializer = new CosmosSystemTextJsonSerializer(
+            new System.Text.Json.JsonSerializerOptions
+            {
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+            })
+    };
+    
+    if (!string.IsNullOrEmpty(endpoint))
+    {
+        return new CosmosClient(endpoint, new DefaultAzureCredential(), clientOptions);
+    }
+    return new CosmosClient(configuration["CosmosDb:ConnectionString"], clientOptions);
+});
+```
+
+## Why camelCase?
+
+1. **API consistency**: All ASP.NET Core controllers already return camelCase JSON (default `System.Text.Json` behavior)
+2. **JavaScript convention**: Frontend expects camelCase (React/TS standard)
+3. **Cosmos SDK v3 drift**: Default Newtonsoft serializer was producing PascalCase, but some writes landed as camelCase (likely from a SDK update or manual writes). Pinning camelCase matches the majority of recent docs and the API surface.
+
+## Affected Services
+
+Applied to:
+- `account-service/Program.cs`
+- `transaction-service/Program.cs`
+- `user-service/Program.cs`
+- `transfer-service/Program.cs`
+- `prompt-eval-service/Program.cs`
+
+## Future Services
+
+**Any new .NET service** that writes to Cosmos MUST use this pattern. Do NOT use default `CosmosClient()` — always pin the serializer.
+
+## Verification
+
+After applying:
+1. Deploy the service
+2. Create a new document via the API
+3. Query the document directly in Cosmos Data Explorer
+4. Confirm fields are camelCase: `userId`, `accountId`, `createdAt`, etc.
+
+## References
+
+- Issue: #125
+- Migration plan: Cosmos DB Serializer-Casing Migration Plan (separate document)
+
+---
+
+# Cosmos Serializer-Casing Migration Plan
+
+**Date:** 2026-05-13  
+**Author:** Turk  
+**Status:** Ready for Brian to execute  
+**Issue:** #125  
+
+## Context
+
+Five Cosmos containers have documents written with **two different field casings**:
+- **PascalCase**: `UserId`, `AccountId`, `Username`, `Email`, `Role`, `CreatedAt`, `UpdatedAt`, `TemplateId` (likely from Cosmos SDK v3 default Newtonsoft serializer)
+- **camelCase**: `userId`, `accountId`, `username`, `email`, `role`, `createdAt`, `updatedAt`, `templateId` (source unknown — possibly SDK behavior change or manual writes)
+
+Cosmos SQL queries are case-sensitive on field paths, so a query written for one casing silently returns 0 rows for docs of the other. This caused the `/accounts` UI page to render empty for any user whose docs happened to be camelCase (incl. `brian@sample.com`).
+
+## Hot Fix (Already Shipped)
+
+All .NET service repositories now **OR both casings** in WHERE clauses. Iterator drain bugs also fixed. This restores read functionality immediately but doesn't normalize the data.
+
+## Affected Containers
+
+1. **Accounts** (`/userId` partition)
+   - Fields: `UserId`/`userId`, `AccountNumber`/`accountNumber`
+   - Estimated: ~38 docs (29 PascalCase, 9 camelCase based on May 13 live query)
+
+2. **Transactions** (`/accountId` partition)
+   - Fields: `AccountId`/`accountId`, `UserId`/`userId`, `Timestamp`/`timestamp`
+   - Estimated: ~155 docs (unknown split)
+
+3. **Users** (`/id` partition)
+   - Fields: `Username`/`username`, `Email`/`email`, `Role`/`role`, `CreatedAt`/`createdAt`
+   - Estimated: ~10 docs (bootstrap users + e2e test user)
+
+4. **PromptTemplates** (`/userId` partition)
+   - Fields: `UserId`/`userId`, `UpdatedAt`/`updatedAt`
+   - Estimated: ~4 seeded templates
+
+5. **EvaluationRuns** (`/userId` partition)
+   - Fields: `UserId`/`userId`, `TemplateId`/`templateId`, `CreatedAt`/`createdAt`
+   - Estimated: <10 docs (admin-triggered runs only)
+
+## Migration Approach
+
+### 1. Identify PascalCase Documents
+
+For each container, run a Cosmos SQL query to find docs with PascalCase fields. Example for Accounts:
+
+```sql
+SELECT c.id, c.UserId, c.userId, c.AccountNumber, c.accountNumber
+FROM c
+WHERE IS_DEFINED(c.UserId) OR IS_DEFINED(c.AccountNumber)
+```
+
+Run via workload-identity pod (pattern from `.squad/agents/basher/history.md` 2026-05-13 entry):
+```python
+from azure.cosmos import CosmosClient
+from azure.identity import DefaultAzureCredential
+
+endpoint = "https://{cosmos-account}.documents.azure.com:443/"
+credential = DefaultAzureCredential()
+client = CosmosClient(endpoint, credential)
+db = client.get_database_client("BankingDemo")
+container = db.get_container_client("Accounts")
+
+# Query and log PascalCase docs
+query = "SELECT c.id, c.UserId FROM c WHERE IS_DEFINED(c.UserId)"
+for item in container.query_items(query, enable_cross_partition_query=True):
+    print(f"PascalCase doc: {item['id']}")
+```
+
+### 2. Normalize to camelCase (UPSERT Pattern)
+
+For each PascalCase doc:
+1. Read the full doc
+2. Transform field names: `UserId` → `userId`, `AccountNumber` → `accountNumber`, etc.
+3. UPSERT with same `id` and partition key (overwrites in-place, preserves TTL/metadata)
+4. Verify the new doc has camelCase fields
+
+**Why UPSERT over REPLACE:**
+- UPSERT is idempotent (safe to re-run)
+- Preserves Cosmos internal metadata (`_rid`, `_self`, `_etag`, `_ts`)
+- No race condition on `_etag` (unlike conditional REPLACE)
+
+**Script skeleton:**
+```python
+for item in container.query_items(query, enable_cross_partition_query=True):
+    doc_id = item["id"]
+    partition_key = item.get("userId") or item.get("UserId")  # Read from either casing
+    
+    # Read full doc
+    doc = container.read_item(item=doc_id, partition_key=partition_key)
+    
+    # Transform PascalCase → camelCase
+    if "UserId" in doc:
+        doc["userId"] = doc.pop("UserId")
+    if "AccountNumber" in doc:
+        doc["accountNumber"] = doc.pop("AccountNumber")
+    # ... repeat for all known PascalCase fields
+    
+    # UPSERT (overwrites in-place)
+    container.upsert_item(doc)
+    print(f"Normalized {doc_id}")
+```
+
+### 3. Verification Queries
+
+After migration, confirm **zero PascalCase docs** remain:
+```sql
+-- Should return 0 rows for each container
+SELECT COUNT(1) FROM c WHERE IS_DEFINED(c.UserId)
+SELECT COUNT(1) FROM c WHERE IS_DEFINED(c.AccountNumber)
+SELECT COUNT(1) FROM c WHERE IS_DEFINED(c.Username)
+-- ... etc.
+```
+
+### 4. Rollback Plan
+
+If migration causes issues:
+1. **Immediate:** Hot-fix repo queries already handle both casings — no read disruption
+2. **Revert writes:** Deploy previous CosmosClient config (no serializer pinning) to allow PascalCase writes again
+3. **Re-normalize:** Re-run migration script (UPSERT is idempotent)
+
+**Data loss risk:** ZERO — UPSERT preserves all fields, only renames keys. Partition key and `id` are unchanged.
+
+### 5. Post-Migration Cleanup
+
+Once **all docs are normalized to camelCase** and the serializer is pinned:
+1. Remove the OR-both-casings pattern from repository queries
+2. Revert queries to single-casing (cleaner SQL, faster execution)
+3. Add integration test (separate issue filed — see #125 follow-up)
+
+Example revert for `CosmosAccountRepository.GetByUserIdAsync`:
+```csharp
+// Before (defensive OR)
+WHERE c.UserId = @userId OR c.userId = @userId
+
+// After migration (clean single-casing)
+WHERE c.userId = @userId
+```
+
+## Acceptance Criteria
+
+1. All 5 containers have **zero PascalCase docs** (verified via `IS_DEFINED` queries)
+2. UI `/accounts` page renders correctly for `brian@sample.com` and `e2e-default` user
+3. Admin dashboard counters (transactions, prompts) are accurate
+4. No 500 errors or missing data in logs post-migration
+
+## Out of Scope
+
+- **Git bisect on Microsoft.Azure.Cosmos** (issue follow-up #1): Root-causing the original writer is optional once serializer is pinned. Not blocking.
+- **Historical write timestamps**: No need to trace which deploy introduced camelCase writes — forward-only fix is sufficient.
+
+## Execution Timing
+
+**Best practice:** Run during low-traffic window (e.g., evening UTC) to minimize cross-partition query load. Estimated runtime: <5 minutes for ~200 total docs across all containers.
+
+## References
+
+- Issue: #125
+- Hot-fix commit: `squad/p2-wave-3` (Basher's account-service OR-pattern + iterator drain fix)
+- Workload-identity pod pattern: `.squad/agents/basher/history.md` 2026-05-13 entry (Redis Stream consumer investigation)
