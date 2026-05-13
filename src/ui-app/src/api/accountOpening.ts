@@ -118,11 +118,11 @@ export const createApplication = async (applicationData: ApplicationCreateReques
 
 export const uploadDocuments = async (
   applicationId: string,
-  files: File[],
+  file: File,
   documentType: DocumentType
 ): Promise<DocumentUploadResponse> => {
   const formData = new FormData();
-  files.forEach((file) => formData.append('files', file));
+  formData.append('file', file);
   formData.append('documentType', documentType);
   const response = await apiClient.post(`/account-opening/applications/${applicationId}/documents`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
@@ -135,7 +135,7 @@ export const uploadDocument = async (
   file: File,
   documentType: DocumentType
 ): Promise<DocumentUploadResponse> => {
-  return uploadDocuments(applicationId, [file], documentType);
+  return uploadDocuments(applicationId, file, documentType);
 };
 
 export const getApplication = async (applicationId: string): Promise<ApplicationResponse> => {

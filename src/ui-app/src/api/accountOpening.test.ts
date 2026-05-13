@@ -132,7 +132,7 @@ describe('Account Opening API', () => {
       mockClient.post.mockResolvedValueOnce(mockResponse);
 
       const file = new File(['content'], 'id.jpg', { type: 'image/jpeg' });
-      const result = await uploadDocuments('app-1', [file], 'photo_id');
+      const result = await uploadDocuments('app-1', file, 'photo_id');
 
       expect(mockClient.post).toHaveBeenCalledWith(
         '/account-opening/applications/app-1/documents',
@@ -149,7 +149,7 @@ describe('Account Opening API', () => {
       mockClient.post.mockRejectedValueOnce(error);
 
       const file = new File(['x'.repeat(11 * 1024 * 1024)], 'huge.pdf', { type: 'application/pdf' });
-      await expect(uploadDocuments('app-1', [file], 'photo_id')).rejects.toEqual(error);
+      await expect(uploadDocuments('app-1', file, 'photo_id')).rejects.toEqual(error);
     });
   });
 
