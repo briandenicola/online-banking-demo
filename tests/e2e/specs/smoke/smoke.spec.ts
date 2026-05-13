@@ -179,7 +179,7 @@ test.describe('Smoke Tests', () => {
       data: {
         AccountId: accountId,
         Amount: 10000.00,
-        Type: 'credit',
+        Type: 'Credit',
         Description: 'Smoke Test Funding Deposit',
         Currency: 'USD',
         Category: 'Income',
@@ -193,7 +193,7 @@ test.describe('Smoke Tests', () => {
       {
         AccountId: accountId,
         Amount: -5.75,
-        Type: 'debit',
+        Type: 'Debit',
         Description: 'Starbucks Coffee #4521',
         Currency: 'USD',
         Category: 'Food & Drink',
@@ -202,7 +202,7 @@ test.describe('Smoke Tests', () => {
       {
         AccountId: accountId,
         Amount: -67.99,
-        Type: 'payment',
+        Type: 'Debit',
         Description: 'Amazon.com Order #112-4432',
         Currency: 'USD',
         Category: 'Shopping',
@@ -211,7 +211,7 @@ test.describe('Smoke Tests', () => {
       {
         AccountId: accountId,
         Amount: 3250.00,
-        Type: 'credit',
+        Type: 'Credit',
         Description: 'Payroll Direct Deposit - Contoso Ltd',
         Currency: 'USD',
         Category: 'Income',
@@ -220,7 +220,7 @@ test.describe('Smoke Tests', () => {
       {
         AccountId: accountId,
         Amount: -142.30,
-        Type: 'payment',
+        Type: 'Debit',
         Description: 'Electric Bill - Pacific Power',
         Currency: 'USD',
         Category: 'Utilities',
@@ -229,7 +229,7 @@ test.describe('Smoke Tests', () => {
       {
         AccountId: accountId,
         Amount: -200.00,
-        Type: 'withdrawal',
+        Type: 'Withdrawal',
         Description: 'ATM Withdrawal - Chase Bank',
         Currency: 'USD',
         Category: 'Cash',
@@ -283,7 +283,7 @@ test.describe('Smoke Tests', () => {
     // 1. Create savings account with $500,000
     const savingsRes = await request.post('/api/accounts', {
       headers,
-      data: { AccountType: 'savings', InitialBalance: 500000, Currency: 'USD' },
+      data: { AccountType: 'Savings', InitialBalance: 500000, Currency: 'USD' },
     });
     expect(savingsRes.status(), `Create savings failed: ${savingsRes.status()}`).toBe(200);
     const savings = await savingsRes.json();
@@ -293,7 +293,7 @@ test.describe('Smoke Tests', () => {
     // 2. Create checking account with $0
     const checkingRes = await request.post('/api/accounts', {
       headers,
-      data: { AccountType: 'checking', InitialBalance: 0, Currency: 'USD' },
+      data: { AccountType: 'Checking', InitialBalance: 0, Currency: 'USD' },
     });
     expect(checkingRes.status(), `Create checking failed: ${checkingRes.status()}`).toBe(200);
     const checking = await checkingRes.json();
@@ -321,7 +321,7 @@ test.describe('Smoke Tests', () => {
       data: {
         AccountId: checking.id,
         Amount: -75000,
-        Type: 'debit',
+        Type: 'Debit',
         Description: '2014 Kia Optima',
         Currency: 'USD',
         AutoCategorize: false,

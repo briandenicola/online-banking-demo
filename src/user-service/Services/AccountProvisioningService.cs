@@ -43,7 +43,7 @@ public sealed class AccountProvisioningService : IAccountProvisioningService
 
             var accountRequest = new CreateAccountRequest
             {
-                AccountType = "checking",
+                AccountType = "Checking",
                 InitialBalance = 0m,
                 Currency = "USD"
             };
