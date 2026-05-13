@@ -133,6 +133,11 @@ else
     builder.Services.AddHttpClient();
     builder.Services.AddHttpContextAccessor();
 
+    // Decomposed transfer pipeline (validator → executor → event publisher)
+    builder.Services.AddScoped<ITransferValidator, TransferValidator>();
+    builder.Services.AddScoped<ITransferExecutor, TransferExecutor>();
+    builder.Services.AddScoped<ITransferEventPublisher, TransferEventPublisher>();
+
     // Services
     builder.Services.AddScoped<ITransferService, TransferService.Services.TransferService>();
 }

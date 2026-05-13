@@ -47,7 +47,7 @@ export async function apiLogin(
   // Ensure the user is registered before attempting login
   await ensureTestUser(request, credentials);
 
-  const response = await request.post('/api/users/login', {
+  const response = await request.post('/api/auth/login', {
     data: {
       username: credentials.email,
       password: credentials.password,

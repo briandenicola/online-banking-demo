@@ -349,3 +349,27 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 **Outcome:** ✓ Test count optimized 290→118, builds clean, no new warnings. Commits: 6b1dec2, 1c7d6f0, 7ee344b, 08f86de, d49ad86.
 
 **Team:** Coordinated with Turk (Python services) and Basher (.NET storage) for cross-service consistency. Wave complete; PR pending merge to main.
+
+### 2026-05-13 — P2 Wave 2 #99: AdminPage + AdminEvalTab Monolith Split
+
+**Scope:** Extracted the two remaining monolith admin components per the team-wide pattern.
+
+**AdminPage.tsx (718 → 236 lines):**
+- `components/FlaggedTransactionsTab.tsx` (305 lines) — owns local sort, expand-row, and action-loading state. Calls `/admin/flagged-transactions/{id}/review` directly via apiClient and reports back through `onRefresh` / `onError` props.
+- `components/AllTransactionsTab.tsx` (291 lines) — same shape; calls `/admin/scored-transactions/{id}/rescore`.
+- Parent keeps only stats + data fetching + 30s refresh interval.
+
+**AdminEvalTab.tsx (661 → 106 lines):** split into `components/eval/`:
+- `types.ts` — shared interfaces (PromptTemplate, EvaluationRunSummary, EvaluationRunDetail, SafetyResult, ActivePrompt, EvalScoredTransaction).
+- `PromptTemplateEditor.tsx` (309) — Active prompts grid + Templates list + Create/Edit dialog. Owns its form state. Bubbles "Run" up via `onRunRequested(templateId)`.
+- `EvaluationRunner.tsx` (158) — the Run dialog. Owns `selectedIds` + `running` flag. POSTs to `/evaluations/run`.
+- `EvaluationResults.tsx` (385) — runs table + detail dialog + JSON download. Fetches detail on row click.
+- `AdminEvalTab.tsx` is now a pure orchestrator: fetches the four endpoints, manages run-dialog open state, and composes the three children.
+
+**Pattern reinforced:**
+- Composition shape for tab subcomponents: `{ data, onRefresh, onError }` plus any feature-specific bubble-up callbacks. Children own ephemeral UI state (sort, expand, dialog form fields, action-loading). Parent owns server-state + refresh.
+- Sub-folders (`components/eval/`) are appropriate when a single feature splits into 3+ files plus shared types — keeps the flat `components/` directory readable.
+
+**Verification:** `npx tsc --noEmit` clean; `npm test` 118/118 passing; build only fails on pre-existing eslint warnings in ApplicationStatus.tsx + RegisterPage.tsx (not from this change — confirmed against baseline before edits).
+
+**Cross-team:** Pushed to `squad/p2-wave-2`. Basher and Turk also working on the branch — picked up their commits via fast-forward push (no rebase needed).

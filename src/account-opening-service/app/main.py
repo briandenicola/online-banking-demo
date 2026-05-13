@@ -13,6 +13,7 @@ from app.config import CorrelationIdMiddleware, configure_logging, init_telemetr
 from app.routes import router as account_opening_router
 from app.routes.health import router as health_router
 from app.services.lifecycle import lifespan
+from app.state_machine import ApplicationStateMachine
 
 configure_logging()
 logger = structlog.get_logger("account-opening-service")
@@ -22,6 +23,7 @@ app = FastAPI(title="Account Opening Service", version="1.0.0", lifespan=lifespa
 app.state.repository = None
 app.state.redis = None
 app.state.blob_service_client = None
+app.state.state_machine = ApplicationStateMachine()
 
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(

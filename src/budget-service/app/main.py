@@ -2,6 +2,7 @@
 Budget Analysis Agent for spending analysis and insights
 """
 import uuid
+from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI, Request
@@ -13,6 +14,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.config import configure_logging, init_telemetry
 from app.routes.budget import router as budget_router
 from app.routes.health import router as health_router
+from app.services.budget_service import create_budget_state, init_embeddings_client
 from app.services.startup import startup_event
 
 configure_logging()
@@ -31,7 +33,15 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
         return response
 
 
-app = FastAPI(title="Budget Analysis Agent", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.budget_state = create_budget_state()
+    app.state.embeddings_client = init_embeddings_client()
+    await startup_event(app.state.embeddings_client)
+    yield
+
+
+app = FastAPI(title="Budget Analysis Agent", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(CorrelationIdMiddleware)
 
@@ -48,8 +58,6 @@ HTTPXClientInstrumentor().instrument()
 
 app.include_router(health_router)
 app.include_router(budget_router)
-
-app.add_event_handler("startup", startup_event)
 
 
 @app.exception_handler(Exception)

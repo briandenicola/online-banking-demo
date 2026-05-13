@@ -14,6 +14,7 @@ public class AuthControllerTests
 {
     private readonly Mock<IUserService> _userServiceMock;
     private readonly Mock<IAuthService> _authServiceMock;
+    private readonly Mock<ILoginAuditService> _loginAuditServiceMock;
     private readonly Mock<ILogger<AuthController>> _loggerMock;
     private readonly AuthController _sut;
 
@@ -21,8 +22,9 @@ public class AuthControllerTests
     {
         _userServiceMock = new Mock<IUserService>();
         _authServiceMock = new Mock<IAuthService>();
+        _loginAuditServiceMock = new Mock<ILoginAuditService>();
         _loggerMock = new Mock<ILogger<AuthController>>();
-        _sut = new AuthController(_userServiceMock.Object, _authServiceMock.Object, _loggerMock.Object);
+        _sut = new AuthController(_userServiceMock.Object, _authServiceMock.Object, _loginAuditServiceMock.Object, _loggerMock.Object);
     }
 
     [Fact]

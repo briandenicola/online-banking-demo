@@ -1,6 +1,8 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends
+
+from app.dependencies import get_redis_client
 
 router = APIRouter()
 
@@ -11,8 +13,7 @@ async def healthz():
 
 
 @router.get("/readyz")
-async def readyz(request: Request):
-    redis_client = request.app.state.redis
+async def readyz(redis_client=Depends(get_redis_client)):
     if not redis_client:
         return {"status": "unavailable", "reason": "redis"}, 503
     try:

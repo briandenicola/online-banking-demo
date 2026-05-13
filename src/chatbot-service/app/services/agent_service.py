@@ -2,11 +2,12 @@ import asyncio
 import os
 import uuid
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from app.config import AGENT_FRAMEWORK_AVAILABLE, Agent, DefaultAzureCredential, FoundryChatClient
 from app.services.agent_tools import (
@@ -72,19 +73,23 @@ FINANCIAL_ADVISOR_INSTRUCTIONS = (
     "- If user requests something outside your scope, politely decline and redirect to appropriate service"
 )
 
-# Globals
-financial_agent: Optional["Agent"] = None
-agent_ready: bool = False
-model_name: str = ""
-cosmos_chat_container = None
+@dataclass
+class AgentState:
+    financial_agent: Optional["Agent"] = None
+    agent_ready: bool = False
+    model_name: str = ""
+    cosmos_chat_container: Any = None
+    user_sessions: dict[str, Any] = field(default_factory=dict)
+    session_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
-# In-memory sessions per user (maps user_id -> AgentSession)
-user_sessions: dict = {}
+
+def get_agent_state(request: Request) -> AgentState:
+    return request.app.state.agent_state
 
 
-async def save_chat_message(user_id: str, role: str, text: str) -> None:
+async def save_chat_message(state: AgentState, user_id: str, role: str, text: str) -> None:
     """Persist a chat message to Cosmos DB."""
-    if not cosmos_chat_container:
+    if not state.cosmos_chat_container:
         return
     try:
         doc = {
@@ -94,19 +99,19 @@ async def save_chat_message(user_id: str, role: str, text: str) -> None:
             "text": text,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await asyncio.to_thread(cosmos_chat_container.upsert_item, doc)
+        await asyncio.to_thread(state.cosmos_chat_container.upsert_item, doc)
     except Exception as e:
         logger.warning(f"Failed to save chat message: {e}")
 
 
-async def load_chat_history(user_id: str, limit: int = 50) -> list[dict]:
+async def load_chat_history(state: AgentState, user_id: str, limit: int = 50) -> list[dict]:
     """Load recent chat history from Cosmos DB."""
-    if not cosmos_chat_container:
+    if not state.cosmos_chat_container:
         return []
     try:
         query = "SELECT * FROM c WHERE c.userId = @uid ORDER BY c.timestamp DESC OFFSET 0 LIMIT @limit"
         items = await asyncio.to_thread(
-            lambda: list(cosmos_chat_container.query_items(
+            lambda: list(state.cosmos_chat_container.query_items(
                 query=query,
                 parameters=[
                     {"name": "@uid", "value": user_id},
@@ -124,7 +129,8 @@ async def load_chat_history(user_id: str, limit: int = 50) -> list[dict]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global financial_agent, agent_ready, model_name, cosmos_chat_container
+    state = AgentState()
+    app.state.agent_state = state
 
     logger.info("=" * 60)
     logger.info("🤖 Chatbot Service — Startup (Microsoft Agent Framework)")
@@ -137,6 +143,7 @@ async def lifespan(app: FastAPI):
         or os.getenv("AZURE_OPENAI_ENDPOINT")
     )
     model_name = os.getenv("FOUNDRY_MODEL") or os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4-mini")
+    state.model_name = model_name
 
     logger.info(f"  Endpoint: {endpoint or '❌ NOT SET'}")
     logger.info(f"  Model: {model_name}")
@@ -174,7 +181,8 @@ async def lifespan(app: FastAPI):
                 instructions=FINANCIAL_ADVISOR_INSTRUCTIONS,
                 tools=[get_budget_insights, get_spending_pattern, analyze_transaction, get_user_transactions, get_user_accounts],
             )
-            agent_ready = True
+            state.financial_agent = financial_agent
+            state.agent_ready = True
             logger.info("🟢 Agent ready — accepting requests")
         except Exception as ex:
             logger.error(f"❌ Failed to create agent: {ex}")
@@ -189,7 +197,7 @@ async def lifespan(app: FastAPI):
                 from azure.cosmos import CosmosClient
                 cosmos_client = await asyncio.to_thread(CosmosClient, cosmos_endpoint, credential=credential)
                 db = cosmos_client.get_database_client("BankingDemo")
-                cosmos_chat_container = db.get_container_client("ChatSessions")
+                state.cosmos_chat_container = db.get_container_client("ChatSessions")
                 logger.info("💾 Cosmos chat persistence ready")
             except Exception as ex:
                 logger.warning(f"⚠️  Cosmos chat init failed (chat will be in-memory only): {ex}")

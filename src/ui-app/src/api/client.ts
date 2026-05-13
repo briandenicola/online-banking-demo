@@ -25,8 +25,7 @@ apiClient.interceptors.response.use(
       const url = error.config?.url || '';
       const isAuthEndpoint =
         url.includes('/auth/login') ||
-        url.includes('/auth/register') ||
-        url.includes('/users/login');
+        url.includes('/auth/register');
       if (!isAuthEndpoint) {
         localStorage.removeItem('auth_token');
         window.location.href = '/login';
