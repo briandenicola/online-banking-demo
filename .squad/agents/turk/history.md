@@ -679,3 +679,103 @@ Note `[request.system_prompt]` (list-wrapped) — `Message`'s `contents` is a `S
 **Decision Drop:** Merged turk-126-message-api.md into decisions.md. Bonus learning: `EvalItem` kwarg drift (input → conversation) caught and fixed in same session.
 
 **Live Verification:** `/api/admin/evaluate` now passes request validation and reaches Foundry backend. 403 is infra-side (role assignment), not Python API usage.
+
+---
+
+### 2026-05-13 — Issues #125 & #130: Cosmos Casing Drift + Redis Counter Flicker
+
+**Branch:** squad/p2-wave-3  
+**Commits:** 243457f (#125), 8fc8c76 (#130)
+
+#### Issue #125: Cosmos Serializer-Casing Drift
+
+**Context:** Basher fixed account-service to OR both PascalCase and camelCase field names in Cosmos queries (`c.UserId OR c.userId`) after discovering Brian's accounts were invisible due to serializer drift. This was a hot-fix to restore read functionality.
+
+**Task:** Audit ALL .NET services for the same drift, pin serializers, document migration plan.
+
+**Audit findings:**
+- **transaction-service:** Used camelCase only (`c.accountId`, `c.userId`, `c.timestamp`) — silently missing PascalCase docs
+- **user-service:** Used PascalCase only (`c.Username`, `c.Email`, `c.Role`, `c.CreatedAt`) — also in bootstrap admin queries in Program.cs
+- **prompt-eval-service:** Used camelCase only (`c.userId`, `c.templateId`, `c.updatedAt`, `c.createdAt`)
+- **account-service:** Already fixed by Basher (OR pattern)
+- **transfer-service:** Only point-reads by `id` — no user-scoped queries, no fix needed
+
+**Fix pattern (applied to 3 services):**
+1. Repository queries: `WHERE c.UserId = @x OR c.userId = @x` (both casings)
+2. Iterator drain: Replace `.ReadNextAsync() → .FirstOrDefault()` with `while (iterator.HasMoreResults) { AddRange(...) }` to prevent silent truncation at ~100 docs
+3. Serializer pin: Add explicit `CosmosSystemTextJsonSerializer` with `PropertyNamingPolicy.CamelCase` to all `CosmosClient` registrations in `Program.cs`
+
+**Why camelCase?** Matches API surface (ASP.NET Core defaults to camelCase JSON), frontend expectations (React/TS convention), and the majority of recent docs.
+
+**Decision drops:**
+- `.squad/decisions/inbox/turk-125-cosmos-migration-plan.md` — One-shot migration plan for normalizing PascalCase docs to camelCase (Brian to execute)
+- `.squad/decisions/inbox/turk-cosmos-serializer-pin.md` — Convention going forward for all .NET services
+
+**Integration test issue:** Filed via `gh issue create` (title: "test(integration): assert API write → direct Cosmos query field casing match", labels: squad) — Livingston's domain. Would have caught both the original drift and the reader incompatibility.
+
+**Post-migration cleanup:** Once all docs are normalized, remove the OR-pattern and revert to single-casing queries for cleaner SQL and faster execution.
+
+#### Issue #130: aiCallsToday Counter Flicker
+
+**Root cause:** Counter lived in process memory (`self._ai_calls_today`) in `FoundryRiskAnalyzer`. With HPA min=2 replicas, each pod has its own count → dashboard value flickered between 17 and 68 depending on which pod responded.
+
+**Fix:** Moved counter to Redis:
+- Key pattern: `ai:metrics:calls:{YYYY-MM-DD}` (UTC date)
+- Increment: `INCR` on **SUCCESS path only** (NOT 429s, NOT 500s) — inside `FoundryRiskAnalyzer.analyze()`
+- TTL: 36 hours (covers UTC day boundary + buffer) — set via `EXPIRE` if `TTL` returns -1
+- Read: `GET` in dashboard endpoint via new `get_ai_calls_today_from_redis(redis_client)` helper
+- Old in-memory counter: Removed `_ai_calls_today`, `_ai_calls_date`, `_ai_calls_lock` from `FoundryRiskAnalyzer`
+- Signature change: `AnalyzerPipeline.assess()` now accepts optional `redis_client` kwarg, passes it to `FoundryRiskAnalyzer.analyze()`
+
+**Key files:**
+- `src/ai-service/app/services/anomaly_service.py` — counter logic moved to Redis
+- `src/ai-service/app/routes/api.py` — dashboard endpoint now calls `get_ai_calls_today_from_redis(state.redis_client)`
+
+**Verification (Brian will run):**
+- Dashboard refresh 10x → monotonically non-decreasing, no flicker
+- Cross-pod check: `kubectl exec` into each ai-service pod and hit `/api/admin/dashboard` directly — same value from each
+- TTL visible: `redis-cli TTL ai:metrics:calls:2026-05-13`
+- New key auto-creates at UTC midnight
+
+**Tests:** No tests asserted on the in-memory counter — nothing to update.
+
+## Learnings: Cosmos Serializer Drift
+
+**Cross-service audit methodology:**
+1. `grep -n "WHERE c\." **/*.cs` to find all Cosmos queries
+2. Identify field casings used (PascalCase vs camelCase)
+3. Apply OR-both-casings pattern to ALL queries (defensive)
+4. Drain iterators with `while (HasMoreResults)` — `.ReadNextAsync()` alone silently truncates at page size
+5. Pin `CosmosSystemTextJsonSerializer` with explicit `PropertyNamingPolicy` in **every** `CosmosClient` registration
+
+**Why OR-both-casings is temporary:** It's defensive but inefficient (Cosmos can't use indexes optimally when ORing field variants). The correct long-term fix is:
+1. Normalize storage (one-shot migration)
+2. Pin serializer to prevent future drift
+3. Revert queries to single-casing
+
+**Pattern for future .NET services:** ANY service that writes to Cosmos MUST pin the serializer at registration time. Default `CosmosClient()` behavior is non-deterministic (SDK version-dependent).
+
+## Learnings: Redis Daily Counter Pattern
+
+**Pattern:**
+```python
+today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+counter_key = f"ai:metrics:calls:{today}"
+await redis_client.incr(counter_key)
+
+# Set TTL to 36 hours on first increment
+ttl = await redis_client.ttl(counter_key)
+if ttl == -1:  # Key exists but has no TTL
+    await redis_client.expire(counter_key, 36 * 60 * 60)
+```
+
+**Why 36 hours?** Covers UTC day boundary + a buffer. Keys auto-expire after they're no longer relevant.
+
+**Why check TTL == -1?** `INCR` creates the key but doesn't set TTL. First caller sets the TTL; subsequent `INCR`s leave it alone. `-1` means "key exists but no TTL set" (vs `-2` = "key doesn't exist").
+
+**When to use:** Any per-day metric that needs to be **cross-replica consistent** (counters, rate limits, usage tracking). Don't use in-memory for metrics read from multiple pods.
+
+**Counter semantics:** Increment ONLY on success path. Don't count retries, 429s, or 500s — this keeps the counter meaningful (actual work done, not attempts).
+
+**Alternative (if you need per-hour):** Use key pattern `ai:metrics:calls:{YYYY-MM-DD}:{HH}` with 25-hour TTL (covers hour overlap).
+
