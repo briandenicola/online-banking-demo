@@ -100,6 +100,7 @@ class ProvisioningConsumer(AgentConsumer):
         self._agent = FoundryAgent(
             project_endpoint=foundry_endpoint.rstrip("/"),
             credential=self._credential,
+            model=foundry_model,
             agent_name="account-provisioner",
             agent_version="1",
             description="Account provisioning agent",
