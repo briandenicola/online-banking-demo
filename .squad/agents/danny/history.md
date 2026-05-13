@@ -759,3 +759,26 @@ openai.BadRequestError: 400 - {'error': {'code': 'UserError',
 **Action Required:** Grant the workload identity the necessary role(s) on the AI Foundry project's `raisvc` plane. Turk's decision drop (merged into decisions.md) documents the Python-side validation + live verification; this is the infrastructure ownership piece.
 
 **Issue Tracking:** Separate from #126 (which is closed). Recommend filing a new issue and tagging for architecture/Terraform review.
+
+## 2026-05-13 — Post-Batch Smoke (Wave 3, batch #127 + live-tx investigation)
+
+**Ceremony:** First real run of Post-Batch Smoke (defined in `.squad/ceremonies.md`)
+
+**Trigger:** Two issues closed on `squad/p2-wave-3`:
+- **#127** (commit `2946b20`) — Linus fixed Account Opening submit payload to match FastAPI `ApplicationCreate` (nested address/employment, `ssn` field) + added `resolveApiError` helper to flatten FastAPI 422 array-shaped `detail`
+- **Basher's live-tx investigation** (no code change) — confirmed tx → categorize → score pipeline works in ~5s; architecture note: budget-service is API-only, not a stream consumer
+
+**Smoke Target:** `onlinebankingdemo.bjdazure.tech` (from repo-root `.env`)
+
+**Tests Executed:**
+1. **#127 Happy Path**: POST valid Account Opening application → HTTP 201 ✅
+2. **#127 Sad Path**: POST with malformed SSN (`"abc"`) → HTTP 422 with array `detail` ✅
+3. **Live-tx Pipeline**: POST transaction, wait ~12s, check ai-service logs → categorized + scored ✅
+   - Logs: `Categorized transaction: Dining & Restaurants (confidence: 0.97)`, `Scored transaction: risk=0.12, flags=['small_purchase']`
+   - Transaction record shows `category: "Uncategorized"` and `riskScore: null` — this is by design: AI results stored in Redis, not written back to Cosmos DB
+4. **Wave 3 Regression Check**: GET `/api/transactions`, `/api/accounts` → HTTP 200 ✅
+
+**Verdict:** ✅ **Clean** — all checks pass; manual testing freeze can lift.
+
+**Commit:** `2946b20` (Linus)
+
