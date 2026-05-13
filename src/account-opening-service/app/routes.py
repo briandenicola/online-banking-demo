@@ -59,7 +59,7 @@ async def upload_document(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
 
     owner = repository.get_owner(application_id)
-    if user.role != "Admin" and owner != user.user_id:
+    if user.role.lower() != "admin" and owner != user.user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     safe_name = file.filename or f"document-{document_type}-{datetime.now(timezone.utc).timestamp()}"
@@ -121,7 +121,7 @@ async def get_application(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
 
     owner = repository.get_owner(application_id)
-    if user.role != "Admin" and owner != user.user_id:
+    if user.role.lower() != "admin" and owner != user.user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     return application

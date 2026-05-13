@@ -55,4 +55,14 @@ public static class ObservabilityExtensions
     {
         return app.UseMiddleware<CorrelationIdMiddleware>();
     }
+
+    /// <summary>
+    /// Adds global exception handling middleware that returns a standardized JSON error response
+    /// and prevents stack trace leakage in non-development environments.
+    /// Must be registered early in the pipeline (before routing/auth).
+    /// </summary>
+    public static IApplicationBuilder UseGlobalExceptionHandler(this IApplicationBuilder app)
+    {
+        return app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
+    }
 }

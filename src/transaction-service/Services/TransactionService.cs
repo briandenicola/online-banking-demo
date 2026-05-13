@@ -141,9 +141,13 @@ public class TransactionService : ITransactionService
 
             _logger.LogInformation("Published TransactionCreated event to Redis for transaction {TransactionId}", transaction.Id);
         }
-        catch (Exception ex)
+        catch (RedisConnectionException ex)
         {
-            _logger.LogError(ex, "Failed to publish TransactionCreated event to Redis for transaction {TransactionId}", transaction.Id);
+            _logger.LogError(ex, "Redis connection failed while publishing TransactionCreated event for transaction {TransactionId}", transaction.Id);
+        }
+        catch (RedisException ex)
+        {
+            _logger.LogError(ex, "Redis error while publishing TransactionCreated event for transaction {TransactionId}", transaction.Id);
         }
     }
 
@@ -211,9 +215,13 @@ public class TransactionService : ITransactionService
 
             _logger.LogInformation("Published InsufficientFundsAttempt event for account {AccountId}", accountId);
         }
-        catch (Exception ex)
+        catch (RedisConnectionException ex)
         {
-            _logger.LogError(ex, "Failed to publish InsufficientFundsAttempt event for account {AccountId}", accountId);
+            _logger.LogError(ex, "Redis connection failed while publishing InsufficientFundsAttempt event for account {AccountId}", accountId);
+        }
+        catch (RedisException ex)
+        {
+            _logger.LogError(ex, "Redis error while publishing InsufficientFundsAttempt event for account {AccountId}", accountId);
         }
     }
 
@@ -234,9 +242,9 @@ public class TransactionService : ITransactionService
             _logger.LogError("Account {AccountId} not found in Cosmos DB during balance update", accountId);
             throw new InvalidOperationException($"Account {accountId} not found. Balance update cannot be completed.", ex);
         }
-        catch (Exception ex)
+        catch (CosmosException ex)
         {
-            _logger.LogError(ex, "Failed to update balance for account {AccountId}", accountId);
+            _logger.LogError(ex, "Cosmos DB error updating balance for account {AccountId}", accountId);
             throw;
         }
     }

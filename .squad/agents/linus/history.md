@@ -241,3 +241,16 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
   - No CONTRIBUTING.md, no API documentation (OpenAPI/Swagger specs)
 - **Positive findings:** Clean context split, TypeScript strict mode, CRA boilerplate cleaned, root README comprehensive, architecture docs excellent, mobile-responsive AppShell, form validation present
 - **Report:** `.squad/decisions/inbox/linus-frontend-audit.md`
+
+### 2026-05-12 — ErrorBoundary Implementation (Issue #92)
+- **Problem:** No ErrorBoundary existed — any uncaught render error crashed the entire app to a white screen
+- **Component created:** `src/ui-app/src/components/ErrorBoundary.tsx` — class component with typed props (section, fallback, children)
+- **Architecture:** Two-layer boundary strategy:
+  1. **Top-level** boundary in App() wrapping AuthProvider/AccountProvider/Router — catches catastrophic errors (context/router crashes)
+  2. **Per-route** boundaries on every page route element (Dashboard, Accounts, Transactions, Transfers, Chat, Settings, Account Opening, Admin) — isolates page crashes so nav remains functional
+- **Fallback UI:** MUI-styled Paper with warning icon, reassuring "Your accounts and data are safe" message, section-specific context, "Try Again" (resets state) and "Go to Dashboard" (escape hatch) buttons
+- **Logging:** `componentDidCatch` logs to console.error with section label and component stack
+- **Props:** `section` (optional label for fallback message), `fallback` (optional custom ReactNode override)
+- **Tests:** 6 tests in `__tests__/ErrorBoundary.test.tsx` — renders children, shows fallback, section name, reset, custom fallback, console logging
+- **MUI v9 gotcha:** `ErrorOutline` icon doesn't exist in MUI v9 icons — use `ErrorOutlineRounded` instead
+- **Pattern:** Per-route boundaries keep AppShell navigation alive when a single page crashes; top-level boundary is the last-resort safety net

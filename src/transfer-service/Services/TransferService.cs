@@ -88,16 +88,46 @@ public class TransferService : ITransferService
 
             return transfer;
         }
-        catch (Exception ex)
+        catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Transfer failed: {TransferId}", transfer.Id);
+            _logger.LogError(ex, "HTTP request failed during transfer: {TransferId}", transfer.Id);
+            transfer.Status = "Failed";
+            transfer.FailureReason = "Transfer could not be completed due to a service communication error";
+            try
+            {
+                await _container.CreateItemAsync(transfer, new PartitionKey(transfer.Id));
+            }
+            catch (CosmosException persistEx)
+            {
+                _logger.LogError(persistEx, "Failed to persist failed transfer record: {TransferId}", transfer.Id);
+            }
+            return transfer;
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogError(ex, "Transfer operation failed: {TransferId}", transfer.Id);
             transfer.Status = "Failed";
             transfer.FailureReason = "Transfer could not be completed";
             try
             {
                 await _container.CreateItemAsync(transfer, new PartitionKey(transfer.Id));
             }
-            catch (Exception persistEx)
+            catch (CosmosException persistEx)
+            {
+                _logger.LogError(persistEx, "Failed to persist failed transfer record: {TransferId}", transfer.Id);
+            }
+            return transfer;
+        }
+        catch (CosmosException ex)
+        {
+            _logger.LogError(ex, "Cosmos DB error during transfer: {TransferId}", transfer.Id);
+            transfer.Status = "Failed";
+            transfer.FailureReason = "Transfer could not be completed due to a storage error";
+            try
+            {
+                await _container.CreateItemAsync(transfer, new PartitionKey(transfer.Id));
+            }
+            catch (CosmosException persistEx)
             {
                 _logger.LogError(persistEx, "Failed to persist failed transfer record: {TransferId}", transfer.Id);
             }
@@ -221,9 +251,13 @@ public class TransferService : ITransferService
 
             _logger.LogInformation("Published TransferInitiated event to Redis for transfer {TransferId}", transfer.Id);
         }
-        catch (Exception ex)
+        catch (RedisConnectionException ex)
         {
-            _logger.LogError(ex, "Failed to publish TransferInitiated event to Redis for transfer {TransferId}", transfer.Id);
+            _logger.LogError(ex, "Redis connection failed while publishing TransferInitiated event for transfer {TransferId}", transfer.Id);
+        }
+        catch (RedisException ex)
+        {
+            _logger.LogError(ex, "Redis error while publishing TransferInitiated event for transfer {TransferId}", transfer.Id);
         }
     }
 

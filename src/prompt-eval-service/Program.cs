@@ -115,6 +115,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseCorrelationId();
+app.UseGlobalExceptionHandler();
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();

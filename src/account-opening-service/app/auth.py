@@ -56,6 +56,6 @@ async def require_auth(request: Request) -> UserClaims:
 
 async def require_admin(request: Request) -> UserClaims:
     user = await require_auth(request)
-    if user.role != "Admin":
+    if user.role.lower() != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return user

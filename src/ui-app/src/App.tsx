@@ -16,6 +16,7 @@ import AccountOpeningPage from './pages/AccountOpeningPage';
 import Login from './pages/Login';
 import RegisterPage from './pages/RegisterPage';
 import AppShell from './components/AppShell';
+import ErrorBoundary from './components/ErrorBoundary';
 import { AuthProvider, useAuthContext } from './contexts/AuthContext';
 import { AccountProvider } from './contexts/AccountContext';
 
@@ -35,14 +36,14 @@ const AppContent: React.FC = () => {
   return (
     <AppShell>
       <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/accounts" element={<Accounts />} />
-        <Route path="/transactions" element={<Transactions />} />
-        <Route path="/transfers" element={<Transfers />} />
-        <Route path="/chat" element={<Chat />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/account-opening" element={<AccountOpeningPage />} />
-        {isAdmin && <Route path="/admin" element={<AdminPage />} />}
+        <Route path="/" element={<ErrorBoundary section="Dashboard"><Dashboard /></ErrorBoundary>} />
+        <Route path="/accounts" element={<ErrorBoundary section="Accounts"><Accounts /></ErrorBoundary>} />
+        <Route path="/transactions" element={<ErrorBoundary section="Transactions"><Transactions /></ErrorBoundary>} />
+        <Route path="/transfers" element={<ErrorBoundary section="Transfers"><Transfers /></ErrorBoundary>} />
+        <Route path="/chat" element={<ErrorBoundary section="Chat"><Chat /></ErrorBoundary>} />
+        <Route path="/settings" element={<ErrorBoundary section="Settings"><Settings /></ErrorBoundary>} />
+        <Route path="/account-opening" element={<ErrorBoundary section="Account Opening"><AccountOpeningPage /></ErrorBoundary>} />
+        {isAdmin && <Route path="/admin" element={<ErrorBoundary section="Admin"><AdminPage /></ErrorBoundary>} />}
         <Route path="/login" element={<Navigate to="/" />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
@@ -54,13 +55,15 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <AuthProvider>
-        <AccountProvider>
-          <Router>
-            <AppContent />
-          </Router>
-        </AccountProvider>
-      </AuthProvider>
+      <ErrorBoundary>
+        <AuthProvider>
+          <AccountProvider>
+            <Router>
+              <AppContent />
+            </Router>
+          </AccountProvider>
+        </AuthProvider>
+      </ErrorBoundary>
     </ThemeProvider>
   );
 }

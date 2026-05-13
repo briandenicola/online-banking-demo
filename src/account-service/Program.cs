@@ -128,9 +128,9 @@ app.UseHttpsRedirection();
 
 app.UseCorrelationId();
 
-app.UseCors();
+app.UseGlobalExceptionHandler();
 
-app.UseAuthentication();
+app.UseCors();
 app.UseAuthorization();
 
 app.MapControllers();
