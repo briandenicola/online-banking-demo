@@ -24,9 +24,13 @@ export async function ensureTestUser(
   request: APIRequestContext,
   credentials: AuthCredentials = DEFAULT_USER
 ): Promise<void> {
+  // Backend validates username to only allow letters, digits, underscore, dot, or hyphen
+  // Generate a valid username from email by removing @ and domain
+  const username = credentials.email.split('@')[0].replace(/[^a-zA-Z0-9._-]/g, '');
+  
   await request.post('/api/users/register', {
     data: {
-      username: credentials.email,
+      username,
       email: credentials.email,
       firstName: 'E2E',
       lastName: 'Test',

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Link as RouterLink } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   Container,
   Box,
@@ -8,7 +8,6 @@ import {
   Button,
   Paper,
   Alert,
-  Link,
   Divider,
 } from '@mui/material';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
@@ -70,8 +69,12 @@ const RegisterPage: React.FC = () => {
 
     setLoading(true);
     try {
+      // Backend validates username to only allow letters, digits, underscore, dot, or hyphen
+      // Generate a valid username from email by removing @ and domain
+      const username = email.split('@')[0].replace(/[^a-zA-Z0-9._-]/g, '');
+      
       await apiClient.post('/users/register', {
-        username: email,
+        username,
         firstName,
         lastName,
         email,
