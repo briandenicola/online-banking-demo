@@ -447,3 +447,38 @@ This pattern applies to all Python services using the FastAPI DI pattern introdu
 - Always verify extracted routes against original monolithic `main.py` to ensure nothing was dropped
 
 **Outcome:** Issue #115 closed. All Python service tests green on branch `squad/p2-wave-3`.
+
+## 2026-05-13 — Issue #109: OpenAPI Specs for Python Services
+
+**Issue:** #109 — Add OpenAPI/Swagger API documentation (Python/FastAPI portion)
+
+**Context:** No OpenAPI spec files committed despite architecture.md referencing Swagger endpoints. Frontend developers must read backend source to understand API contracts.
+
+**What was done:**
+1. Verified all 4 FastAPI services already expose `/docs` (Swagger UI) and `/openapi.json` endpoints by default (FastAPI behavior)
+2. Created `scripts/generate-openapi.py` — Python script that imports each service's FastAPI app and calls `app.openapi()` to generate specs
+3. Generated and committed OpenAPI specs to `docs/api/` for:
+   - ai-service-openapi.json (24KB)
+   - budget-service-openapi.json (24KB)
+   - chatbot-service-openapi.json (24KB)
+   - account-opening-service-openapi.json (24KB)
+4. Updated `docs/architecture.md` with API documentation references and regen instructions
+5. Pushed to branch `squad/p2-wave-3`, commented on issue
+
+**Key files:**
+- `scripts/generate-openapi.py` — regenerates all 4 specs by importing each service's FastAPI app
+- `docs/api/{service}-openapi.json` — committed specs
+- `docs/architecture.md` — updated "Communication Patterns" section
+
+**Pattern:** FastAPI `app.openapi()` method generates full OpenAPI 3.1.0 spec with all routes, schemas, and metadata from the FastAPI app definition at import time. Script must add each service's `src/{service-name}` path to `sys.path` before importing `app.main.app`.
+
+**Gotcha:** Script emits experimental warnings from Azure AI SDK (`MemoryStore`, `SkillResource`) during import — these are harmless and don't affect spec generation.
+
+**Outcome:** Python portion of #109 complete. Waiting for Basher to finish .NET services.
+
+## Learnings
+- FastAPI automatically generates OpenAPI 3.1.0 specs at runtime via `app.openapi()` method — no external tools needed
+- OpenAPI generation requires importing the FastAPI app, which triggers all module-level code (logging setup, telemetry init, etc.) — acceptable for offline spec generation
+- Azure AI SDK emits experimental warnings at import time for preview features (MemoryStore, SkillResource) — suppress with PYTHONWARNINGS=ignore if needed
+- Committed OpenAPI specs serve as API contract documentation for frontend developers without requiring service runtime access
+- Pattern: Store specs in `docs/api/{service-name}-openapi.json` for cross-team discoverability

@@ -1,3 +1,451 @@
+# Decisions — Wave 3 Integration & Stabilization Sprint
+
+## Session: 2026-05-13 (OpenAPI, Docs, Test Recovery)
+
+---
+
+## Decision: OpenAPI Spec Generation for .NET Services
+
+**Status:** IMPLEMENTED  
+**Date:** 2026-05-13  
+**Author:** Basher  
+**Issue:** #109 — Add OpenAPI/Swagger API documentation  
+**Branch:** squad/p2-wave-3  
+**Commit:** ff310d0, ed16ec9
+
+### Context
+
+Architecture documentation referenced Swagger endpoints, but no OpenAPI specs were committed to the repository. All .NET services had Swagger enabled at runtime, but lacked:
+1. Proper API titles and security definitions in Swagger config
+2. Committed OpenAPI specs for developer reference and API client generation
+3. A repeatable process for regenerating specs after API changes
+
+### Decision
+
+#### Swagger Configuration
+
+All .NET services now use a standardized Swashbuckle configuration:
+
+```csharp
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo { Title = "Service Name", Version = "v1" });
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer"
+    });
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme { Reference = new OpenApiReference { Id = "Bearer", Type = ReferenceType.SecurityScheme } },
+            Array.Empty<string>()
+        }
+    });
+});
+```
+
+#### Spec Generation Process
+
+**Tool:** `Swashbuckle.AspNetCore.Cli` 6.9.0
+
+**Command:**
+```bash
+swagger tofile --output <path> <service.dll> v1
+```
+
+**Environment Requirements:**
+- `UseInMemoryDatabase=true` — avoids Cosmos/Redis dependencies
+- `Jwt__Key`, `Jwt__Issuer`, `Jwt__Audience` — minimal JWT config
+- `CosmosDb__ConnectionString` — fake connection string for services that require it
+
+**Special Cases:**
+- `prompt-eval-service` requires temporary commenting of startup initialization code (lines 108-113 in Program.cs) because it attempts to create Cosmos containers during startup before Swagger can be extracted.
+
+#### Committed Specs
+
+All specs committed to `docs/api/`:
+- `user-service-openapi.json`
+- `account-service-openapi.json`
+- `transaction-service-openapi.json`
+- `transfer-service-openapi.json`
+- `prompt-eval-service-openapi.json`
+
+#### Regeneration Script
+
+Created `scripts/generate-openapi-specs.sh` to:
+1. Install `Swashbuckle.AspNetCore.Cli` if not present
+2. Build each .NET service in isolated output directory
+3. Extract OpenAPI spec using `swagger tofile`
+4. Handle prompt-eval-service's startup initialization automatically
+5. Write specs to `docs/api/{service-name}-openapi.json`
+
+Usage:
+```bash
+./scripts/generate-openapi-specs.sh
+```
+
+### Rationale
+
+#### Why commit OpenAPI specs?
+
+1. **Developer reference** — Easier to review API contracts without running services
+2. **API client generation** — Specs can be used to generate TypeScript, Python, or other clients
+3. **Documentation** — Can be viewed in Swagger UI, Redoc, or other OpenAPI viewers
+4. **Version control** — API changes are tracked in git
+
+#### Why Swashbuckle CLI instead of runtime extraction?
+
+- **Pros:** No need to run services or configure infrastructure
+- **Cons:** Requires service to be buildable and initialize successfully
+- **Tradeoff:** Acceptable for our use case; services are lightweight enough to start with minimal config
+
+#### Why not add CI generation?
+
+Deferred as follow-up. Regeneration is currently manual via script. CI generation could:
+- Run on PR to detect API changes
+- Auto-commit updated specs
+- Validate no breaking changes
+
+However, this adds complexity and wasn't required for initial implementation.
+
+### Coordination with Turk
+
+**Python/FastAPI services** (ai-service, budget-service, chatbot-service, account-opening-service) are handled by Turk in parallel. FastAPI generates OpenAPI specs automatically at runtime, so the approach differs:
+- FastAPI: Fetch spec from `/openapi.json` endpoint
+- .NET: Build and extract using Swashbuckle CLI
+
+Both approaches commit specs to `docs/api/` for consistency.
+
+### Open Questions
+
+1. **CI generation** — Should we auto-generate specs in CI and fail PR if specs are out of date?
+2. **Breaking change detection** — Should we add tooling to detect breaking API changes between commits?
+3. **Spec validation** — Should we validate specs against OpenAPI 3.0 schema in CI?
+
+### References
+
+- Issue: #109
+- Commits: ff310d0, ed16ec9
+- Script: `scripts/generate-openapi-specs.sh`
+- Docs: `docs/README.md` (API Documentation section)
+
+---
+
+## Decision: OpenAPI Spec Generation for Python/FastAPI Services
+
+**Author:** Turk  
+**Date:** 2026-05-13  
+**Issue:** #109  
+**Status:** Implemented  
+**Branch:** squad/p2-wave-3
+**Commit:** e0c5e80
+
+### Context
+
+No OpenAPI spec files were committed to the repo despite `docs/architecture.md` referencing Swagger endpoints. Frontend developers had no API contract documentation without starting backend services.
+
+### Decision
+
+Commit generated OpenAPI 3.1.0 specs for all Python/FastAPI services to version control and provide a regeneration script.
+
+### Implementation
+
+1. **Spec location:** `docs/api/{service-name}-openapi.json`
+   - ai-service-openapi.json
+   - budget-service-openapi.json
+   - chatbot-service-openapi.json
+   - account-opening-service-openapi.json
+
+2. **Generation script:** `scripts/generate-openapi.py`
+   - Imports each service's FastAPI app from `app.main`
+   - Calls `app.openapi()` to generate spec
+   - Writes to `docs/api/` with 2-space indent
+   - Single script regenerates all 4 services
+
+3. **Runtime endpoints:** Already exposed by FastAPI default behavior
+   - Swagger UI: `/docs`
+   - OpenAPI JSON: `/openapi.json`
+   - No code changes needed — FastAPI auto-generates these
+
+4. **Documentation:** Updated `docs/architecture.md` with API doc references and regen instructions
+
+### Rationale
+
+- **Committed specs** serve as versioned API contracts for frontend developers and external consumers
+- **FastAPI native generation** eliminates need for external tooling (Swagger CLI, Redoc, etc.)
+- **Simple Python script** fits project's "convention over configuration" principle
+- **No CI integration** (yet) — specs updated manually when routes change, keeping initial implementation simple
+
+### Coordination
+
+Aligned with Basher on file layout convention via decision inbox pattern. Both teams chose `docs/api/{service-name}-openapi.json` layout.
+
+### Future Work
+
+- Add spec generation to CI (validate specs are up-to-date on PR)
+- Consider Swagger UI aggregator for multi-service browsing
+- Add schema validation tests (e.g., assert spec matches runtime routes)
+
+### Files Changed
+
+- `scripts/generate-openapi.py` — new file, 1306 bytes
+- `docs/api/{4 specs}` — new files, ~24KB each
+- `docs/architecture.md` — updated "Communication Patterns" section
+
+**Commit:** e0c5e80
+
+---
+
+## D-101 — Single canonical login endpoint: AuthController.Login
+
+**Author:** Basher  
+**Date:** 2026-05-13  
+**Wave:** squad/p2-wave-2  
+**Issue:** #101
+
+### Decision
+The application has exactly one login endpoint: `POST /api/auth/login`
+(owned by `AuthController`). The previously duplicated `POST /api/users/login`
+on `UsersController` is removed. All clients (UI app, e2e tests, fixtures)
+have been updated to call the canonical route.
+
+### Rationale
+The two endpoints had drifted toward identical behavior but were maintained
+separately, creating a real bug-fix-divergence risk. `AuthController` is the
+natural owner because authentication is a cross-cutting concern that does
+not belong on a "users CRUD" controller — and consolidating there lets
+`UsersController` shed its dependencies on `IAuthService` and
+`IHttpClientFactory` (it now only depends on `IUserService` and the new
+`IAccountProvisioningService`).
+
+### Convention established
+Controllers in user-service must remain thin: model binding, validation,
+service call, return result. Cross-cutting work (audit, downstream
+provisioning, parsing) lives in services injected via DI. New patterns
+introduced and re-usable in other services:
+- `IUserAgentParser` for any code that needs coarse browser identification
+- `ILoginAuditService.RecordAsync` for any future endpoint that should be
+  audited (admin password resets, lockouts, etc.)
+- `IAccountProvisioningService` as the single seam for "create the user's
+  default checking account" — call it from anywhere a user is created.
+
+### Impact
+- Removes one of two parallel login code paths (~75 lines of duplicate
+  audit/validation logic).
+- 5 e2e specs and 1 fixture updated to `/api/auth/login`. UI client
+  interceptor no longer needs to special-case `/users/login` for 401.
+- `AuthControllerTests` constructor signature updated to inject the new
+  `ILoginAuditService` mock.
+
+### Out of scope (deferred)
+- `Register` is also defined on both controllers but with **different
+  behavior** — `UsersController.Register` provisions a default account,
+  `AuthController.Register` does not. Consolidating them is a separate
+  decision and would need product input on whether registration via
+  `/api/auth/register` should also auto-provision an account.
+
+---
+
+## D-102 — Transfer pipeline pattern: Validator / Executor / EventPublisher
+
+**Author:** Basher  
+**Date:** 2026-05-13  
+**Wave:** squad/p2-wave-2  
+**Issue:** #102
+
+### Decision
+The transfer flow is decomposed into three single-responsibility
+collaborators behind interfaces, composed by a thin orchestrator:
+
+| Interface | Responsibility |
+|-----------|----------------|
+| `ITransferValidator` | Input + business rule validation (currently: source-account ownership via account-service) |
+| `ITransferExecutor` | Side-effecting downstream work (currently: debit + credit POSTs to transaction-service) |
+| `ITransferEventPublisher` | Domain-event publication (currently: `TransferInitiated` to Redis stream, best-effort) |
+
+`TransferService.InitiateTransferAsync` is now ~30 LOC of orchestration:
+`validate → build entity → execute → persist → publish`, with a single
+`PersistFailureAsync` helper handling the three exception → status mappings
+that were previously triplicated.
+
+### Rationale
+The old `TransferService` mixed validation, transactional HTTP calls,
+Cosmos persistence, Redis eventing, and three near-identical exception
+handlers in one ~225-line file. The split:
+- Lets `TransferValidator` grow new business rules (self-transfer
+  rejection, daily limits, fraud signals) without touching execution code.
+- Lets `TransferEventPublisher` evolve toward the outbox pattern or move
+  to a different transport without touching `TransferService`.
+- Removes the triplicated catch-bodies in favor of one helper — failure
+  reasons stay in the orchestrator (where they're easy to compare) and
+  the persistence pattern only exists in one place.
+
+### Convention to extend
+For other "god services" (anything in
+`{transaction,account,prompt-eval}-service` that mixes I/O kinds), prefer
+this pipeline shape:
+1. Validator — read-only checks, throws on rule violation.
+2. Executor — side-effecting downstream work (HTTP, DB writes that aren't
+   the entity itself).
+3. EventPublisher — best-effort eventing; never throws.
+
+The orchestrator owns: building the entity, persisting it, mapping
+exception kinds to status/failure-reason values from `Constants`.
+
+### Compatibility notes
+- `InMemoryTransferService` retains its current public constructor
+  (`IConnectionMultiplexer`, `IHttpClientFactory`, `IHttpContextAccessor`,
+  `IConfiguration`, `ILogger<InMemoryTransferService>`) — it now wires the
+  three new collaborators internally with `NullLogger`. Existing test
+  fixtures unchanged.
+- Production DI in `Program.cs` registers all three new interfaces as
+  scoped.
+
+### Verification
+- `dotnet build src/transfer-service/` — clean (0 warnings, 0 errors).
+- `dotnet test src/transfer-service.Tests/` — same 8/15 pass as
+  pre-refactor; the 7 failures pre-existed (tests assert legacy
+  `Status == "Pending"` value not produced by current code) and are out
+  of scope for #102.
+
+---
+
+## Decision: Tab Subcomponent Composition Pattern
+
+**Date:** 2026-05-13  
+**Author:** Linus  
+**Wave:** P2 Wave 2 (#99)  
+**Status:** Established
+
+### Context
+
+`AdminPage.tsx` is the host for 8 tabs. Earlier waves extracted the simpler tabs into focused
+files (`AdminUserManagementTab`, `AdminLoginAuditTab`, `AdminFoundryStatusTab`, etc.). Wave 2
+finished the job by extracting the two remaining inline panels and splitting the 661-line
+`AdminEvalTab` into three sub-components.
+
+This decision codifies the props shape and ownership boundaries so future tab/sub-tab work
+follows the same shape without re-litigating.
+
+### Decision
+
+#### Tab subcomponents owned by a parent that fetches data
+
+Standard prop shape:
+
+```ts
+interface XxxTabProps {
+  data: T[];                                   // server-state, owned by parent
+  onRefresh: () => Promise<void> | void;       // re-fetch trigger
+  onError: (message: string) => void;          // bubble user-facing error to parent's <Alert>
+  // ...feature-specific bubble-up callbacks (e.g. onRunRequested(templateId))
+}
+```
+
+**Parent owns:** server data, polling/refresh interval, top-level `<Alert>`.
+**Child owns:** ephemeral UI state — sort field/direction, expanded row, dialog open state,
+form field values, per-row action-loading flags. Children call `apiClient` directly for
+their own write actions and report back via `onRefresh` / `onError`.
+
+#### When to add a sub-folder
+
+Use a feature sub-folder under `components/` (e.g. `components/eval/`) when a tab decomposes
+into **3+ files plus shared types**. For 1–2 files, keep them flat in `components/`.
+Shared types go in `<feature>/types.ts`, never duplicated across the sub-files.
+
+#### Dialogs as their own components
+
+Modal dialogs that own non-trivial state (form fields, multi-select) become their own
+component, controlled by `{ open, onClose, onStarted }` props. The parent stays a thin
+orchestrator and just toggles `open`.
+
+### Rationale
+
+- Mirrors the already-established earlier-wave pattern (Admin*Tab files already in
+  `components/`); no new pattern invented, just made explicit.
+- Keeps `useState` count per file under ~5 — the previous AdminEvalTab had 15+.
+- Children are independently testable because they accept data via props instead of
+  hitting `apiClient` for reads.
+- The `onError(message)` callback (instead of children rendering their own `<Alert>`)
+  keeps a single error surface per page and avoids stacked error banners.
+
+### Examples in tree
+
+- `components/FlaggedTransactionsTab.tsx`, `components/AllTransactionsTab.tsx` — flat tabs.
+- `components/eval/{PromptTemplateEditor,EvaluationRunner,EvaluationResults,types}` —
+  sub-folder with shared types.
+- `components/AdminEvalTab.tsx` — example of a thin orchestrator (~100 lines: fetches +
+  composes children + manages one inter-child dialog state).
+
+### Non-goals
+
+- This does **not** mandate React Context for cross-child state. For tab compositions
+  this small, props are clearer than context.
+- This does **not** require children to fetch their own data. Centralized fetching in
+  the parent enables consistent refresh semantics (single 30s interval, single error banner).
+
+---
+
+## D-94 — FastAPI shared state via app.state + Depends
+
+**Author:** Turk  
+**Date:** 2026-05-13  
+**Wave:** squad/p2-wave-2  
+**Issue:** #94
+
+### Decision
+All Python/FastAPI services should store mutable shared state on `app.state`
+and expose it through `Depends()` helpers rather than module-level globals.
+Lifespan/startup is responsible for constructing the singletons and placing
+them on `app.state`.
+
+### Rationale
+Module-level mutable state is not thread-safe, breaks with multi-worker
+deploys, and makes tests harder to isolate. `app.state` keeps state scoped to
+the application instance and allows explicit dependency injection in routes.
+
+### Convention established
+- Create `get_*` dependency helpers that return objects from `app.state`.
+- Initialize shared clients/state in lifespan/startup and attach to
+  `app.state`.
+- Wrap in-memory caches (sessions, transaction dicts, counters) with
+  `asyncio.Lock` to avoid concurrent mutation.
+
+### Impact
+- Removes module-level mutable globals from ai-service, budget-service,
+  chatbot-service, and account-opening-service routes.
+
+---
+
+## Decision: Orphan Script Audit Complete (Issue #105)
+
+**Date:** 2026-05-13  
+**Auditor:** Danny  
+**Branch:** squad/p2-wave-3
+
+### Scope
+Reviewed all scripts in `scripts/` directory for orphan status.
+
+### Results
+- ✅ **seed-data.sh**: Wired as `local:seed`
+- ✅ **test.sh**: Wired as `local:smoke` (fixed stale "Anomaly service" → "AI service")
+- ✅ **generate-openapi.py**: Active (used by Basher/Turk for OpenAPI spec generation)
+- ✅ **README.md**: Documentation for scripts
+
+### No Further Action Required
+All scripts either:
+1. Wired into Taskfile (seed-data.sh, test.sh)
+2. Actively used (generate-openapi.py)
+3. Documentation (README.md)
+
+No dead scripts found. Audit complete.
+
+---
+
 # Decisions — Online Banking Demo Stabilization Sprint
 
 ## Session: 2026-05-05 (Full Stabilization Sprint)

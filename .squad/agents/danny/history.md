@@ -665,3 +665,78 @@ Basher implemented the Redis architecture decision:
 **Positives:** CI covers all services, .gitignore/.dockerignore are clean, Dockerfile patterns are consistent per language family, Poetry used consistently across Python services.
 
 **Output:** Full findings written to `.squad/decisions/inbox/danny-repo-audit.md`
+
+### Documentation Standards (#110, #112) — 2026-05-12
+
+**Contributing Documentation (#110):**
+- Created MIT LICENSE (copyright Brian DeNicola 2026) and CONTRIBUTING.md at repo root
+- Documented actual branching patterns: squad/*, feat/*, fix/* (observed from git log)
+- Testing conventions: pytest (Python pyproject.toml), dotnet test (.NET *.Tests.csproj), Playwright (tests/e2e/)
+- Task automation: Documented `task --list-all` command structure (cloud:*, local:*, e2e:* namespaces)
+- Squad workflow: Lightweight reference to .squad/ structure, routing.md, team.md
+- **Convention over configuration** — Did not invent processes; documented what exists
+
+**Stale Taskfile References (#112):**
+- **Pattern found:** Docs used obsolete `task -t Taskfile.cloud.yml` syntax instead of `task cloud:*`
+- Fixed docs/README.md: Changed 3 commands to use `task cloud:up`, `task cloud:build`, `task cloud:deploy`
+- Fixed specs/001-backlog-implementation-plan/tasks.md: `task deploy` → `task cloud:deploy` (3 refs)
+- T068 task names clarified to match existing patterns (e2e:smoke, e2e:cloud already exist)
+- **Root cause:** Task namespace refactor happened but docs were not updated
+- **Total corrections:** 6 command references updated across 2 files
+
+**Architectural Notes:**
+- Taskfile.yml is the orchestrator; includes tasks/Taskfile.{local,cloud,e2e,build}.yml
+- Task commands follow namespace pattern: `{context}:{action}` or `{context}:{action}:{target}`
+- E2E test suite already well-structured: phase1-4, chromium/firefox, debug/headed/ui modes
+- Documentation lives in docs/ (technical) and specs/ (planning) — keep them in sync
+
+**Follow-up:**
+- No missing-task refs requiring escalation
+- All referenced commands verified to exist in Taskfile.yml
+
+### 2026-05 — Orphaned Script Audit & Wiring (Issue #105)
+
+**Task:** Audit `scripts/seed-data.sh` and `scripts/test.sh` for orphan status; decide wire vs delete.
+
+**Audit Pattern:**
+1. Grep for references across all docs, Taskfiles, README, service READMEs
+2. Check if functionality duplicated by existing Taskfile tasks
+3. Verify correctness (stale service names, outdated ports)
+4. Wire if unique value; delete if superseded
+
+**Findings:**
+- **seed-data.sh:**
+  - ✅ Referenced in `docs/deployment-local.md` (steps 4 + "Using Seed Script" section)
+  - ✅ Referenced in `scripts/README.md`
+  - ✅ Provides unique value: populates demo users/accounts/transactions for local dev
+  - ✅ No equivalent in Taskfile.local.yml
+  - ✅ Idempotent user registration (tolerates "already exists")
+  - **Decision: WIRE** as `local:seed` task
+
+- **test.sh:**
+  - ❌ Contains stale reference: "Anomaly service" (line 44) → should be "AI service"
+  - ⚠️ Provides health checks + functional API smoke tests
+  - ⚠️ Taskfile.local.yml already has `test:` task (dotnet test, pytest, go test)
+  - ⚠️ Different scope: test.sh = smoke/health checks; Taskfile test = unit tests
+  - **Decision: WIRE** as `local:smoke` task (renamed to avoid collision), fixed stale reference
+
+**Changes Applied:**
+- Taskfile.local.yml: Added `seed:` task (depends on _init-env, chmod +x, runs seed-data.sh)
+- Taskfile.local.yml: Added `smoke:` task (chmod +x, runs test.sh --smoke)
+- scripts/test.sh:44: "Anomaly service health" → "AI service health"
+- Commit: fd51cfe "chore(#105): wire orphaned seed/test scripts into Taskfile"
+
+**Orphan-Script Audit Pattern (Reusable):**
+1. Grep for script name across `*.md`, `Taskfile*.yml`, `*.sh` files
+2. Check if referenced in docs/ or actively used
+3. Verify script correctness (ports, service names, env vars)
+4. Check for duplicate functionality in existing Taskfile tasks
+5. Wire if unique value + referenced; delete if superseded or never referenced
+6. Fix any stale references (service names, ports) before wiring
+
+**Taskfile Structure Notes:**
+- Root `Taskfile.yml` includes `tasks/Taskfile.{local,cloud,e2e,build}.yml`
+- Task naming convention: `{context}:{action}` (e.g., `local:seed`, `cloud:up`, `e2e:smoke`)
+- Local tasks use `deps: [_init-env]` for Terraform output wiring
+- Internal tasks prefixed with `_` (e.g., `_init`, `_init-env`)
+- Test scope split: `local:test` = unit tests, `local:smoke` = health/functional checks
