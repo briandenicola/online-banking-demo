@@ -6,10 +6,16 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
 from app.auth import UserClaims, require_admin, require_auth
+from app.dependencies import (
+    get_blob_service_client,
+    get_redis_client,
+    get_repository,
+    get_state_machine,
+)
 from app.events import publish_event
 from app.models import (
     ApplicationCreate,
@@ -18,25 +24,24 @@ from app.models import (
     DocumentMetadata,
     DocumentType,
 )
-from app.repository import InMemoryApplicationRepository
+from app.repository import ApplicationRepository
 from app.state_machine import ApplicationStateMachine
 
 router = APIRouter(prefix="/api/account-opening", tags=["account-opening"])
-state_machine = ApplicationStateMachine()
 logger = structlog.get_logger("account-opening-routes")
 
 
 @router.post("/applications", status_code=status.HTTP_201_CREATED)
 async def create_application(
     payload: ApplicationCreate,
-    request: Request,
     user: Annotated[UserClaims, Depends(require_auth)],
+    repository: ApplicationRepository = Depends(get_repository),
+    redis_client=Depends(get_redis_client),
 ):
-    repository: InMemoryApplicationRepository = request.app.state.repository
     application = repository.create(payload, user.user_id)
 
     await publish_event(
-        request.app.state.redis,
+        redis_client,
         event_type="application_submitted",
         data={
             "applicationId": application.id,
@@ -51,12 +56,13 @@ async def create_application(
 @router.post("/applications/{application_id}/documents", status_code=status.HTTP_201_CREATED)
 async def upload_document(
     application_id: str,
-    request: Request,
     user: Annotated[UserClaims, Depends(require_auth)],
     document_type: Annotated[DocumentType, Form(alias="documentType")],
     file: UploadFile = File(...),
+    repository: ApplicationRepository = Depends(get_repository),
+    redis_client=Depends(get_redis_client),
+    blob_service_client=Depends(get_blob_service_client),
 ):
-    repository: InMemoryApplicationRepository = request.app.state.repository
     application = repository.get(application_id)
     if not application:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
@@ -69,7 +75,6 @@ async def upload_document(
     blob_path = f"{application_id}/{document_type}/{safe_name}"
     container_name = "account-opening-documents"
 
-    blob_service_client = request.app.state.blob_service_client
     if not blob_service_client:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -105,7 +110,7 @@ async def upload_document(
     repository.add_document(application_id, metadata)
 
     await publish_event(
-        request.app.state.redis,
+        redis_client,
         event_type="document_uploaded",
         data={
             "applicationId": application_id,
@@ -121,10 +126,9 @@ async def upload_document(
 @router.get("/applications/{application_id}")
 async def get_application(
     application_id: str,
-    request: Request,
     user: Annotated[UserClaims, Depends(require_auth)],
+    repository: ApplicationRepository = Depends(get_repository),
 ):
-    repository: InMemoryApplicationRepository = request.app.state.repository
     application = repository.get(application_id)
     if not application:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
@@ -138,11 +142,10 @@ async def get_application(
 
 @router.get("/applications")
 async def list_applications(
-    request: Request,
     _: Annotated[UserClaims, Depends(require_admin)],
     status: ApplicationStatus | None = None,
+    repository: ApplicationRepository = Depends(get_repository),
 ):
-    repository: InMemoryApplicationRepository = request.app.state.repository
     return repository.get_all(status)
 
 
@@ -155,10 +158,11 @@ class ReviewRequest(BaseModel):
 async def review_application(
     application_id: str,
     payload: ReviewRequest,
-    request: Request,
     admin: Annotated[UserClaims, Depends(require_admin)],
+    repository: ApplicationRepository = Depends(get_repository),
+    redis_client=Depends(get_redis_client),
+    state_machine: ApplicationStateMachine = Depends(get_state_machine),
 ):
-    repository: InMemoryApplicationRepository = request.app.state.repository
     application = repository.get(application_id)
     if not application:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
@@ -194,7 +198,7 @@ async def review_application(
     repository.update(application)
 
     await publish_event(
-        request.app.state.redis,
+        redis_client,
         event_type="application_decision",
         data={
             "applicationId": application_id,
