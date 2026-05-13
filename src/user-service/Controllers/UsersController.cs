@@ -1,13 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
-using System.Net.Http;
-using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
 using OnlineBankingDemo.Contracts.Dtos;
 using UserService.Services;
 
@@ -19,69 +15,20 @@ namespace UserService.Controllers;
 public class UsersController : ControllerBase
 {
     private readonly IUserService _userService;
-    private readonly IAuthService _authService;
-    private readonly IHttpClientFactory _httpClientFactory;
-    private readonly ILogger<UsersController> _logger;
+    private readonly IAccountProvisioningService _accountProvisioningService;
 
     public UsersController(
         IUserService userService,
-        IAuthService authService,
-        IHttpClientFactory httpClientFactory,
-        ILogger<UsersController> logger)
+        IAccountProvisioningService accountProvisioningService)
     {
         _userService = userService;
-        _authService = authService;
-        _httpClientFactory = httpClientFactory;
-        _logger = logger;
-    }
-
-    [AllowAnonymous]
-    [HttpPost("login")]
-    public async Task<IActionResult> Login([FromBody] LoginRequest request)
-    {
-        var user = await _userService.GetUserByUsernameAsync(request.Username);
-
-        // Log failed login audit
-        if (user == null)
-        {
-            await LogLoginAuditAsync(null, request.Username, false, global::UserService.Constants.FailureReasons.UserNotFound);
-            return Unauthorized(new { Message = "Invalid credentials" });
-        }
-
-        // Check if account is locked
-        if (user.IsLocked)
-        {
-            await LogLoginAuditAsync(user.Id, request.Username, false, global::UserService.Constants.FailureReasons.AccountLocked);
-            return Unauthorized(new { Message = "Account is locked. Please contact administrator." });
-        }
-
-        var isValid = await _userService.ValidateCredentialsAsync(request.Username, request.Password);
-        if (!isValid)
-        {
-            await LogLoginAuditAsync(user.Id, request.Username, false, global::UserService.Constants.FailureReasons.InvalidPassword);
-            return Unauthorized(new { Message = "Invalid credentials" });
-        }
-
-        // Log successful login audit
-        await LogLoginAuditAsync(user.Id, request.Username, true, null);
-
-        var token = await _authService.GenerateTokenAsync(user.Id, user.Username, user.Role);
-
-        return Ok(new
-        {
-            Token = token,
-            UserId = user.Id,
-            Username = user.Username,
-            Role = user.Role,
-            ExpiresIn = int.Parse(System.Environment.GetEnvironmentVariable("Jwt__ExpiresInMinutes") ?? "60") * 60
-        });
+        _accountProvisioningService = accountProvisioningService;
     }
 
     [AllowAnonymous]
     [HttpPost("register")]
     public async Task<IActionResult> Register([FromBody] RegisterUserRequest request)
     {
-        // Check email uniqueness
         var existingEmail = await _userService.GetUserByEmailAsync(request.Email);
         if (existingEmail != null)
         {
@@ -93,7 +40,7 @@ public class UsersController : ControllerBase
             var user = await _userService.CreateUserAsync(request);
 
             // Provision a default checking account (best-effort)
-            await ProvisionDefaultAccountAsync(user.Id);
+            await _accountProvisioningService.ProvisionDefaultAccountAsync(user.Id);
 
             return CreatedAtAction(nameof(GetUser), new { id = user.Id }, new
             {
@@ -229,84 +176,6 @@ public class UsersController : ControllerBase
         await _userService.SetCategoryPreferencesAsync(userId, request.Categories ?? new List<string>());
         var categories = await _userService.GetCategoryPreferencesAsync(userId);
         return Ok(new { Categories = categories });
-    }
-
-    private async Task ProvisionDefaultAccountAsync(string userId)
-    {
-        try
-        {
-            var client = _httpClientFactory.CreateClient("AccountService");
-
-            // Mint a short-lived JWT so account-service can authenticate this internal call
-            var token = await _authService.GenerateTokenAsync(userId, "system", global::UserService.Constants.Roles.User);
-
-            var accountRequest = new CreateAccountRequest
-            {
-                AccountType = "checking",
-                InitialBalance = 0m,
-                Currency = "USD"
-            };
-
-            var json = JsonConvert.SerializeObject(accountRequest);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
-            client.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-
-            var response = await client.PostAsync("/api/accounts", content);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning(
-                    "Failed to provision default account for user {UserId}. Status: {StatusCode}",
-                    userId, response.StatusCode);
-            }
-            else
-            {
-                _logger.LogInformation("Provisioned default checking account for user {UserId}", userId);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Error provisioning default account for user {UserId}", userId);
-        }
-    }
-
-    private async Task LogLoginAuditAsync(string? userId, string username, bool success, string? failureReason)
-    {
-        try
-        {
-            var httpContext = HttpContext;
-            var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-            var userAgent = httpContext.Request.Headers["User-Agent"].ToString();
-
-            // Extract browser info from user agent
-            string? browser = null;
-            if (!string.IsNullOrEmpty(userAgent))
-            {
-                if (userAgent.Contains("Chrome")) browser = global::UserService.Constants.Browsers.Chrome;
-                else if (userAgent.Contains("Firefox")) browser = global::UserService.Constants.Browsers.Firefox;
-                else if (userAgent.Contains("Safari")) browser = global::UserService.Constants.Browsers.Safari;
-                else if (userAgent.Contains("Edge")) browser = global::UserService.Constants.Browsers.Edge;
-                else browser = global::UserService.Constants.Browsers.Other;
-            }
-
-            var audit = new UserService.Models.LoginAudit
-            {
-                UserId = userId ?? "unknown",
-                Username = username,
-                IpAddress = ipAddress,
-                UserAgent = userAgent,
-                Browser = browser,
-                Success = success,
-                FailureReason = failureReason
-            };
-
-            await _userService.LogLoginAuditAsync(audit);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to log login audit");
-        }
     }
 }
 

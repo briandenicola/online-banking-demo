@@ -16,7 +16,7 @@ test.describe('E2E-402: Admin User Management — List & Filter', () => {
   });
 
   test.beforeEach(async ({ page, request }) => {
-    const loginResponse = await request.post('/api/users/login', {
+    const loginResponse = await request.post('/api/auth/login', {
       data: {
         username: ADMIN_CREDENTIALS.email,
         password: ADMIN_CREDENTIALS.password,

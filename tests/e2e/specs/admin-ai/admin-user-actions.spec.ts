@@ -23,7 +23,7 @@ test.describe('E2E-403: Admin User Actions — Suspend/Unsuspend', () => {
   });
 
   test.beforeEach(async ({ page, request }) => {
-    const loginResponse = await request.post('/api/users/login', {
+    const loginResponse = await request.post('/api/auth/login', {
       data: {
         username: ADMIN_CREDENTIALS.email,
         password: ADMIN_CREDENTIALS.password,
@@ -186,7 +186,7 @@ test.describe('E2E-403: Admin User Actions — Suspend/Unsuspend', () => {
 
     try {
       // Try to login as suspended user
-      const loginResponse = await request.post('/api/users/login', {
+      const loginResponse = await request.post('/api/auth/login', {
         data: {
           username: REGULAR_USER_CREDENTIALS.email,
           password: REGULAR_USER_CREDENTIALS.password,
@@ -256,7 +256,7 @@ test.describe('E2E-403: Admin User Actions — Suspend/Unsuspend', () => {
     }
 
     // Verify user can login again
-    const loginResponse = await request.post('/api/users/login', {
+    const loginResponse = await request.post('/api/auth/login', {
       data: {
         username: targetUser.email,
         password: 'password123',

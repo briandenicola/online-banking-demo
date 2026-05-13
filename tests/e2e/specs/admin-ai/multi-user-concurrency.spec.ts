@@ -23,7 +23,7 @@ baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
     try {
       // Login all users in parallel
       const loginPromises = TEST_USERS.map(creds =>
-        request.post('/api/users/login', {
+        request.post('/api/auth/login', {
           data: { username: creds.email, password: creds.password },
         })
       );
@@ -82,7 +82,7 @@ baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
 
     try {
       // Login first user
-      const user1Response = await request.post('/api/users/login', {
+      const user1Response = await request.post('/api/auth/login', {
         data: { username: TEST_USERS[0].email, password: TEST_USERS[0].password },
       });
 
@@ -95,7 +95,7 @@ baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
       const user1Token = user1Body.token ?? user1Body.accessToken ?? user1Body.jwt;
 
       // Login second user
-      const user2Response = await request.post('/api/users/login', {
+      const user2Response = await request.post('/api/auth/login', {
         data: { username: TEST_USERS[1].email, password: TEST_USERS[1].password },
       });
 
@@ -177,7 +177,7 @@ baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
 
   baseTest('should handle concurrent transfers without race conditions', async ({ request }) => {
     // Login as primary user
-    const loginResponse = await request.post('/api/users/login', {
+    const loginResponse = await request.post('/api/auth/login', {
       data: { username: TEST_USERS[0].email, password: TEST_USERS[0].password },
     });
 
@@ -269,7 +269,7 @@ baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
 
     try {
       // Login as two different sessions of the same user
-      const loginResponse = await request.post('/api/users/login', {
+      const loginResponse = await request.post('/api/auth/login', {
         data: { username: TEST_USERS[0].email, password: TEST_USERS[0].password },
       });
 
@@ -334,10 +334,10 @@ baseTest.describe('E2E-407: Multi-User Concurrency Test', () => {
   baseTest('should not leak transaction data between different user sessions', async ({ request }) => {
     // Login as two different users
     const [user1Resp, user2Resp] = await Promise.all([
-      request.post('/api/users/login', {
+      request.post('/api/auth/login', {
         data: { username: TEST_USERS[0].email, password: TEST_USERS[0].password },
       }),
-      request.post('/api/users/login', {
+      request.post('/api/auth/login', {
         data: { username: TEST_USERS[1].email, password: TEST_USERS[1].password },
       }),
     ]);

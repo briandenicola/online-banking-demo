@@ -74,6 +74,12 @@ builder.Services.AddHttpClient("AccountService", client =>
 // Use in-memory database for development if configured
 var useInMemory = builder.Configuration.GetValue<bool>("UseInMemoryDatabase", false);
 
+// Shared infrastructure for thin controllers
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton<IUserAgentParser, UserAgentParser>();
+builder.Services.AddScoped<ILoginAuditService, LoginAuditService>();
+builder.Services.AddScoped<IAccountProvisioningService, AccountProvisioningService>();
+
 if (useInMemory)
 {
     builder.Services.AddLogging();

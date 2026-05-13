@@ -43,7 +43,7 @@ test.describe('E2E-401: Admin Dashboard Access & Permission Check', () => {
   test.describe('Admin User Access', () => {
     test('should allow admin to log in and access admin dashboard', async ({ page, request }) => {
       // Login as admin via API
-      const loginResponse = await request.post('/api/users/login', {
+      const loginResponse = await request.post('/api/auth/login', {
         data: {
           username: ADMIN_CREDENTIALS.email,
           password: ADMIN_CREDENTIALS.password,
@@ -89,7 +89,7 @@ test.describe('E2E-401: Admin Dashboard Access & Permission Check', () => {
     });
 
     test('should display stats cards on admin dashboard', async ({ page, request }) => {
-      const loginResponse = await request.post('/api/users/login', {
+      const loginResponse = await request.post('/api/auth/login', {
         data: {
           username: ADMIN_CREDENTIALS.email,
           password: ADMIN_CREDENTIALS.password,
@@ -132,7 +132,7 @@ test.describe('E2E-401: Admin Dashboard Access & Permission Check', () => {
     });
 
     test('should show admin navigation link for admin user', async ({ page, request }) => {
-      const loginResponse = await request.post('/api/users/login', {
+      const loginResponse = await request.post('/api/auth/login', {
         data: {
           username: ADMIN_CREDENTIALS.email,
           password: ADMIN_CREDENTIALS.password,
