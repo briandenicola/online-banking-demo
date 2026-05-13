@@ -151,9 +151,12 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({
                       overflow: 'auto',
                       whiteSpace: 'pre-wrap',
                       lineHeight: 1.5,
+                      color: prompt.systemPrompt ? 'text.primary' : 'text.secondary',
+                      fontStyle: prompt.systemPrompt ? 'normal' : 'italic',
                     }}
                   >
-                    {prompt.systemPrompt}
+                    {prompt.systemPrompt ||
+                      'Prompt body not returned by API. The /api/admin/prompts endpoint currently exposes only name/type/enabled — body field is missing on the backend (see issue #120).'}
                   </Box>
                 </CardContent>
               </Card>

@@ -473,3 +473,59 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 
 **Verification:** Your next E2E smoke run should pick up the deployed bundle immediately after `task cloud:deploy`, no manual restart needed.
 
+
+### 2026-05-13 — #119 + #120 Active AI panel + Avg Risk Score (P2 wave 3)
+
+**#119 — Avg Risk Score = 1,778,591,506.40**
+- Cause is backend, not frontend. `AdminPage` renders whatever `/api/admin/stats`
+  returns; backend averages a Redis sorted-set whose score *should* be the
+  clamped 0–1 `assessment.riskScore` (`anomaly_service.py:617`) but was
+  poisoned with timestamp values from before the Foundry agents were wired
+  (#118). Magnitude `1.78e9` ≈ `time.time()` for 2026 — dead giveaway.
+- Frontend defensive fix: added `formatRiskScore()` in `AdminPage.tsx`
+  that returns `'—'` for any value outside `[0, 1]` (also guards NaN/±∞).
+  The dashboard will never advertise a 10-digit "risk score" again, even
+  if more bad data sneaks in.
+- Real fix is a Redis cleanup of `scored-transactions` — flagged for
+  Brian/Basher in the issue comment.
+
+**#120 — Active AI Prompts blank + Disabled**
+- Confirmed backend `/api/admin/prompts` (`src/ai-service/app/routes/api.py:285`)
+  returns only `{name, type, enabled}` — no `systemPrompt` field at all.
+  That's why every card body is empty. The Disabled badge logic
+  (`prompt.enabled ? 'Active' : 'Disabled'`) is not inverted; if the badge
+  reads Disabled, that's what the analyzer object reports.
+- Frontend changes: made `ActivePrompt.systemPrompt` optional in
+  `components/eval/types.ts`; `PromptTemplateEditor.tsx` now renders an
+  italic placeholder with a hint pointing at #120 when the field is
+  missing, instead of an empty gray bar.
+- Backend fix (add `systemPrompt: analyzer.SYSTEM_PROMPT` to the response)
+  flagged for Basher in the issue comment. Issue stays open.
+
+**Deploy verification (don't trust `:latest` apply alone):**
+- `task cloud:deploy` now bakes in `kubectl rollout restart deployment -n {{.NAMESPACE}}`
+  (good — no more stale-bundle traps like the b565fd5 incident).
+- Pulled the live `main.<hash>.js` and grepped for the new marker
+  string `"Prompt body not returned"` (present, count 1) and the
+  minified `Number.isFinite(...)` from `formatRiskScore` (present).
+  Bundle deploy verified end-to-end, not just by trusting kubectl.
+
+## Learnings
+- **Backend-bug? Add a frontend defensive guard anyway.** The avg-risk
+  display was correct *given the data*, but the user-visible output was
+  garbage. A `formatRiskScore` clamp is a few lines and prevents
+  recurrence regardless of who poisons the source. Pattern: every
+  numeric tile that has a known domain ([0,1], [0,100], non-negative)
+  should have a tiny "in-range or em-dash" formatter.
+- **Field-missing vs field-wrong.** When a UI renders blank, the
+  null-coalesce / placeholder guard is just as important as fixing the
+  contract — it's how the user finds out *why* it's blank instead of
+  staring at an empty gray rectangle.
+- **TypeScript field optionality is a contract debugger.** Marking
+  `ActivePrompt.systemPrompt?: string` immediately surfaced "the API
+  doesn't actually send this" — the kind of thing that'd otherwise be
+  buried in a runtime undefined.
+- **Bundle-grep verification habit is paying off.** Same 30-second
+  `curl asset-manifest.json | grep marker` flow caught the stale
+  registration deploy two sessions ago; this time it confirmed the new
+  bundle landed before I left the issue alone.
