@@ -19,6 +19,7 @@ import {
   createApplication,
 } from '../../api/accountOpening';
 import { resolveApiError } from '../../api/errors';
+import { useAuthContext } from '../../contexts/AuthContext';
 
 export type ApplicationFormData = ApiApplicationFormData;
 
@@ -105,6 +106,32 @@ const isAdult = (dateString: string) => {
   return dob <= adultDate;
 };
 
+// Phone input formatter: allow only digits and allowed punctuation (+, space, -, (, ), .)
+// and apply US format mask for display
+const formatPhoneInput = (value: string): string => {
+  // Strip all characters except digits and allowed punctuation
+  const cleaned = value.replace(/[^\d+\s\-().]/g, '');
+  
+  // If starts with +, keep international format as-is
+  if (cleaned.startsWith('+')) {
+    return cleaned;
+  }
+  
+  // Otherwise apply US format mask: (555) 123-4567
+  const digits = cleaned.replace(/\D/g, '');
+  
+  if (digits.length === 0) return '';
+  if (digits.length <= 3) return `(${digits}`;
+  if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
+};
+
+// Validate phone against backend regex: ^\+?[\d\s\-().]{7,30}$
+const validatePhoneFormat = (value: string): boolean => {
+  const regex = /^\+?[\d\s\-().]{7,30}$/;
+  return regex.test(value);
+};
+
 const ApplicationForm: React.FC<ApplicationFormProps> = ({
   onSubmit,
   onApplicationCreated,
@@ -112,10 +139,21 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
   mode,
   initialData,
 }) => {
+  const { user } = useAuthContext();
   const resolvedMode: FormMode = mode ?? (onApplicationCreated ? 'full' : 'simple');
   const steps = resolvedMode === 'full' ? fullSteps : simpleSteps;
   const [activeStep, setActiveStep] = React.useState(0);
-  const [values, setValues] = React.useState<FormState>(() => resolveInitialState(initialData));
+  
+  // Pre-fill email from auth context on initial mount
+  const [values, setValues] = React.useState<FormState>(() => {
+    const initial = resolveInitialState(initialData);
+    // Pre-fill email if not already provided and user is authenticated
+    if (!initial.email && user?.email) {
+      initial.email = user.email;
+    }
+    return initial;
+  });
+  
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [submitting, setSubmitting] = React.useState(false);
   const [submitError, setSubmitError] = React.useState<string | null>(null);
@@ -128,7 +166,13 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
 
   const handleChange = (field: keyof FormState) =>
     (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-      const nextValue = event.target.value;
+      let nextValue = event.target.value;
+      
+      // Apply phone formatting if this is the phone field
+      if (field === 'phone') {
+        nextValue = formatPhoneInput(nextValue);
+      }
+      
       setValues((prev) => ({ ...prev, [field]: nextValue }));
       if (errors[field]) {
         setErrors((prev) => {
@@ -138,6 +182,16 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
         });
       }
     };
+
+  // Handle phone field blur to validate format
+  const handlePhoneBlur = () => {
+    if (values.phone && !validatePhoneFormat(values.phone)) {
+      setErrors((prev) => ({
+        ...prev,
+        phone: 'Phone must match format: +?[digits/spaces/-/()/.] (7-30 chars)',
+      }));
+    }
+  };
 
   const validateSimpleStep = (step: number) => {
     const nextErrors: Record<string, string> = {};
@@ -413,8 +467,10 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
                   label="Phone"
                   value={values.phone}
                   onChange={handleChange('phone')}
+                  onBlur={handlePhoneBlur}
                   error={Boolean(errors.phone)}
                   helperText={errors.phone}
+                  placeholder="(555) 123-4567"
                 />
               </Grid>
               <Grid size={{ xs: 12, sm: 6 }}>
@@ -530,8 +586,10 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
                   label="Phone"
                   value={values.phone}
                   onChange={handleChange('phone')}
+                  onBlur={handlePhoneBlur}
                   error={Boolean(errors.phone)}
                   helperText={errors.phone}
+                  placeholder="(555) 123-4567"
                 />
               </Grid>
               <Grid size={{ xs: 12 }}>
