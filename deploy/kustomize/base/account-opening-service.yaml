@@ -192,7 +192,7 @@ spec:
         - name: Jwt__Issuer
           value: "user-service"
         - name: AGENT_ID_SIDECAR_URL
-          value: "http://localhost:5000"
+          value: "http://localhost:8080"
         envFrom:
         - configMapRef:
             name: banking-demo-config
@@ -214,14 +214,14 @@ spec:
         image: mcr.microsoft.com/entra-sdk/auth-sidecar:1.0.0-azurelinux3.0-distroless
         imagePullPolicy: Always
         ports:
-        - containerPort: 5000
+        - containerPort: 8080
           protocol: TCP
         envFrom:
         - configMapRef:
             name: banking-demo-config
         readinessProbe:
           tcpSocket:
-            port: 5000
+            port: 8080
           initialDelaySeconds: 5
           periodSeconds: 10
         resources:
