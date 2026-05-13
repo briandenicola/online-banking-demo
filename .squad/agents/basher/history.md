@@ -18,6 +18,7 @@
 
 **AI/Agent Patterns:**
 - Foundry agents: Provisioned at init via `AIProjectClient.create_version` in init container; runtime uses `FoundryAgent` class.
+- **FoundryAgent model parameter: REQUIRED as of agent-framework-foundry 1.2.2. Pass `model=<deployment_name>` from `FOUNDRY_MODEL` env var to all `FoundryAgent()` constructors. The Foundry Responses API returns 400 Bad Request if missing.**
 - Content Understanding: Uses `ContentUnderstandingClient` with prebuilt analyzers; call `update_defaults()` at startup.
 - Account-opening pipeline: Four Redis-stream consumers (extraction, identity, compliance, provisioning) running concurrently.
 
@@ -34,6 +35,27 @@
 - `src/account-opening-service/app/agents/provisioning.py` — Foundry decision + user/account provisioning
 - `src/account-opening-service/app/worker.py` — worker wiring, Foundry connectivity check, signal handling
 - `deploy/kustomize/base/account-opening-service.yaml` — init container + CUS/Foundry env vars
+
+### 2026-05-13 — FoundryAgent model parameter required (agent-framework-foundry 1.2.2+)
+
+**Problem:** After agent-framework-foundry repin to 1.2.2 (commits 0b6255a, 65f6c9f), `account-opening-worker` crashed with:
+```
+HTTP/1.1 400 Bad Request: Missing required parameter: 'model'
+```
+The Foundry Responses API now **requires** the `model` parameter, but all `FoundryAgent()` constructor calls in the worker and its three consumers (identity-verifier, compliance-assessor, account-provisioner) were missing it.
+
+**Fix:** Added `model=foundry_model` parameter to:
+- `src/account-opening-service/app/worker.py:81` — connectivity check agent
+- `src/account-opening-service/app/agents/identity_verification.py:96`
+- `src/account-opening-service/app/agents/compliance_check.py:100`
+- `src/account-opening-service/app/agents/provisioning.py:100`
+
+The `FOUNDRY_MODEL=gpt-5.4-mini` env var was already plumbed via kustomize; no infrastructure change needed.
+
+**Pattern:** As of agent-framework-foundry 1.2.2, `FoundryAgent` requires `model=<deployment_name>` from env var. Chatbot-service already had this pattern with `FoundryChatClient(model=model_name, ...)`.
+
+**Commit:** d120834
+
 
 ### 2026-05 — Duplicate email registration TOCTOU fix (email lookup document pattern)
 
