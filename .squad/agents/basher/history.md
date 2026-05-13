@@ -1580,3 +1580,34 @@ Username **must** be the workload identity's `oid` claim from the AAD token, not
 4. `kubectl exec ... grep` against the pod's on-disk source confirmed the new code shipped (no need to replicate ingress + JWT to curl the endpoint for trivial dict additions)
 
 **Why we didn't pursue the `enabled` semantics question (raised in Scribe's flag):** Out of scope for these issues; both `analyzer.enabled` semantics ("constructed" vs "reachable") would require a separate health-probe round-trip per agent on every admin request. If the UI badge ever shows misleading state we'll revisit, but Linus's panel is functional with the current value. Logged here for next pass.
+
+
+### 2026-05-13 — Accounts page regression (#121 reopened review → new #125)
+
+**Reported:** Brian — `/accounts` UI shows zero rows, hypothesised Turk's commit `06b9a13` (chatbot endpoint switch + `accountType`/`type` rename) caused it and that "29 accounts" returned by the chatbot was an admin-scope leak.
+
+**Verdict:** Brian's hypothesis was wrong on both counts. Turk's commit is correct as shipped:
+- `account-service` only exposes `GET /api/accounts` (no `/my`); the handler is user-scoped via the `userId` JWT claim. The 29 accounts the chatbot saw were all real, all owned by `e2e-default@banking-demo.com` — smoke-test pollution that has been accumulating for days.
+- The `accountType`/`type` sanitizer fallback was correct (API serializes `accountType` via System.Text.Json default camelCase).
+
+**Actual root cause** (separate, pre-existing): Cosmos `Accounts` container has docs in **mixed casing** — both `c.UserId`/`c.AccountNumber` (PascalCase) and `c.userId`/`c.accountNumber` (camelCase) — but `CosmosAccountRepository.GetByUserIdAsync` queried only PascalCase. Cosmos SQL field paths are case-sensitive, so camelCase docs returned 0 rows. Brian's 4 accounts are 100% camelCase → empty page. Verified via direct Cosmos query (workload-identity pod from history pattern):
+
+```
+c.UserId = '<e2e>'    → 29 hits
+c.userId = '<e2e>'    → 9 hits
+c.userId = '<brian>'  → 4 hits  (PascalCase: 0)
+```
+
+**Fix:** `CosmosAccountRepository.cs` — `GetByUserIdAsync` and `GetByAccountNumberAsync` now `WHERE c.X = @v OR c.x = @v` for both casings. Also fixed an unrelated truncation bug: both methods called `await iterator.ReadNextAsync()` once and dropped any further pages — replaced with `while (HasMoreResults)` drain (would have started silently dropping accounts at >100 per user, which Brian was almost certainly going to hit on a fresh smoke-test deploy).
+
+**Verified live:**
+- `task cloud:build:account-service` → `task cloud:deploy` → rollout green
+- `GET /api/accounts` for e2e user: 29 → **38** accounts (the 9 previously-invisible camelCase docs now come through)
+- `POST /api/chat` "balance per account" returns the same 38, confirming JWT forwarding and Turk's tool wiring intact
+- Brian's 4 camelCase docs are now reachable (verified via Cosmos count, not via his login since his password isn't in the e2e fixtures)
+
+**Follow-ups filed as #125** (writer-side casing fix, data migration, transaction-service audit).
+
+**Reusable lesson:** Cosmos JSON field paths are case-sensitive. **Always** prefer `[JsonProperty("camelName")]` on every persisted field (or a `CosmosClientOptions.Serializer` pinned to camelCase) instead of relying on Cosmos SDK v3 default Newtonsoft preserve-case behaviour. Default behaviour can drift across SDK package updates and create silent multi-casing data — a single-row read still works (Newtonsoft deserialize is case-insensitive on the `<T>`) so the bug only surfaces on queries.
+
+**Smoke-domain reminder for next on-call:** `e2e-default@banking-demo.com / password123` works from `tests/e2e/fixtures/authFixture.ts` and is the cheapest way to land an authenticated curl against `https://${CUSTOM_DOMAIN}` without spinning up Playwright.
