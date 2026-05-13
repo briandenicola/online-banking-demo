@@ -456,3 +456,20 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
 - **`:latest` + `kubectl apply` ≠ rolling deploy.** When kustomize image tags don't change, Apply alone won't restart pods — even with `imagePullPolicy: Always`. The deploy task needs either (a) digest-pinned tags per build, or (b) an explicit `rollout restart` step. This bit us once already and will keep biting until fixed in the Taskfile.
 - **Always sanity-check the served bundle** when a frontend smoke fails post-deploy. `curl` the JS from `asset-manifest.json` and grep for a known marker from the latest source — it takes 30 seconds and immediately tells you "deployed code ≠ source".
 - **Terser variable aliasing risk:** when two adjacent shorthand object properties (`{username, email}`) are derived from the same source value, the minifier may emit them with the same variable name in the output. The b565fd5 fix (introducing a derived `const username = ...replace(...)`) breaks that aliasing because `username` and `email` now hold different values.
+
+### 2026-05-13 — Coordinator Integration: Rollout Restart in cloud:deploy (commits e57d5f0, 1a989f2)
+
+**Pattern:** The Coordinator has permanently integrated `kubectl rollout restart deployment/<svc>` into the `task cloud:deploy` target as of commit e57d5f0. This eliminates the manual `kubectl rollout restart` workaround after every cloud build/deploy cycle.
+
+**Historical context:** Your stale-bundle trap discovery and the manual rollout restart fix prompted the Coordinator to bake this into the Taskfile itself. `:latest` image tags no longer require manual pod bouncing — `task cloud:deploy` now handles it automatically.
+
+**For you:** Any service you build/deploy via `task cloud:deploy` will now automatically restart pods as part of the deploy job. This means your next smoke test verification should see new bundles on deploy without requiring the manual `kubectl rollout restart` workaround.
+
+**Additional refactor (commit 1a989f2):** The Taskfile's `NAMESPACE` variable is now hoisted to task-level scope, eliminating hardcoded `banking-demo` strings throughout the deploy targets. This makes it easier to test against different namespaces.
+
+**Files that changed (Taskfile):**
+- Added rollout restart commands for ui-app, user-service, account-service, transaction-service, transfer-service, ai-service, chatbot-service, budget-service, account-opening-service, prompt-eval-service post-kustomize-apply
+- Hoisted NAMESPACE to global task var
+
+**Verification:** Your next E2E smoke run should pick up the deployed bundle immediately after `task cloud:deploy`, no manual restart needed.
+

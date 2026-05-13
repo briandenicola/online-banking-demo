@@ -1437,68 +1437,6 @@ Upgraded AKS configuration to production-grade defaults appropriate for a demo p
 - Pod CIDR is 100.65.0.0/16 — don't overlap with VNet (10.x) or service CIDR (100.64.x)
 - node_count changes via Azure autoscaler won't cause Terraform drift
 
----
-
-# Decision: Gateway-Level Security via nginx njs
-
-**Author:** Danny (Lead/Architect)
-**Date:** 2025-01-06
-**Branch:** squad/security
-**Status:** Implemented
-
-## Context
-
-The API gateway (nginx) was passing all requests through to backend services without authentication or rate limiting. JWT validation was only happening at individual service level, meaning:
-- Unauthenticated requests consumed backend resources before being rejected
-- No protection against brute-force or DDoS at the edge
-- No standard security headers on responses
-
-## Decision
-
-Implement gateway-level security using nginx njs (JavaScript) module:
-
-1. **JWT Validation** — All `/api/*` routes require valid Bearer token except `/api/users/login` and `/api/users/register`
-2. **Rate Limiting** — 100 req/min per IP for API endpoints; 10 req/min for login/register
-3. **Security Headers** — X-Frame-Options, X-Content-Type-Options, HSTS, X-XSS-Protection, Referrer-Policy
-4. **Secret Externalization** — JWT key moved to `.env` file with docker-compose variable substitution
-
-## Alternatives Considered
-
-| Option | Pros | Cons |
-|--------|------|------|
-| Lua (OpenResty) | Mature ecosystem | Requires different base image, heavier |
-| Auth proxy (oauth2-proxy) | Feature-rich | Additional service, more complexity |
-| njs module | Ships with nginx, JS syntax, crypto built-in | Newer, smaller ecosystem |
-| Backend-only validation | No gateway changes | Wastes backend resources on invalid requests |
-
-## Architecture
-
-```
-Client → nginx (JWT check + rate limit + headers) → @upstream → backend service
-         ↓ (if invalid)
-         401/429 response
-```
-
-**Files added/modified:**
-- `gateway/Dockerfile` — nginx:alpine + nginx-module-njs
-- `gateway/jwt_validate.js` — HS256 JWT validation logic
-- `nginx.conf` — Rate limiting zones, security headers, njs integration
-- `docker-compose.yml` — Gateway build context, JWT env vars from .env
-- `.env.example` — JWT_KEY and JWT_ISSUER placeholders
-
-## Risks & Mitigations
-
-- **njs crypto compatibility**: Verified that `require('crypto').createHmac` works in njs runtime for HS256
-- **Dev friction**: Fallback defaults (`${JWT_KEY:-...}`) mean existing `docker-compose up` still works without .env
-- **Token algorithm lock-in**: Currently only supports HS256; if services move to RS256, gateway validation must be updated
-
-## Follow-up Actions
-
-- [ ] Add integration test that verifies 401 on missing token and 200 on valid token
-- [ ] Consider adding CORS headers at gateway level
-- [ ] Evaluate moving to RS256 for production (asymmetric keys don't need shared secret)
-
----
 
 # Decision: Kubernetes Deployment Best Practices
 
@@ -5154,3 +5092,178 @@ cd tests/e2e && BASE_URL=https://onlinebankingdemo.bjdazure.tech \
 - **Performance:** Negligible (one extra DB query only on username miss)
 - **Compatibility:** No breaking changes; existing username-based logins continue to work
 
+---
+# Decision Drop: Registration Smoke Fix — Stale `:latest` Bundle
+
+**Author:** Linus (Frontend Dev)
+**Date:** 2026-05-13
+**Branch:** squad/p2-wave-3
+**Related commit:** b565fd5 (the *source* fix; this drop covers the *deploy* fix)
+**Status:** Fixed, smoke green (21/21)
+
+## What Was Broken
+
+The Registration smoke test (`tests/e2e/specs/smoke/smoke.spec.ts:78`) timed out waiting for `**/login` after submitting the registration form against the live AKS deployment.
+
+## Root Cause
+
+**Two layers:**
+
+1. **Browser symptom:** the deployed JS bundle's registration POST payload contained `{username: <raw-email>, email: <raw-email>}` — identical values. Backend rejected with `400 "Email field is not a valid e-mail address"` because `username = email.split('@')[0]` was being skipped (the *email* slot got the local-part instead of the full address). The page rendered "Registration failed. Please try again." and never navigated.
+
+2. **Real cause:** the deployed bundle was the **pre-b565fd5 code**. ACR had a newer `ui-app:latest` digest, but the running pod was created *before* that push and never restarted to pull it.
+
+   The Taskfile pins `ui-app:latest` in `deploy/kustomize/base/kustomization.yaml`. `task cloud:deploy` does `kubectl apply -k`, which is a **no-op** when no manifest field changes. With `:latest`, the Deployment spec is byte-identical run over run, so the pods never roll. `imagePullPolicy: Always` only fires on pod creation — there is no creation event without a manifest delta.
+
+## Fix Applied
+
+Operational only — no source code changed:
+
+```bash
+task cloud:build:ui-app                                       # rebuild & push :latest
+task cloud:deploy                                             # apply manifests
+kubectl -n banking-demo rollout restart deployment/ui-app     # FORCE pod recreate to pull new :latest
+```
+
+Verified: live bundle (`main.8a4036f7.js`) now contains `post("/users/register",{username:t,firstName:e,lastName:n,email:a,password:l})` — distinct variables for username and email. Registration smoke passes in 2.2s.
+
+## Recommendation (For Danny / Whoever Owns the Taskfile)
+
+This trap will recur on every UI deploy. Two reasonable fixes — pick one:
+
+**Option A (simplest):** Add `kubectl rollout restart deployment/<svc> -n banking-demo` for each rebuilt service inside `task cloud:deploy` (or a dedicated `cloud:rollout` task). Cheap and guarantees pods pick up new `:latest`.
+
+**Option B (cleaner, more cost):** Drop `:latest` and tag each build with the short git SHA (`{{.GIT_SHA}}`). Kustomize then rewrites `newTag` per deploy, the manifest changes, and Apply triggers a normal rolling update. Bonus: rollback is trivial (re-deploy with prior SHA). This is the standard pattern.
+
+Either way, **`task cloud:deploy` should never silently no-op while the user thinks they shipped new code.** That is the actual bug; the symptom just happened to land in my domain this time.
+
+## Frontend-Side Defense
+
+I also added a note in `.squad/agents/linus/history.md`: when a frontend smoke fails post-deploy, the first diagnostic should be `curl` the bundle from `asset-manifest.json` and grep for a known string from the latest source. Confirms in 30s whether the deployed code matches HEAD before chasing test or app bugs.
+
+## Files Touched
+
+- `.squad/agents/linus/history.md` — appended learnings.
+- `.squad/decisions/inbox/linus-registration-redirect-fix.md` — this file.
+
+No source code changes. The b565fd5 frontend fix was correct all along; it just wasn't running.
+
+---
+
+# Decision: Explicitly declare `aiohttp` for Python services using agent-framework-foundry
+
+**Status:** ✅ Implemented (ai-service)  
+**Date:** 2026-05-13  
+**Author:** Turk (Backend)  
+**Issue:** #118  
+**Commit:** 0cb17b8 (squad/p2-wave-3)
+
+## Context
+
+The `Check Foundry Status` admin panel reported both `transaction-categorizer` and `risk-assessor` agents as 🔴 ERROR / "Agent not initialized" on https://onlinebankingdemo.bjdazure.tech.
+
+After ruling out (1) missing Foundry-side agents and (3) a faulty health check, root cause was (2): ai-service main container failed to instantiate `FoundryAgent` at lifespan startup with:
+
+```
+❌ Foundry initialization failed: No module named 'aiohttp'
+```
+
+`agent-framework-foundry`'s `FoundryAgent` uses `aiohttp.ClientSession` internally but does **not** declare it as a transitive dependency. The `try/except` in `anomaly_service.lifespan` swallowed the ImportError, leaving both agents with `_ready=False`.
+
+## Decision
+
+For every Python service that depends on `agent-framework-foundry` (or any Azure AI SDK that uses HTTP under the hood), **explicitly add `aiohttp` to `pyproject.toml`**. Do not rely on it being pulled in transitively.
+
+Applied to: `src/ai-service/pyproject.toml` (`aiohttp = "^3.10.0"`).
+Already correct: `src/chatbot-service/pyproject.toml`, `src/account-opening-service/pyproject.toml`.
+
+## Rationale
+
+- This is the **third time** the same missing-dependency pattern has surfaced (account-opening-service → chatbot-service → ai-service). It will keep recurring otherwise.
+- `try/except Exception as e: logger.error(...)` in lifespan masks ImportError — by the time the symptom shows up in the UI, the cause is far removed. Better to declare deps up-front.
+- Cost is negligible (one wheel, ~1MB).
+
+## Alternatives Considered
+
+1. **Pin `agent-framework-foundry` to a version that bundles aiohttp** — no such version published; relying on a future SDK fix is unreliable.
+2. **Make Foundry init failures fatal (raise instead of log)** — would crash all services on any transient Foundry issue. Rejected.
+3. **Add a startup smoke-call against the Foundry endpoint that fails-fast** — useful but orthogonal; doesn't replace the missing dep.
+
+## Follow-ups (out-of-scope here, flagged for team)
+
+- **Linus / Frontend:** the admin "Check Foundry Status" panel correctly surfaced the failure — no UI changes needed. Health-check code (`_check_agent` in `app/routes/api.py`) is also correct.
+- **Basher / Cross-service patterns:** worth adding a CI lint or doc convention: "Any service that imports `agent_framework_foundry` MUST list `aiohttp` in pyproject.toml". A simple grep-based pre-commit would suffice.
+- **Deploy ergonomics:** `task cloud:deploy` does not restart pods when the kustomize manifest is unchanged but the `:latest` image was rebuilt. Either (a) tag images with the git short-SHA in `_images:update`, or (b) add an automatic `kubectl rollout restart` for changed services. This affects every "rebuild and redeploy" workflow, not just ai-service.
+
+## Verification
+
+```
+$ kubectl logs deploy/ai-service -c ai-service | grep Foundry
+✅ Foundry risk agent created (persistent)
+✅ Foundry categorizer agent created (persistent)
+
+$ curl /api/admin/foundry-status
+{"status":"ok","agents":{"transaction-categorizer":{"status":"ok"},"risk-assessor":{"status":"ok"}}}
+```
+
+---
+
+# Decision: Forward inbound JWT to downstream admin endpoints (prompt-eval-service)
+
+**Author:** Basher (Backend)
+**Date:** 2026-05-13
+**Issue:** #117
+**Commit:** 4fd2cfa
+**Status:** ✅ Implemented & verified in cloud (banking-demo namespace)
+
+## Context
+
+`POST /api/evaluations/run` was returning HTTP 500 from the deployed prompt-eval-service. The issue suggested possible Foundry/Cosmos misconfiguration. Pod logs showed the actual cause:
+
+```
+GET http://ai-service/api/admin/transactions ... StatusCode: 401 (Unauthorized)
+HttpRequestException: Response status code does not indicate success: 401
+   at PromptEvalService.Services.EvaluationService.FetchTransactionsAsync(...)
+```
+
+prompt-eval-service was making in-cluster calls to ai-service `/api/admin/*` (which require an admin JWT via `require_admin`) without forwarding the caller's bearer token. `EnsureSuccessStatusCode()` threw, the controller's generic catch turned it into 500, UI broke.
+
+## Decision
+
+**JWT pass-through is the canonical pattern for .NET-service → Python-service admin calls in this codebase.**
+
+For request-scoped calls:
+- Inject `IHttpContextAccessor`
+- Read `HttpContext.Request.Headers.Authorization`, strip `Bearer ` prefix
+- Set on the outbound `HttpRequestMessage`
+
+For background/queued work:
+- Capture the token at enqueue time and store it on the work-item record
+- The HttpContext is gone by the time the BackgroundService picks it up; you cannot read it lazily
+
+For error mapping:
+- Downstream 401/403 → throw `UnauthorizedAccessException` → return **502 Bad Gateway** to caller
+- Reserves 500 for genuine internal errors and gives the UI an actionable signal
+
+## Rationale
+
+1. **Matches existing `AccountProvisioningService` pattern** in user-service (mints a token and adds it to `Authorization` header on outbound HttpClient calls). Token forwarding is a lighter-weight variant — no minting required because the caller is already an authenticated admin.
+2. **Avoids inventing a service-to-service token-minting subsystem** for prompt-eval. The user is already an admin (controller has `[Authorize(Roles="admin,Admin")]`), so propagating their token is sufficient and respects the principle of least privilege (no service can act with broader rights than its caller).
+3. **502 vs 500 distinction** matches RFC 9110 semantics — downstream service rejected the request, this service is fine. Improves on-call triage.
+
+## Alternatives considered
+
+1. **Mint a service-account JWT in prompt-eval-service** (like `AccountProvisioningService` does). Rejected — adds key-management surface area and would let the service act outside the caller's permissions. Re-evaluate if we ever need scheduled/cron evaluation runs.
+2. **Drop admin requirement on `/api/admin/transactions` for in-cluster traffic** (NetworkPolicy + IP-based trust). Rejected — defense-in-depth, and would still need auth for the user-context (which user requested this run, for audit logging).
+3. **Return 503 instead of 502.** Rejected — 503 means *we* are unavailable, not the downstream.
+
+## Operational notes
+
+- Cosmos has Local Auth disabled (Entra RBAC only) and is behind a private endpoint. Any Cosmos verification/admin work must run from an in-cluster pod with `serviceAccountName: banking-workload-identity` and the `azure.workload.identity/use: "true"` label. Master-key access is not an option.
+- The cluster has no seeded admin user. `Admin__BootstrapEmail` only fires when zero admins exist; promoting an additional user requires flipping the Role field directly in Cosmos via the workload-identity pod pattern.
+
+## Follow-ups (NOT blocking #117 — file as separate issues)
+
+1. **ai-service `/api/admin/evaluate` returns 422** when the transactions list is empty/non-existent. Background queue then logs an unhandled exception. Worth ai-service-side input validation hardening + a friendlier failure path on the prompt-eval BackgroundService.
+2. **Istio gateway routing** (`cluster-config/istio/gateway/default-ingress.yaml`) only sends `/api/evaluations` to prompt-eval-service. `/api/prompts` falls through to the UI 404. If the UI needs template management, a route addition is required.
+3. **`task cloud:deploy` doesn't trigger rollouts** when the image tag is unchanged (kustomize sees `:latest` as identical). Either bump tags via build, or have the deploy task `kubectl rollout restart` services whose images were just built. Recurring footgun across the team.
