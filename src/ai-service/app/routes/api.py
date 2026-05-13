@@ -153,6 +153,9 @@ async def get_admin_stats(
     avg_risk = sum(score for _, score in scores) / len(scores) if scores else 0
     high_risk = len([score for _, score in scores if score >= anomaly_service.FLAGGING_THRESHOLD])
 
+    # Get AI calls today from Redis
+    ai_calls = await anomaly_service.get_ai_calls_today_from_redis(state.redis_client)
+
     return AdminStats(
         totalFlagged=total_flagged,
         pendingReview=pending,
@@ -161,7 +164,7 @@ async def get_admin_stats(
         avgRiskScore=avg_risk,
         totalScored=total_scored,
         highRiskCount=high_risk,
-        aiCallsToday=anomaly_service.get_ai_calls_today(state.analyzer_pipeline),
+        aiCallsToday=ai_calls,
     )
 
 

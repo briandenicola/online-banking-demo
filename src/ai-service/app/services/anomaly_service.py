@@ -111,9 +111,6 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
     def __init__(self):
         self._agent: Optional["FoundryAgent"] = None
         self._ready = False
-        self._ai_calls_today = 0
-        self._ai_calls_date = ""
-        self._ai_calls_lock = asyncio.Lock()
 
     @property
     def name(self) -> str:
@@ -128,13 +125,7 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
         self._agent = agent
         self._ready = True
 
-    async def analyze(self, transaction: dict) -> RiskAssessment:
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        async with self._ai_calls_lock:
-            if self._ai_calls_date != today:
-                self._ai_calls_today = 0
-                self._ai_calls_date = today
-
+    async def analyze(self, transaction: dict, redis_client: Optional[redis.Redis] = None) -> RiskAssessment:
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("foundry.risk-assessment") as span:
             span.set_attribute("analyzer.name", self.name)
@@ -158,10 +149,15 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
                 session = self._agent.create_session()
                 response = await self._agent.run(user_message, session=session)
 
-                async with self._ai_calls_lock:
-                    self._ai_calls_today += 1
-                    calls_today = self._ai_calls_today
-                span.set_attribute("ai.calls_today", calls_today)
+                # Increment AI calls counter in Redis (success path only)
+                if redis_client:
+                    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    counter_key = f"ai:metrics:calls:{today}"
+                    await redis_client.incr(counter_key)
+                    # Set TTL to 36 hours on first increment (covers UTC day boundary + buffer)
+                    ttl = await redis_client.ttl(counter_key)
+                    if ttl == -1:  # Key exists but has no TTL
+                        await redis_client.expire(counter_key, 36 * 60 * 60)
 
                 result = self._parse_response(str(response))
                 span.set_attribute("risk.score", result.riskScore)
@@ -175,10 +171,6 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
                     explanation="AI scoring unavailable — assigned default moderate risk",
                     flags=["ai_unavailable"]
                 )
-
-    @property
-    def ai_calls_today(self) -> int:
-        return self._ai_calls_today
 
     def _parse_response(self, response: str) -> RiskAssessment:
         """Parse the AI response into a RiskAssessment."""
@@ -345,12 +337,22 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
 
 
 def get_ai_calls_today(analyzer_pipeline: Optional["AnalyzerPipeline"]) -> int:
-    if not analyzer_pipeline:
-        return 0
-    for analyzer in analyzer_pipeline.analyzers:
-        if isinstance(analyzer, FoundryRiskAnalyzer):
-            return analyzer.ai_calls_today
+    """Deprecated: counter moved to Redis. Use get_ai_calls_today_from_redis instead."""
     return 0
+
+
+async def get_ai_calls_today_from_redis(redis_client: Optional[redis.Redis]) -> int:
+    """Get today's AI call count from Redis."""
+    if not redis_client:
+        return 0
+    try:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        counter_key = f"ai:metrics:calls:{today}"
+        count = await redis_client.get(counter_key)
+        return int(count) if count else 0
+    except Exception as e:
+        logger.warning(f"Failed to read AI calls counter from Redis: {e}")
+        return 0
 
 
 class AnalyzerPipeline:
@@ -374,7 +376,7 @@ class AnalyzerPipeline:
     def categorizers(self) -> list[BaseCategorizer]:
         return self._categorizers
 
-    async def assess(self, transaction: dict) -> RiskAssessment:
+    async def assess(self, transaction: dict, redis_client: Optional[redis.Redis] = None) -> RiskAssessment:
         """Run all enabled analyzers and return the highest-risk assessment."""
         results: list[RiskAssessment] = []
 
@@ -382,7 +384,11 @@ class AnalyzerPipeline:
             if not analyzer.enabled:
                 continue
             try:
-                result = await analyzer.analyze(transaction)
+                # Pass redis_client to analyzers that support it (FoundryRiskAnalyzer)
+                if isinstance(analyzer, FoundryRiskAnalyzer):
+                    result = await analyzer.analyze(transaction, redis_client)
+                else:
+                    result = await analyzer.analyze(transaction)
                 results.append(result)
             except Exception as e:
                 logger.error(f"Analyzer {analyzer.name} failed: {e}")
@@ -580,8 +586,8 @@ async def score_and_store_transaction(
     # Inject category into transaction context for risk scoring
     transaction_with_category = {**transaction, "category": category}
 
-    # Step 2: Score for risk (uses category context)
-    assessment = await analyzer_pipeline.assess(transaction_with_category)
+    # Step 2: Score for risk (uses category context, passes redis_client for counter)
+    assessment = await analyzer_pipeline.assess(transaction_with_category, redis_client)
     logger.info(
         f"📊 Scored transaction: risk={assessment.riskScore:.2f}, "
         f"flags={assessment.flags}, explanation={assessment.explanation[:80]}"
