@@ -1,18 +1,18 @@
 import asyncio
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app.config import AGENT_FRAMEWORK_AVAILABLE, DefaultAzureCredential
-from app.services import agent_service
+from app.services.agent_service import AgentState, get_agent_state
 from app.services.chat_service import get_health_status
 
 router = APIRouter()
 
 
 @router.get("/health")
-async def health():
-    return get_health_status()
+async def health(agent_state: AgentState = Depends(get_agent_state)):
+    return get_health_status(agent_state)
 
 
 @router.get("/healthz")
@@ -21,8 +21,8 @@ async def healthz():
 
 
 @router.get("/readyz")
-async def ready():
-    checks = {"azure_credential": False, "agent_ready": agent_service.agent_ready}
+async def ready(agent_state: AgentState = Depends(get_agent_state)):
+    checks = {"azure_credential": False, "agent_ready": agent_state.agent_ready}
 
     if AGENT_FRAMEWORK_AVAILABLE and DefaultAzureCredential:
         try:
