@@ -108,6 +108,14 @@ spec:
         host: user-service
         port:
           number: 80
+  - match:
+    - uri:
+        prefix: /api/admin/replay-events
+    route:
+    - destination:
+        host: transaction-service
+        port:
+          number: 80
   # AI-service admin routes (flagged-transactions, stats, scored-transactions)
   - match:
     - uri:

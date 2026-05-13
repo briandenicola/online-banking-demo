@@ -74,6 +74,15 @@ public class InMemoryTransactionRepository : ITransactionRepository
         return Task.FromResult<IEnumerable<Transaction>>(results);
     }
 
+    public Task<IEnumerable<Transaction>> GetAllAsync(int limit = 10_000)
+    {
+        var results = _transactions.Values
+            .OrderByDescending(t => t.Timestamp)
+            .Take(limit)
+            .ToList();
+        return Task.FromResult<IEnumerable<Transaction>>(results);
+    }
+
     public Task<Transaction> CreateAsync(Transaction transaction)
     {
         _transactions[transaction.Id] = transaction;

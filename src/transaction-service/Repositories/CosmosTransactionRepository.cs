@@ -58,6 +58,28 @@ public class CosmosTransactionRepository : ITransactionRepository
         return results.Take(limit);
     }
 
+    public async Task<IEnumerable<Transaction>> GetAllAsync(int limit = 10_000)
+    {
+        // Cross-partition scan — admin/maintenance only. Drains pages until limit
+        // is hit so a single ReadNextAsync call doesn't silently truncate at ~100.
+        var query = new QueryDefinition("SELECT * FROM c ORDER BY c.timestamp DESC");
+        var iterator = _container.GetItemQueryIterator<Transaction>(
+            query,
+            requestOptions: new QueryRequestOptions { MaxItemCount = 1000 });
+
+        var results = new List<Transaction>();
+        while (iterator.HasMoreResults && results.Count < limit)
+        {
+            var page = await iterator.ReadNextAsync();
+            foreach (var item in page)
+            {
+                results.Add(item);
+                if (results.Count >= limit) break;
+            }
+        }
+        return results;
+    }
+
     public async Task<Transaction> CreateAsync(Transaction transaction)
     {
         var response = await _container.CreateItemAsync(transaction, new PartitionKey(transaction.AccountId));

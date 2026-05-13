@@ -640,7 +640,18 @@ async def score_and_store_transaction(
 
 async def consume_redis_stream(redis_client: redis.Redis, analyzer_pipeline: "AnalyzerPipeline"):
     """Consume transactions from Redis Stream and analyze them."""
-    await redis_client.xgroup_create(name=STREAM_NAME, groupname=CONSUMER_GROUP, id="0", mkstream=True)
+    try:
+        await redis_client.xgroup_create(name=STREAM_NAME, groupname=CONSUMER_GROUP, id="0", mkstream=True)
+        logger.info(f"Created consumer group {CONSUMER_GROUP} on stream {STREAM_NAME}")
+    except redis.ResponseError as e:
+        # BUSYGROUP — group already exists from a prior run. Expected on every
+        # restart after the first; without this guard the entire consumer task
+        # silently dies and no transactions are ever scored.
+        if "BUSYGROUP" in str(e):
+            logger.info(f"Consumer group {CONSUMER_GROUP} already exists — resuming")
+        else:
+            logger.error(f"Failed to create consumer group: {e}")
+            raise
     backoff = 1
     _failure_counts: dict[str, int] = {}
     dlq_stream = f"{STREAM_NAME}-dlq"
