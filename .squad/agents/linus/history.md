@@ -529,3 +529,18 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
   `curl asset-manifest.json | grep marker` flow caught the stale
   registration deploy two sessions ago; this time it confirmed the new
   bundle landed before I left the issue alone.
+
+## Historical Context (2025)
+
+**Note:** This section summarizes learnings from pre-2026 UI audits and fixes. See dated subsections below for full details.
+
+### 2025 Audit Summary
+
+From frontend code quality audits conducted in 2025-07:
+- **UI patterns:** Established React component hierarchies, state management approach, styling conventions (MUI v9)
+- **Key fixes:** Transaction endpoint integration, Nginx proxy issues, account API alignment, login error handling
+- **Best practices:** Input validation, error boundaries, accessible forms, responsive layouts, test fixtures
+- **Infrastructure:** Docker healthchecks, container hardening, pod security policies
+
+For specific dates and detailed fixes from these entries, refer to the dated learning sections (###) above.
+

@@ -6,10 +6,10 @@
 
 ## Decision: Defensive guard for Avg Risk Score tile (#119)
 
-**Status:** ✅ Implemented
+**Status:** ✅ Fully Implemented (Linus frontend + Basher backend)
 **Date:** 2026-05-13
-**Author:** Linus (Frontend)
-**Branch/Commit:** squad/p2-wave-3 / 489527b
+**Author:** Linus (Frontend), Basher (Backend follow-up)
+**Branch/Commit:** squad/p2-wave-3 / 489527b (frontend), 5c12a20 (backend cleanup)
 
 ### Context
 Admin dashboard "Avg Risk Score" tile was rendering `1,778,591,506.40` —
@@ -45,13 +45,17 @@ the underlying data is cleaned up.
   rebuild from the per-transaction JSON keys.
 - Verifying that all post-#118 transactions land with `score ∈ [0, 1]`.
 
-**Flagged for Brian / Basher / Turk** — see comment on #119.
+### Backend Follow-up (Basher)
+1. **Redis `scored-transactions` sorted set purged** of 157 legacy entries with timestamp-shaped scores. 
+   - Write path was already corrected at `anomaly_service.py:617` after #118's fix
+   - This was data-only cleanup via `kubectl exec` pattern
+2. **Reusable Redis-from-pod pattern established** for future maintenance ops — any pod with workload identity + `redis.asyncio` can run ad-hoc Redis ops without hardcoding connection strings or pulling from KeyVault.
 
 ---
 
 ## Decision: Active AI Prompts — graceful fallback for missing body (#120)
 
-**Status:** ✅ Frontend implemented; backend fix flagged
+**Status:** ✅ Fully Implemented (Linus frontend + Basher backend)
 **Date:** 2026-05-13
 **Author:** Linus (Frontend)
 **Branch/Commit:** squad/p2-wave-3 / 489527b
@@ -80,14 +84,43 @@ The "Active AI Prompts" panel renders `foundry-risk` and
    `systemPrompt` is missing/empty, explaining the data is not yet
    exposed by the API and pointing at #120.
 
-### What needs Basher (backend)
-1. Include `systemPrompt: analyzer.SYSTEM_PROMPT` (and same for
-   categorizers) in the `GET /api/admin/prompts` response.
-2. Confirm whether `analyzer.enabled` reflects "agent reachable" or just
-   "agent constructed" — the badge should mean the former.
+### Backend Implementation (Basher)
+1. **`/api/admin/prompts` now returns `systemPrompt`** for each analyzer and categorizer 
+   - Sourced from each class's `SYSTEM_PROMPT` constant
+   - One-line API contract addition; frontend already optional-handles it
+2. **`enabled` field semantics clarified:** currently means "agent constructed" not "agent reachable"
+   - Linus's panel renders correctly with current semantics
+   - Flagged as a possible future follow-up if we ever see false-green badges
 
-**Comment posted on #120 with the above; issue stays open until backend
-ships the body field.**
+---
+
+## Decision: Chatbot account-balance lookup fix (#121)
+
+**Status:** ✅ Implemented & verified in cloud
+**Date:** 2026-05-13
+**Author:** Turk (Backend)
+**Issue:** #121
+**Branch/Commit:** squad/p2-wave-3
+
+### Context
+`agent_tools.get_user_accounts()` was calling `GET {ACCOUNT_SERVICE_URL}/api/accounts/my`, which does not exist on account-service. That route doesn't exist — AccountsController exposes only `[HttpGet] /api/accounts`, deriving the user from the JWT `userId` claim. Every chatbot balance query returned 404, wrapped into a friendly message by the tool.
+
+### Decision
+1. Chatbot calls **`GET /api/accounts`** (not `/api/accounts/my`)
+   - Account-service derives the userId from the JWT claim — no path-based user identifier needed
+2. When consuming account JSON, accept both `accountType` and `type` fields
+   - Defensive fallback prevents silent regression if the account-service contract is ever revised
+
+### Verification
+```
+$ curl -sk -X POST https://onlinebankingdemo.bjdazure.tech/api/chat \
+       -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+       -d '{"message":"What was my last account balance for each of my accounts","user_id":"x"}'
+{"response":"Here are your current balances by account, using masked account numbers:
+- Checking ****5852: $28,033.96
+- Savings ****8917: $350,000.00
+- ... (29 accounts total) ..."}
+```
 
 ---
 
