@@ -23,6 +23,7 @@ from app.models import (
     AuditEntry,
     DocumentMetadata,
     DocumentType,
+    LastError,
 )
 from app.repository import ApplicationRepository
 from app.services.projection import project_application, project_applications
@@ -226,3 +227,97 @@ async def get_audit_trail(
         )
 
     return application.auditTrail
+
+
+@router.post("/applications/{application_id}/resubmit", status_code=status.HTTP_202_ACCEPTED)
+async def resubmit_application(
+    application_id: str,
+    user: Annotated[UserClaims, Depends(require_auth)],
+    repository: ApplicationRepository = Depends(get_repository),
+    redis_client=Depends(get_redis_client),
+):
+    """
+    Resubmit a failed application to retry from the failed stage.
+    Enforces retry cap: max 2 attempts per stage (initial + 1 retry).
+    """
+    application = repository.get(application_id)
+    if not application:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
+
+    owner = repository.get_owner(application_id)
+    if user.role.lower() != "admin" and owner != user.user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    # Validate application status
+    if application.status != ApplicationStatus.failed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Application is not in failed state",
+        )
+
+    # Validate lastError exists and is retryable
+    if not application.lastError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No error information available for retry",
+        )
+
+    if not application.lastError.retryable:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This error is not retryable. Please contact support.",
+        )
+
+    # Check retry cap (max 2 attempts per stage: initial + 1 retry)
+    failed_stage = application.failedStage or application.lastError.stage
+    current_attempts = application.stageAttempts.get(failed_stage, 0)
+    
+    if current_attempts >= 2:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "retry_cap_exceeded",
+                "message": "Maximum retry attempts exceeded. Please contact support for assistance.",
+            },
+        )
+
+    # Clear failure and resume from failed stage
+    application = repository.clear_stage_failure_for_retry(application_id, failed_stage)
+    if not application:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update application",
+        )
+
+    # Publish resume event based on stage
+    event_type_map = {
+        "document_extraction": "document_uploaded",
+        "identity_verification": "document_extracted",
+        "compliance_check": "identity_verified",
+    }
+    
+    event_type = event_type_map.get(failed_stage)
+    if not event_type:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown stage: {failed_stage}",
+        )
+
+    # Re-publish the event to trigger stage processing
+    await publish_event(
+        redis_client,
+        event_type=event_type,
+        data={
+            "applicationId": application_id,
+            "resubmit": True,
+            "attempt": current_attempts + 1,
+        },
+    )
+
+    return {
+        "applicationId": application_id,
+        "resumedFromStage": failed_stage,
+        "attempt": current_attempts + 1,
+        "status": application.status.value,
+        "message": f"Application resumed from {failed_stage} stage.",
+    }

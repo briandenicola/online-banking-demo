@@ -13,6 +13,7 @@ from .models import (
     ApplicationStatus,
     AuditEntry,
     DocumentMetadata,
+    LastError,
 )
 
 logger = structlog.get_logger("cosmos-repository")
@@ -108,6 +109,66 @@ class CosmosDBApplicationRepository:
             return None
         application.auditTrail.append(entry)
         application.updatedAt = datetime.now(timezone.utc)
+        self.update(application)
+        return application
+
+    def record_stage_failure(
+        self,
+        application_id: str,
+        stage: str,
+        error: LastError,
+    ) -> ApplicationResponse | None:
+        """Record stage failure with error details and increment attempt counter."""
+        application = self.get(application_id)
+        if not application:
+            return None
+        
+        application.lastError = error
+        application.failedStage = stage
+        application.status = ApplicationStatus.failed
+        
+        # Increment stage attempts
+        current_attempts = application.stageAttempts.get(stage, 0)
+        application.stageAttempts[stage] = current_attempts + 1
+        
+        application.updatedAt = datetime.now(timezone.utc)
+        self.update(application)
+        return application
+
+    def clear_stage_failure_for_retry(
+        self,
+        application_id: str,
+        stage: str,
+    ) -> ApplicationResponse | None:
+        """Clear failure state and resume from failed stage (resubmit)."""
+        application = self.get(application_id)
+        if not application:
+            return None
+        
+        application.lastError = None
+        application.failedStage = None
+        application.status = ApplicationStatus(stage)
+        application.updatedAt = datetime.now(timezone.utc)
+        
+        self.update(application)
+        return application
+
+    def set_customer_explanation(
+        self,
+        application_id: str,
+        outcome: str,
+        explanation: str,
+    ) -> ApplicationResponse | None:
+        """Set customer-facing explanation for terminal state."""
+        application = self.get(application_id)
+        if not application:
+            return None
+        
+        application.customerOutcome = outcome
+        application.customerExplanation = explanation
+        application.customerExplanationGeneratedAt = datetime.now(timezone.utc)
+        application.updatedAt = datetime.now(timezone.utc)
+        
         self.update(application)
         return application
 

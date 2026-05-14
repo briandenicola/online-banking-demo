@@ -65,6 +65,8 @@ SYSTEM_PROMPT = (
 
 
 class ProvisioningConsumer(AgentConsumer):
+    STAGE_NAME = "provisioning"
+    
     def __init__(
         self,
         redis,
@@ -114,7 +116,7 @@ class ProvisioningConsumer(AgentConsumer):
             "ACCOUNT_SERVICE_URL", "http://account-service.banking-demo.svc.cluster.local"
         ).rstrip("/")
 
-    async def process_event(self, event_data: dict) -> None:
+    async def process_event(self, event_data: dict, idempotency_key: str | None = None) -> None:
         if event_data.get("eventType") != "compliance_checked":
             return
 
@@ -194,6 +196,15 @@ class ProvisioningConsumer(AgentConsumer):
         if decision == "approved":
             user_id, account_ids = await self._provision_account(application)
 
+        # Generate customer explanation for terminal states
+        await self._generate_customer_explanation(
+            application_id=application_id,
+            decision=decision,
+            risk_tier=risk_tier,
+            verified=verified,
+            flags=combined_flags,
+        )
+
         self._repository.update(application)
 
         await publish_event(
@@ -268,6 +279,88 @@ class ProvisioningConsumer(AgentConsumer):
                     account_ids.append(account_id)
 
             return user_id, account_ids
+
+    async def _generate_customer_explanation(
+        self,
+        application_id: str,
+        decision: str,
+        risk_tier: str | None,
+        verified: bool | None,
+        flags: list[str],
+    ) -> None:
+        """
+        Generate customer-facing explanation for terminal application state.
+        This is a one-shot generation that happens only at workflow finalization.
+        """
+        outcome_map = {
+            "approved": "approved",
+            "rejected": "declined",
+            "pending_review": "needs_review",
+        }
+        customer_outcome = outcome_map.get(decision, "needs_review")
+
+        # Build prompt for customer explanation
+        prompt = f"""You are writing a customer-facing message for a bank account application.
+
+Application outcome: {decision}
+Risk assessment: {risk_tier or "unknown"}
+Identity verified: {verified}
+Flags raised: {len(flags)} flags
+
+Write a 2-3 sentence explanation for the customer that:
+1. Uses friendly, plain English (no banking jargon)
+2. Explains what happens next
+3. If declined, provides an actionable suggestion without revealing internal assessment details
+4. Never mentions specific risk scores, internal flags, or compliance codes
+
+For approved: Welcome them and explain account activation.
+For declined: Be empathetic, don't blame them, suggest next steps.
+For pending review: Explain the timeline and that someone will be in touch.
+
+Return ONLY the explanation text, no JSON wrapper."""
+
+        try:
+            # Use the existing Foundry agent for explanation generation
+            from agent_framework_foundry import FoundryAgent
+            
+            explanation_agent = FoundryAgent(
+                project_endpoint=self._agent.project_endpoint,
+                credential=self._credential,
+                agent_name="customer-explanation-generator",
+                agent_version="1",
+                description="Generates customer-facing explanations",
+                instructions="You write friendly, clear messages for banking customers.",
+                default_options={"extra_body": {"model": self._model}},
+            )
+            
+            session = explanation_agent.create_session()
+            response = await explanation_agent.run(prompt, session=session)
+            explanation = str(response).strip()
+            
+            # Sanitize and limit length
+            if len(explanation) > 500:
+                explanation = explanation[:497] + "..."
+            
+            # Store on document
+            self._repository.set_customer_explanation(
+                application_id=application_id,
+                outcome=customer_outcome,
+                explanation=explanation,
+            )
+            
+            logger.info(
+                "Customer explanation generated",
+                application_id=application_id,
+                outcome=customer_outcome,
+            )
+        
+        except Exception as exc:
+            logger.error(
+                "Failed to generate customer explanation",
+                application_id=application_id,
+                error=str(exc),
+            )
+            # Non-blocking: don't fail provisioning if explanation generation fails
 
 
 def _summarize_decision_inputs(payload: dict[str, Any]) -> dict[str, Any]:

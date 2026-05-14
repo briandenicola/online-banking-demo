@@ -22,6 +22,8 @@ ANALYZER_NAME = "prebuilt-documentSearch"
 
 
 class DocumentExtractionConsumer(AgentConsumer):
+    STAGE_NAME = "document_extraction"
+    
     def __init__(
         self,
         redis,
@@ -67,7 +69,7 @@ class DocumentExtractionConsumer(AgentConsumer):
             except Exception as exc:
                 logger.warning("Failed to set CUS model deployments", error=str(exc))
 
-    async def process_event(self, event_data: dict) -> None:
+    async def process_event(self, event_data: dict, idempotency_key: str | None = None) -> None:
         if event_data.get("eventType") != "document_uploaded":
             return
 

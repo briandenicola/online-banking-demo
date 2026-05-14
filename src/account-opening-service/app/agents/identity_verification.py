@@ -61,6 +61,8 @@ SYSTEM_PROMPT = (
 
 
 class IdentityVerificationConsumer(AgentConsumer):
+    STAGE_NAME = "identity_verification"
+    
     def __init__(
         self,
         redis,
@@ -104,7 +106,7 @@ class IdentityVerificationConsumer(AgentConsumer):
         )
 
 
-    async def process_event(self, event_data: dict) -> None:
+    async def process_event(self, event_data: dict, idempotency_key: str | None = None) -> None:
         if event_data.get("eventType") != "document_extracted":
             return
 

@@ -65,6 +65,8 @@ SYSTEM_PROMPT = (
 
 
 class ComplianceCheckConsumer(AgentConsumer):
+    STAGE_NAME = "compliance_check"
+    
     def __init__(
         self,
         redis,
@@ -108,7 +110,7 @@ class ComplianceCheckConsumer(AgentConsumer):
         )
 
 
-    async def process_event(self, event_data: dict) -> None:
+    async def process_event(self, event_data: dict, idempotency_key: str | None = None) -> None:
         if event_data.get("eventType") != "identity_verified":
             return
 
