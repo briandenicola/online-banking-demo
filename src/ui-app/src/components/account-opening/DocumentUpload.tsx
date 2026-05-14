@@ -21,6 +21,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import ImageIcon from '@mui/icons-material/Image';
 import { DocumentType, uploadDocuments } from '../../api/accountOpening';
+import { resolveApiError } from '../../api/errors';
 
 export interface UploadedDocument {
   id: string;
@@ -317,13 +318,15 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({
   }, [previews]);
 
   const handleFileSelection = (selected: File[]) => {
-    const validationError = selected.find((file) => validateFile(file, maxSize, formats));
+    // Defensive: ensure only one file even if drag-drop bypasses input attribute
+    const filesToProcess = selected.length > 1 ? [selected[0]] : selected;
+    const validationError = filesToProcess.find((file) => validateFile(file, maxSize, formats));
     if (validationError) {
       setError(validateFile(validationError, maxSize, formats));
       return;
     }
     setError(null);
-    setFiles(selected);
+    setFiles(filesToProcess);
   };
 
   const handleSingleDrop = (event: React.DragEvent<HTMLDivElement>) => {
@@ -341,16 +344,12 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({
     setError(null);
     setProgress(10);
     try {
-      await uploadDocuments(applicationId, files, documentType);
+      await uploadDocuments(applicationId, files[0], documentType);
       setProgress(100);
       setFiles([]);
       onUploadComplete?.();
     } catch (err: unknown) {
-      const message =
-        (err as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.detail ||
-        (err as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.message ||
-        'Upload failed. Please try again.';
-      setError(message);
+      setError(resolveApiError(err, 'Upload failed. Please try again.'));
     } finally {
       setUploading(false);
       setProgress(0);
@@ -407,20 +406,19 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({
       >
         <CloudUploadIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
         <Typography variant="body1" sx={{ fontWeight: 600 }}>
-          Drop files here
+          Drop a file here
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           JPG, JPEG, PNG, or PDF files accepted
         </Typography>
         <Button variant="outlined" onClick={() => fileInputRef.current?.click()}>
-          Select Files
+          Select File
         </Button>
         <input
           ref={fileInputRef}
           type="file"
           hidden
-          multiple
-          aria-label="Upload files"
+          aria-label="Upload file"
           accept={formats.join(',')}
           onChange={(event) => handleFileSelection(Array.from(event.target.files || []))}
         />

@@ -1,0 +1,13 @@
+{
+  "properties": {
+    "category": "AzureStorageAccount",
+    "authType": "AAD",
+    "isSharedToAll": true,
+    "target": "https://3e393faab212a8ce4cb2aasa.blob.core.windows.net/",
+    "metadata": {
+      "ApiType": "Azure",
+      "ResourceId": "/subscriptions/ccfc5dda-43af-4b5e-8cc2-1dda18f2382e/resourceGroups/modest-hippo-861-rg/providers/Microsoft.Storage/storageAccounts/3e393faab212a8ce4cb2aasa",
+      "AccountName": "3e393faab212a8ce4cb2aasa"
+    }
+  }
+}

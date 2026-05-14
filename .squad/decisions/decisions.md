@@ -1,37 +1,452 @@
-
 ---
 
-# Decision: Deploy OTEL Collector with App Insights Exporter
+# Decision: Block Multi-Select for Account Opening Document Upload
 
-**Author:** Basher
-**Date:** 2025-07
-**Status:** proposed
+**Date:** 2026-05-13  
+**Agent:** Linus (Frontend Dev)  
+**Status:** Implemented  
+**Commit:** d4b52be (amended into 418cbdd fix)
 
 ## Context
+Account Opening document upload flow had a silent-failure bug: frontend `<input multiple>` allowed multi-file selection, and `uploadDocuments()` looped over files calling `formData.append('file', f)` for each. However, the FastAPI backend endpoint signature is:
 
-Brian requested an OpenTelemetry Collector deployment to centralize traces/metrics/logs and export them to Azure Application Insights. The App Insights resource and Terraform output already exist.
+```python
+async def upload_document(
+    application_id: str,
+    file: UploadFile = File(...),  # SINGULAR
+    documentType: DocumentType = Form(...)
+):
+```
+
+FastAPI's singular `UploadFile` binding only reads the **first** 'file' key from the FormData, silently dropping additional files. Users selecting 2+ files saw only the first uploaded with no error message.
+
+## Options Considered
+
+### Option 1: Loop individual POST requests (frontend)
+Loop `uploadDocuments()` calls, one per file. Simple frontend change, but:
+- **Cons:** No atomicity, partial failures leave inconsistent state, increases network overhead, backend logs N separate requests.
+
+### Option 2: Change backend to accept file array
+Change FastAPI signature to `file: list[UploadFile] = File(...)` and process all files in one request.
+- **Cons:** Backend change required, increases transaction complexity, current product requirements only show single-file examples.
+
+### Option 3: Block multi-select on frontend ✅ **CHOSEN**
+Remove `multiple` attribute from `<input>`, change `uploadDocuments()` signature to singular `File`, update UI copy to reflect single-file constraint.
+- **Pros:** Matches actual backend contract, eliminates silent-drop class entirely, no backend changes, clearest UX (user knows upfront it's single-file).
+- **Cons:** Requires multiple clicks for multiple documents (but each is a separate document type anyway — Photo ID, Proof of Address, etc.).
 
 ## Decision
+**Implement Option 3** — block multi-select on the frontend. Brian approved this approach.
 
-1. **Single manifest file** (`deploy/kustomize/observability/otel-collector.yaml`) containing Namespace (`observability`), Service, Deployment, and ConfigMap. Separate kustomization directory since base enforces `namespace: banking-demo`.
-2. **Secret-based connection string** — The collector reads `APPINSIGHTS_CONNECTION_STRING` from a K8s Secret (`appinsights-secret` in `observability` namespace). The OTEL config uses native `${env:APPINSIGHTS_CONNECTION_STRING}` substitution.
-3. **Operator responsibility** — The K8s secret must be created out-of-band (e.g., via Terraform's `kubernetes_secret` resource or a CI step using the existing `application_insights_connection_string` output).
-4. **Image pinned** to `otel/opentelemetry-collector-contrib:0.151.0`.
-5. **OTEL endpoint re-added** to the shared configmap so all services can send telemetry to the collector.
+### Rationale
+1. **Current product behavior:** Each document type (photo_id, proof_of_address, bank_statement, etc.) is uploaded separately via the DocumentUpload component with a specific `documentType`. Multi-select doesn't map cleanly to this workflow — user would need to specify a type per file anyway.
+2. **Backend contract:** The FastAPI endpoint is explicitly singular. Frontend should honor this contract rather than working around it.
+3. **Avoid silent failures:** The worst UX is when the user thinks all files uploaded but only one actually did. Blocking multi-select makes the limitation explicit.
+4. **Future extension:** If multi-file becomes a requirement, we can batch uploads at the frontend (Option 1) or extend the backend (Option 2) at that time. Current decision doesn't block future work.
 
-## Alternatives Considered
+## Implementation
+**Commit:** d4b52be (amend of 418cbdd)
 
-- Hardcoding connection string in ConfigMap — rejected (secret material).
-- Helm chart for collector — rejected (project uses Kustomize).
-- Deploying in `banking-demo` namespace — rejected (separation of concerns).
+### Changes
+1. **`src/ui-app/src/api/accountOpening.ts`**
+   - Changed `uploadDocuments()` signature: `files: File[]` → `file: File`
+   - Single `formData.append('file', file)` call (no loop)
+   - `uploadDocument()` wrapper updated to pass file directly (no array wrap)
 
-## Consequences
+2. **`src/ui-app/src/api/accountOpening.test.ts`**
+   - Updated 2 test calls from `uploadDocuments('app-1', [file], 'photo_id')` → `uploadDocuments('app-1', file, 'photo_id')`
 
-- All services can now export OTLP telemetry to the collector.
-- Operator must create `appinsights-secret` in `observability` namespace before deploying.
-- Future: consider adding a `SealedSecret` or External Secrets Operator for GitOps-friendly secret management.
+3. **`src/ui-app/src/components/account-opening/DocumentUpload.tsx`**
+   - Removed `multiple` attribute from `<input type="file">`
+   - Updated UI copy: "Drop files here" → "Drop a file here", "Select Files" → "Select File"
+   - Defensive slice in `handleFileSelection()`: `const filesToProcess = selected.length > 1 ? [selected[0]] : selected;` — guards against drag-drop bypassing input attribute
+   - Upload call: `await uploadDocuments(applicationId, files[0], documentType)`
+
+### Verification
+- ✅ `npm run build` — succeeded (warnings pre-existing, unrelated)
+- ✅ `npm test -- --testPathPattern=accountOpening --watchAll=false` — 24/24 tests passed
+- ✅ Commit amend successful: HEAD `d4b52be` (child of `d1b3172`, replaces `418cbdd`)
+
+## Related Work
+- Issue #127: `resolveApiError()` helper for safe FastAPI error extraction (used in same commit)
+- Decision `.squad/decisions.md` entry for `basher-acctopen-422` (commit 2946b20) — fixed ApplicationForm.tsx multipart field name, missed DocumentUpload.tsx until this fix
+
+## Notes
+- The "remove file" button at line ~452 still works correctly with a 1-element array (no changes needed)
+- Drag-drop `handleSingleDrop()` calls the same `handleFileSelection()` with defensive slice, so both input paths are covered
+- If users complain about multiple clicks for multiple documents, revisit Option 1 (loop POSTs) or Option 2 (backend array support)
 
 ---
+
+# Fix: Account Opening 422 + React #31 Crash
+
+**Session:** 2026-05-13 (Basher)  
+**Commit:** 418cbdd  
+**Branch:** squad/p2-wave-3  
+**Context:** Post-deploy smoke test of 69ce049 — Brian still hitting Account Opening 422 + React #31 white-screen crash
+
+---
+
+## Root Causes Confirmed
+
+### 1. Multipart Field Name Mismatch (422)
+**Frontend:** `src/ui-app/src/api/accountOpening.ts:125`
+```typescript
+files.forEach((file) => formData.append('files', file));  // plural
+```
+
+**Backend:** `src/account-opening-service/app/routes/api.py:62`
+```python
+async def upload_document(
+    ...
+    file: UploadFile = File(...),  # singular
+    ...
+)
+```
+
+FastAPI expects `file` (singular) but frontend sends `files` (plural). Result: 422 Unprocessable Entity with Pydantic validation error: `Field required: file`.
+
+### 2. React Error #31 from Raw Error Object
+**DocumentUpload.tsx:349-353** (before fix):
+```typescript
+catch (err: unknown) {
+  const message =
+    (err as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.detail ||
+    (err as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.message ||
+    'Upload failed. Please try again.';
+  setError(message);
+}
+```
+
+This assumes `detail` is always a string, but **FastAPI 422 validation errors return `detail` as an ARRAY** of `{ type, loc, msg, ... }` objects. Storing the array directly in React state causes:
+```
+Error: Minified React error #31 (object with keys {type, loc, ...})
+```
+React crashes to ErrorBoundary because objects are not valid React children.
+
+**ApplicationForm.tsx** (lines 21, 393) already fixed in commit 2946b20 (issue #127) using `resolveApiError()` helper. DocumentUpload.tsx was missed.
+
+---
+
+## Fixes Applied (Commit 418cbdd)
+
+### Fix 1: Change Multipart Field Name
+**File:** `src/ui-app/src/api/accountOpening.ts:125`  
+**Change:** `formData.append('files', file)` → `formData.append('file', file)`  
+
+**Rationale:** Backend is the API contract authority (FastAPI signature `file: UploadFile`). Changing frontend is surgical (1 line) vs. extending backend to accept both singular/plural would be overengineering.
+
+### Fix 2: Use `resolveApiError()` Helper
+**File:** `src/ui-app/src/components/account-opening/DocumentUpload.tsx`  
+**Changes:**
+- Line 24: Add `import { resolveApiError } from '../../api/errors';`
+- Lines 349-353: Replace ad-hoc error extraction with `setError(resolveApiError(err, 'Upload failed. Please try again.'));`
+
+**Rationale:** `resolveApiError()` (from `src/ui-app/src/api/errors.ts`) handles:
+- FastAPI 422 array `detail` → flattened string (`loc.join('.') + ': ' + msg`)
+- FastAPI single-message `detail` (string)
+- .NET ProblemDetails `errors` map
+- Custom `message` / `title` fields
+- Returns **typed `string`** to prevent accidental array-into-state regression
+
+This is the **standard pattern** for all form error handling (see .squad/decisions.md, issue #127).
+
+---
+
+## Verification
+
+### Build Status
+```bash
+cd src/ui-app && npm run build
+# ✓ Compiled with warnings (pre-existing eslint react-hooks/exhaustive-deps in ApplicationStatus.tsx)
+# ✓ File sizes: 240.22 kB main.js, 263 B css
+```
+
+No new TypeScript or build errors introduced. Warnings are pre-existing (unrelated to these changes).
+
+### No Other Callers Affected
+**Grep verification:**
+- Only 1 occurrence of `formData.append('files'` in entire UI codebase (the one we fixed)
+- No other ad-hoc `response?.data?.detail` extraction in `src/ui-app/src/components/account-opening/` (ApplicationForm already using `resolveApiError`)
+
+---
+
+## What Brian Needs to Rebuild
+
+**Services to rebuild:**
+1. **ui-app** — frontend changes (accountOpening.ts, DocumentUpload.tsx)
+2. **account-opening-service** — NO code changes, but needs restart to pick up fixed frontend calls
+
+**Deployment steps:**
+1. Rebuild ui-app container image (includes vite build with fixes)
+2. Redeploy account-opening-service pod (to pick up new frontend assets if served from same origin, or just force-refresh browser if SPA served from CDN/static host)
+3. Smoke test: Account Opening flow → Document Upload → verify 201 Created (not 422) and no React #31 crash
+
+**No other services affected** — these are isolated frontend fixes with no backend API signature changes.
+
+---
+
+## Related Context
+- **.squad/decisions.md** — Entry for `basher-acctopen-422` diagnosis (merged by Scribe last session)
+- **Issue #127** — Original React #31 fix for ApplicationForm.tsx (commit 2946b20)
+- **Commit 69ce049** — Prior deploy that Brian was testing when this bug surfaced
+- **React error #31** — https://react.dev/errors/31 ("Objects are not valid as a React child")
+
+---
+
+## Files Changed
+- `src/ui-app/src/api/accountOpening.ts` (1 line: multipart field name)
+- `src/ui-app/src/components/account-opening/DocumentUpload.tsx` (import + 1 line: resolveApiError)
+
+**Total:** 2 files, 3 insertions(+), 6 deletions(-)
+
+---
+
+# Diagnosis: Eval-Runner 500 — Azure AI Foundry RBAC Issue
+
+**Status:** 🔴 Root Cause Identified — RBAC Permissions Gap  
+**Date:** 2026-05-13  
+**Author:** Basher (Backend Dev)  
+**Commit Tested:** 69ce049 (live in AKS banking-demo namespace)  
+**UI Flow:** Prompt Eval admin → "Risk Scoring — Conservative v1" → Run Evaluation → 500 error
+
+---
+
+## Summary
+
+The eval-runner endpoint returns HTTP 500 when Brian clicks "Run Evaluation" in the Prompt Eval admin UI. The failure occurs in **ai-service** (Python/FastAPI), not prompt-eval-service (.NET). The root cause is an **Azure AI Foundry RBAC permissions gap** — the workload identity can create agents and call chat completion, but **cannot create evaluation runs** against the raisvc (Responsible AI Service) evaluator backend.
+
+---
+
+## Log Evidence
+
+### 1. prompt-eval-service logs (`.NET 9`)
+```
+{"@t":"2026-05-13T20:32:33.0964885Z","@l":"Error",
+ "@x":"System.Net.Http.HttpRequestException: Response status code does not indicate success: 500 (Internal Server Error).\n
+   at PromptEvalService.Services.EvaluationService.ExecuteFoundryEvaluationAsync(...) in /src/prompt-eval-service/Services/EvaluationService.cs:line 115\n
+   at PromptEvalService.Services.EvaluationBackgroundService.ProcessEvaluationAsync(...) in /src/prompt-eval-service/Services/EvaluationBackgroundService.cs:line 64",
+ "RunId":"8b5c4c8e-bcd7-4595-9609-0dbbbb6216e8"}
+```
+
+**Analysis:** prompt-eval-service successfully calls `POST /api/admin/evaluate` on ai-service but receives HTTP 500. The .NET service is just a pass-through — the real failure is downstream.
+
+### 2. ai-service logs (Python/FastAPI)
+```
+HTTP Request: POST https://modest-hippo-861-foundry.services.ai.azure.com/api/projects/modest-hippo-861-project/openai/v1/evals "HTTP/1.1 201 Created"
+
+HTTP Request: POST https://modest-hippo-861-foundry.services.ai.azure.com/api/projects/modest-hippo-861-project/openai/v1/evals/eval_74b20e78996449cba972f2ff725cdc12/runs "HTTP/1.1 400 The action cannnot be finished with reason Response status code does not indicate success: 403 (Forbidden)"
+
+{"error": "Error code: 400 - {'error': {'code': 'UserError', 'severity': None, 
+  'message': 'The action cannnot be finished with reason Response status code does not indicate success: 403 (Forbidden).', 
+  'messageFormat': 'The action cannnot be finished with reason {error}', 
+  'messageParameters': {'error': 'Response status code does not indicate success: 403 (Forbidden).'}, 
+  'referenceCode': None, 'detailsUri': None, 'target': None, 'details': [], 
+  'innerError': {'code': 'UnauthorizedUserAction', 'innerError': None}, 
+  'additionalInfo': None}, 
+  'correlation': {'operation': '51c0d843e646c58ffb67e24729566f43', 'request': '9ef7a9af50a4323b'}, 
+  'environment': 'canadacentral', 'location': 'canadacentral', 
+  'time': '2026-05-13T20:32:33.0674398+00:00', 'componentName': 'raisvc', 'statusCode': 400}",
+ "path": "/api/admin/evaluate", "event": "Unhandled exception"}
+
+openai.BadRequestError: Error code: 400 - {'error': {'code': 'UserError', ...
+  'innerError': {'code': 'UnauthorizedUserAction', 'innerError': None}}}
+```
+
+**Analysis:** The Python SDK successfully:
+1. ✅ Creates the eval definition (`POST .../evals` → **201 Created**)
+2. ❌ **Fails** to create the eval run (`POST .../evals/{id}/runs` → **400 wrapping 403 Forbidden**)
+
+The error message "UnauthorizedUserAction" from Azure AI Foundry's `raisvc` (Responsible AI Service) component indicates the workload identity **lacks permission** to execute evaluations, even though it can create eval definitions.
+
+---
+
+## Code Path Analysis
+
+### File: `src/ai-service/app/routes/api.py`
+**Lines:** 318–378 (`run_foundry_evaluation` endpoint)
+
+```python
+# Line 338: FoundryChatClient initialization with credential
+client = FoundryChatClient(
+    project_endpoint=state.foundry_endpoint,
+    model=state.foundry_model or "gpt-5.4-mini",
+    credential=state.foundry_credential,  # DefaultAzureCredential (workload identity)
+)
+
+# Lines 345-351: Create temporary agent with eval prompt
+eval_agent = FoundryAgent(
+    project_endpoint=state.foundry_endpoint,
+    credential=state.foundry_credential,
+    agent_name="risk-assessor",
+    agent_version="1",
+    instructions=request.system_prompt,
+)
+
+# Lines 363-370: Build EvalItem with conversation
+eval_items.append(
+    EvalItem(
+        conversation=[
+            Message("system", [request.system_prompt]),
+            Message("user", [prompt]),
+        ],
+    )
+)
+
+# Line 372: Call FoundryEvals.evaluate()
+evals = FoundryEvals(client=client, evaluators=request.evaluators)
+results = await evals.evaluate(eval_items)  # ← FAILS HERE
+```
+
+**SDK Trace:**
+1. `FoundryEvals.evaluate()` → `agent_framework_foundry/_foundry_evals.py:662`
+2. `_evaluate_via_dataset()` → `agent_framework_foundry/_foundry_evals.py:727`
+3. `self._client.evals.runs.create()` → `openai/resources/evals/runs/runs.py:375`
+4. Azure AI Foundry REST API: `POST /api/projects/{project}/openai/v1/evals/{eval_id}/runs`
+5. **raisvc backend returns 403 Forbidden**
+
+**No token scope bug:** The credential is passed directly to the SDK constructors. The Agent Framework SDK (`agent-framework-foundry`) handles token acquisition internally with the correct audience (`https://ai.azure.com/.default`). Commit 69ce049 already fixed the stale scope bug in `anomaly_service.py:781`.
+
+---
+
+## RBAC Analysis
+
+### Current Role Assignment (infra/cloud/identity.tf:58-62)
+```hcl
+resource "azurerm_role_assignment" "banking_ai_project_manager" {
+  scope                = azapi_resource.ai_foundry_project.id
+  role_definition_name = "Azure AI Project Manager"
+  principal_id         = azurerm_user_assigned_identity.banking_services.principal_id
+}
+```
+
+**"Azure AI Project Manager" role includes:**
+- ✅ **Agents API** — create/read/update agents and call chat completions
+- ✅ **Eval definitions** — create eval definitions (confirmed by 201 Created)
+- ❌ **Eval runs (raisvc)** — **MISSING** permission to execute evaluations
+
+**Why this is different from agents:** The raisvc evaluator component is a separate backend service within AI Foundry. Creating an eval definition is a metadata operation (stored in the project). **Executing an eval run** invokes the raisvc compute plane, which requires additional permissions.
+
+### Azure AI Foundry RBAC Roles (as of 2026-05)
+According to Azure docs and similar 403 issues in the community:
+- `Azure AI Project Manager` — full access to project resources (agents, connections, deployments)
+- `Azure AI Evaluator` — **required for executing evaluations** (grants access to raisvc)
+- `Azure AI Developer` — full read/write including evaluations
+
+**Hypothesis:** The workload identity needs **`Azure AI Evaluator`** or **`Azure AI Developer`** role in addition to `Azure AI Project Manager`.
+
+---
+
+## Precedent: Decision #126 & #131
+
+### Decision #126 (closed as infra follow-up)
+**File:** `.squad/decisions.md:5573-5642`
+
+> The endpoint now surfaces a *different* error from the Foundry evaluator backend:
+> ```
+> openai.BadRequestError: 400 - {'error': {'code': 'UserError',
+>   'message': 'Response status code does not indicate success: 403 (Forbidden)',
+>   'innerError': {'code': 'UnauthorizedUserAction'},
+>   'componentName': 'raisvc', ...}}
+> ```
+> 
+> This is an Azure AI Foundry **RBAC / role-assignment issue** on the project's evaluator/`raisvc` plane — not a Python bug. Recommend a separate issue for **Danny** (architecture / Terraform owner) to grant the workload identity the appropriate role on the AI Foundry project's evaluation service.
+
+**Status:** Decision #126 closed with note that this is an **infra follow-up**, not a Python code bug.
+
+### Decision #131 (token scope fix)
+**File:** `.squad/decisions.md:5755-5818`
+
+Fixed `anomaly_service.py:781` scope from `cognitiveservices.azure.com` → `ai.azure.com`. This resolved the 403 for **agent calls**, confirming the token scope was correct. However, the eval runner 403 persists because it's a **different permission** (raisvc backend vs. agent API).
+
+**Conclusion:** #131 fixed the token audience. This is a **new RBAC gap** specific to evaluations.
+
+---
+
+## Proposed Fix
+
+### File: `infra/cloud/identity.tf`
+**Add after line 62:**
+
+```hcl
+# RBAC: Azure AI Evaluator (required for AI Foundry Evaluations / raisvc)
+resource "azurerm_role_assignment" "banking_ai_evaluator" {
+  scope                = azapi_resource.ai_foundry_project.id
+  role_definition_name = "Azure AI Evaluator"
+  principal_id         = azurerm_user_assigned_identity.banking_services.principal_id
+}
+```
+
+**Alternative (broader permissions):**
+Replace `Azure AI Project Manager` with `Azure AI Developer` (includes evaluator permissions).
+
+**Recommendation:** Add `Azure AI Evaluator` as a separate assignment to follow least-privilege principle. If the role doesn't exist in the Azure RM provider, use `Azure AI Developer`.
+
+---
+
+## Verification Plan
+
+1. **Apply Terraform change:**
+   ```bash
+   cd infra/cloud
+   terraform plan -out=tfplan
+   # Review the new role assignment
+   terraform apply tfplan
+   ```
+
+2. **Wait for RBAC propagation** (typically 1-5 minutes)
+
+3. **Test in UI:**
+   - Navigate to Prompt Eval admin page
+   - Select "Risk Scoring — Conservative v1"
+   - Click "Run Evaluation"
+   - Expected: 200 OK with eval results (no 500 error)
+
+4. **Confirm in logs:**
+   ```bash
+   kubectl logs -n banking-demo -l app=ai-service --tail=50 --since=5m | grep evaluate
+   ```
+   - Should see: `HTTP Request: POST .../evals/{id}/runs "HTTP/1.1 200 OK"`
+   - No more 403 / UnauthorizedUserAction errors
+
+---
+
+## Bundling Recommendation
+
+### Option A: Standalone Infra Fix (RECOMMENDED)
+- **Scope:** Terraform RBAC change only
+- **Branch:** `fix/eval-rbac` or commit directly to `main` (infra-only)
+- **Deploy:** `terraform apply` → wait for propagation → test
+- **PR:** Can merge independently, no service restart required
+
+### Option B: Bundle with acctopen-422
+- **Scope:** This fix + account-opening 422 diagnosis
+- **Risk:** Couples an infra change (needs Terraform) with app code changes
+- **Recommendation:** **Don't bundle.** Infra and app deploys are separate pipelines. Test this fix independently first.
+
+**Verdict:** Ship as **standalone Terraform PR**. Test live. If it works, Danny can close the infra follow-up from #126. The acctopen-422 work is a separate investigation.
+
+---
+
+## Confidence Level
+
+**95% confident** this is the root cause:
+- ✅ Logs clearly show 403 from raisvc with "UnauthorizedUserAction"
+- ✅ Eval definition creation succeeds (201) → confirms token scope is correct
+- ✅ Eval run creation fails (403) → isolated to evaluator permissions
+- ✅ Decision #126 already flagged this as an infra RBAC issue
+- ✅ Azure AI Evaluator role exists and is documented for this exact use case
+
+**5% uncertainty:** If `Azure AI Evaluator` role doesn't exist in azurerm provider or has a different name. Fallback: use `Azure AI Developer` or check `az role definition list` in the subscription.
+
+---
+
+## Related Issues
+
+- **#126** — Fixed API drift in eval endpoint, surfaced this 403 as infra follow-up
+- **#131** — Fixed token scope for agents, doesn't cover evaluator permissions
+- **acctopen-422** — Separate investigation (account-opening service), not related to this eval failure
+
 
 # Decision: Redis Entra ID Dual-Mode Authentication
 
@@ -309,43 +724,6 @@ Add Layer 5 to the secure deployment plan with the following priority categories
 - **Livingston:** E2E test implementation, chaos engineering experiments
 - **Danny:** Documentation overhaul, ADRs, architecture diagrams, Terraform module planning
 
----
-
-# Decision: Remove Legacy Gateway Directory
-
-**Date:** 2025-07-16
-**Author:** Danny (Lead/Architect)
-**Status:** Implemented
-**Requested by:** Brian
-
-## Context
-
-The `gateway/` directory contained an nginx reverse proxy with njs-based JWT validation (`jwt_validate.js`). This component was superseded by Istio ingress gateway, which now handles ingress routing, mTLS, and authorization policy at the mesh level.
-
-## Decision
-
-Remove the entire `gateway/` directory and all references to it:
-
-- **Deleted:** `gateway/Dockerfile`, `gateway/jwt_validate.js`
-- **Cleaned:** `docker-compose.yml` — removed the `gateway` service block (build, ports, env, volumes, depends_on) and the `depends_on: gateway` from `ui-app`
-- **Retained:** Root-level `nginx.conf` (still used by docker-compose for local API routing)
-- **No action needed:** CI/CD workflows, kustomize manifests, and Taskfile references were already clean (Taskfile.e2e.yml references Istio's `aks-istio-ingressgateway-external`, not the legacy gateway)
-
-## Rationale
-
-- Dead code increases maintenance burden and confuses onboarding
-- JWT validation in njs was a local-only workaround; Istio `RequestAuthentication` + `AuthorizationPolicy` is the production path
-- Reduces docker-compose surface area and build time
-
-## Risks
-
-- **Local dev without Istio:** The `ui-app` service no longer depends on a gateway. For local docker-compose usage, the root `nginx.conf` still provides routing. If JWT auth is needed locally, it must be added to individual services or a new lightweight proxy.
-
-## Commit
-
-`chore: remove legacy gateway — replaced by Istio ingress`
-
----
 
 # Decision: KeyVault CSI Driver — Replace K8s Secrets (Backlog)
 
@@ -1631,3 +2009,496 @@ All Python service dependencies are now pinned to exact versions (`==x.y.z`) in 
 - `src/budget-service/`
 - `src/chatbot-service/`
 - `src/account-opening-service/`
+---
+
+# Decision: Exact-pin preview Azure AI SDKs (agent-framework-*, azure-ai-inference betas)
+
+**Date:** 2026-05-13  
+**Agent:** Basher  
+**Status:** Applied  
+**Issue:** #137  
+**Commit:** 0b6255a  
+
+## Context
+
+Eval prompt execution failed with `UnauthorizedUserAction` 400/403 after container rebuild on 2026-05-13. Investigation ruled out RBAC (all role assignments correct). Root cause: unpinned preview SDKs in pyproject.toml pulling new releases on every rebuild.
+
+Commits db70575 (2026-05-02) and eeda8ed (2026-05-08) removed version constraints:
+- `agent-framework-core = "*"`
+- `agent-framework-foundry = "*"`
+- `azure-ai-inference = ">=1.0.0b9,<2.0.0"`
+
+PyPI published agent-framework-* 1.3.0 on 2026-05-08 with breaking eval contract changes. Container rebuild pulled 1.3.0 → SDK constructed eval requests differently → raiserv rejected with 403.
+
+## Decision
+
+**Exact-pin all preview-channel Azure AI SDKs** to last-known-good versions:
+- `agent-framework-core = "1.2.2"`
+- `agent-framework-foundry = "1.2.2"`
+- `azure-ai-inference = "1.0.0b9"`
+
+Applied to:
+- src/ai-service/pyproject.toml
+- src/chatbot-service/pyproject.toml
+- src/account-opening-service/pyproject.toml
+
+(budget-service doesn't use agent-framework, no change needed)
+
+## Rationale
+
+1. **Preview SDKs break compat between minors:** Unlike stable releases, preview channels have no semver guarantees. 1.2.2 → 1.3.0 broke eval pipeline.
+2. **Wildcard pins allow arbitrary upgrades:** `"*"` resolves to latest on every `pip install`, causing non-deterministic builds.
+3. **Exception to >=min,<next-major rule:** Repo standard uses `^` or `>=min,<next-major` ranges to prevent transitive conflicts. This works for **stable** libs. Preview SDKs require exact pins due to frequent breaking changes.
+4. **Stable deps unchanged:** Keep caret/range constraints for fastapi, pydantic, redis, etc.
+
+## Alternatives Considered
+
+1. **Lock all deps to exact versions (==)** — Rejected. Causes transitive dependency hell. Only needed for preview SDKs.
+2. **Use Poetry lockfile** — Better determinism, but doesn't solve root cause (unpinned preview SDKs would still drift on lock updates). Lockfiles are a separate improvement.
+3. **Wait for agent-framework stable 2.x** — Unknown timeline, eval must work now.
+
+## Remediation Going Forward
+
+1. **CI lint:** Add pre-commit check that fails on `agent-framework.*= "\*"` in pyproject.toml
+2. **Dependabot:** Enable with explicit upgrade PRs for preview SDKs
+3. **Smoke-test requirement:** Eval pipeline must pass before merging any agent-framework bump
+4. **Upstream investigation:** Determine if 1.3.0 is intentionally breaking or a bug (file issue if latter)
+
+## Impact
+
+- **Immediate:** Eval pipeline stable again at 1.2.2
+- **Maintenance:** Preview SDK upgrades now require explicit commit + testing (good — prevents silent breakage)
+- **CI discipline:** Must add lint rule to enforce exact pins for preview SDKs
+
+## Verification
+
+After rebuild with pinned deps:
+```bash
+# Container logs should show:
+# agent-framework-core==1.2.2
+# agent-framework-foundry==1.2.2
+# azure-ai-inference==1.0.0b9
+
+# Eval prompt should succeed (no 403)
+```
+
+---
+
+# Decision: Cosmos DB Serializer Convention (camelCase)
+
+**Date:** 2026-05-13  
+**Author:** Turk  
+**Status:** Active (applied to all .NET services)  
+**Issue:** #125  
+
+## Decision
+
+All `CosmosClient` registrations in .NET services **MUST** pin an explicit camelCase serializer using `CosmosSystemTextJsonSerializer`. This prevents future serializer drift between writes and ensures consistency with the API surface (which already returns camelCase JSON).
+
+## Implementation
+
+In each service's `Program.cs`, configure the `CosmosClient` registration:
+
+```csharp
+builder.Services.AddSingleton<CosmosClient>(sp =>
+{
+    var configuration = sp.GetRequiredService<IConfiguration>();
+    var endpoint = configuration["CosmosDb:Endpoint"];
+    
+    var clientOptions = new CosmosClientOptions
+    {
+        Serializer = new CosmosSystemTextJsonSerializer(
+            new System.Text.Json.JsonSerializerOptions
+            {
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+            })
+    };
+    
+    if (!string.IsNullOrEmpty(endpoint))
+    {
+        return new CosmosClient(endpoint, new DefaultAzureCredential(), clientOptions);
+    }
+    return new CosmosClient(configuration["CosmosDb:ConnectionString"], clientOptions);
+});
+```
+
+## Why camelCase?
+
+1. **API consistency**: All ASP.NET Core controllers already return camelCase JSON (default `System.Text.Json` behavior)
+2. **JavaScript convention**: Frontend expects camelCase (React/TS standard)
+3. **Cosmos SDK v3 drift**: Default Newtonsoft serializer was producing PascalCase, but some writes landed as camelCase (likely from a SDK update or manual writes). Pinning camelCase matches the majority of recent docs and the API surface.
+
+## Affected Services
+
+Applied to:
+- `account-service/Program.cs`
+- `transaction-service/Program.cs`
+- `user-service/Program.cs`
+- `transfer-service/Program.cs`
+- `prompt-eval-service/Program.cs`
+
+## Future Services
+
+**Any new .NET service** that writes to Cosmos MUST use this pattern. Do NOT use default `CosmosClient()` — always pin the serializer.
+
+## Verification
+
+After applying:
+1. Deploy the service
+2. Create a new document via the API
+3. Query the document directly in Cosmos Data Explorer
+4. Confirm fields are camelCase: `userId`, `accountId`, `createdAt`, etc.
+
+## References
+
+- Issue: #125
+- Migration plan: Cosmos DB Serializer-Casing Migration Plan (separate document)
+
+---
+
+# Cosmos Serializer-Casing Migration Plan
+
+**Date:** 2026-05-13  
+**Author:** Turk  
+**Status:** Ready for Brian to execute  
+**Issue:** #125  
+
+## Context
+
+Five Cosmos containers have documents written with **two different field casings**:
+- **PascalCase**: `UserId`, `AccountId`, `Username`, `Email`, `Role`, `CreatedAt`, `UpdatedAt`, `TemplateId` (likely from Cosmos SDK v3 default Newtonsoft serializer)
+- **camelCase**: `userId`, `accountId`, `username`, `email`, `role`, `createdAt`, `updatedAt`, `templateId` (source unknown — possibly SDK behavior change or manual writes)
+
+Cosmos SQL queries are case-sensitive on field paths, so a query written for one casing silently returns 0 rows for docs of the other. This caused the `/accounts` UI page to render empty for any user whose docs happened to be camelCase (incl. `brian@sample.com`).
+
+## Hot Fix (Already Shipped)
+
+All .NET service repositories now **OR both casings** in WHERE clauses. Iterator drain bugs also fixed. This restores read functionality immediately but doesn't normalize the data.
+
+## Affected Containers
+
+1. **Accounts** (`/userId` partition)
+   - Fields: `UserId`/`userId`, `AccountNumber`/`accountNumber`
+   - Estimated: ~38 docs (29 PascalCase, 9 camelCase based on May 13 live query)
+
+2. **Transactions** (`/accountId` partition)
+   - Fields: `AccountId`/`accountId`, `UserId`/`userId`, `Timestamp`/`timestamp`
+   - Estimated: ~155 docs (unknown split)
+
+3. **Users** (`/id` partition)
+   - Fields: `Username`/`username`, `Email`/`email`, `Role`/`role`, `CreatedAt`/`createdAt`
+   - Estimated: ~10 docs (bootstrap users + e2e test user)
+
+4. **PromptTemplates** (`/userId` partition)
+   - Fields: `UserId`/`userId`, `UpdatedAt`/`updatedAt`
+   - Estimated: ~4 seeded templates
+
+5. **EvaluationRuns** (`/userId` partition)
+   - Fields: `UserId`/`userId`, `TemplateId`/`templateId`, `CreatedAt`/`createdAt`
+   - Estimated: <10 docs (admin-triggered runs only)
+
+## Migration Approach
+
+### 1. Identify PascalCase Documents
+
+For each container, run a Cosmos SQL query to find docs with PascalCase fields. Example for Accounts:
+
+```sql
+SELECT c.id, c.UserId, c.userId, c.AccountNumber, c.accountNumber
+FROM c
+WHERE IS_DEFINED(c.UserId) OR IS_DEFINED(c.AccountNumber)
+```
+
+Run via workload-identity pod (pattern from `.squad/agents/basher/history.md` 2026-05-13 entry):
+```python
+from azure.cosmos import CosmosClient
+from azure.identity import DefaultAzureCredential
+
+endpoint = "https://{cosmos-account}.documents.azure.com:443/"
+credential = DefaultAzureCredential()
+client = CosmosClient(endpoint, credential)
+db = client.get_database_client("BankingDemo")
+container = db.get_container_client("Accounts")
+
+# Query and log PascalCase docs
+query = "SELECT c.id, c.UserId FROM c WHERE IS_DEFINED(c.UserId)"
+for item in container.query_items(query, enable_cross_partition_query=True):
+    print(f"PascalCase doc: {item['id']}")
+```
+
+### 2. Normalize to camelCase (UPSERT Pattern)
+
+For each PascalCase doc:
+1. Read the full doc
+2. Transform field names: `UserId` → `userId`, `AccountNumber` → `accountNumber`, etc.
+3. UPSERT with same `id` and partition key (overwrites in-place, preserves TTL/metadata)
+4. Verify the new doc has camelCase fields
+
+**Why UPSERT over REPLACE:**
+- UPSERT is idempotent (safe to re-run)
+- Preserves Cosmos internal metadata (`_rid`, `_self`, `_etag`, `_ts`)
+- No race condition on `_etag` (unlike conditional REPLACE)
+
+**Script skeleton:**
+```python
+for item in container.query_items(query, enable_cross_partition_query=True):
+    doc_id = item["id"]
+    partition_key = item.get("userId") or item.get("UserId")  # Read from either casing
+    
+    # Read full doc
+    doc = container.read_item(item=doc_id, partition_key=partition_key)
+    
+    # Transform PascalCase → camelCase
+    if "UserId" in doc:
+        doc["userId"] = doc.pop("UserId")
+    if "AccountNumber" in doc:
+        doc["accountNumber"] = doc.pop("AccountNumber")
+    # ... repeat for all known PascalCase fields
+    
+    # UPSERT (overwrites in-place)
+    container.upsert_item(doc)
+    print(f"Normalized {doc_id}")
+```
+
+### 3. Verification Queries
+
+After migration, confirm **zero PascalCase docs** remain:
+```sql
+-- Should return 0 rows for each container
+SELECT COUNT(1) FROM c WHERE IS_DEFINED(c.UserId)
+SELECT COUNT(1) FROM c WHERE IS_DEFINED(c.AccountNumber)
+SELECT COUNT(1) FROM c WHERE IS_DEFINED(c.Username)
+-- ... etc.
+```
+
+### 4. Rollback Plan
+
+If migration causes issues:
+1. **Immediate:** Hot-fix repo queries already handle both casings — no read disruption
+2. **Revert writes:** Deploy previous CosmosClient config (no serializer pinning) to allow PascalCase writes again
+3. **Re-normalize:** Re-run migration script (UPSERT is idempotent)
+
+**Data loss risk:** ZERO — UPSERT preserves all fields, only renames keys. Partition key and `id` are unchanged.
+
+### 5. Post-Migration Cleanup
+
+Once **all docs are normalized to camelCase** and the serializer is pinned:
+1. Remove the OR-both-casings pattern from repository queries
+2. Revert queries to single-casing (cleaner SQL, faster execution)
+3. Add integration test (separate issue filed — see #125 follow-up)
+
+Example revert for `CosmosAccountRepository.GetByUserIdAsync`:
+```csharp
+// Before (defensive OR)
+WHERE c.UserId = @userId OR c.userId = @userId
+
+// After migration (clean single-casing)
+WHERE c.userId = @userId
+```
+
+## Acceptance Criteria
+
+1. All 5 containers have **zero PascalCase docs** (verified via `IS_DEFINED` queries)
+2. UI `/accounts` page renders correctly for `brian@sample.com` and `e2e-default` user
+3. Admin dashboard counters (transactions, prompts) are accurate
+4. No 500 errors or missing data in logs post-migration
+
+## Out of Scope
+
+- **Git bisect on Microsoft.Azure.Cosmos** (issue follow-up #1): Root-causing the original writer is optional once serializer is pinned. Not blocking.
+- **Historical write timestamps**: No need to trace which deploy introduced camelCase writes — forward-only fix is sufficient.
+
+## Execution Timing
+
+**Best practice:** Run during low-traffic window (e.g., evening UTC) to minimize cross-partition query load. Estimated runtime: <5 minutes for ~200 total docs across all containers.
+
+## References
+
+- Issue: #125
+- Hot-fix commit: `squad/p2-wave-3` (Basher's account-service OR-pattern + iterator drain fix)
+- Workload-identity pod pattern: `.squad/agents/basher/history.md` 2026-05-13 entry (Redis Stream consumer investigation)
+
+---
+
+# Decision: Redis-backed `aiCallsToday` counter (issue #130)
+
+**Author:** Basher
+**Status:** Accepted
+**Scope:** ai-service (Python/FastAPI). Pattern applies to any future per-day metric in any multi-replica Python service.
+
+## Context
+
+`aiCallsToday` was an in-process counter inside ai-service. With HPA min=2, the dashboard read landed on a random pod and returned that pod's local count, producing the now-infamous "17 → 68 → 17" flicker. `avgRiskScore` and `totalScored` were already correct because they live in Redis sorted sets.
+
+## Decision
+
+1. **Storage.** Redis string, key format `ai:metrics:calls:{YYYY-MM-DD}` (UTC). Value is the count, written via `INCR`.
+
+2. **TTL strategy.** `EXPIRE <key> 129600` (36 hours), set **only when `INCR` returns `1`** (i.e. on key creation). Never reset TTL on subsequent increments. 36h covers a full UTC day plus a 12h buffer for late traffic, monitoring, and clock skew.
+
+3. **Success-path-only.** Increment fires after `_parse_response()` succeeds, before the success return. Failure paths (HTTPX errors, parse errors, AI fallback) do **not** increment. Counter measures real AI work delivered, not attempts.
+
+4. **Resilience.** Increment runs through `_increment_ai_calls_counter()` which has its own `try/except Exception` that logs and returns. A Redis outage must never degrade the AI request path. The dashboard read function similarly returns `0` on Redis error (graceful degrade, never 500).
+
+5. **Counter semantics preserved.** Only the FoundryRiskAnalyzer's `analyze()` increments — same site as the original in-memory counter. Categorization is **not** counted (it was never counted in the in-memory version).
+
+## Key naming convention (proposed standard for ai-service metrics)
+
+| Prefix | Use |
+| --- | --- |
+| `ai:metrics:*` | All ai-service operational metrics (counters, gauges, snapshots) |
+| `ai:metrics:calls:{YYYY-MM-DD}` | Daily AI call counter (this decision) |
+| `ai:metrics:<name>:{YYYY-MM-DD}` | Future daily counters (errors, retries, etc.) |
+| `ai:metrics:<name>:{YYYY-MM-DD}:{HH}` | Future hourly counters (use 25h TTL) |
+
+`scored-transactions`, `flagged-transactions`, `flagged-tx:*` etc. remain unchanged — those are domain data, not metrics.
+
+## Why not a sliding window / atomic SET-NX-EX?
+
+Considered: `SET key 0 NX EX 129600` then `INCR`. Two round-trips either way; the `INCR == 1` branch is cleaner and avoids the race where a slow `SET NX` overlaps with a faster `INCR` from another pod.
+
+## Why not Prometheus/OTEL counter?
+
+OTEL counters are per-process and aggregated at the collector — same problem we're trying to solve.
+
+## Risks / open questions
+
+- **Token refresh during increment.** Redis is on Entra ID auth with 45-minute token refresh. If a token expires mid-increment, the helper logs and continues — count may be off by one until next call. Acceptable for a dashboard metric; not for billing.
+- **Day boundary at exactly 00:00:00 UTC.** Two pods racing across midnight may briefly write to two adjacent keys. Both keys exist with their own TTLs. Read endpoint always reads "today's" key, so the previous day's tail traffic just isn't shown. Acceptable.
+
+---
+
+# Decision: Exact-pin agent-framework preview SDKs (issue #137 — SDK drift prevention)
+
+**Author:** Basher
+**Date:** 2026-05-13
+**Status:** accepted
+**Issue:** #137 — Eval-403 partially caused by unpinned agent-framework preview SDKs
+**Branch:** squad/p2-wave-3
+
+## Context
+
+The eval pipeline broke when containers were rebuilt and pip resolved `agent-framework-core 1.3.0` / `agent-framework-foundry 1.3.0` (published 2026-05-08). Last-known-good is **1.2.2** (published 2026-04-29). SDK contract drift has bitten the squad multiple times.
+
+## Decision
+
+### 1. Exception to the "ranges, not pins" rule
+
+The repo standard for Python deps is `>=min,<next-major` ranges (caret pins) to keep transitive deps resolvable. **Preview-channel SDKs are the sole exception and MUST be exact-pinned.**
+
+The packages this exception currently applies to:
+
+| Package | Pinned version | Rationale |
+|---|---|---|
+| `agent-framework-core` | `1.2.2` | Last-known-good before 1.3.0 broke eval contract |
+| `agent-framework-foundry` | `1.2.2` | Must move in lockstep with `-core` (same publisher, daily-build cadence) |
+| `azure-ai-inference` | `1.0.0b9` | Beta-channel — every `bN` bump has historically been breaking |
+
+### 2. CI guard
+
+Added `.github/workflows/preview-sdk-pin-guard.yml` — runs on every PR that touches `src/**/pyproject.toml`. Fails the build if any unpinned preview-SDK line is found.
+
+Also added `task lint:preview-sdk-pins` (Taskfile.lint.yml) for local checks before pushing.
+
+### 3. Verified resolutions
+
+Ran `uv pip compile --python-version 3.11` against each pyproject.toml. All three services resolve cleanly with no transitive conflicts.
+
+### 4. Bump procedure (for future)
+
+When a future feature genuinely needs a new agent-framework release:
+
+1. Open a *separate* PR that only bumps the pin.
+2. Run `uv pip compile` on all three services to confirm no transitive break.
+3. **Run the eval smoke test** before merge.
+4. Commit message MUST list old → new versions and eval test result.
+
+### 5. Out of scope (follow-up tickets recommended)
+
+The CI guard surfaced two additional preview-SDK pin violations:
+
+- `src/account-opening-service/pyproject.toml:26` — `azure-ai-contentunderstanding = "*"`
+- `src/budget-service/pyproject.toml:13` — `azure-ai-inference = ">=1.0.0b9"`
+
+Recommend filing follow-up issues to exact-pin these too.
+
+## Why this resolves SDK drift for good
+
+Previous fixes corrected the pins but added no enforcement. The pins drifted back because contributors copy-pasted from older branches or Dependabot-style bumps weren't blocked. The CI guard makes regressing impossible without an explicit, reviewed override.
+
+---
+
+# Decision: Issue #137 — Real Root Cause of Foundry Eval 403
+
+**Author:** Basher
+**Date:** 2026-05-13
+**Status:** accepted
+**Supersedes:** the "Fix Applied" section in issue #137 (which claimed SDK pinning was the fix — incomplete)
+
+## TL;DR
+
+The eval 403 is **not RBAC** and **not SDK contract drift alone**. It's an **incomplete eval payload**. The `/api/admin/evaluate` endpoint was sending `[system, user]` conversations with **no assistant turn**. Foundry's raisvc rejects eval-run creation when there's nothing to evaluate, returning a confusing 400-wrapped 403 `UnauthorizedUserAction` that *looks* like an authorization failure but is actually "your request body is missing the response you want me to score."
+
+## What the issue body got wrong
+
+The issue's "Fix Applied" section claimed the cure was exact-pinning `agent-framework-core 1.2.2`, `agent-framework-foundry 1.2.2`, `azure-ai-inference 1.0.0b9` (commit `0b6255a`). That pin shipped and **the 403 still occurred** — which Brian confirmed. The pin was necessary (prevents future drift) but not sufficient — the bug was always in our caller code.
+
+## The real cause
+
+`src/ai-service/app/routes/api.py:run_foundry_evaluation` constructs each `EvalItem` from a two-message conversation:
+
+```python
+EvalItem(conversation=[
+    Message("system", [request.system_prompt]),
+    Message("user", [prompt]),
+])
+```
+
+The Foundry SDK's `_evaluate_via_dataset` then derives:
+
+```python
+query_text    = " ".join(m.text for m in query_msgs    if m.role == "user"      and m.text)
+response_text = " ".join(m.text for m in response_msgs if m.role == "assistant" and m.text)
+```
+
+With no assistant message, `response_text == ""`. The JSONL row submitted to `POST /openai/v1/evals/{id}/runs` has an empty `response` field. raisvc's evaluators have nothing to score, raisvc rejects, and the SDK surfaces the 403.
+
+A telltale sign in the current code: an `eval_agent = FoundryAgent(...)` is constructed and never used. That dead variable is residue from the original implementation (commit `bd4f6a7`) which did include the assistant turn.
+
+## When and where it broke
+
+| Commit    | Event                                                                                |
+|-----------|--------------------------------------------------------------------------------------|
+| `bd4f6a7` | Original eval impl in `app/main.py`. Three-turn conversation. Worked.                |
+| `39dfdbe` | **The break.** "P2 Wave 1: code quality + refactoring (#114)" extracted main.py → routes/api.py and dropped the `eval_agent.run()` call + the assistant `Message`. |
+| `4134138` | Fixed the immediate `AttributeError` and the `EvalItem` kwarg name. Did **not** notice the missing assistant turn. |
+| `0b6255a` | Pinned SDKs. No effect on the bug.                                                   |
+| `243457f` | Silent unrelated regression: reverted warm-up token scope in `anomaly_service.py`. Cosmetic only but worth fixing. |
+
+## Fix shipped
+
+**`src/ai-service/app/routes/api.py`** — restored the per-transaction agent run and the assistant turn:
+
+```python
+session = eval_agent.create_session()
+agent_response = await eval_agent.run(prompt, session=session)
+assistant_text = agent_response.text or ""
+
+eval_items.append(EvalItem(conversation=[
+    Message("system",    [request.system_prompt]),
+    Message("user",      [prompt]),
+    Message("assistant", [assistant_text]),
+]))
+```
+
+**`src/ai-service/app/services/anomaly_service.py`** — reverted the warm-up scope to `https://ai.azure.com/.default` to match `init_agents.py` and avoid diagnostic noise.
+
+## Recommended follow-ups
+
+- **Integration test (issue worth filing):** Mock `evals.create` / `evals.runs.create` and assert non-empty `response` per item. Would have caught both the 39dfdbe regression and the 4134138 incomplete fix.
+- **Audit other refactor casualties:** the same `#114` refactor pass touched several services. Worth a sweep for other dead-variable smells where the original behaviour was lost.
+- **File a Microsoft feedback item:** raisvc should distinguish "missing assistant turn" from "RBAC denied" instead of returning the same `UnauthorizedUserAction` code for both.
+
+## Skill captured
+
+`.squad/skills/foundry-eval-debugging/SKILL.md` — diagnostic ladder for raisvc 403s (RBAC → token scope/audience → SDK payload shape → endpoint/api_version → wrapper bugs).

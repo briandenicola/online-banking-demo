@@ -100,6 +100,7 @@ class IdentityVerificationConsumer(AgentConsumer):
             agent_version="1",
             description="Identity verification agent",
             instructions=SYSTEM_PROMPT,
+            default_options={"extra_body": {"model": foundry_model}},
         )
 
 

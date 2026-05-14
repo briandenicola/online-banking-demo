@@ -18,3 +18,7 @@ includes:
   e2e:
     taskfile: ./tasks/Taskfile.e2e.yml
     internal: false
+
+  lint:
+    taskfile: ./tasks/Taskfile.lint.yml
+    internal: false

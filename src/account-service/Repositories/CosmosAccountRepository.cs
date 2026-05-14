@@ -30,22 +30,39 @@ public class CosmosAccountRepository : IAccountRepository
 
     public async Task<IEnumerable<Account>> GetByUserIdAsync(string userId)
     {
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.UserId = @userId")
+        // Cosmos JSON paths are case-sensitive. Historical docs use both
+        // PascalCase ("UserId") and camelCase ("userId") — Cosmos SDK v3's
+        // default serializer (Newtonsoft, preserve-case) wrote PascalCase,
+        // but more recent writes land as camelCase. Match both so the read
+        // path is robust regardless of when the doc was created.
+        var query = new QueryDefinition(
+                "SELECT * FROM c WHERE c.UserId = @userId OR c.userId = @userId")
             .WithParameter("@userId", userId);
 
         var iterator = _container.GetItemQueryIterator<Account>(query);
-        var results = await iterator.ReadNextAsync();
-        return results.ToList();
+        var results = new List<Account>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+        return results;
     }
 
     public async Task<Account?> GetByAccountNumberAsync(string accountNumber)
     {
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.AccountNumber = @accountNumber")
+        var query = new QueryDefinition(
+                "SELECT * FROM c WHERE c.AccountNumber = @accountNumber OR c.accountNumber = @accountNumber")
             .WithParameter("@accountNumber", accountNumber);
 
         var iterator = _container.GetItemQueryIterator<Account>(query);
-        var results = await iterator.ReadNextAsync();
-        return results.FirstOrDefault();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            var first = page.FirstOrDefault();
+            if (first != null) return first;
+        }
+        return null;
     }
 
     public async Task<Account> CreateAsync(Account account)

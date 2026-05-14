@@ -40,22 +40,58 @@ public class CosmosTransactionRepository : ITransactionRepository
 
     public async Task<IEnumerable<Transaction>> GetByAccountIdAsync(string accountId, int limit = 50)
     {
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.accountId = @accountId ORDER BY c.timestamp DESC")
+        var query = new QueryDefinition(
+                "SELECT * FROM c WHERE (c.AccountId = @accountId OR c.accountId = @accountId) ORDER BY c.timestamp DESC")
             .WithParameter("@accountId", accountId);
 
         var iterator = _container.GetItemQueryIterator<Transaction>(query);
-        var results = await iterator.ReadNextAsync();
+        var results = new List<Transaction>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+            if (results.Count >= limit) break;
+        }
         return results.Take(limit);
     }
 
     public async Task<IEnumerable<Transaction>> GetByUserIdAsync(string userId, int limit = 50)
     {
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.userId = @userId ORDER BY c.timestamp DESC")
+        var query = new QueryDefinition(
+                "SELECT * FROM c WHERE (c.UserId = @userId OR c.userId = @userId) ORDER BY c.timestamp DESC")
             .WithParameter("@userId", userId);
 
         var iterator = _container.GetItemQueryIterator<Transaction>(query);
-        var results = await iterator.ReadNextAsync();
+        var results = new List<Transaction>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+            if (results.Count >= limit) break;
+        }
         return results.Take(limit);
+    }
+
+    public async Task<IEnumerable<Transaction>> GetAllAsync(int limit = 10_000)
+    {
+        // Cross-partition scan — admin/maintenance only. Drains pages until limit
+        // is hit so a single ReadNextAsync call doesn't silently truncate at ~100.
+        var query = new QueryDefinition("SELECT * FROM c ORDER BY c.timestamp DESC");
+        var iterator = _container.GetItemQueryIterator<Transaction>(
+            query,
+            requestOptions: new QueryRequestOptions { MaxItemCount = 1000 });
+
+        var results = new List<Transaction>();
+        while (iterator.HasMoreResults && results.Count < limit)
+        {
+            var page = await iterator.ReadNextAsync();
+            foreach (var item in page)
+            {
+                results.Add(item);
+                if (results.Count >= limit) break;
+            }
+        }
+        return results;
     }
 
     public async Task<Transaction> CreateAsync(Transaction transaction)

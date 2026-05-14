@@ -111,11 +111,21 @@ else
     {
         var configuration = sp.GetRequiredService<IConfiguration>();
         var endpoint = configuration["CosmosDb:Endpoint"];
+        
+        var clientOptions = new CosmosClientOptions
+        {
+            SerializerOptions = new CosmosSerializationOptions
+            {
+                PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase,
+                IgnoreNullValues = true
+            }
+        };
+        
         if (!string.IsNullOrEmpty(endpoint))
         {
-            return new CosmosClient(endpoint, new DefaultAzureCredential());
+            return new CosmosClient(endpoint, new DefaultAzureCredential(), clientOptions);
         }
-        return new CosmosClient(configuration["CosmosDb:ConnectionString"]);
+        return new CosmosClient(configuration["CosmosDb:ConnectionString"], clientOptions);
     });
 
     // Redis for event streaming (Entra ID auth when running in Azure)
@@ -178,7 +188,8 @@ if (!useInMemory)
     try
     {
         // Check if any admin users exist
-        var adminQuery = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.Role = 'admin'");
+        var adminQuery = new QueryDefinition(
+            "SELECT VALUE COUNT(1) FROM c WHERE c.Role = 'admin' OR c.role = 'admin'");
         var adminIterator = container.GetItemQueryIterator<int>(adminQuery);
         var adminResult = await adminIterator.ReadNextAsync();
         var adminCount = adminResult.FirstOrDefault();
@@ -188,11 +199,17 @@ if (!useInMemory)
             if (!string.IsNullOrWhiteSpace(bootstrapEmail))
             {
                 // Promote the user matching the bootstrap email
-                var emailQuery = new QueryDefinition("SELECT * FROM c WHERE LOWER(c.Email) = @email")
+                var emailQuery = new QueryDefinition(
+                        "SELECT * FROM c WHERE LOWER(c.Email) = @email OR LOWER(c.email) = @email")
                     .WithParameter("@email", bootstrapEmail.ToLowerInvariant());
                 var emailIterator = container.GetItemQueryIterator<UserService.Models.User>(emailQuery);
-                var emailResult = await emailIterator.ReadNextAsync();
-                var bootstrapUser = emailResult.FirstOrDefault();
+                UserService.Models.User? bootstrapUser = null;
+                while (emailIterator.HasMoreResults)
+                {
+                    var emailResult = await emailIterator.ReadNextAsync();
+                    bootstrapUser = emailResult.FirstOrDefault();
+                    if (bootstrapUser != null) break;
+                }
 
                 if (bootstrapUser != null)
                 {
@@ -208,7 +225,8 @@ if (!useInMemory)
             else
             {
                 // Fall back to first-user convention
-                var firstUserQuery = new QueryDefinition("SELECT * FROM c ORDER BY c.CreatedAt ASC OFFSET 0 LIMIT 1");
+                var firstUserQuery = new QueryDefinition(
+                    "SELECT * FROM c ORDER BY c.CreatedAt ASC, c.createdAt ASC OFFSET 0 LIMIT 1");
                 var firstUserIterator = container.GetItemQueryIterator<UserService.Models.User>(firstUserQuery);
                 var firstUserResult = await firstUserIterator.ReadNextAsync();
                 var firstUser = firstUserResult.FirstOrDefault();

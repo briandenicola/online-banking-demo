@@ -87,11 +87,21 @@ builder.Services.AddSingleton<CosmosClient>(sp =>
 {
     var configuration = sp.GetRequiredService<IConfiguration>();
     var endpoint = configuration["CosmosDb:Endpoint"];
+    
+    var clientOptions = new CosmosClientOptions
+    {
+        SerializerOptions = new CosmosSerializationOptions
+        {
+            PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase,
+            IgnoreNullValues = true
+        }
+    };
+    
     if (!string.IsNullOrEmpty(endpoint))
     {
-        return new CosmosClient(endpoint, new DefaultAzureCredential());
+        return new CosmosClient(endpoint, new DefaultAzureCredential(), clientOptions);
     }
-    return new CosmosClient(configuration["CosmosDb:ConnectionString"]);
+    return new CosmosClient(configuration["CosmosDb:ConnectionString"], clientOptions);
 });
 
 // Ensure Cosmos containers exist

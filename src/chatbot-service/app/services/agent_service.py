@@ -99,7 +99,7 @@ async def save_chat_message(state: AgentState, user_id: str, role: str, text: st
             "text": text,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await asyncio.to_thread(state.cosmos_chat_container.upsert_item, doc)
+        await asyncio.to_thread(state.cosmos_chat_container.upsert_item, doc, partition_key=user_id)
     except Exception as e:
         logger.warning(f"Failed to save chat message: {e}")
 

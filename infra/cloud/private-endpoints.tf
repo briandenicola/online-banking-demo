@@ -19,9 +19,10 @@ locals {
     cosmos      = "privatelink.documents.azure.com"
     redis       = "privatelink.redis.azure.net"
     acr         = "privatelink.azurecr.io"
-    cogservices  = "privatelink.cognitiveservices.azure.com"
-    openai       = "privatelink.openai.azure.com"
-    services_ai  = "privatelink.services.ai.azure.com"
+    cogservices = "privatelink.cognitiveservices.azure.com"
+    openai      = "privatelink.openai.azure.com"
+    services_ai = "privatelink.services.ai.azure.com"
+    search      = "privatelink.search.windows.net"
     blob        = "privatelink.blob.core.windows.net"
     queue       = "privatelink.queue.core.windows.net"
     table       = "privatelink.table.core.windows.net"
@@ -303,6 +304,32 @@ resource "azurerm_private_endpoint" "storage_file" {
   private_dns_zone_group {
     name                 = "storage-file-dns"
     private_dns_zone_ids = [azurerm_private_dns_zone.zones["file"].id]
+  }
+
+  tags = {
+    AppName = local.resource_name
+  }
+}
+
+# 11. Azure AI Search
+resource "azurerm_private_endpoint" "search" {
+  name                = "${local.resource_name}-search-pe"
+  location            = azurerm_resource_group.this.location
+  resource_group_name = azurerm_resource_group.this.name
+  subnet_id           = azurerm_subnet.private_endpoints.id
+
+  depends_on = [azapi_resource.ai_search]
+
+  private_service_connection {
+    name                           = "${local.resource_name}-search-psc"
+    private_connection_resource_id = azapi_resource.ai_search.id
+    subresource_names              = ["searchService"]
+    is_manual_connection           = false
+  }
+
+  private_dns_zone_group {
+    name                 = "search-dns"
+    private_dns_zone_ids = [azurerm_private_dns_zone.zones["search"].id]
   }
 
   tags = {

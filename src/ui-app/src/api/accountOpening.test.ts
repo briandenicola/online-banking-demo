@@ -43,17 +43,20 @@ describe('Account Opening API', () => {
       dateOfBirth: '1990-01-15',
       email: 'jane@example.com',
       phone: '555-0100',
-      ssnLastFour: '1234',
-      street: '123 Main St',
-      city: 'Springfield',
-      state: 'IL',
-      zip: '62701',
-      employer: 'Acme Corp',
-      title: 'Engineer',
-      annualIncome: 85000,
-      employmentStatus: 'employed',
+      ssn: '1234',
+      address: {
+        street: '123 Main St',
+        city: 'Springfield',
+        state: 'IL',
+        zip: '62701',
+        country: 'US',
+      },
+      employment: {
+        employer: 'Acme Corp',
+        title: 'Engineer',
+        annualIncome: 85000,
+      },
       accountType: 'checking' as const,
-      initialDeposit: 500,
     };
 
     test('calls POST /account-opening/applications with application data', async () => {
@@ -129,7 +132,7 @@ describe('Account Opening API', () => {
       mockClient.post.mockResolvedValueOnce(mockResponse);
 
       const file = new File(['content'], 'id.jpg', { type: 'image/jpeg' });
-      const result = await uploadDocuments('app-1', [file], 'photo_id');
+      const result = await uploadDocuments('app-1', file, 'photo_id');
 
       expect(mockClient.post).toHaveBeenCalledWith(
         '/account-opening/applications/app-1/documents',
@@ -146,7 +149,7 @@ describe('Account Opening API', () => {
       mockClient.post.mockRejectedValueOnce(error);
 
       const file = new File(['x'.repeat(11 * 1024 * 1024)], 'huge.pdf', { type: 'application/pdf' });
-      await expect(uploadDocuments('app-1', [file], 'photo_id')).rejects.toEqual(error);
+      await expect(uploadDocuments('app-1', file, 'photo_id')).rejects.toEqual(error);
     });
   });
 

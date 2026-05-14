@@ -104,6 +104,7 @@ class ProvisioningConsumer(AgentConsumer):
             agent_version="1",
             description="Account provisioning agent",
             instructions=SYSTEM_PROMPT,
+            default_options={"extra_body": {"model": foundry_model}},
         )
 
         self._user_service_url = os.getenv(

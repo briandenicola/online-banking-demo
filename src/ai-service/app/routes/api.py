@@ -66,7 +66,7 @@ async def detect(
     """Score a single transaction synchronously (for on-demand assessment)."""
     if not state.analyzer_pipeline:
         raise HTTPException(status_code=503, detail="Analyzer pipeline not initialized")
-    return await state.analyzer_pipeline.assess(body.model_dump())
+    return await state.analyzer_pipeline.assess(body.model_dump(), state.redis_client)
 
 
 @router.get("/api/admin/foundry-status")
@@ -153,6 +153,9 @@ async def get_admin_stats(
     avg_risk = sum(score for _, score in scores) / len(scores) if scores else 0
     high_risk = len([score for _, score in scores if score >= anomaly_service.FLAGGING_THRESHOLD])
 
+    # Get AI calls today from Redis
+    ai_calls = await anomaly_service.get_ai_calls_today_from_redis(state.redis_client)
+
     return AdminStats(
         totalFlagged=total_flagged,
         pendingReview=pending,
@@ -161,7 +164,7 @@ async def get_admin_stats(
         avgRiskScore=avg_risk,
         totalScored=total_scored,
         highRiskCount=high_risk,
-        aiCallsToday=anomaly_service.get_ai_calls_today(state.analyzer_pipeline),
+        aiCallsToday=ai_calls,
     )
 
 
@@ -341,13 +344,21 @@ async def run_foundry_evaluation(
         credential=state.foundry_credential,
     )
 
-    # Create a temporary agent with the prompt being evaluated
+    # Create a temporary agent with the prompt being evaluated.
+    # NOTE: agent-framework-foundry 1.2.x does NOT accept `model=` on the
+    # FoundryAgent constructor. The model deployment name flows to the
+    # underlying responses.create() call via `default_options`. Without it
+    # the call to eval_agent.run() returns 400 "Missing required parameter:
+    # 'model'" from /openai/v1/responses, which surfaces as both #137
+    # (eval failures) and #130 (counter stays 0 because evals never succeed).
+    eval_model = state.foundry_model or "gpt-5.4-mini"
     eval_agent = FoundryAgent(
         project_endpoint=state.foundry_endpoint,
         credential=state.foundry_credential,
         agent_name="risk-assessor",
         agent_version="1",
         instructions=request.system_prompt,
+        default_options={"extra_body": {"model": eval_model}},
     )
 
     eval_items = []
@@ -360,18 +371,74 @@ async def run_foundry_evaluation(
             f"- Category: {tx.get('category', 'N/A')}\n"
             f"- Account: ****{str(tx.get('accountId', '')[-4:])}"
         )
+
+        # FoundryEvals (raisvc) requires a non-empty assistant turn to evaluate.
+        # Run the prompt through the eval_agent first to capture the model's
+        # response, then submit the full system→user→assistant conversation.
+        # Without the assistant turn, raisvc rejects the run with a 400-wrapped
+        # 403 (UnauthorizedUserAction) — see issue #137.
+        session = eval_agent.create_session()
+        try:
+            agent_response = await eval_agent.run(prompt, session=session)
+        except Exception as e:  # noqa: BLE001
+            from app.telemetry import extract_openai_error_fields
+            import traceback
+            diag = extract_openai_error_fields(e)
+            logger.bind(
+                component="run_foundry_evaluation",
+                phase="eval_agent.run",
+                eval_name=request.eval_name,
+                eval_deployment=eval_model,
+                foundry_endpoint=state.foundry_endpoint,
+            ).error(
+                "foundry.eval.agent_run.failed",
+                traceback=traceback.format_exc(),
+                **diag,
+            )
+            raise
+        assistant_text = agent_response.text or ""
+
         eval_items.append(
             EvalItem(
-                input=[
-                    Message.system(request.system_prompt),
-                    Message.user(prompt),
+                conversation=[
+                    Message("system", [request.system_prompt]),
+                    Message("user", [prompt]),
+                    Message("assistant", [assistant_text]),
                 ],
-                output="",
             )
         )
 
     evals = FoundryEvals(client=client, evaluators=request.evaluators)
-    results = await evals.evaluate(eval_items)
+
+    import uuid as _uuid
+    request_id = _uuid.uuid4().hex
+    eval_log = logger.bind(
+        component="run_foundry_evaluation",
+        request_id=request_id,
+        eval_name=request.eval_name,
+        eval_deployment=eval_model,
+        evaluators=request.evaluators,
+        n_test_inputs=len(request.transactions),
+        foundry_endpoint=state.foundry_endpoint,
+        foundry_model=state.foundry_model,
+        principal_user_id=getattr(user, "user_id", None),
+    )
+    eval_log.info("foundry.eval.invoke.start")
+
+    from app.telemetry import foundry_http_debug, extract_openai_error_fields
+    try:
+        async with foundry_http_debug(request_id):
+            results = await evals.evaluate(eval_items, eval_name=request.eval_name)
+    except Exception as e:  # noqa: BLE001
+        import traceback
+        diag = extract_openai_error_fields(e)
+        eval_log.error(
+            "foundry.eval.invoke.failed",
+            traceback=traceback.format_exc(),
+            **diag,
+        )
+        raise
+    eval_log.info("foundry.eval.invoke.ok", n_results=len(results) if results is not None else 0)
     return {
         "status": "ok",
         "eval_name": request.eval_name,

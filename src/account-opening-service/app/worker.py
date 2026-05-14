@@ -15,7 +15,6 @@ from .agents import (
     ProvisioningConsumer,
 )
 from .redis_client import create_redis_client
-from .sidecar_credential import SidecarTokenCredential
 from .repository import InMemoryApplicationRepository
 from .cosmos_repository import CosmosDBApplicationRepository
 from .state_machine import ApplicationStateMachine
@@ -86,6 +85,7 @@ async def main() -> int:
             agent_version="1",
             description="Foundry connectivity check agent",
             instructions="Respond with JSON: {\"status\": \"ok\"}",
+            default_options={"extra_body": {"model": foundry_model}},
         )
         session = connectivity_agent.create_session()
         response = await connectivity_agent.run("ping", session=session)
@@ -96,20 +96,11 @@ async def main() -> int:
         logger.error("Foundry connectivity check failed", error=str(exc))
         return 1
 
-    # Build a separate credential for the 3 Foundry agent consumers.
-    # If the Entra Agent ID sidecar is deployed, use it; otherwise fall back
-    # to DefaultAzureCredential (local dev / docker-compose).
-    sidecar_url = os.getenv("AGENT_ID_SIDECAR_URL")
-    agent_identity = os.getenv("AGENT_ID_AGENT_IDENTITY")
-    if sidecar_url and agent_identity:
-        foundry_credential = SidecarTokenCredential(
-            sidecar_url=sidecar_url,
-            agent_identity=agent_identity,
-        )
-        logger.info("Using SidecarTokenCredential for Foundry agents", sidecar_url=sidecar_url)
-    else:
-        foundry_credential = credential
-        logger.info("Using DefaultAzureCredential for Foundry agents (sidecar not configured)")
+    # Foundry agent consumers share the same DefaultAzureCredential / workload
+    # identity used elsewhere. The Entra Agent ID sidecar was reverted on
+    # 2026-05-13 (issue #134) — see ai-service for the reference pattern.
+    foundry_credential = credential
+    logger.info("Using DefaultAzureCredential for Foundry agents")
 
     redis_client = await create_redis_client()
     if not redis_client:

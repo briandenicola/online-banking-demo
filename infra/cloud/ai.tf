@@ -21,7 +21,7 @@ resource "azapi_resource" "this" {
       disableLocalAuth       = true
       allowProjectManagement = true
       customSubDomainName    = local.openai_name
-      publicNetworkAccess = "Disabled"
+      publicNetworkAccess    = "Disabled"
       userOwnedStorageAccounts = [
         {
           id = azurerm_storage_account.main.id

@@ -1,3 +1,4 @@
+# DEPRECATED 2026-05-13 (issue #134): Reverted to DefaultAzureCredential / workload identity. Kept for potential future re-enable.
 """
 SidecarTokenCredential — Azure TokenCredential backed by the Entra Agent ID
 auth-sidecar that runs as a container in the same Kubernetes pod.

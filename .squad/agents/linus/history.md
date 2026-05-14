@@ -529,3 +529,116 @@ The 5 critical bugs (broken test, unauthenticated account fetch, client-only tra
   `curl asset-manifest.json | grep marker` flow caught the stale
   registration deploy two sessions ago; this time it confirmed the new
   bundle landed before I left the issue alone.
+
+## Historical Context (2025)
+
+**Note:** This section summarizes learnings from pre-2026 UI audits and fixes. See dated subsections below for full details.
+
+### 2025 Audit Summary
+
+From frontend code quality audits conducted in 2025-07:
+- **UI patterns:** Established React component hierarchies, state management approach, styling conventions (MUI v9)
+- **Key fixes:** Transaction endpoint integration, Nginx proxy issues, account API alignment, login error handling
+- **Best practices:** Input validation, error boundaries, accessible forms, responsive layouts, test fixtures
+- **Infrastructure:** Docker healthchecks, container hardening, pod security policies
+
+For specific dates and detailed fixes from these entries, refer to the dated learning sections (###) above.
+
+
+## Learnings — 2026-05-13 — issue #127 (Account Opening 422 + React #31)
+
+**The FastAPI 422 `detail` array gotcha** — Pydantic validation errors come back as
+`{ detail: [{ type, loc, msg, input, ctx }, ...] }`. The previous `resolveSubmitError`
+returned `error.response.data.detail` directly, which set React state to an array of
+objects. Rendering that in JSX trips React error #31 (objects are not valid as a
+React child) and falls through to ErrorBoundary, producing a white screen. **Always
+coerce to string before `setSubmitError(...)`** — and always type the resolver as
+`(error: unknown) => string` so the compiler catches the regression.
+
+This pattern is going to bite us again on every other Pydantic-validated POST:
+- `account-service` (transfer/account create endpoints — .NET ProblemDetails shape, but the form-level `setError` fallback is the same risk)
+- `transfer-service` (.NET — ProblemDetails returns `errors: { field: ["msg"] }`)
+- `chatbot-service`, `budget-service`, `ai-service`, `account-opening-service` (all FastAPI — array `detail`)
+
+**Reusable pattern landed:** `src/ui-app/src/api/errors.ts` exports `resolveApiError(error, fallback)`
+which handles: string detail, array detail (FastAPI), `message`/`title`, ProblemDetails
+`errors` map. Tested in `errors.test.ts`. Use it from every form's catch block.
+
+**Wire-vs-form payload separation** — the form's `FormState` / `ApplicationFormData`
+is a flat UI-friendly shape. The backend wire contract (`ApplicationCreateRequest`)
+is nested. Keep them as separate TypeScript types and convert at the API boundary
+(`buildCreateRequest`). Conflating them is what let the contract drift unnoticed.
+
+
+## Learnings — 2026-05-13 — issue #129 (Phone Mask + Email Pre-fill)
+
+**Hand-rolled input formatters beat libs for simple cases** — The phone mask (restrict
+chars + apply US format) is ~30 lines total. React Input Mask / IMask would add 50KB+
+to the bundle for the same result. Keep the formatter inline, under 40 lines. Backend
+regex: `^\+?[\d\s\-().]{7,30}$` — validate on blur for instant feedback, but still
+defer to server-side 422 as the source of truth. Defense-in-depth: client restricts,
+server enforces.
+
+**Auth context pre-fill pattern** — Use `useAuthContext()` from
+`src/ui-app/src/contexts/AuthContext.tsx`. For email pre-fill, do it in state init
+(not `useEffect`) to avoid flicker:
+```typescript
+const { user } = useAuthContext();
+const [values, setValues] = React.useState(() => {
+  const initial = resolveInitialState(initialData);
+  if (!initial.email && user?.email) {
+    initial.email = user.email;
+  }
+  return initial;
+});
+```
+Defensive: fallback to empty if `user?.email` is null. Field remains editable.
+
+**Test harness must match runtime context** — Components using `useAuthContext` throw
+"must be used within AuthProvider" in tests. Wrap the component in `<AuthProvider>` in
+`renderForm()` (or each test case). Pattern is consistent across the codebase — no
+mocks, just wrap in the real provider. 15/15 tests passed after adding the wrapper.
+
+**onBlur validation for format checks** — Phone validation triggers on blur so the user
+isn't harassed mid-type, but still sees the error before submitting. Pattern:
+`handlePhoneBlur()` sets `errors.phone` if `validatePhoneFormat(values.phone)` fails.
+Client-side regex must match backend regex exactly to avoid false positives.
+
+### 2026-05-13 — Form Pre-fill from Auth Context (#129)
+- **Pattern:** Use `useAuthContext()` hook for reactive form initialization without flicker
+- **Implementation:** State-init pattern via `React.useState(() => { ... const { user } = useAuthContext(); ... })` 
+- **Key:** Initialize in the state-init callback (not `useEffect`) to avoid re-render on mount
+- **Defensive:** Always check `user?.email` and fall back to empty string (`user?.email || ''`) — avoid assuming auth state exists
+- **Test wrapper requirement:** Any component using `useAuthContext()` must be wrapped in `<AuthProvider>` during tests or will throw "must be used within AuthProvider"
+- **Reusable:** For future forms needing user-derived pre-fills (email, firstName, phone, etc.), import `useAuthContext` from `src/ui-app/src/contexts/AuthContext.tsx` and follow this pattern
+- **Phone input mask:** Hand-rolled ~30 lines. Formatter restricts to `[\d\+\-() .]`, applies US mask `(555) 123-4567` unless international (`+`), strips invalid chars on paste. Validator checks backend regex `^\+?[\d\s\-().]{7,30}$` on blur.
+
+### 2026-05-13 — Multi-Select / Singular File Upload Binding (#130)
+- **Problem:** Frontend allowed `<input multiple>` while backend FastAPI `file: UploadFile = File(...)` (singular) only processes one file — rest silently dropped
+- **Root cause:** FormData.append('file', f) loop appended multiple 'file' keys, but FastAPI non-list binding only reads the first
+- **Solution (Option 3):** Block multi-select at UI level. Removed `multiple` attribute from input, changed `uploadDocuments()` API signature from `File[]` → `File`, defensive slice in `handleFileSelection()` to guard against drag-drop bypassing input attribute
+- **Files changed:**
+  - `src/ui-app/src/api/accountOpening.ts` — uploadDocuments() now takes single `File` parameter
+  - `src/ui-app/src/api/accountOpening.test.ts` — test calls updated to pass single file instead of array
+  - `src/ui-app/src/components/account-opening/DocumentUpload.tsx` — removed `multiple`, updated copy ("Drop a file here", "Select File"), sliced `files[0]` in upload call
+- **Gotcha:** HTML input `multiple` can be bypassed by drag-drop — always defensively slice `selected.length > 1 ? [selected[0]] : selected` in drop handlers
+- **Rationale:** Backend contract is singular (one file per request). Multi-file support would require backend changes (`file: list[UploadFile] = File(...)`). Simpler to match frontend to actual backend behavior than risk silent failures.
+
+---
+
+### 2026-05-14T02:03:23Z: Cross-team notification — #137/#130 resolved
+
+**By:** Scribe (Orchestration)  
+**Topics:** FoundryAgent SDK contract, unified fix scope
+
+Issues #137 (eval failures) and #130 ("AI Calls Today" counter stuck at 0) are now CLOSED and verified in production. Both traced back to the same root cause: FoundryAgent constructor signature drift.
+
+**New contract:** When instantiating any `FoundryAgent(...)`, pass model via `default_options={"extra_body": {"model": "<deployment_name>"}}` — do NOT pass `model=` as a direct kwarg (SDK 1.2.2 rejects it).
+
+**Scope of fix:**
+- account-opening-service: all 4 FoundryAgent constructors fixed
+- ai-service: all 3 FoundryAgent constructors fixed (risk_agent, categorizer_agent, eval_agent)
+
+**Prevention:** Both services now have runtime `TestFoundryAgentSignatureContract` tests that run on every pytest invocation. Catch signature drift on next SDK pin bump.
+
+**Impact on #135/#136 work:** No impact. Your frontend work proceeds normally; backend #135-PR1/PR2/PR3 execution is unblocked by the answers to Danny's 3 planning questions (see .squad/decisions.md).

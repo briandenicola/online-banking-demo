@@ -14,9 +14,12 @@ import {
 } from '@mui/material';
 import {
   ApplicationFormData as ApiApplicationFormData,
+  ApplicationCreateRequest,
   ApplicationResponse,
   createApplication,
 } from '../../api/accountOpening';
+import { resolveApiError } from '../../api/errors';
+import { useAuthContext } from '../../contexts/AuthContext';
 
 export type ApplicationFormData = ApiApplicationFormData;
 
@@ -103,6 +106,32 @@ const isAdult = (dateString: string) => {
   return dob <= adultDate;
 };
 
+// Phone input formatter: allow only digits and allowed punctuation (+, space, -, (, ), .)
+// and apply US format mask for display
+const formatPhoneInput = (value: string): string => {
+  // Strip all characters except digits and allowed punctuation
+  const cleaned = value.replace(/[^\d+\s\-().]/g, '');
+  
+  // If starts with +, keep international format as-is
+  if (cleaned.startsWith('+')) {
+    return cleaned;
+  }
+  
+  // Otherwise apply US format mask: (555) 123-4567
+  const digits = cleaned.replace(/\D/g, '');
+  
+  if (digits.length === 0) return '';
+  if (digits.length <= 3) return `(${digits}`;
+  if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
+};
+
+// Validate phone against backend regex: ^\+?[\d\s\-().]{7,30}$
+const validatePhoneFormat = (value: string): boolean => {
+  const regex = /^\+?[\d\s\-().]{7,30}$/;
+  return regex.test(value);
+};
+
 const ApplicationForm: React.FC<ApplicationFormProps> = ({
   onSubmit,
   onApplicationCreated,
@@ -110,10 +139,21 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
   mode,
   initialData,
 }) => {
+  const { user } = useAuthContext();
   const resolvedMode: FormMode = mode ?? (onApplicationCreated ? 'full' : 'simple');
   const steps = resolvedMode === 'full' ? fullSteps : simpleSteps;
   const [activeStep, setActiveStep] = React.useState(0);
-  const [values, setValues] = React.useState<FormState>(() => resolveInitialState(initialData));
+  
+  // Pre-fill email from auth context on initial mount
+  const [values, setValues] = React.useState<FormState>(() => {
+    const initial = resolveInitialState(initialData);
+    // Pre-fill email if not already provided and user is authenticated
+    if (!initial.email && user?.email) {
+      initial.email = user.email;
+    }
+    return initial;
+  });
+  
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [submitting, setSubmitting] = React.useState(false);
   const [submitError, setSubmitError] = React.useState<string | null>(null);
@@ -126,7 +166,13 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
 
   const handleChange = (field: keyof FormState) =>
     (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-      const nextValue = event.target.value;
+      let nextValue = event.target.value;
+      
+      // Apply phone formatting if this is the phone field
+      if (field === 'phone') {
+        nextValue = formatPhoneInput(nextValue);
+      }
+      
       setValues((prev) => ({ ...prev, [field]: nextValue }));
       if (errors[field]) {
         setErrors((prev) => {
@@ -136,6 +182,16 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
         });
       }
     };
+
+  // Handle phone field blur to validate format
+  const handlePhoneBlur = () => {
+    if (values.phone && !validatePhoneFormat(values.phone)) {
+      setErrors((prev) => ({
+        ...prev,
+        phone: 'Phone must match format: +?[digits/spaces/-/()/.] (7-30 chars)',
+      }));
+    }
+  };
 
   const validateSimpleStep = (step: number) => {
     const nextErrors: Record<string, string> = {};
@@ -288,6 +344,31 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
     };
   };
 
+  // Wire-shape payload for the backend. Backend `ApplicationCreate` requires
+  // nested `address` (with country) and `employment`, and field name `ssn`.
+  // Country is hard-coded to 'US' until a country picker is added (see #127).
+  const buildCreateRequest = (formData: ApplicationFormData): ApplicationCreateRequest => ({
+    firstName: formData.firstName,
+    lastName: formData.lastName,
+    dateOfBirth: formData.dateOfBirth,
+    email: formData.email,
+    phone: (formData.phone ?? '').trim(),
+    ssn: (formData.ssnLastFour ?? '').trim(),
+    address: {
+      street: (formData.street ?? '').trim(),
+      city: (formData.city ?? '').trim(),
+      state: (formData.state ?? '').trim(),
+      zip: (formData.zip ?? '').trim(),
+      country: 'US',
+    },
+    employment: {
+      employer: (formData.employer ?? '').trim(),
+      title: (formData.title ?? '').trim(),
+      annualIncome: Number(formData.annualIncome ?? 0),
+    },
+    accountType: formData.accountType,
+  });
+
   const handleNext = () => {
     if (validateStep(activeStep)) {
       setActiveStep((prev) => prev + 1);
@@ -298,11 +379,6 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
     setActiveStep((prev) => prev - 1);
   };
 
-  const resolveSubmitError = (error: unknown) =>
-    (error as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.detail ||
-    (error as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.message ||
-    'Failed to submit application. Please try again.';
-
   const handleSubmit = async () => {
     if (!validateStep(activeStep)) return;
     const payload = buildPayload();
@@ -311,10 +387,10 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
     try {
       await Promise.resolve(onSubmit?.(payload));
       if (resolvedMode === 'simple') return;
-      const application = await createApplication(payload);
+      const application = await createApplication(buildCreateRequest(payload));
       onApplicationCreated?.(application);
     } catch (error: unknown) {
-      setSubmitError(resolveSubmitError(error));
+      setSubmitError(resolveApiError(error, 'Failed to submit application. Please try again.'));
     } finally {
       setSubmitting(false);
     }
@@ -391,8 +467,10 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
                   label="Phone"
                   value={values.phone}
                   onChange={handleChange('phone')}
+                  onBlur={handlePhoneBlur}
                   error={Boolean(errors.phone)}
                   helperText={errors.phone}
+                  placeholder="(555) 123-4567"
                 />
               </Grid>
               <Grid size={{ xs: 12, sm: 6 }}>
@@ -508,8 +586,10 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
                   label="Phone"
                   value={values.phone}
                   onChange={handleChange('phone')}
+                  onBlur={handlePhoneBlur}
                   error={Boolean(errors.phone)}
                   helperText={errors.phone}
+                  placeholder="(555) 123-4567"
                 />
               </Grid>
               <Grid size={{ xs: 12 }}>

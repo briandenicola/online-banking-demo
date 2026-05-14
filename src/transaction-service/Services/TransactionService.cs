@@ -80,6 +80,26 @@ public class TransactionService : ITransactionService
         return await _transactionRepository.GetByUserIdAsync(userId, limit);
     }
 
+    public async Task<int> ReplayCreatedEventsAsync(int limit = 10_000)
+    {
+        var transactions = await _transactionRepository.GetAllAsync(limit);
+        var published = 0;
+        foreach (var transaction in transactions)
+        {
+            try
+            {
+                await PublishTransactionCreatedEvent(transaction);
+                published++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Replay failed to publish event for transaction {TransactionId}", transaction.Id);
+            }
+        }
+        _logger.LogInformation("Replayed {Published} TransactionCreated events to Redis Stream", published);
+        return published;
+    }
+
     private async Task PublishTransactionCreatedEvent(Transaction transaction)
     {
         try

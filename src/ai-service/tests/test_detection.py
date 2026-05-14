@@ -167,3 +167,147 @@ class TestFlaggingThreshold:
 
     def test_threshold_is_0_7(self):
         assert FLAGGING_THRESHOLD == 0.7
+
+
+class TestAiCallsCounter:
+    """Counter must live in Redis (cross-pod), not in-process. Issue #130."""
+
+    @pytest.mark.asyncio
+    async def test_increment_uses_utc_day_bucketed_key_and_sets_ttl_on_create(self):
+        from app.services import anomaly_service
+
+        fake_redis = AsyncMock()
+        fake_redis.incr = AsyncMock(return_value=1)  # first writer
+        fake_redis.expire = AsyncMock()
+
+        await anomaly_service._increment_ai_calls_counter(fake_redis)
+
+        from datetime import datetime, timezone
+        expected_key = f"ai:metrics:calls:{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+        fake_redis.incr.assert_awaited_once_with(expected_key)
+        fake_redis.expire.assert_awaited_once_with(expected_key, 36 * 60 * 60)
+
+    @pytest.mark.asyncio
+    async def test_increment_does_not_reset_ttl_on_subsequent_calls(self):
+        from app.services import anomaly_service
+
+        fake_redis = AsyncMock()
+        fake_redis.incr = AsyncMock(return_value=42)  # key already existed
+        fake_redis.expire = AsyncMock()
+
+        await anomaly_service._increment_ai_calls_counter(fake_redis)
+
+        fake_redis.expire.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_increment_swallows_redis_errors(self):
+        """Redis being down must NOT crash the AI request path."""
+        from app.services import anomaly_service
+
+        fake_redis = AsyncMock()
+        fake_redis.incr = AsyncMock(side_effect=ConnectionError("redis down"))
+
+        # Must not raise
+        await anomaly_service._increment_ai_calls_counter(fake_redis)
+
+    @pytest.mark.asyncio
+    async def test_get_returns_zero_when_redis_unavailable(self):
+        from app.services import anomaly_service
+
+        assert await anomaly_service.get_ai_calls_today_from_redis(None) == 0
+
+        fake_redis = AsyncMock()
+        fake_redis.get = AsyncMock(side_effect=ConnectionError("redis down"))
+        assert await anomaly_service.get_ai_calls_today_from_redis(fake_redis) == 0
+
+    @pytest.mark.asyncio
+    async def test_get_returns_int_from_redis_value(self):
+        from app.services import anomaly_service
+
+        fake_redis = AsyncMock()
+        fake_redis.get = AsyncMock(return_value=b"17")
+        assert await anomaly_service.get_ai_calls_today_from_redis(fake_redis) == 17
+
+    def test_no_in_memory_counter_attribute_on_pipeline(self):
+        """Guard against regression: no module/class-level counter state."""
+        from app.services import anomaly_service
+
+        pipeline = anomaly_service.AnalyzerPipeline()
+        for attr in ("ai_calls_today", "_ai_calls_today", "calls_today", "_calls_today"):
+            assert not hasattr(pipeline, attr), f"in-memory counter {attr!r} must not exist"
+            assert not hasattr(anomaly_service, attr), f"module-level counter {attr!r} must not exist"
+
+
+class TestFoundryAgentSignatureContract:
+    """Pin the FoundryAgent constructor contract for our pinned SDK version.
+
+    Issue #137 + #130: agent-framework-foundry 1.2.x removed ``model=`` from
+    ``FoundryAgent.__init__`` and requires the model deployment name to flow
+    via ``default_options={"model": ...}``. Omitting it causes the underlying
+    ``responses.create()`` call to 400 with "Missing required parameter:
+    'model'", which surfaces as eval failures (#137) and a stuck "AI Calls
+    Today" counter (#130, downstream).
+
+    These tests fail loudly on local pytest if either:
+      - any FoundryAgent call site reintroduces ``model=`` (rejected kwarg), or
+      - any FoundryAgent call site forgets ``default_options={"model": ...}``
+        (causes runtime 400).
+    """
+
+    def _agent_kwargs(self):
+        import inspect
+        from agent_framework_foundry import FoundryAgent
+        return set(inspect.signature(FoundryAgent.__init__).parameters.keys())
+
+    @pytest.mark.parametrize(
+        "module_path",
+        [
+            "app/services/anomaly_service.py",
+            "app/routes/api.py",
+        ],
+    )
+    def test_foundry_agent_call_sites_use_default_options_for_model(self, module_path):
+        import re
+        from pathlib import Path
+
+        src = (Path(__file__).resolve().parent.parent / module_path).read_text()
+        sdk_kwargs = self._agent_kwargs()
+
+        # Strip Python line comments (so prose like `model=` inside a
+        # `# ...` comment is not mistaken for a kwarg).
+        src_no_comments = re.sub(r"(?m)#.*$", "", src)
+
+        # Match every FoundryAgent(...) call (multi-line, balanced enough for
+        # our codebase — no nested FoundryAgent constructions).
+        for m in re.finditer(r"FoundryAgent\(([^)]*)\)", src_no_comments, re.DOTALL):
+            body = m.group(1)
+            # Only top-level kwargs: a name followed by '=' that is NOT '=='.
+            used_kwargs = set(re.findall(r"\b(\w+)\s*=(?!=)", body))
+            # Drop names that appear inside a dict literal (e.g. {"model": ...}).
+            dict_inner_keys = set(re.findall(r"\{[^{}]*\}", body))
+            for inner in re.findall(r"\{([^{}]*)\}", body):
+                # Anything between { and } is a dict literal — kwargs there
+                # are not constructor kwargs.
+                inner_kwargs = set(re.findall(r"\b(\w+)\s*=(?!=)", inner))
+                used_kwargs -= inner_kwargs
+
+            unsupported = used_kwargs - sdk_kwargs
+            assert not unsupported, (
+                f"{module_path}: FoundryAgent() kwargs not in SDK signature: "
+                f"{unsupported}. Supported: {sorted(sdk_kwargs)}"
+            )
+            assert "model" not in used_kwargs, (
+                f"{module_path}: must not pass model= to FoundryAgent — "
+                f"use default_options={{'model': ...}} instead (#137)"
+            )
+            assert "default_options" in used_kwargs, (
+                f"{module_path}: FoundryAgent() must pass "
+                f"default_options={{'model': ...}} so responses.create() "
+                f"receives the model deployment name (#137 / #130)"
+            )
+            assert re.search(r"default_options\s*=\s*\{[^{}]*['\"]extra_body['\"]\s*:\s*\{[^{}]*['\"]model['\"]", body), (
+                f"{module_path}: default_options must wrap model under extra_body — "
+                f"FoundryAgent's underlying _FoundryAgentChatClient does not propagate "
+                f"top-level `model` to responses.create(); use "
+                f"default_options={{'extra_body': {{'model': ...}}}} (#137 / #130)"
+            )

@@ -34,6 +34,44 @@ SCORED_TRANSACTION_PREFIX = "scored-tx:"
 SCORED_TX_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
 FLAGGING_THRESHOLD = 0.7
 
+# Cross-replica AI call counter. Per-pod in-memory counters caused dashboard
+# flicker under HPA min>=2 (issue #130). Storage: ai:metrics:calls:{YYYY-MM-DD}
+# (UTC date-bucketed, INCR + 36h TTL set only on key creation).
+AI_CALLS_COUNTER_PREFIX = "ai:metrics:calls"
+AI_CALLS_COUNTER_TTL_SECONDS = 36 * 60 * 60  # 36h: covers UTC day boundary + buffer
+
+
+async def _increment_ai_calls_counter(redis_client: Optional[redis.Redis]) -> None:
+    """Increment today's AI-call counter in Redis. Failures are logged, never raised:
+    a Redis hiccup must NOT degrade the AI request path."""
+    if not redis_client:
+        return
+    try:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        key = f"{AI_CALLS_COUNTER_PREFIX}:{today}"
+        new_value = await redis_client.incr(key)
+        # Only set TTL when the key is freshly created — avoid resetting on every
+        # increment (which would prevent expiration entirely).
+        if new_value == 1:
+            await redis_client.expire(key, AI_CALLS_COUNTER_TTL_SECONDS)
+    except Exception as e:
+        logger.warning("Failed to increment AI calls counter (non-fatal)", error=str(e))
+
+
+async def get_ai_calls_today_from_redis(redis_client: Optional[redis.Redis]) -> int:
+    """Read today's AI-call count. Returns 0 if Redis is unavailable so the
+    dashboard degrades gracefully instead of 500-ing."""
+    if not redis_client:
+        return 0
+    try:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        key = f"{AI_CALLS_COUNTER_PREFIX}:{today}"
+        count = await redis_client.get(key)
+        return int(count) if count else 0
+    except Exception as e:
+        logger.warning("Failed to read AI calls counter from Redis", error=str(e))
+        return 0
+
 @dataclass
 class AnomalyState:
     redis_client: Optional[redis.Redis] = None
@@ -111,9 +149,6 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
     def __init__(self):
         self._agent: Optional["FoundryAgent"] = None
         self._ready = False
-        self._ai_calls_today = 0
-        self._ai_calls_date = ""
-        self._ai_calls_lock = asyncio.Lock()
 
     @property
     def name(self) -> str:
@@ -128,13 +163,7 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
         self._agent = agent
         self._ready = True
 
-    async def analyze(self, transaction: dict) -> RiskAssessment:
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        async with self._ai_calls_lock:
-            if self._ai_calls_date != today:
-                self._ai_calls_today = 0
-                self._ai_calls_date = today
-
+    async def analyze(self, transaction: dict, redis_client: Optional[redis.Redis] = None) -> RiskAssessment:
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("foundry.risk-assessment") as span:
             span.set_attribute("analyzer.name", self.name)
@@ -158,27 +187,28 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
                 session = self._agent.create_session()
                 response = await self._agent.run(user_message, session=session)
 
-                async with self._ai_calls_lock:
-                    self._ai_calls_today += 1
-                    calls_today = self._ai_calls_today
-                span.set_attribute("ai.calls_today", calls_today)
-
                 result = self._parse_response(str(response))
                 span.set_attribute("risk.score", result.riskScore)
+
+                # Success path only: increment cross-replica AI call counter.
+                # Helper swallows any Redis error so the AI result is never lost.
+                await _increment_ai_calls_counter(redis_client)
+
                 return result
 
             except Exception as e:
-                logger.error(f"Foundry risk assessment failed: {e}")
+                from app.telemetry import extract_openai_error_fields
+                diag = extract_openai_error_fields(e)
+                logger.bind(
+                    component="FoundryRiskAnalyzer.analyze",
+                    transaction_id=transaction.get("transactionId"),
+                ).error("foundry.agent_run.failed", **diag)
                 span.record_exception(e)
                 return RiskAssessment(
                     riskScore=0.5,
                     explanation="AI scoring unavailable — assigned default moderate risk",
                     flags=["ai_unavailable"]
                 )
-
-    @property
-    def ai_calls_today(self) -> int:
-        return self._ai_calls_today
 
     def _parse_response(self, response: str) -> RiskAssessment:
         """Parse the AI response into a RiskAssessment."""
@@ -311,7 +341,12 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
                 return result
 
             except Exception as e:
-                logger.error(f"Foundry categorization failed: {e}")
+                from app.telemetry import extract_openai_error_fields
+                diag = extract_openai_error_fields(e)
+                logger.bind(
+                    component="FoundryCategorizer.categorize",
+                    transaction_id=transaction.get("transactionId"),
+                ).error("foundry.agent_run.failed", **diag)
                 span.record_exception(e)
                 return CategoryResult(
                     category=transaction.get("category", "Uncategorized"),
@@ -344,15 +379,6 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
             )
 
 
-def get_ai_calls_today(analyzer_pipeline: Optional["AnalyzerPipeline"]) -> int:
-    if not analyzer_pipeline:
-        return 0
-    for analyzer in analyzer_pipeline.analyzers:
-        if isinstance(analyzer, FoundryRiskAnalyzer):
-            return analyzer.ai_calls_today
-    return 0
-
-
 class AnalyzerPipeline:
     """Pipeline for combining multiple analyzers."""
 
@@ -374,7 +400,7 @@ class AnalyzerPipeline:
     def categorizers(self) -> list[BaseCategorizer]:
         return self._categorizers
 
-    async def assess(self, transaction: dict) -> RiskAssessment:
+    async def assess(self, transaction: dict, redis_client: Optional[redis.Redis] = None) -> RiskAssessment:
         """Run all enabled analyzers and return the highest-risk assessment."""
         results: list[RiskAssessment] = []
 
@@ -382,7 +408,11 @@ class AnalyzerPipeline:
             if not analyzer.enabled:
                 continue
             try:
-                result = await analyzer.analyze(transaction)
+                # Pass redis_client to analyzers that support it (FoundryRiskAnalyzer)
+                if isinstance(analyzer, FoundryRiskAnalyzer):
+                    result = await analyzer.analyze(transaction, redis_client)
+                else:
+                    result = await analyzer.analyze(transaction)
                 results.append(result)
             except Exception as e:
                 logger.error(f"Analyzer {analyzer.name} failed: {e}")
@@ -580,8 +610,8 @@ async def score_and_store_transaction(
     # Inject category into transaction context for risk scoring
     transaction_with_category = {**transaction, "category": category}
 
-    # Step 2: Score for risk (uses category context)
-    assessment = await analyzer_pipeline.assess(transaction_with_category)
+    # Step 2: Score for risk (uses category context, passes redis_client for counter)
+    assessment = await analyzer_pipeline.assess(transaction_with_category, redis_client)
     logger.info(
         f"📊 Scored transaction: risk={assessment.riskScore:.2f}, "
         f"flags={assessment.flags}, explanation={assessment.explanation[:80]}"
@@ -640,7 +670,18 @@ async def score_and_store_transaction(
 
 async def consume_redis_stream(redis_client: redis.Redis, analyzer_pipeline: "AnalyzerPipeline"):
     """Consume transactions from Redis Stream and analyze them."""
-    await redis_client.xgroup_create(name=STREAM_NAME, groupname=CONSUMER_GROUP, id="0", mkstream=True)
+    try:
+        await redis_client.xgroup_create(name=STREAM_NAME, groupname=CONSUMER_GROUP, id="0", mkstream=True)
+        logger.info(f"Created consumer group {CONSUMER_GROUP} on stream {STREAM_NAME}")
+    except redis.ResponseError as e:
+        # BUSYGROUP — group already exists from a prior run. Expected on every
+        # restart after the first; without this guard the entire consumer task
+        # silently dies and no transactions are ever scored.
+        if "BUSYGROUP" in str(e):
+            logger.info(f"Consumer group {CONSUMER_GROUP} already exists — resuming")
+        else:
+            logger.error(f"Failed to create consumer group: {e}")
+            raise
     backoff = 1
     _failure_counts: dict[str, int] = {}
     dlq_stream = f"{STREAM_NAME}-dlq"
@@ -767,8 +808,15 @@ async def lifespan(app: FastAPI):
             state.foundry_credential = credential
             state.foundry_endpoint = endpoint
             state.foundry_model = model_name
-            token = await asyncio.to_thread(credential.get_token, "https://cognitiveservices.azure.com/.default")
+            token = await asyncio.to_thread(credential.get_token, "https://ai.azure.com/.default")
             logger.info(f"✅ Azure credential acquired (expires: {token.expires_on})")
+
+            # One-shot identity probe for the cognitiveservices.azure.com audience —
+            # this is the audience raisvc / the eval pipeline checks. Logs decoded
+            # JWT claims (oid, appid, aud, iss, tid) so we can correlate role
+            # assignments against the actual principal at the time of the call.
+            from app.telemetry import identity_startup_probe
+            await identity_startup_probe(credential, endpoint)
 
             risk_agent = FoundryAgent(
                 project_endpoint=endpoint,
@@ -777,6 +825,11 @@ async def lifespan(app: FastAPI):
                 agent_version="1",
                 description="Financial transaction risk scoring agent",
                 instructions=FoundryRiskAnalyzer.SYSTEM_PROMPT,
+                # agent-framework-foundry 1.2.x: model deployment name MUST
+                # be passed via default_options, not `model=` (rejected by
+                # FoundryAgent.__init__) and not omitted (responses.create
+                # then 400s with "Missing required parameter: 'model'").
+                default_options={"extra_body": {"model": model_name}},
             )
             foundry_analyzer.initialize(risk_agent)
             logger.info("✅ Foundry risk agent created (persistent)")
@@ -788,6 +841,7 @@ async def lifespan(app: FastAPI):
                 agent_version="1",
                 description="Financial transaction categorization agent",
                 instructions=FoundryCategorizer.SYSTEM_PROMPT,
+                default_options={"extra_body": {"model": model_name}},
             )
             foundry_categorizer.initialize(categorizer_agent)
             logger.info("✅ Foundry categorizer agent created (persistent)")

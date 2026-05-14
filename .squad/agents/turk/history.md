@@ -7,6 +7,33 @@
 - **Joined:** 2026-05-07
 - **Focus:** Python service config fixes and cross-service consistency
 
+## Session Log
+
+### 2026-05-12 — Build Break Fix: Internal Serializer Type
+
+**Issue:** Commit 243457f (#125) used `CosmosSystemTextJsonSerializer`, which is **internal** in Microsoft.Azure.Cosmos. Build failed with CS0122 protection level error across all 5 .NET services.
+
+**Learning:** `CosmosSystemTextJsonSerializer` is internal. The **public API** for camelCase pinning is:
+
+```csharp
+CosmosClientOptions.SerializerOptions = new CosmosSerializationOptions
+{
+    PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase,
+    IgnoreNullValues = true
+}
+```
+
+**Fix:** Replaced internal type usage in:
+- user-service/Program.cs
+- account-service/Program.cs
+- transaction-service/Program.cs
+- transfer-service/Program.cs
+- prompt-eval-service/Program.cs
+
+Updated skill document with DO NOT USE warning. Decision logged in `.squad/decisions/turk-serializer-public-api.md`.
+
+**Verification:** `dotnet build` on user-service succeeded with 0 errors (5 warnings unrelated to serializer).
+
 ## Core Context
 
 **Core Python/FastAPI Patterns:**
@@ -617,3 +644,239 @@ After: `"Here are your current balances by account, using masked account numbers
 - Always verify the **exact** downstream URL/path against the producing controller before assuming a deeper auth/identity bug. The #117 JWT-forwarding pattern was a tempting hypothesis but a `git grep` of the controller's routes ruled it out in 30 seconds.
 - The chatbot tool error path swallows the HTTP status code into a generic "couldn't retrieve" message visible to users. Worth considering surfacing the status (or at least logging at error not warning) so the next 4xx vs 5xx is faster to triage from logs alone — current logger emits at WARN with the body truncated to 200 chars, which was sufficient here but only because we re-reproduced from the cluster.
 - Cross-service JSON contract drift (`accountType` vs `type`) silently produced empty fields. Defensive `.get(primary, .get(legacy, default))` is the lightweight fix until a shared schema/types story exists. A future improvement would be Pydantic models for inbound data in chatbot tools, mirroring what frontend already enforces.
+
+---
+
+**2026-05-13 18:17:36Z** — Scribe note: Basher proved your #121 chatbot fix was correct (no revert needed). The Accounts page regression was unrelated (pre-existing Cosmos serializer-casing drift in account-service). Now tracking #124 (Account Opening Agent Stages).
+
+### 2026-05-13 — Account-Opening Stages Projection (Issue #124)
+
+**Issue:** Admin dashboard rendered "No stage data available" and "Risk Tier: —" for every account-opening application — even those that had successfully run the full Foundry agent pipeline.
+
+**Root cause (option d — API field-name mismatch):** The persisted document stores agent outputs in `agentResults[]` (one entry per agent, with `riskTier` nested inside the compliance-check entry's `findings` dict). The admin UI in `AdminApplicationsTab.tsx` reads top-level `application.stages[]` (with `name/status/confidence/reasoning`) and `application.riskTier`. Neither field was ever projected on the API response, so completed pipelines looked broken.
+
+**Fix:** Added `app/services/projection.py` with `project_application()` that derives the four canonical pipeline stages (document-extraction → identity-verification → compliance-check → provisioning) from `agentResults`. Completed entries surface confidence/reasoning/timestamp plus a `details` summary string (KYC, Risk, Flags); missing entries fall back to `in_progress` (when the application status maps to that agent) or `pending`. `riskTier` is pulled from the compliance-check `findings.riskTier`. Wired into all four application-returning endpoints. Persistence schema unchanged.
+
+**Key files:**
+- `src/account-opening-service/app/services/projection.py` — new projection helper
+- `src/account-opening-service/app/routes/api.py` — call `project_application()` / `project_applications()` on the way out
+- `src/account-opening-service/tests/test_projection.py` — 6 unit tests
+
+**Pattern (reusable):** When the storage schema and the UI contract diverge, add a thin **outbound projection** in `app/services/` rather than mutating the model or the persisted documents. Keeps reads/writes symmetric and lets the UI evolve without a Cosmos migration.
+
+**Workflow gating note:** Many applications stuck at `submitted` are not a bug — Document Extraction triggers on the `document_uploaded` event, so applications where the user never uploaded ID/proof-of-address legitimately never advance. The new projection now surfaces this state as four `pending` stages instead of an empty placeholder.
+
+**Commit:** 4dc6762
+
+### 2026-05-13 — Foundry Eval 500 (Issue #126)
+
+**Issue:** `POST /api/admin/evaluate` in ai-service returned 500 with `AttributeError: type object 'Message' has no attribute 'system'`.
+
+**Root cause:** Code used `Message.system(...)` / `Message.user(...)` factory methods that the `agent_framework.Message` class does not expose. Verified live signature in pod: `Message(role: 'RoleLiteral | str', contents: 'Sequence[Content | str | Mapping[str, Any]] | None' = None, ...)`. Only public Message helpers are `from_dict`, `from_json`, `text`, `to_dict`, `to_json` — no role-named factories.
+
+**Bonus bug found while verifying:** The same `EvalItem(input=[...], output="")` call also used wrong kwargs. Live signature: `EvalItem(conversation: list[Message], tools=None, context=None, expected_output=None, ...)`. Without this fix the 500 would just turn into a different `TypeError`.
+
+**Fix (single hunk in `src/ai-service/app/routes/api.py`):**
+```python
+EvalItem(
+    conversation=[
+        Message("system", [request.system_prompt]),
+        Message("user", [prompt]),
+    ],
+)
+```
+Note `[request.system_prompt]` (list-wrapped) — `Message`'s `contents` is a `Sequence`, so passing a bare string causes Python to iterate it character-by-character and produce N `TextContent` parts.
+
+## Learnings
+
+- **`agent_framework.Message` API shape:** Construct positionally as `Message(role, contents)` where `role` is `"system"|"user"|"assistant"` (string literal) and `contents` is a **list** of strings / `Content` objects. Do NOT use `Message.system(...)` or `Message.user(...)` — those don't exist. Always wrap a single string in a list, otherwise iteration over the string produces one TextContent per character.
+- **`agent_framework._evaluation.EvalItem` API shape:** `EvalItem(conversation=[...messages...], expected_output=..., tools=..., context=...)`. Not `input=`/`output=`.
+- **Verification trick:** `kubectl exec deploy/<svc> -- python -c "import inspect; from X import Y; print(inspect.signature(Y.__init__))"` is the fastest way to nail down a prerelease SDK's true API when docs are stale.
+
+**Commit:** (see #126)
+
+---
+
+### 2026-05-13 — Wave 3 Closeout — Issue #126 Merged (Scribe Orchestration)
+
+**Status:** Wave 3 orchestration complete. Issue #126 (ai-service Message API drift) now documented in decisions.md and live-verified on onlinebankingdemo.bjdazure.tech.
+
+**Related:** Basher shipped concurrent fixes #123 (dashboard zeros) and #125 (accounts regression). Foundry raisvc 403 follow-up from #126 now tracked on Danny's infra plate.
+
+**Decision Drop:** Merged turk-126-message-api.md into decisions.md. Bonus learning: `EvalItem` kwarg drift (input → conversation) caught and fixed in same session.
+
+**Live Verification:** `/api/admin/evaluate` now passes request validation and reaches Foundry backend. 403 is infra-side (role assignment), not Python API usage.
+
+---
+
+### 2026-05-13 — Issues #125 & #130: Cosmos Casing Drift + Redis Counter Flicker
+
+**Branch:** squad/p2-wave-3  
+**Commits:** 243457f (#125), 8fc8c76 (#130)
+
+#### Issue #125: Cosmos Serializer-Casing Drift
+
+**Context:** Basher fixed account-service to OR both PascalCase and camelCase field names in Cosmos queries (`c.UserId OR c.userId`) after discovering Brian's accounts were invisible due to serializer drift. This was a hot-fix to restore read functionality.
+
+**Task:** Audit ALL .NET services for the same drift, pin serializers, document migration plan.
+
+**Audit findings:**
+- **transaction-service:** Used camelCase only (`c.accountId`, `c.userId`, `c.timestamp`) — silently missing PascalCase docs
+- **user-service:** Used PascalCase only (`c.Username`, `c.Email`, `c.Role`, `c.CreatedAt`) — also in bootstrap admin queries in Program.cs
+- **prompt-eval-service:** Used camelCase only (`c.userId`, `c.templateId`, `c.updatedAt`, `c.createdAt`)
+- **account-service:** Already fixed by Basher (OR pattern)
+- **transfer-service:** Only point-reads by `id` — no user-scoped queries, no fix needed
+
+**Fix pattern (applied to 3 services):**
+1. Repository queries: `WHERE c.UserId = @x OR c.userId = @x` (both casings)
+2. Iterator drain: Replace `.ReadNextAsync() → .FirstOrDefault()` with `while (iterator.HasMoreResults) { AddRange(...) }` to prevent silent truncation at ~100 docs
+3. Serializer pin: Add explicit `CosmosSystemTextJsonSerializer` with `PropertyNamingPolicy.CamelCase` to all `CosmosClient` registrations in `Program.cs`
+
+**Why camelCase?** Matches API surface (ASP.NET Core defaults to camelCase JSON), frontend expectations (React/TS convention), and the majority of recent docs.
+
+**Decision drops:**
+- `.squad/decisions/inbox/turk-125-cosmos-migration-plan.md` — One-shot migration plan for normalizing PascalCase docs to camelCase (Brian to execute)
+- `.squad/decisions/inbox/turk-cosmos-serializer-pin.md` — Convention going forward for all .NET services
+
+**Integration test issue:** Filed via `gh issue create` (title: "test(integration): assert API write → direct Cosmos query field casing match", labels: squad) — Livingston's domain. Would have caught both the original drift and the reader incompatibility.
+
+**Post-migration cleanup:** Once all docs are normalized, remove the OR-pattern and revert to single-casing queries for cleaner SQL and faster execution.
+
+#### Issue #130: aiCallsToday Counter Flicker
+
+**Root cause:** Counter lived in process memory (`self._ai_calls_today`) in `FoundryRiskAnalyzer`. With HPA min=2 replicas, each pod has its own count → dashboard value flickered between 17 and 68 depending on which pod responded.
+
+**Fix:** Moved counter to Redis:
+- Key pattern: `ai:metrics:calls:{YYYY-MM-DD}` (UTC date)
+- Increment: `INCR` on **SUCCESS path only** (NOT 429s, NOT 500s) — inside `FoundryRiskAnalyzer.analyze()`
+- TTL: 36 hours (covers UTC day boundary + buffer) — set via `EXPIRE` if `TTL` returns -1
+- Read: `GET` in dashboard endpoint via new `get_ai_calls_today_from_redis(redis_client)` helper
+- Old in-memory counter: Removed `_ai_calls_today`, `_ai_calls_date`, `_ai_calls_lock` from `FoundryRiskAnalyzer`
+- Signature change: `AnalyzerPipeline.assess()` now accepts optional `redis_client` kwarg, passes it to `FoundryRiskAnalyzer.analyze()`
+
+**Key files:**
+- `src/ai-service/app/services/anomaly_service.py` — counter logic moved to Redis
+- `src/ai-service/app/routes/api.py` — dashboard endpoint now calls `get_ai_calls_today_from_redis(state.redis_client)`
+
+**Verification (Brian will run):**
+- Dashboard refresh 10x → monotonically non-decreasing, no flicker
+- Cross-pod check: `kubectl exec` into each ai-service pod and hit `/api/admin/dashboard` directly — same value from each
+- TTL visible: `redis-cli TTL ai:metrics:calls:2026-05-13`
+- New key auto-creates at UTC midnight
+
+**Tests:** No tests asserted on the in-memory counter — nothing to update.
+
+## Learnings: Cosmos Serializer Drift
+
+**Cross-service audit methodology:**
+1. `grep -n "WHERE c\." **/*.cs` to find all Cosmos queries
+2. Identify field casings used (PascalCase vs camelCase)
+3. Apply OR-both-casings pattern to ALL queries (defensive)
+4. Drain iterators with `while (HasMoreResults)` — `.ReadNextAsync()` alone silently truncates at page size
+5. Pin `CosmosSystemTextJsonSerializer` with explicit `PropertyNamingPolicy` in **every** `CosmosClient` registration
+
+**Why OR-both-casings is temporary:** It's defensive but inefficient (Cosmos can't use indexes optimally when ORing field variants). The correct long-term fix is:
+1. Normalize storage (one-shot migration)
+2. Pin serializer to prevent future drift
+3. Revert queries to single-casing
+
+**Pattern for future .NET services:** ANY service that writes to Cosmos MUST pin the serializer at registration time. Default `CosmosClient()` behavior is non-deterministic (SDK version-dependent).
+
+## Learnings: Redis Daily Counter Pattern
+
+**Pattern:**
+```python
+today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+counter_key = f"ai:metrics:calls:{today}"
+await redis_client.incr(counter_key)
+
+# Set TTL to 36 hours on first increment
+ttl = await redis_client.ttl(counter_key)
+if ttl == -1:  # Key exists but has no TTL
+    await redis_client.expire(counter_key, 36 * 60 * 60)
+```
+
+**Why 36 hours?** Covers UTC day boundary + a buffer. Keys auto-expire after they're no longer relevant.
+
+**Why check TTL == -1?** `INCR` creates the key but doesn't set TTL. First caller sets the TTL; subsequent `INCR`s leave it alone. `-1` means "key exists but no TTL set" (vs `-2` = "key doesn't exist").
+
+**When to use:** Any per-day metric that needs to be **cross-replica consistent** (counters, rate limits, usage tracking). Don't use in-memory for metrics read from multiple pods.
+
+**Counter semantics:** Increment ONLY on success path. Don't count retries, 429s, or 500s — this keeps the counter meaningful (actual work done, not attempts).
+
+**Alternative (if you need per-hour):** Use key pattern `ai:metrics:calls:{YYYY-MM-DD}:{HH}` with 25-hour TTL (covers hour overlap).
+
+
+## Cross-Agent Update — 2026-05-13 SDK Pinning Convention (Basher)
+
+**Relevant to:** Python service dependency management (your domain)
+
+Basher's eval-403 RCA (issue #137) established a **new exception to the repo's standard dependency versioning**:
+
+### Convention: Preview-Channel SDKs Require Exact Pins
+
+- **Stable dependencies** (fastapi, pydantic, redis, etc.) continue using range constraints (`^`, `>=min,<next-major`)
+- **Preview-channel SDKs** (agent-framework-core, agent-framework-foundry, azure-ai-inference beta releases) require exact pins (e.g., `"1.2.2"`, not `"*"` or `">=1.0.0,<2.0.0"`)
+- **Reason:** Preview channels break semver between minor versions (1.2.2 → 1.3.0 breaking change caused eval-403). Wildcard/range pins allow arbitrary upgrades on every rebuild, introducing non-determinism.
+
+### Applied To
+- src/ai-service/pyproject.toml: agent-framework-core/foundry pinned to 1.2.2, azure-ai-inference pinned to 1.0.0b9
+- src/chatbot-service/pyproject.toml: same
+- src/account-opening-service/pyproject.toml: same
+
+### Remediation Going Forward
+- Add pre-commit lint rule to block agent-framework wildcard constraints
+- Enable Dependabot with explicit upgrade PRs for preview SDKs
+- Require eval smoke-test before merging any preview-SDK version bump
+
+### Watch Out For
+If you touch any Python service's pyproject.toml and encounter agent-framework or azure-ai-inference dependencies, treat them as preview-channel and use exact pins. Don't fall back to range constraints.
+
+### 2026-05-12 — Crash Fix: ORDER BY + Composite Index Requirement
+
+**Issue:** prompt-eval-service crashed on startup after #125 fix:
+```
+CosmosException: BadRequest (400)
+Reason: The order by query does not have a corresponding composite index
+Container: PromptTemplates
+```
+
+**Root Cause:** Commit 243457f introduced OR-both-casings queries (`c.userId = 'global' OR c.UserId = 'global'`) with ORDER BY clauses (`ORDER BY c.updatedAt DESC, c.CreatedAt DESC`). Cosmos DB requires a **composite index** to serve OR-pattern + ORDER BY queries efficiently.
+
+**Learning:** Combining OR-pattern defensive queries with ORDER BY forces a composite index requirement:
+- Composite indexes must be pre-defined in Terraform
+- Blocks deployment until Brian runs `terraform apply`
+- Couples code changes to infra changes (bad)
+- Only justified for high-traffic, large-result-set queries
+
+**Fix Applied (Option A):** Removed ORDER BY from Cosmos queries, sorted in-memory instead:
+- `CosmosEvaluationRunRepository.GetAllAsync()` → fetch all, then `.OrderByDescending(r => r.CreatedAt).ToList()`
+- `CosmosPromptTemplateRepository.GetAllAsync()` → fetch all, then `.OrderByDescending(t => t.UpdatedAt).ToList()`
+
+**Rationale:** These are **admin tables** (global templates, evaluation runs) with ~10-50 total docs max. In-memory sort is perfectly acceptable and avoids infra coupling.
+
+**Files Changed:**
+- `src/prompt-eval-service/Repositories/CosmosEvaluationRunRepository.cs`
+- `src/prompt-eval-service/Repositories/CosmosPromptTemplateRepository.cs`
+- `.squad/skills/cosmos-casing-audit/SKILL.md` — added "ORDER BY Pitfall" section
+
+**Verification:** `dotnet build` succeeded with 0 errors.
+
+**Decision:** `.squad/decisions/inbox/turk-orderby-composite-index.md`
+
+**Key Takeaway:** For small admin tables, prefer in-memory sort over composite indexes. Reserve composite indexes for user-scoped queries with 100s-1000s of docs per user.
+
+---
+
+### 2026-05-14T02:03:23Z: Cross-team notification — #137/#130 resolved
+
+**By:** Scribe (Orchestration)  
+**Topics:** FoundryAgent SDK contract, unified fix scope
+
+Issues #137 (eval failures) and #130 ("AI Calls Today" counter stuck at 0) are now CLOSED and verified in production. Root cause: FoundryAgent constructor signature drift in both account-opening-service and ai-service.
+
+**New contract:** When instantiating any `FoundryAgent(...)`, pass model via `default_options={"extra_body": {"model": "<deployment_name>"}}` — do NOT pass `model=` as a direct kwarg (SDK 1.2.2 rejects it).
+
+**Verification:** Both pods now succeed end-to-end. Prevention: runtime `TestFoundryAgentSignatureContract` tests added to both services.
+
+Your `turk-orderby-composite-index` decision has been merged into the decisions log as canonical reference. No follow-up work scoped.

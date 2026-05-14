@@ -1,6 +1,7 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import ApplicationForm from './ApplicationForm';
+import { AuthProvider } from '../../contexts/AuthContext';
 
 // Mock the account opening API module
 jest.mock('../../api/accountOpening', () => ({
@@ -26,11 +27,13 @@ const mockCreateApplication = createApplication as jest.MockedFunction<typeof cr
 
 const renderForm = (props = {}) => {
   return render(
-    <ApplicationForm
-      onSubmit={jest.fn()}
-      onApplicationCreated={jest.fn()}
-      {...props}
-    />
+    <AuthProvider>
+      <ApplicationForm
+        onSubmit={jest.fn()}
+        onApplicationCreated={jest.fn()}
+        {...props}
+      />
+    </AuthProvider>
   );
 };
 
@@ -294,10 +297,12 @@ describe('ApplicationForm', () => {
       mockCreateApplication.mockResolvedValueOnce({ id: 'app-1', status: 'submitted' as const, createdAt: '2026-05-01T10:00:00Z' });
 
       render(
-        <ApplicationForm
-          onSubmit={jest.fn()}
-          onApplicationCreated={onApplicationCreated}
-        />
+        <AuthProvider>
+          <ApplicationForm
+            onSubmit={jest.fn()}
+            onApplicationCreated={onApplicationCreated}
+          />
+        </AuthProvider>
       );
 
       await navigateToReview();
@@ -320,10 +325,12 @@ describe('ApplicationForm', () => {
       mockCreateApplication.mockResolvedValueOnce({ id: 'app-1', status: 'submitted' as const, createdAt: '2026-05-01T10:00:00Z' });
 
       render(
-        <ApplicationForm
-          onSubmit={jest.fn()}
-          onApplicationCreated={onApplicationCreated}
-        />
+        <AuthProvider>
+          <ApplicationForm
+            onSubmit={jest.fn()}
+            onApplicationCreated={onApplicationCreated}
+          />
+        </AuthProvider>
       );
 
       await navigateToReview();
@@ -342,10 +349,12 @@ describe('ApplicationForm', () => {
       });
 
       render(
-        <ApplicationForm
-          onSubmit={jest.fn()}
-          onApplicationCreated={jest.fn()}
-        />
+        <AuthProvider>
+          <ApplicationForm
+            onSubmit={jest.fn()}
+            onApplicationCreated={jest.fn()}
+          />
+        </AuthProvider>
       );
 
       await navigateToReview();

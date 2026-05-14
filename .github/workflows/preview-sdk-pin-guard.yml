@@ -1,0 +1,48 @@
+name: Preview SDK Pin Guard
+
+# Fails CI if any preview-channel Azure AI SDK in src/*/pyproject.toml is
+# unpinned (wildcard "*" or open-ended range). Preview SDKs MUST be exact-pinned
+# per .squad/decisions/inbox/basher-137-preview-sdk-pinning.md.
+#
+# Background: Issue #137 — agent-framework-core "*" silently resolved to a
+# breaking 1.3.0 release on container rebuild and broke the eval pipeline (403
+# from raisvc). Last-known-good is 1.2.2. This guard prevents recurrence.
+
+on:
+  pull_request:
+    paths:
+      - 'src/**/pyproject.toml'
+      - '.github/workflows/preview-sdk-pin-guard.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/**/pyproject.toml'
+
+permissions:
+  contents: read
+
+jobs:
+  pin-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify agent-framework preview SDKs are exact-pinned
+        run: |
+          set -e
+          # agent-framework-* packages MUST be exact-pinned (e.g. "1.2.2").
+          # This guard fails on wildcard ("*") or open-ended ranges (^, ~, >=).
+          # Bare exact versions like "1.2.2" are allowed.
+          BAD=$(grep -nHE '^agent-framework[a-z-]*[[:space:]]*=[[:space:]]*"(\*|[\^~>].*|>=.*)"' src/*/pyproject.toml || true)
+
+          if [ -n "$BAD" ]; then
+            echo "::error::agent-framework-* preview SDKs must be exact-pinned (e.g. \"1.2.2\", not \"*\" or \">=1.2.0\")."
+            echo "Offending lines:"
+            echo "$BAD"
+            echo ""
+            echo "See .squad/decisions/inbox/basher-137-preview-sdk-pinning.md and"
+            echo ".squad/skills/preview-sdk-pinning/SKILL.md for the pinning rule."
+            exit 1
+          fi
+
+          echo "✅ All agent-framework-* dependencies are exact-pinned."
