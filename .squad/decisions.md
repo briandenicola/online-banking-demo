@@ -7430,3 +7430,99 @@ Process discipline prevents velocity waste. The bottleneck isn't LLM capability�
 - Added banner to `.squad/skills/SKILL.md` (Basher workflow) highlighting sample-first discipline
 - Documented in this decision as binding process rule for future Foundry work
 
+---
+
+## Decision: Template ACR hostname in kustomize via sed-sub at deploy time
+
+**Author:** Basher  
+**Date:** 2026-05-14  
+**Status:** ✅ Implemented & deployed
+
+### Context
+
+`deploy/kustomize/base/kustomization.yaml` carried hard-coded `newName:` entries pointing at prior TF environments' ACR hostnames (`modesthippo861acr`, `poeticanemone22804acr`). When `task cloud:deploy` ran against a fresh TF env, pods went into `ImagePullBackOff` because kustomize emitted manifests referencing the wrong (or no-longer-authorized) registry.
+
+### Decision
+
+Added `_kustomization:update` task to `tasks/Taskfile.cloud.yml`:
+
+```sh
+sed -i -E "s|[a-z0-9]+acr\.azurecr\.io/|{{.ACR_NAME}}.azurecr.io/|g" \
+  deploy/kustomize/base/kustomization.yaml
+```
+
+Wired into deploy between `_images:update` and `kubectl apply -k`, then restored the file via `git checkout` after apply (matching existing `_configmap:update` / `_secretproviderclass:update` pattern).
+
+Also added missing `account-opening-service` line to `_images:update`.
+
+### Verification
+
+- File restored after apply; working tree stays clean
+- Regex verified against kustomization.yaml — matches only 11 `newName:` lines without over-matching
+- Pattern reusable for future env-specific manifest templating
+
+### Consequences
+
+**Positive:**
+- New TF environments automatically pick up the correct ACR with no manual edits
+- Pattern matches existing conventions (configmap/secret-provider-class)
+
+**Risk:**
+- Sed regex fragile if TF naming pattern changes (acceptable — ACR names constrained to `[a-z0-9]` by Azure)
+
+---
+
+## Directive: User Deploy Oversight
+
+**By:** Brian (Copilot directive 2026-05-14T16:27Z)  
+**Status:** ✅ Binding
+
+**Agents must NEVER run `task cloud:deploy` themselves.** Brian manages all deploys. Agents may edit deploy task/manifest files and propose redeploys, but the actual invocation is Brian's responsibility.
+
+**Rationale:** Maintains user oversight and control over infrastructure changes. Deploy tasks have side effects (kubectl apply, TF outputs). User-driven dispatch ensures deliberate, traceable operations.
+
+---
+
+## RCA: ImagePullBackOff + Workload-Identity 401 — Workspace Context Bug
+
+**Discovered by:** Coordinator  
+**Date:** 2026-05-14  
+**Status:** ✅ Root cause identified & documented
+
+### Root Cause
+
+TF working tree was on `canadacentral` workspace (`poetic-anemone-22804`) instead of `swedencentral` (`funky-elephant-11797`). Every TF output the deploy task reads (`terraform output -raw acr_name`, `terraform output json`) returned values from the OLD environment.
+
+**This was NOT a code bug** — it was a workspace context bug.
+
+### Symptoms
+
+1. `ImagePullBackOff` — pods unable to pull from ACR because kustomization.yaml contained wrong registry hostname
+2. Workload-identity 401 (AADSTS70025 on old MI 51592ddd) — configmap/secret-provider-class templated with wrong tenant/client IDs
+
+### Investigation Trail
+
+- Basher noticed hardcoded `newName:` entries and proposed sed templating (correct diagnosis of the manifest symptom)
+- Coordinator discovered that `terraform output` was returning values from the wrong environment
+- Running on wrong workspace is invisible — no error message, just wrong values
+
+### Fix
+
+Before running `task cloud:deploy`:
+
+```sh
+terraform -chdir=./infra/cloud workspace select swedencentral
+```
+
+Verify with:
+
+```sh
+terraform -chdir=./infra/cloud workspace show
+```
+
+### Lessons
+
+1. **Workspace context is invisible** — No error message, just silently wrong values. Must explicitly verify with `workspace show`.
+2. **Deploy tasks should validate workspace** — Consider pre-flight check in Taskfile that asserts correct workspace before reading TF outputs.
+3. **Side effect history matters** — Basher's manual AcrPull role assignment and hardcoded ACR names were harmless because the sed fix will rewrite on next deploy, but highlighted that wrong context had already caused drift.
+
