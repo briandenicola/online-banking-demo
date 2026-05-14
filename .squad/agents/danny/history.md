@@ -1049,3 +1049,43 @@ Basher identified 4 critical corrections to the multi-phase Foundry private netw
 - All BYO PEs for AKS pod → PaaS access remain unchanged
 
 **Issue:** #141 — 3-phase migration plan (Phase A: enable managed VNet + outbound rules; Phase B: update capabilityHost deps + remove agents subnet; Phase C: cleanup)
+
+### 2026-05-XX — Account Opening State Machine + Customer Status (Issues #135 & #136)
+
+**Context:** Brian requested coordinated implementation plan for two related issues:
+- #135: Persist workflow stages with recoverable failed state and resubmit capability
+- #136: Customer-facing progress screen with AI-generated explanations
+
+**Key Architectural Decisions:**
+
+1. **Schema Location — Extend existing document (NOT new container)**
+   - Applied `cosmos-workflow-state` skill guidance: splitting workflow state into separate container causes cross-container reads, double-writes, and serialization drift
+   - Added `lastError`, `stageAttempts`, `failedStage`, `customerOutcome`, `customerExplanation` to existing `ApplicationResponse`
+   - Partition key unchanged: `/id` (application is its own partition)
+
+2. **Idempotency Key Shape: `{applicationId}:{stage}:{attempt}`**
+   - Three-layer dedup: Redis SET (24h TTL), Cosmos agentResults upsert-by-key, Foundry session ID prefix
+   - Resubmit increments attempt BEFORE publishing — ensures fresh key for manual retry, drops accidental redelivery
+
+3. **Failure Path Centralized in AgentConsumer Base Class**
+   - Each consumer declares `STAGE_NAME` and optionally overrides `_classify(exc)`
+   - Base class handles: idempotency check → process → mark processed → on exception: persist lastError → ACK message
+   - ACK on failure is intentional — don't redeliver; let `/resubmit` drive retry
+
+4. **Customer Explanation Generation — One-shot at Finalization**
+   - Generated in `ProvisioningConsumer` when workflow reaches terminal state
+   - Stored on document (`customerExplanation`, `customerExplanationGeneratedAt`)
+   - NOT regenerated on each view — UI reads stored text
+   - Prompt template in codebase (workflow-specific), not Cosmos prompt-templates container
+
+5. **Polling over SSE for Customer Status**
+   - 2-second intervals, stop on terminal status
+   - SSE adds complexity without proportional benefit for 10-30 second workflows
+   - ~30 RU per workflow (2 RU × 15 polls) is acceptable
+
+**Plan Deliverable:** `.squad/decisions/inbox/danny-135-136-plan.md` (awaiting Brian's sign-off before implementation)
+
+**Open Questions for Brian:**
+- Retry limit: unlimited OK, or cap at N attempts?
+- Customer explanation prompt template: review before deploy?
+- Failed state admin visibility: separate tab or mixed with pending_review?
