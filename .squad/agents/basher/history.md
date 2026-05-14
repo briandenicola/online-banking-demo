@@ -2042,3 +2042,127 @@ This ensures:
 3. Test eval endpoint — if evals now succeed, confirms 1.3.0 fix
 4. If still fails, update Rung 11 with correlation_id from new logs
 
+---
+
+### 2026-05-14 — Account Opening Error Handling and Customer Explanations (#135 + #136)
+
+**Context:** Implemented backend state machine improvements for account opening workflow recovery and customer communication.
+
+**What was implemented:**
+
+1. **Error Handling (#135):**
+   - Extended `ApplicationResponse` model with error tracking fields: `lastError`, `stageAttempts`, `failedStage`
+   - Added `failed` status to `ApplicationStatus` enum — recoverable terminal state
+   - Created `LastError` model with classification (code, message, retryable, attempt)
+   - Repository methods: `record_stage_failure`, `clear_stage_failure_for_retry`
+   - Consumer base class now includes:
+     - Idempotency via Redis SET: `{applicationId}:{stage}:{attempt}` with 24h TTL
+     - Error classification logic mapping exceptions → error codes (timeout, auth_error, validation_error, etc.)
+     - Automatic failure recording + ACK (no redelivery — manual retry only)
+   - All agent consumers updated with `STAGE_NAME` class attribute
+   - State machine allows `failed → stage` transitions for resubmit
+   - New endpoint: `POST /applications/{id}/resubmit` with retry cap enforcement (max 2 attempts per stage)
+
+2. **Customer Explanations (#136):**
+   - Added customer-facing fields: `customerOutcome`, `customerExplanation`, `customerExplanationGeneratedAt`
+   - Repository method: `set_customer_explanation`
+   - Provisioning agent generates friendly 2-3 sentence explanations using Foundry
+   - One-shot generation at terminal state (approved/declined/needs_review)
+   - Non-blocking — failure doesn't fail provisioning
+
+**Key Patterns:**
+
+1. **Idempotency Key Shape:** `{applicationId}:{stage}:{attempt}`
+   - Stored in Redis SET with 24h TTL
+   - Checked before processing each event
+   - Prevents duplicate Foundry/Cosmos calls on redelivery
+
+2. **Error Classification:** Base class `_classify_error()` maps exceptions to structured errors with retryability
+   - Timeout/connection → retryable
+   - Auth/validation → non-retryable
+   - Default: unknown_error, retryable=true
+
+3. **Retry Cap Enforcement:** Max 2 attempts per stage (initial + 1 manual resubmit)
+   - Enforced in `/resubmit` endpoint
+   - Returns 409 Conflict with `{error: "retry_cap_exceeded", message: "..."}` when exceeded
+
+4. **Resubmit Flow:**
+   - Clears `lastError`, sets status back to stage
+   - Re-publishes upstream event (e.g., `document_uploaded` for `document_extraction`)
+   - Worker processes as new attempt with incremented idempotency key
+
+**Testing:**
+- Build verification: ✅ All Python files compile without errors
+- Integration tests: Deferred to Livingston (e2e test suite)
+
+**Coordination:**
+- Linus working on customer UI screen — GET endpoint auto-serializes new fields
+- Livingston writing e2e tests — resubmit endpoint contract documented
+- All backend changes are backward-compatible (new fields optional)
+
+**Commit:** 345aa72 on branch `squad/135-136-account-opening-state-machine`
+
+**Decision summary:** `.squad/decisions/inbox/basher-135-136-implementation.md`
+
+
+---
+
+### 2026-05-14 — Account Opening Error Handling and Customer Explanations (#135 + #136)
+
+**Context:** Implemented backend state machine improvements for account opening workflow recovery and customer communication.
+
+**What was implemented:**
+
+1. **Error Handling (#135):**
+   - Extended `ApplicationResponse` model with error tracking fields: `lastError`, `stageAttempts`, `failedStage`
+   - Added `failed` status to `ApplicationStatus` enum — recoverable terminal state
+   - Created `LastError` model with classification (code, message, retryable, attempt)
+   - Repository methods: `record_stage_failure`, `clear_stage_failure_for_retry`
+   - Consumer base class now includes:
+     - Idempotency via Redis SET: `{applicationId}:{stage}:{attempt}` with 24h TTL
+     - Error classification logic mapping exceptions → error codes (timeout, auth_error, validation_error, etc.)
+     - Automatic failure recording + ACK (no redelivery — manual retry only)
+   - All agent consumers updated with `STAGE_NAME` class attribute
+   - State machine allows `failed → stage` transitions for resubmit
+   - New endpoint: `POST /applications/{id}/resubmit` with retry cap enforcement (max 2 attempts per stage)
+
+2. **Customer Explanations (#136):**
+   - Added customer-facing fields: `customerOutcome`, `customerExplanation`, `customerExplanationGeneratedAt`
+   - Repository method: `set_customer_explanation`
+   - Provisioning agent generates friendly 2-3 sentence explanations using Foundry
+   - One-shot generation at terminal state (approved/declined/needs_review)
+   - Non-blocking — failure doesn't fail provisioning
+
+**Key Patterns:**
+
+1. **Idempotency Key Shape:** `{applicationId}:{stage}:{attempt}`
+   - Stored in Redis SET with 24h TTL
+   - Checked before processing each event
+   - Prevents duplicate Foundry/Cosmos calls on redelivery
+
+2. **Error Classification:** Base class `_classify_error()` maps exceptions to structured errors with retryability
+   - Timeout/connection → retryable
+   - Auth/validation → non-retryable
+   - Default: unknown_error, retryable=true
+
+3. **Retry Cap Enforcement:** Max 2 attempts per stage (initial + 1 manual resubmit)
+   - Enforced in `/resubmit` endpoint
+   - Returns 409 Conflict with `{error: "retry_cap_exceeded", message: "..."}` when exceeded
+
+4. **Resubmit Flow:**
+   - Clears `lastError`, sets status back to stage
+   - Re-publishes upstream event (e.g., `document_uploaded` for `document_extraction`)
+   - Worker processes as new attempt with incremented idempotency key
+
+**Testing:**
+- Build verification: ✅ All Python files compile without errors
+- Integration tests: Deferred to Livingston (e2e test suite)
+
+**Coordination:**
+- Linus working on customer UI screen — GET endpoint auto-serializes new fields
+- Livingston writing e2e tests — resubmit endpoint contract documented
+- All backend changes are backward-compatible (new fields optional)
+
+**Commit:** 345aa72 on branch `squad/135-136-account-opening-state-machine`
+
+**Decision summary:** `.squad/decisions/inbox/basher-135-136-implementation.md`
