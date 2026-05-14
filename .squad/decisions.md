@@ -7354,3 +7354,79 @@ This approach:
 ### Follow-up
 
 Document this pattern in `.squad/skills/azure-foundry-managed-vnet/SKILL.md` for future infrastructure work.
+
+---
+
+## Decision: Foundry BYO Connection Schema Corrections
+
+**Status:** ✅ Accepted  
+**Date:** 2026-05-14  
+**Supersedes:** "Foundry Managed VNet Connection Schema Fix" 
+
+### Context
+
+HTTP 400 errors on BYO storage/cosmos connection creation under Managed VNet. Initial hypothesis (remove connection resources, rely on auto-creation) was incorrect.
+
+### Decision
+
+Connection resources ARE required at project level, but with correct schema per microsoft-foundry/foundry-samples:
+
+1. **Storage connection:**
+   - category: `AzureStorageAccount` (not `AzureStorage`)
+   - target: `primary_blob_endpoint`
+   - authType: `AAD`
+   - metadata: include `location`
+   - Remove: `useWorkspaceManagedIdentity` (invalid property)
+
+2. **Cosmos connection:**
+   - category: `CosmosDb` (not `AzureCosmosDB`)
+   - target: `endpoint`
+   - authType: `AAD`
+   - metadata: include `location`
+   - Remove: `useWorkspaceManagedIdentity` (invalid property)
+
+3. **AI Search connection:**
+   - category: `CognitiveSearch`
+   - target: `https://{name}.search.windows.net` (not resource ID)
+   - authType: `AAD`
+   - metadata: include `location`
+   - Remove: `useWorkspaceManagedIdentity` (invalid property)
+
+### Consequences
+
+- Aligns with Microsoft's official reference implementation
+- Eliminates deserialization errors from incorrect category values
+- Removes invalid property that caused schema validation issues
+
+### References
+
+- microsoft-foundry/foundry-samples: `infrastructure-setup-terraform/18-managed-virtual-network/ai-foundry.tf`
+- Azure API: `Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview`
+
+---
+
+## Directive: Sample-First Rule for Coordinator (Process Improvement)
+
+**Status:** ✅ Codified  
+**Date:** 2026-05-14  
+**Context:** Foundry TF debugging session (issues #138/#141) burned ~35 min across 3 Basher rounds due to pattern-matching from broken TF instead of consulting official Microsoft samples first.
+
+### Directive
+
+Before delegating any infrastructure TF task for a Microsoft service:
+
+1. **Confirm sample availability:** Check if an official Microsoft sample exists. If yes, include the raw GitHub URL in delegation prompt as MANDATORY input.
+2. **Fetch before proposing changes:** If recommending structural rewrites, fetch and quote exact sample lines that justify the change. Do NOT propose deletions based on half-read samples.
+3. **Limit iteration:** If Basher fails twice on the same TF surface, STOP spawning more rounds. Pull the sample directly, perform surgical edits in coordinator context, and ship.
+4. **Abandon background agents:** Agents that cannot be terminated (e.g., background R2) MUST be considered abandoned immediately upon strategy change. Never trust later commits without diff review.
+
+### Rationale
+
+Process discipline prevents velocity waste. The bottleneck isn't LLM capability—it's coordination discipline. Grounding decisions in authoritative source-of-truth (official samples) eliminates speculative iteration.
+
+### Implementation
+
+- Updated `.squad/agents/basher/charter.md` with sample-first requirement
+- Added banner to `.squad/skills/SKILL.md` (Basher workflow) highlighting sample-first discipline
+- Documented in this decision as binding process rule for future Foundry work
+
