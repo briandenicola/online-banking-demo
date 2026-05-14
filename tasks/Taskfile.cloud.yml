@@ -76,14 +76,20 @@ tasks:
       - rm -rf node_modules dist
 
   deploy:
-    desc: Deploy application to Kubernetes cluster (updates image refs then applies)
+    desc: Deploy application to Kubernetes cluster (env values streamed in from terraform state — manifests on disk never mutated)
     cmds:
-      - task: _images:update
       - kubectl apply -k deploy/kustomize/observability/
-      - kubectl apply -k deploy/kustomize/base/
-      - task: _images:revert
-      - task: _configmap:update
-      - task: _secretproviderclass:update
+      - task: _images:apply
+      - task: _configmap:apply
+      - task: _secretproviderclass:apply
+      - kubectl apply -f cluster-config/istio/gateway/istio-ingress-gateway.yaml
+      - kubectl apply -f cluster-config/istio/gateway/default-ingress.yaml
+      - task: tls:enable
+      # Force pods to re-pull :latest images. kustomize pins :latest, so when no
+      # manifest field changes, `kubectl apply` is a no-op and pods keep running
+      # the previously-pulled digest even though imagePullPolicy=Always — that
+      # policy only fires on pod creation. Rollout restart guarantees fresh pulls.
+      - kubectl rollout restart deployment -n {{.NAMESPACE}}
       - kubectl apply -f cluster-config/istio/gateway/istio-ingress-gateway.yaml
       - kubectl apply -f cluster-config/istio/gateway/default-ingress.yaml
       - task: tls:enable
@@ -285,37 +291,27 @@ tasks:
       AZURE_CLIENT_ID:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw banking_services_client_id
 
-  _images:update:
+  _images:apply:
     internal: true
-    desc: Substitute ACR + tag placeholders in kustomization.yaml (template stays clean — restored after apply via _images:revert)
+    desc: Stream-substitute ACR + tag into kustomize build output and apply (manifest on disk is never mutated)
     cmds:
       - |
-        if ! grep -q "REPLACE_WITH_ACR_LOGIN_SERVER" deploy/kustomize/base/kustomization.yaml || ! grep -q "REPLACE_WITH_TAG" deploy/kustomize/base/kustomization.yaml; then
-          echo "❌ kustomization.yaml is not in template form (missing REPLACE_WITH_ACR_LOGIN_SERVER or REPLACE_WITH_TAG placeholders)."
-          echo "   This usually means a prior deploy's substituted values got committed."
-          echo "   Restore with: git checkout deploy/kustomize/base/kustomization.yaml (if HEAD is clean)"
-          echo "   or manually re-template the file before retrying."
-          exit 1
-        fi
-      - sed -i "s|REPLACE_WITH_ACR_LOGIN_SERVER|{{.ACR_LOGIN_SERVER}}|g" deploy/kustomize/base/kustomization.yaml
-      - sed -i "s|REPLACE_WITH_TAG|{{.TAG}}|g" deploy/kustomize/base/kustomization.yaml
+        kustomize build deploy/kustomize/base \
+          | sed -e "s|REPLACE_WITH_ACR_LOGIN_SERVER|{{.ACR_LOGIN_SERVER}}|g" \
+                -e "s|REPLACE_WITH_TAG|{{.TAG}}|g" \
+          | kubectl apply -f -
 
-  _images:revert:
+  _configmap:apply:
     internal: true
-    desc: Restore kustomization.yaml template placeholders so committed file stays cluster-agnostic
+    desc: Stream-substitute env values into configmap and apply (manifest on disk is never mutated)
     cmds:
-      - git checkout deploy/kustomize/base/kustomization.yaml
-
-  _configmap:update:
-    internal: true
-    desc: Substitute Cosmos endpoint and storage account in configmap, apply, then restore
-    cmds:
-      - sed -i "s|REPLACE_WITH_COSMOS_ENDPOINT|{{.COSMOS_ENDPOINT}}|g" deploy/kustomize/base/configmap.yaml
-      - sed -i "s|REPLACE_WITH_STORAGE_ACCOUNT|{{.STORAGE_ACCOUNT}}|g" deploy/kustomize/base/configmap.yaml
-      - sed -i "s|REPLACE_WITH_AZURE_CLIENT_ID|{{.AZURE_CLIENT_ID}}|g" deploy/kustomize/base/configmap.yaml
-      - sed -i "s|REPLACE_WITH_TENANT_ID|{{.TENANT_ID}}|g" deploy/kustomize/base/configmap.yaml
-      - kubectl apply -f deploy/kustomize/base/configmap.yaml -n {{.NAMESPACE}}
-      - git checkout deploy/kustomize/base/configmap.yaml
+      - |
+        sed -e "s|REPLACE_WITH_COSMOS_ENDPOINT|{{.COSMOS_ENDPOINT}}|g" \
+            -e "s|REPLACE_WITH_STORAGE_ACCOUNT|{{.STORAGE_ACCOUNT}}|g" \
+            -e "s|REPLACE_WITH_AZURE_CLIENT_ID|{{.AZURE_CLIENT_ID}}|g" \
+            -e "s|REPLACE_WITH_TENANT_ID|{{.TENANT_ID}}|g" \
+            deploy/kustomize/base/configmap.yaml \
+          | kubectl apply -n {{.NAMESPACE}} -f -
     vars:
       COSMOS_ENDPOINT:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw cosmos_db_endpoint
@@ -326,15 +322,16 @@ tasks:
       TENANT_ID:
         sh: az account show --query tenantId -o tsv
 
-  _secretproviderclass:update:
+  _secretproviderclass:apply:
     internal: true
-    desc: Substitute KV/identity values in SecretProviderClass, apply, then restore
+    desc: Stream-substitute KV/identity values into SecretProviderClass and apply (manifest on disk is never mutated)
     cmds:
-      - sed -i "s|REPLACE_WITH_KEYVAULT_NAME|{{.KEYVAULT_NAME}}|g" deploy/kustomize/base/secret-provider-class.yaml
-      - sed -i "s|REPLACE_WITH_TENANT_ID|{{.TENANT_ID}}|g" deploy/kustomize/base/secret-provider-class.yaml
-      - sed -i "s|REPLACE_WITH_AZURE_CLIENT_ID|{{.AZURE_CLIENT_ID}}|g" deploy/kustomize/base/secret-provider-class.yaml
-      - kubectl apply -f deploy/kustomize/base/secret-provider-class.yaml -n {{.NAMESPACE}}
-      - git checkout deploy/kustomize/base/secret-provider-class.yaml
+      - |
+        sed -e "s|REPLACE_WITH_KEYVAULT_NAME|{{.KEYVAULT_NAME}}|g" \
+            -e "s|REPLACE_WITH_TENANT_ID|{{.TENANT_ID}}|g" \
+            -e "s|REPLACE_WITH_AZURE_CLIENT_ID|{{.AZURE_CLIENT_ID}}|g" \
+            deploy/kustomize/base/secret-provider-class.yaml \
+          | kubectl apply -n {{.NAMESPACE}} -f -
     vars:
       KEYVAULT_NAME:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw key_vault_name
