@@ -6,9 +6,9 @@ env:
 
 vars:
   ACR_NAME:
-    sh: terraform -chdir=./{{.INFRA_DIR}} output -raw acr_name
+    sh: terraform -chdir=./{{.INFRA_DIR}} output -raw acr_name || true
   ACR_LOGIN_SERVER:
-    sh: terraform -chdir=./{{.INFRA_DIR}} output -raw acr_login_server
+    sh: terraform -chdir=./{{.INFRA_DIR}} output -raw acr_login_server || true
   TAG: '{{default "latest" .CLI_ARGS}}'
   NAMESPACE: banking-demo
 

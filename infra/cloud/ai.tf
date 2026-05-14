@@ -3,7 +3,7 @@
 #############################################
 
 resource "azapi_resource" "this" {
-  type                      = "Microsoft.CognitiveServices/accounts@2025-04-01-preview"
+  type                      = "Microsoft.CognitiveServices/accounts@2025-10-01-preview"
   name                      = local.openai_name
   parent_id                 = azurerm_resource_group.this.id
   location                  = azurerm_resource_group.this.location
@@ -20,11 +20,34 @@ resource "azapi_resource" "this" {
     properties = {
       disableLocalAuth       = true
       allowProjectManagement = true
+      apiProperties          = {}
       customSubDomainName    = local.openai_name
       publicNetworkAccess    = "Disabled"
-      userOwnedStorageAccounts = [
+      networkAcls = {
+        defaultAction       = "Deny"
+        virtualNetworkRules = []
+        ipRules             = []
+      }
+      networkInjections = [
         {
-          id = azurerm_storage_account.main.id
+          scenario                   = "agent"
+          subnetArmId                = ""
+          useMicrosoftManagedNetwork = true
+        }
+      ]
+      userOwnedStorage = [
+        {
+          resourceId = azurerm_storage_account.main.id
+        }
+      ]
+      userOwnedCosmosDB = [
+        {
+          resourceId = azurerm_cosmosdb_account.main.id
+        }
+      ]
+      userOwnedSearch = [
+        {
+          resourceId = azapi_resource.ai_search.id
         }
       ]
     }
@@ -36,21 +59,15 @@ resource "azapi_resource" "this" {
   ]
 }
 
-data "azurerm_cognitive_account" "openai" {
-  depends_on          = [azapi_resource.this]
-  name                = local.openai_name
-  resource_group_name = azurerm_resource_group.this.name
-}
-
 # Grant the deployer (current user) OpenAI access
 resource "azurerm_role_assignment" "current_user_cognitive_services_openai_user" {
-  scope                = data.azurerm_cognitive_account.openai.id
+  scope                = azapi_resource.this.id
   role_definition_name = "Cognitive Services OpenAI User"
   principal_id         = data.azurerm_client_config.current.object_id
 }
 
 resource "azapi_resource" "content_understanding" {
-  type                      = "Microsoft.CognitiveServices/accounts@2025-04-01-preview"
+  type                      = "Microsoft.CognitiveServices/accounts@2025-10-01-preview"
   name                      = local.cus_name
   parent_id                 = azurerm_resource_group.this.id
   location                  = "westus"
@@ -90,9 +107,9 @@ data "azurerm_cognitive_account" "content_understanding" {
 }
 
 resource "azapi_resource" "gpt54_mini" {
-  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview"
+  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-10-01-preview"
   name      = "gpt-5.4-mini"
-  parent_id = data.azurerm_cognitive_account.openai.id
+  parent_id = azapi_resource.this.id
 
   depends_on = [azapi_resource.this]
 
@@ -113,9 +130,9 @@ resource "azapi_resource" "gpt54_mini" {
 
 resource "azapi_resource" "text_embedding" {
   count     = var.deploy_embedding_model ? 1 : 0
-  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview"
+  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-10-01-preview"
   name      = "text-embedding-ada-002"
-  parent_id = data.azurerm_cognitive_account.openai.id
+  parent_id = azapi_resource.this.id
 
   depends_on = [azapi_resource.gpt54_mini]
 
@@ -135,7 +152,7 @@ resource "azapi_resource" "text_embedding" {
 }
 
 resource "azapi_resource" "cus_gpt41" {
-  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview"
+  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-10-01-preview"
   name      = "gpt-4.1"
   parent_id = data.azurerm_cognitive_account.content_understanding.id
 
@@ -157,7 +174,7 @@ resource "azapi_resource" "cus_gpt41" {
 }
 
 resource "azapi_resource" "cus_text_embedding_3_large" {
-  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview"
+  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-10-01-preview"
   name      = "text-embedding-3-large"
   parent_id = data.azurerm_cognitive_account.content_understanding.id
 
@@ -179,9 +196,9 @@ resource "azapi_resource" "cus_text_embedding_3_large" {
 }
 
 resource "azapi_resource" "ai_foundry_project" {
-  type                      = "Microsoft.CognitiveServices/accounts/projects@2025-04-01-preview"
+  type                      = "Microsoft.CognitiveServices/accounts/projects@2025-10-01-preview"
   name                      = local.project_name
-  parent_id                 = data.azurerm_cognitive_account.openai.id
+  parent_id                 = azapi_resource.this.id
   location                  = azurerm_resource_group.this.location
   schema_validation_enabled = false
 

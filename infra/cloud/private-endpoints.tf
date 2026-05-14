@@ -77,6 +77,17 @@ resource "azurerm_private_endpoint" "keyvault" {
   tags = {
     AppName = local.resource_name
   }
+
+  # Create the PE only after every secret has been written over the public
+  # endpoint. Once the PE exists, runtime workloads use the private path while
+  # the public surface remains gated by network_acls (see keyvault.tf).
+  depends_on = [
+    azurerm_key_vault_secret.jwt_key,
+    azurerm_key_vault_secret.openai_endpoint,
+    azurerm_key_vault_secret.content_understanding_endpoint,
+    azurerm_key_vault_secret.redis_connection_string,
+    azurerm_key_vault_secret.appinsights_connection_string,
+  ]
 }
 
 # 2. Cosmos DB
@@ -166,7 +177,7 @@ resource "azurerm_private_endpoint" "ai" {
 
   private_service_connection {
     name                           = "${local.resource_name}-ai-psc"
-    private_connection_resource_id = data.azurerm_cognitive_account.openai.id
+    private_connection_resource_id = azapi_resource.this.id
     subresource_names              = ["account"]
     is_manual_connection           = false
   }

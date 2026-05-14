@@ -35,7 +35,7 @@ resource "azapi_resource" "redis_access_policy_assignment" {
 
 # RBAC: Cognitive Services OpenAI User
 resource "azurerm_role_assignment" "banking_cognitive_services_openai_user" {
-  scope                = data.azurerm_cognitive_account.openai.id
+  scope                = azapi_resource.this.id
   role_definition_name = "Cognitive Services OpenAI User"
   principal_id         = azurerm_user_assigned_identity.banking_services.principal_id
 }
@@ -100,4 +100,117 @@ resource "azurerm_role_assignment" "current_user_search_index_data_contributor" 
   scope                = azapi_resource.ai_search.id
   role_definition_name = "Search Index Data Contributor"
   principal_id         = data.azurerm_client_config.current.object_id
+}
+
+#############################################
+# FOUNDRY MSI — Grant Foundry account MSI data-plane access to BYO resources
+#############################################
+
+# RBAC: Storage Blob Data Contributor (Foundry → Storage)
+resource "azurerm_role_assignment" "foundry_storage_blob_data_contributor" {
+  scope                = azurerm_storage_account.main.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azapi_resource.this.output.identity.principalId
+}
+
+# RBAC: Cosmos DB Built-in Data Contributor (Foundry → Cosmos)
+resource "azurerm_cosmosdb_sql_role_assignment" "foundry_cosmos_contributor" {
+  resource_group_name = azurerm_resource_group.this.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  role_definition_id  = "${azurerm_cosmosdb_account.main.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
+  principal_id        = azapi_resource.this.output.identity.principalId
+  scope               = azurerm_cosmosdb_account.main.id
+}
+
+# RBAC: Search Index Data Contributor (Foundry → Search)
+resource "azurerm_role_assignment" "foundry_search_index_data_contributor" {
+  scope                = azapi_resource.ai_search.id
+  role_definition_name = "Search Index Data Contributor"
+  principal_id         = azapi_resource.this.output.identity.principalId
+}
+
+# RBAC: Search Service Contributor (Foundry → Search)
+resource "azurerm_role_assignment" "foundry_search_service_contributor" {
+  scope                = azapi_resource.ai_search.id
+  role_definition_name = "Search Service Contributor"
+  principal_id         = azapi_resource.this.output.identity.principalId
+}
+
+#############################################
+# FOUNDRY MANAGED VNET — RBAC required for managed private endpoint provisioning
+# (issue #141 — Managed Virtual Network preview)
+#############################################
+
+# RBAC: Azure AI Enterprise Network Connection Approver (RG scope)
+# Required for the Foundry account MSI to auto-approve managed private endpoints
+# created inside the Microsoft-managed VNet by outbound rules.
+# Role ID: b556d68e-0be0-4f35-a333-ad7ee1ce17ea
+resource "azurerm_role_assignment" "foundry_network_connection_approver" {
+  scope                = azurerm_resource_group.this.id
+  role_definition_name = "Azure AI Enterprise Network Connection Approver"
+  principal_id         = azapi_resource.this.output.identity.principalId
+}
+
+# RBAC: Contributor on Cosmos DB (control-plane) — required by the canonical
+# managed-VNet sample so the Foundry MSI can provision/approve the managed PE
+# to Cosmos. This is the ARM Contributor role, distinct from the Cosmos SQL
+# data-plane role above.
+resource "azurerm_role_assignment" "foundry_cosmos_arm_contributor" {
+  scope                = azurerm_cosmosdb_account.main.id
+  role_definition_name = "Contributor"
+  principal_id         = azapi_resource.this.output.identity.principalId
+}
+
+#############################################
+# FOUNDRY PROJECT MSI — Required by capability host (Agents runtime)
+# Per microsoft-foundry/foundry-samples 18-managed-virtual-network: the project's
+# system-assigned identity must have data-plane access to BYO Storage/Cosmos/Search
+# BEFORE the capability host is created. Otherwise capability host creation fails
+# with "CapabilityHostOperationFailed" and no further detail.
+#############################################
+
+resource "azurerm_role_assignment" "project_storage_blob" {
+  scope                = azurerm_storage_account.main.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azapi_resource.ai_foundry_project.output.identity.principalId
+}
+
+resource "azurerm_role_assignment" "project_search_index" {
+  scope                = azapi_resource.ai_search.id
+  role_definition_name = "Search Index Data Contributor"
+  principal_id         = azapi_resource.ai_foundry_project.output.identity.principalId
+}
+
+resource "azurerm_role_assignment" "project_search_contributor" {
+  scope                = azapi_resource.ai_search.id
+  role_definition_name = "Search Service Contributor"
+  principal_id         = azapi_resource.ai_foundry_project.output.identity.principalId
+}
+
+# Cosmos DB control-plane RBAC (NOT the SQL data-plane role — the capability
+# host validates these specific control-plane roles on the project MSI).
+resource "azurerm_role_assignment" "project_cosmos_reader" {
+  scope                = azurerm_cosmosdb_account.main.id
+  role_definition_name = "Cosmos DB Account Reader Role"
+  principal_id         = azapi_resource.ai_foundry_project.output.identity.principalId
+}
+
+resource "azurerm_role_assignment" "project_cosmos_operator" {
+  scope                = azurerm_cosmosdb_account.main.id
+  role_definition_name = "Cosmos DB Operator"
+  principal_id         = azapi_resource.ai_foundry_project.output.identity.principalId
+}
+
+# Wait for project-level RBAC to propagate before creating the capability host.
+# Sample uses 90s; ARM RBAC propagation can take that long across regions.
+resource "time_sleep" "wait_project_rbac" {
+  create_duration = "90s"
+
+  depends_on = [
+    azurerm_role_assignment.project_storage_blob,
+    azurerm_role_assignment.project_search_index,
+    azurerm_role_assignment.project_search_contributor,
+    azurerm_role_assignment.project_cosmos_reader,
+    azurerm_role_assignment.project_cosmos_operator,
+  ]
 }

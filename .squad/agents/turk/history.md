@@ -880,3 +880,7 @@ Issues #137 (eval failures) and #130 ("AI Calls Today" counter stuck at 0) are n
 **Verification:** Both pods now succeed end-to-end. Prevention: runtime `TestFoundryAgentSignatureContract` tests added to both services.
 
 Your `turk-orderby-composite-index` decision has been merged into the decisions log as canonical reference. No follow-up work scoped.
+
+---
+
+**2026-05-14 16:57 Scribe:** Heads-up: #141 filed — Foundry Managed VNet migration plan from Danny. See decisions.md for context.
