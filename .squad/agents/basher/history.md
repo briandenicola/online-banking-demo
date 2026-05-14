@@ -2492,3 +2492,36 @@ inconsistent contracts.
 - PR #139 — Phase 1 implementation
 - Microsoft docs: [Configure Foundry private link](https://learn.microsoft.com/en-us/azure/foundry/how-to/configure-private-link)
 - Microsoft docs: [Agent Service VNet injection](https://learn.microsoft.com/en-us/azure/ai-services/agents/how-to/virtual-networks)
+
+### 2026-05-14 — Merge main → squad/p2-wave-3 (#139 conflict resolution)
+
+**Task:** Make PR #139 mergeable by bringing `origin/main` into `squad/p2-wave-3` and resolving 5 conflicts.
+
+**Pre-work:** Committed two uncommitted `terraform fmt` whitespace changes (ai.tf, cosmos.tf alignment) as separate `chore(infra): terraform fmt` commit before starting merge.
+
+**5 Conflicts Resolved:**
+
+1. **`.squad/decisions-archive.md`** — Union merge. Both branches archived different decisions independently. Took `--ours` which already contained all content (append-only file, no actual overlap).
+
+2. **`src/account-opening-service/README.md`** — Add/add conflict. Main branch added two new env vars (`AGENT_ID_SIDECAR_URL`, `AGENT_ID_AGENT_IDENTITY`) for Entra agent identity sidecar. Added both to environment variables table.
+
+3. **`src/account-opening-service/app/routes/api.py`** — Content conflict on return statement. Our branch (p2-wave-3) introduced `project_application()` helper for API projection (#124). Main returned raw `application` object. Kept `return project_application(application)` as it's the desired behavior for #124.
+
+4. **`src/ai-service/pyproject.toml`** — CRITICAL conflict per #137 SDK pinning decision. Our branch had `agent-framework-core = "1.2.2"` and `agent-framework-foundry = "1.2.2"` (pinned). Main had `"*"` (unpinned). Kept pinned versions `1.2.2` to comply with #137 decision and avoid the FoundryAgent constructor contract bug. Also preserves `azure-ai-inference = "1.0.0b9"` pin.
+
+5. **`src/ai-service/tests/test_detection.py`** — Content conflict. Our branch added two new test classes at the end:
+   - `TestAiCallsCounter` — 6 tests validating Redis-based counter behavior (#130)
+   - `TestFoundryAgentSignatureContract` — SDK contract enforcement tests (#137)
+   
+   Main had no additions. Kept both test classes.
+
+**Verification:**
+- `git diff --check` — no conflict markers
+- `grep "agent-framework" src/ai-service/pyproject.toml` — confirmed both at `1.2.2`
+- Python syntax check on both `.py` files — all valid
+
+**Result:** PR #139 now shows `mergeable: MERGEABLE` (was `CONFLICTING`). `mergeStateStatus: UNSTABLE` indicates CI checks running but conflicts resolved. Pushed 2 commits:
+1. `chore(infra): terraform fmt for ai.tf and cosmos.tf`
+2. `Merge branch 'main' into squad/p2-wave-3` (with detailed conflict resolution notes)
+
+**Key Learning:** The #137 SDK pinning policy (agent-framework 1.2.2, azure-ai-inference 1.0.0b9) is the authoritative version. Any merge or rebase must preserve these pins — unpinned versions reintroduce the FoundryAgent constructor bug that caused eval failures and stuck counters.
