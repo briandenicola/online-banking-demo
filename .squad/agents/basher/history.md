@@ -2525,3 +2525,86 @@ inconsistent contracts.
 2. `Merge branch 'main' into squad/p2-wave-3` (with detailed conflict resolution notes)
 
 **Key Learning:** The #137 SDK pinning policy (agent-framework 1.2.2, azure-ai-inference 1.0.0b9) is the authoritative version. Any merge or rebase must preserve these pins — unpinned versions reintroduce the FoundryAgent constructor bug that caused eval failures and stuck counters.
+
+### 2026-05-13 — Issue #138 Phase 2 & 3: Foundry Private Networking (BYO Connections + Network Injection)
+
+**Context:** Issue #138 Phase 1 (Azure AI Search + PE + deployer roles) merged to main in PR #139. Phase 2 adds BYO project-scoped connections (Storage, Cosmos, Search) with AAD auth + Foundry MSI RBAC + capabilityHost. Phase 3 adds networkInjections to Foundry account + agents subnet NSG split.
+
+**Implementation:**
+
+**Phase 2:**
+1. API version bump: All Foundry resources (account, project, deployments) bumped from `2025-04-01-preview` to `2025-10-01-preview` in `infra/cloud/ai.tf`. Required for `networkInjections` schema support in Phase 3.
+
+2. BYO connections (AAD auth, no keys) in `infra/cloud/ai-connections.tf`:
+   - `azapi_resource.storage_connection` → `azurerm_storage_account.main` (category: `AzureStorage`)
+   - `azapi_resource.cosmosdb_connection` → `azurerm_cosmosdb_account.main` (category: `AzureCosmosDB`)
+   - `azapi_resource.aisearch_connection` → `azapi_resource.ai_search` (category: `CognitiveSearch`)
+   - All use `authType = "AAD"`, `isSharedToAll = false`, project-scoped via `parent_id = azapi_resource.ai_foundry_project.id`
+
+3. Foundry MSI data-plane roles in `infra/cloud/identity.tf`:
+   - `azurerm_role_assignment.foundry_storage_blob_data_contributor` → Storage Blob Data Contributor on `azurerm_storage_account.main`
+   - `azurerm_cosmosdb_sql_role_assignment.foundry_cosmos_contributor` → Cosmos DB Built-in Data Contributor (SQL role `00000000-0000-0000-0000-000000000002`)
+   - `azurerm_role_assignment.foundry_search_index_data_contributor` + `foundry_search_service_contributor` → Search roles on `azapi_resource.ai_search`
+   - Principal: `azapi_resource.this.output.identity.principalId` (Foundry account MSI)
+
+4. RBAC propagation wait: `time_sleep.wait_foundry_rbac` (60s) in `ai-connections.tf`, depends on all 4 role assignments above.
+
+5. capabilityHost sub-resource: `azapi_resource.ai_foundry_project_capability_host` (name: `agents-capability-host`, type: `capabilityHosts@2025-10-01-preview`) binds the three connections:
+   - `vectorStoreConnections = [azapi_resource.ai_search.name]`
+   - `storageConnections = [azurerm_storage_account.main.name]`
+   - `threadStorageConnections = [azurerm_cosmosdb_account.main.name]`
+   - Depends on `time_sleep.wait_foundry_rbac` + all three connections
+
+**Phase 3:**
+1. Agents subnet NSG split in `infra/cloud/networking.tf`:
+   - Created `azurerm_network_security_group.agents` (name: `${local.resource_name}-agents-nsg`) with default rules (no explicit rules yet — Foundry agent traffic flows by default)
+   - Updated `azurerm_subnet_network_security_group_association.agents` to reference new NSG (was incorrectly using `azurerm_network_security_group.aks.id`)
+
+2. networkInjections on Foundry account in `infra/cloud/ai.tf`:
+   - Added `networkInjections` array to `azapi_resource.this` (Foundry account) properties:
+     ```hcl
+     networkInjections = [
+       {
+         scenario                   = "agent"
+         useMicrosoftManagedNetwork = false
+         subnetArmId                = azurerm_subnet.agents.id
+       }
+     ]
+     ```
+   - CRITICAL: `networkInjections` is on the **account** (`Microsoft.CognitiveServices/accounts`), NOT the project. This matches the SKILL.md canonical pattern and Brian's reference repo.
+
+**Validation:**
+- `terraform fmt -recursive` — clean
+- `terraform init -upgrade` — upgraded azapi to 2.9.0, azurerm to 4.72.0
+- `terraform validate` — Success! The configuration is valid.
+- `terraform plan` — 106 to add, 0 to change, 0 to destroy (fresh deployment)
+- No resource recreations flagged (all resources are new)
+
+**Commits:**
+- `d5fa18b` — Phase 2: BYO connections + Foundry MSI RBAC + capabilityHost
+- `1a888c6` — Phase 3: networkInjections on account + agents NSG split
+
+**Key Learnings:**
+1. **API version 2025-10-01-preview required for networkInjections schema.** Earlier versions (2025-04-01-preview) don't support the `networkInjections` property.
+
+2. **Foundry MSI principal ID extraction:** `azapi_resource.this.output.identity.principalId` works because the resource has `response_export_values = ["identity.principalId", ...]`. This is the system-assigned MSI of the Foundry account.
+
+3. **Cosmos DB SQL role assignment syntax:** Uses `azurerm_cosmosdb_sql_role_assignment` with `role_definition_id = "${cosmos_account_id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"` (Cosmos DB Built-in Data Contributor). NOT `azurerm_role_assignment` like ARM RBAC roles.
+
+4. **capabilityHost connection references use resource names, not IDs.** Brian's reference repo shows `vectorStoreConnections = [azapi_resource.ai_search.name]`, not `.id`. The API expects the simple name string.
+
+5. **networkInjections belongs on account, not project.** SKILL.md explicitly states: "CRITICAL: `networkInjections` must be added to `Microsoft.CognitiveServices/accounts`, NOT the project resource." Verified in Brian's reference `ai_foundry.tf` — it's on the top-level Foundry account resource.
+
+6. **Agents subnet delegation required:** `Microsoft.App/environments` delegation already existed on `azurerm_subnet.agents` from Phase 1. This is required for Foundry agent VNet injection.
+
+7. **Reference repo divergences:**
+   - Brian's repo uses `azurerm_storage_account.this` and `azurerm_cosmosdb_account.this`; ours use `.main`. Adjusted references accordingly.
+   - Brian's repo has separate `wait_times.tf` for time_sleep resources; we kept it inline in `ai-connections.tf` for proximity to role assignments.
+   - Brian's repo has `ai_foundry_capability_host.tf` as separate file; we added to `ai-connections.tf` to keep connection-related resources together.
+
+**Next Steps (Brian to do):**
+- `terraform apply phase23.tfplan` in `infra/cloud/` to deploy Phase 2+3 resources
+- Verify Foundry project connections visible in Azure Portal (Project → Connections blade)
+- Verify agents subnet has active VNet injection (check Network tab on Foundry account)
+- Test agent runtime connectivity to Storage/Cosmos/Search via private endpoints
+
