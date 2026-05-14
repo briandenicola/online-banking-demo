@@ -1,5 +1,10 @@
 #############################################
 # KEY VAULT SECRETS — Secrets stored in Azure Key Vault
+#
+# Secrets are written over the public endpoint (locked to the deployer's IP
+# in keyvault.tf). The Private Endpoint is created AFTER all secrets exist
+# (see depends_on in private-endpoints.tf) so runtime workloads use the
+# private path while bootstrap stays unblocked.
 #############################################
 
 # JWT signing key — generated once, persisted in KeyVault
@@ -14,7 +19,6 @@ resource "azurerm_key_vault_secret" "jwt_key" {
   key_vault_id = azurerm_key_vault.main.id
   depends_on = [
     azurerm_role_assignment.deployer_keyvault_admin,
-    azurerm_private_endpoint.keyvault,
   ]
 }
 
@@ -24,7 +28,6 @@ resource "azurerm_key_vault_secret" "openai_endpoint" {
   key_vault_id = azurerm_key_vault.main.id
   depends_on = [
     azurerm_role_assignment.deployer_keyvault_admin,
-    azurerm_private_endpoint.keyvault,
   ]
 }
 
@@ -34,7 +37,6 @@ resource "azurerm_key_vault_secret" "content_understanding_endpoint" {
   key_vault_id = azurerm_key_vault.main.id
   depends_on = [
     azurerm_role_assignment.deployer_keyvault_admin,
-    azurerm_private_endpoint.keyvault,
   ]
 }
 
@@ -44,7 +46,6 @@ resource "azurerm_key_vault_secret" "redis_connection_string" {
   key_vault_id = azurerm_key_vault.main.id
   depends_on = [
     azurerm_role_assignment.deployer_keyvault_admin,
-    azurerm_private_endpoint.keyvault,
   ]
 }
 
@@ -54,7 +55,6 @@ resource "azurerm_key_vault_secret" "appinsights_connection_string" {
   key_vault_id = azurerm_key_vault.main.id
   depends_on = [
     azurerm_role_assignment.deployer_keyvault_admin,
-    azurerm_private_endpoint.keyvault,
   ]
 }
 
