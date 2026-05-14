@@ -31,83 +31,80 @@ resource "azapi_resource" "application_insights_connection" {
   }
 }
 
-# BYO Storage connection (AAD auth)
-resource "azapi_resource" "storage_connection" {
-  depends_on = [
-    azapi_resource.ai_foundry_project,
-    azurerm_storage_account.main
-  ]
-  type                      = "Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01"
-  name                      = azurerm_storage_account.main.name
-  parent_id                 = azapi_resource.ai_foundry_project.id
-  schema_validation_enabled = false
-
-  body = {
-    name = azurerm_storage_account.main.name
-    properties = {
-      category                     = "AzureStorage"
-      authType                     = "AAD"
-      isSharedToAll                = false
-      useWorkspaceManagedIdentity  = true
-      metadata = {
-        ApiType    = "Azure"
-        ResourceId = azurerm_storage_account.main.id
-      }
-      target = azurerm_storage_account.main.id
-    }
-  }
-}
-
-# BYO Cosmos DB connection (AAD auth)
-resource "azapi_resource" "cosmosdb_connection" {
-  depends_on = [
-    azapi_resource.ai_foundry_project,
-    azurerm_cosmosdb_account.main
-  ]
-  type                      = "Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01"
-  name                      = azurerm_cosmosdb_account.main.name
-  parent_id                 = azapi_resource.ai_foundry_project.id
-  schema_validation_enabled = false
-
-  body = {
-    name = azurerm_cosmosdb_account.main.name
-    properties = {
-      category                     = "AzureCosmosDB"
-      authType                     = "AAD"
-      isSharedToAll                = false
-      useWorkspaceManagedIdentity  = true
-      metadata = {
-        ApiType    = "Azure"
-        ResourceId = azurerm_cosmosdb_account.main.id
-      }
-      target = azurerm_cosmosdb_account.main.id
-    }
-  }
-}
-
-# BYO AI Search connection (AAD auth)
+# BYO AI Search connection (AAD auth) — schema matches Microsoft sample
+# https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-terraform/18-managed-virtual-network
 resource "azapi_resource" "aisearch_connection" {
   depends_on = [
     azapi_resource.ai_foundry_project,
     azapi_resource.ai_search
   ]
-  type                      = "Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01"
+  type                      = "Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview"
   name                      = azapi_resource.ai_search.name
   parent_id                 = azapi_resource.ai_foundry_project.id
   schema_validation_enabled = false
 
   body = {
-    name = azapi_resource.ai_search.name
     properties = {
-      category                     = "CognitiveSearch"
-      authType                     = "AAD"
-      isSharedToAll                = false
-      useWorkspaceManagedIdentity  = true
+      category = "CognitiveSearch"
+      target   = "https://${azapi_resource.ai_search.name}.search.windows.net"
+      authType = "AAD"
       metadata = {
         ApiType    = "Azure"
         ResourceId = azapi_resource.ai_search.id
+        location   = azurerm_resource_group.this.location
       }
-      target = azapi_resource.ai_search.id
+    }
+  }
+}
+
+# BYO Cosmos DB connection (AAD auth) — schema matches Microsoft sample
+resource "azapi_resource" "cosmosdb_connection" {
+  depends_on = [
+    azapi_resource.ai_foundry_project,
+    azurerm_cosmosdb_account.main,
+    azapi_resource.aisearch_connection
+  ]
+  type                      = "Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview"
+  name                      = azurerm_cosmosdb_account.main.name
+  parent_id                 = azapi_resource.ai_foundry_project.id
+  schema_validation_enabled = false
+
+  body = {
+    properties = {
+      category = "CosmosDb"
+      target   = azurerm_cosmosdb_account.main.endpoint
+      authType = "AAD"
+      metadata = {
+        ApiType    = "Azure"
+        ResourceId = azurerm_cosmosdb_account.main.id
+        location   = azurerm_cosmosdb_account.main.location
+      }
+    }
+  }
+}
+
+# BYO Storage connection (AAD auth) — schema matches Microsoft sample
+resource "azapi_resource" "storage_connection" {
+  depends_on = [
+    azapi_resource.ai_foundry_project,
+    azurerm_storage_account.main,
+    azapi_resource.cosmosdb_connection
+  ]
+  type                      = "Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview"
+  name                      = azurerm_storage_account.main.name
+  parent_id                 = azapi_resource.ai_foundry_project.id
+  schema_validation_enabled = false
+
+  body = {
+    properties = {
+      category = "AzureStorageAccount"
+      target   = azurerm_storage_account.main.primary_blob_endpoint
+      authType = "AAD"
+      metadata = {
+        ApiType    = "Azure"
+        ResourceId = azurerm_storage_account.main.id
+        location   = azurerm_storage_account.main.location
+      }
     }
   }
 }
