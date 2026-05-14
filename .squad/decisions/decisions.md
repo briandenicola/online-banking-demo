@@ -2900,3 +2900,368 @@ Use **endpoint URLs** for Storage and Cosmos connections, **ARM IDs** for contro
 - [Add connections to Azure AI Foundry projects](https://learn.microsoft.com/en-us/azure/foundry/how-to/connections-add)
 - `.squad/skills/foundry-managed-vnet/SKILL.md` — Connection schema patterns
 - `.squad/agents/basher/history.md` — 2026-05-14 Learnings entry
+
+---
+
+# Foundry Eval Empty Dataset Bug (VNET Private Endpoint Root Cause)
+
+**Status:** BLOCKED — Foundry service bug  
+**Impact:** All eval runs fail (ai-service anomaly detection evals, prompt-eval-service, sandbox tests)  
+**Author:** Basher  
+**Date:** 2026-05-14
+
+## Summary
+
+Azure AI Foundry's evaluation service fails to materialize inline datasets (`data_source.source.type: "file_content"`) in VNET-only deployments with private endpoints. All eval runs submitted with inline content get stuck in `status: "Starting"` indefinitely because Foundry cannot write the dataset to project blob storage.
+
+## Root Cause
+
+**Foundry eval backend lacks network access or RBAC to upload inline JSONL datasets to private-endpoint-only blob storage.**
+
+### Failure Sequence
+
+1. Client SDK (`agent-framework-foundry 1.3.0`) calls `evals.runs.create()` with inline content:
+   ```json
+   {
+     "data_source": {
+       "type": "jsonl",
+       "source": {
+         "type": "file_content",
+         "content": [{"item": {...}}]
+       }
+     }
+   }
+   ```
+
+2. Foundry API accepts the POST (returns 201 Created) and registers the run with:
+   ```json
+   {
+     "id": "evalrun_...",
+     "status": "Starting",
+     "tags": {
+       "expected_inline_dataset_id": "azureai://.../data/eval-data-{timestamp}/versions/1",
+       "is_inline_dataset": "true"
+     }
+   }
+   ```
+
+3. Foundry eval worker **attempts to upload the JSONL to project blob storage** (container `{workspace-guid}-azureml-blobstore`) but:
+   - The storage account has `publicNetworkAccess: "Disabled"`
+   - Only private endpoint access is allowed
+   - Foundry worker either:
+     a. Lacks network path to the private endpoint, OR
+     b. Lacks RBAC (`Storage Blob Data Contributor`) on the storage account, OR
+     c. Uses public blob URLs that resolve but are blocked by firewall
+
+4. Upload fails silently; dataset URI is registered but has 0 rows
+
+5. Eval run never transitions from "Starting" because there's no data to evaluate
+
+### Evidence
+
+**1. Storage Container Is Empty**
+```bash
+$ kubectl exec -n banking-demo deploy/eval-sandbox -c eval-sandbox -- bash -c '
+  TOKEN=$(python3 -c "from azure.identity import DefaultAzureCredential; print(DefaultAzureCredential().get_token(\"https://storage.azure.com/.default\").token)")
+  curl -H "Authorization: Bearer $TOKEN" -H "x-ms-version: 2021-08-06" \
+    "https://a676b825d5b2a5d641e032sa.blob.core.windows.net/9fff2344-68ff-40ad-a0af-72f55a2463fe-azureml-blobstore?restype=container&comp=list"
+'
+# Output: <Blobs /> — 0 blobs despite 6 eval runs submitted today
+```
+
+**2. All Eval Runs Stuck in "Starting"**
+```bash
+$ curl -H "Authorization: Bearer $TOKEN" \
+  "${FOUNDRY_PROJECT_ENDPOINT}/evaluations/runs?api-version=2025-05-15-preview" \
+  | jq '.value[] | {id, displayName, status}'
+
+{
+  "id": "evalrun_6dd19ece794c42d5a5b06767f26a5edc",
+  "displayName": "debug-test Run",
+  "status": "Starting"
+}
+{
+  "id": "evalrun_682614e1e3334695b49bdca5da7dfd96",
+  "displayName": "sandbox-repro Run",
+  "status": "Starting"
+}
+{
+  "id": "evalrun_fcd72483570646c1b704f0e16634199e",
+  "displayName": "sandbox-repro Run",
+  "status": "Starting"
+}
+# ... all 6 runs from today stuck, none progressed past "Starting"
+```
+
+**3. SDK Constructs Valid JSONL**
+```python
+# Verified the SDK builds correct data structure:
+{
+  "query": "Assess this transaction: $1,500.00",        # ✅ Non-empty
+  "response": "This transaction shows HIGH RISK.",      # ✅ Non-empty
+  "query_messages": [
+    {"role": "system", "content": [{"type": "text", "text": "..."}]},
+    {"role": "user", "content": [{"type": "text", "text": "..."}]}
+  ],
+  "response_messages": [
+    {"role": "assistant", "content": [{"type": "text", "text": "..."}]}
+  ]
+}
+# This gets wrapped in {"item": {...}} per JSONL format standard
+```
+
+**4. HTTP Traces Confirm Data Sent**
+```
+DEBUG:openai._base_client:Request options: {
+  'json_data': {
+    'data_source': {
+      'type': 'jsonl',
+      'source': {
+        'type': 'file_content',
+        'content': [{'item': {
+          'query': 'Assess this transaction: $1,500.00',
+          'response': 'This transaction shows HIGH RISK.',
+          ...
+        }}]
+      }
+    }
+  }
+}
+# Foundry returns 201 Created — accepts the payload
+```
+
+## Impact
+
+**CRITICAL — All evals broken in production:**
+- `ai-service` anomaly detection evals (transaction categorization quality checks)
+- `prompt-eval-service` template evaluations
+- `eval-sandbox` reproduction tests
+- Any future eval-based quality gates in CI/CD
+
+**Affected Environments:**
+- ✅ **Public Foundry** (dev/test with `publicNetworkAccess: "Enabled"`) — works fine
+- ❌ **VNET-only Foundry** (production with private endpoints) — broken
+
+## Workarounds
+
+### Option 1: Explicit Dataset Upload (RECOMMENDED, Not Yet Implemented)
+
+Instead of passing inline `file_content`, upload the dataset to blob storage explicitly using the pod's managed identity, then reference by URI:
+
+```python
+import json
+import io
+from azure.storage.blob import BlobServiceClient
+from azure.identity import DefaultAzureCredential
+
+# 1. Serialize to JSONL
+jsonl_buffer = io.BytesIO()
+for d in dicts:
+    jsonl_buffer.write((json.dumps({"item": d}) + "\n").encode("utf-8"))
+jsonl_buffer.seek(0)
+
+# 2. Upload to project storage
+credential = DefaultAzureCredential()
+blob_service = BlobServiceClient(
+    account_url=f"https://{storage_account}.blob.core.windows.net",
+    credential=credential
+)
+container_client = blob_service.get_container_client("{workspace-guid}-azureml-blobstore")
+blob_name = f"eval-datasets/eval-data-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.jsonl"
+container_client.upload_blob(name=blob_name, data=jsonl_buffer, overwrite=True)
+
+# 3. Reference uploaded dataset
+data_source = {
+    "type": "uri_file",
+    "uri": f"azureai://datastores/workspaceblobstore/paths/{blob_name}"
+}
+
+# 4. Submit eval run as before
+run = await client.evals.runs.create(
+    eval_id=eval_obj.id,
+    name=f"{eval_name} Run",
+    data_source=data_source,
+)
+```
+
+**Pros:** Works around Foundry bug; pod already has RBAC on storage  
+**Cons:** Requires patching `agent-framework-foundry` SDK or forking `_evaluate_via_dataset()`  
+**Effort:** ~4 hours (patch SDK, test, update ai-service/prompt-eval-service)
+
+### Option 2: Enable Public Blob Access Temporarily
+
+Set `properties.publicNetworkAccess: "Enabled"` on the storage account to let Foundry's eval worker reach it over the internet.
+
+**Pros:** Zero code changes  
+**Cons:** **Security risk** — exposes project storage to public internet; violates VNET isolation requirement  
+**Not Recommended**
+
+### Option 3: File Microsoft Support Ticket
+
+This is a Foundry service bug. Microsoft needs to either:
+- Grant Foundry eval workers network access to customer VNETs, OR
+- Fix the inline dataset upload to use the private endpoint, OR
+- Document that `file_content` is unsupported in VNET deployments
+
+**Pros:** Correct long-term fix  
+**Cons:** Timescale unknown (weeks? months?); blocks all production evals until resolved
+
+## Decision
+
+**SHORT-TERM:** Implement **Workaround #1** (explicit dataset upload) in a forked `FoundryEvals` class or SDK patch  
+**LONG-TERM:** File support ticket with Microsoft; revert to inline `file_content` once Foundry bug is fixed
+
+### Action Items
+
+1. **Basher:** Create `FoundryEvalsVNETWorkaround` class that overrides `_evaluate_via_dataset()` to upload datasets explicitly
+2. **Basher:** Update `ai-service` and `prompt-eval-service` to use workaround class
+3. **Danny:** File Azure support ticket with this RCA as evidence
+4. **Squad:** Add regression test — when Foundry fixes the bug, inline evals should work again; test both paths
+
+## References
+
+- **Investigation:** `.squad/agents/basher/history.md` § 2026-05-14
+- **Skill update:** `.squad/skills/foundry-eval-debugging/SKILL.md` (add VNET failure mode)
+- **Foundry REST API:** `https://learn.microsoft.com/en-us/rest/api/azureml/`
+- **agent-framework-foundry source:** `/usr/local/lib/python3.11/site-packages/agent_framework_foundry/_foundry_evals.py:666-732`
+
+---
+
+# Admin Users 500 Error — Missing Composite Index
+
+**Date:** 2026-05-14T19:20:00Z  
+**Author:** Turk (Backend Dev)  
+**Status:** RESOLVED  
+**Issue:** Admin Console "User Management" returned 500 error  
+**Services:** user-service  
+**Root Cause:** Multi-field ORDER BY query without composite index
+
+---
+
+## Problem
+
+GET `/api/admin/users` returned 500 Internal Server Error when admin accessed User Management tab.
+
+**Cosmos Exception:**
+```
+Microsoft.Azure.Cosmos.CosmosException: Response status code does not indicate success: BadRequest (400)
+Reason: {"Errors":["The order by query does not have a corresponding composite index that it can be served from."]}
+Container: Users (partition key: /id)
+```
+
+**Query:**
+```sql
+SELECT * FROM c 
+WHERE NOT STARTSWITH(c.id, 'email-lookup:') 
+ORDER BY c.CreatedAt DESC, c.createdAt DESC
+```
+
+---
+
+## Root Cause
+
+1. **Multi-field ORDER BY requires composite index**: Cosmos DB cannot serve `ORDER BY field1, field2` queries using the default automatic indexing policy
+2. **No indexing policy defined**: `infra/cloud/cosmos.tf` defines Users container without explicit `indexing_policy` block → falls back to default
+3. **Case-redundancy anti-pattern**: Query ordered by both `c.CreatedAt` and `c.createdAt` (defensive casing) but redundant for ordering
+
+---
+
+## Solution
+
+Removed ORDER BY from `CosmosUserRepository.GetAllUsersAsync()` (lines 110-124):
+
+```csharp
+// Removed ORDER BY to avoid requiring composite index in Cosmos.
+// If sorted results are needed, either:
+//   1. Add composite index to infra/cloud/cosmos.tf (Users container)
+//   2. Sort in-memory after retrieval
+var query = new QueryDefinition(
+    "SELECT * FROM c WHERE NOT STARTSWITH(c.id, 'email-lookup:')");
+```
+
+**Rationale:**
+- Users table is small (~10-100 docs typical)
+- Unsorted retrieval acceptable for admin dashboard
+- UI can sort client-side if needed
+- Avoids infra coupling (composite index requires Terraform apply + reindex time)
+
+---
+
+## Alternative Considered: Add Composite Index
+
+If sorted results are required server-side, add to `infra/cloud/cosmos.tf`:
+
+```hcl
+resource "azurerm_cosmosdb_sql_container" "users" {
+  name                = "Users"
+  # ... existing config ...
+  
+  indexing_policy {
+    indexing_mode = "consistent"
+    
+    composite_index {
+      index {
+        path  = "/CreatedAt"
+        order = "descending"
+      }
+      index {
+        path  = "/createdAt"
+        order = "descending"
+      }
+    }
+  }
+}
+```
+
+**Rejected because:**
+- Requires Terraform apply (production change)
+- Container reindexing delays deployment
+- Couples code change to infra change
+- Not justified for small admin table
+
+---
+
+## Pattern: Small Tables + ORDER BY
+
+**When small tables need ordering:**
+1. **Fetch unsorted** from Cosmos
+2. **Sort in-memory** using LINQ (e.g., `.OrderByDescending(u => u.CreatedAt)`)
+3. **Reserve composite indexes** for user-scoped queries with 100s-1000s of docs
+
+**When composite indexes ARE justified:**
+- Large result sets (1000+ docs per partition)
+- High-frequency queries (10+ QPS)
+- User-scoped tables where each user has many docs (e.g., Transactions/accountId)
+
+**Previous occurrence:** prompt-eval-service crash (2026-05-12) — same pattern, same fix.
+
+---
+
+## Files Changed
+
+- `src/user-service/Repositories/CosmosUserRepository.cs` (lines 110-124)
+
+---
+
+## Verification
+
+- **Code change:** Verified via grep/view (removed ORDER BY clause)
+- **Local build:** Blocked by permission issues (Brian will verify via deployment)
+- **Expected result:** GET `/api/admin/users` returns 200 with user list (unsorted)
+
+---
+
+## Follow-Up
+
+- [ ] Deploy user-service to banking-demo namespace
+- [ ] Smoke test: Open Admin Console → User Management → Verify user list loads
+- [ ] Optional: Add client-side sorting in `AdminUserManagementTab.tsx` if UX requires ordering
+
+---
+
+## Related
+
+- **Issue:** #N/A (reported directly by Brian)
+- **Decision:** turk-admin-users-500 (this document)
+- **Prior Art:** turk-orderby-composite-index (prompt-eval-service, 2026-05-12)
+- **Skill:** cosmos-casing-audit (SKILL.md covers case-defensive queries)

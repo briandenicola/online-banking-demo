@@ -1110,3 +1110,29 @@ Basher identified 4 critical corrections to the multi-phase Foundry private netw
 **Status:** ✅ Plan complete; implementation in progress (Basher committed, Linus committed, Livingston committed).
 
 **Branch:** squad/135-136-account-opening-state-machine
+
+---
+
+## 2026-05-14: CROSS-AGENT — Foundry Eval VNET Bug RCA Complete
+
+**Notification:** Basher completed RCA on Foundry eval empty-dataset bug affecting production (all 6 eval runs stuck in "Starting").
+
+**Root Cause:** Foundry eval backend **cannot upload inline datasets to private-endpoint-only blob storage**. When `publicNetworkAccess: "Disabled"` on storage account, Foundry's eval worker fails to materialize inline `file_content` datasets—the runs register but dataset uploads fail silently, leaving runs frozen in "Starting" state indefinitely.
+
+**Impact Chain:**
+- ✅ SDK (agent-framework-foundry 1.3.0) constructs valid JSONL and sends it (201 Created)
+- ❌ Foundry backend attempts upload to project blob storage, fails (no network path to private endpoint)
+- ❌ All 6 runs from 2026-05-14 stuck; storage container remains empty (0 blobs)
+
+**Decision:** Implement **Workaround #1 (explicit dataset upload)** — Upload JSONL using pod's managed identity + reference by URI. File Azure support ticket as long-term fix.
+
+**Your Next Action:** Plan azure-ai-projects migration (Issue #143) considering:
+1. This VNET issue affects all Foundry eval-based features in production
+2. Workaround requires patching SDK or forking `_evaluate_via_dataset()`
+3. Migration should include regression test for when Foundry bug is fixed (test both inline and URI paths)
+
+**Files:**
+- Full RCA: `.squad/decisions/decisions.md` (appended 2026-05-14T21:41:57Z)
+- Workdir summary: `.squad/agents/basher/eval-empty-dataset-summary.md`
+- Investigation log: `.squad/agents/basher/history.md` (2026-05-14 entries)
+- Skill update: `.squad/skills/foundry-eval-debugging/SKILL.md` (Rung -1: VNET empty dataset bug)

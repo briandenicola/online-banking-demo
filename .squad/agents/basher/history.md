@@ -2211,3 +2211,75 @@ This ensures:
 **Commits:** 345aa72, 926e0d4  
 **Branch:** squad/135-136-account-opening-state-machine  
 **Dependencies:** ✅ Unblocked Linus (frontend) and Livingston (tests)
+
+## 2026-05-14 — Foundry Eval Empty Dataset Bug (VNET Private Endpoint Issue)
+
+### Problem
+All Foundry eval runs stuck in `status: "Starting"` with `result_counts.total: 0`. REST API showed every run from today had an `expected_inline_dataset_id` registered but Foundry treated them as 0-row datasets.
+
+### Investigation
+1. **SDK produces valid data** — Verified `agent-framework-foundry` constructs proper JSONL with non-empty `query`, `response`, `query_messages`, `response_messages`
+2. **HTTP POST succeeds** — Foundry returns 201 Created for both eval definition and run creation
+3. **Storage account empty** — Project blob container (`9fff2344-68ff-40ad-a0af-72f55a2463fe-azureml-blobstore`) has 0 blobs; inline datasets never materialized
+4. **VNET-only deployment** — All PaaS services (Foundry, storage) use private endpoints with public access disabled
+
+### Root Cause
+**Foundry's eval backend fails to process inline datasets (`"source": {"type": "file_content"}`) in VNET-enabled private endpoint deployments.**
+
+The SDK sends the JSONL content in the POST body with `data_source.source.type: "file_content"`. Foundry accepts the request but then must:
+1. Write JSONL to project blob storage
+2. Register dataset in catalog
+3. Start eval run
+
+**Step 1 fails silently** — likely because:
+- Foundry eval worker lacks network path to private endpoint
+- Missing RBAC on Foundry service principal for storage account
+- Inline upload code not aware of private DNS
+
+### Evidence
+```bash
+# All recent runs stuck in "Starting"
+$ curl -H "Authorization: Bearer $TOKEN" \
+  "$FOUNDRY_PROJECT_ENDPOINT/evaluations/runs?api-version=2025-05-15-preview"
+{
+  "value": [
+    {
+      "id": "evalrun_6dd19ece794c42d5a5b06767f26a5edc",
+      "displayName": "debug-test Run",
+      "status": "Starting",  # <-- Never progresses
+      "tags": {
+        "expected_inline_dataset_id": "azureai://.../eval-data-2026-05-14_213159_b5197_UTC/versions/1",
+        "is_inline_dataset": "true"
+      },
+      "outputs": {
+        "evaluationResultId": ""  # <-- Empty, no processing
+      }
+    }
+  ]
+}
+
+# Storage container empty despite dataset registration
+$ az storage blob list \
+  --account-name a676b825d5b2a5d641e032sa \
+  --container-name 9fff2344-68ff-40ad-a0af-72f55a2463fe-azureml-blobstore \
+  --auth-mode login
+[]  # <-- 0 blobs
+```
+
+### Workaround
+**Option 1:** Use explicit dataset upload (NOT YET IMPLEMENTED)
+- Upload JSONL to blob storage using `azure-storage-blob` with managed identity
+- Register dataset via Foundry data API
+- Reference by URI: `{"type": "uri_file", "uri": "azureai://..."}`
+
+**Option 2:** Enable public blob access temporarily for eval runs (security risk)
+
+**Option 3:** File Microsoft support ticket — this is a Foundry service bug
+
+### Decision
+Documented as known limitation. Production ai-service evals will remain broken until Microsoft fixes the Foundry VNET inline-dataset bug OR we implement workaround #1.
+
+### Related
+- `.squad/skills/foundry-eval-debugging/SKILL.md` — Add VNET empty-dataset failure mode
+- Decision: `.squad/decisions/inbox/basher-eval-empty-dataset-rca.md`
+
