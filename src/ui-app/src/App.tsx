@@ -13,6 +13,7 @@ import Chat from './pages/Chat';
 import AdminPage from './pages/AdminPage';
 import Settings from './pages/Settings';
 import AccountOpeningPage from './pages/AccountOpeningPage';
+import CustomerApplicationStatusPage from './pages/CustomerApplicationStatusPage';
 import Login from './pages/Login';
 import RegisterPage from './pages/RegisterPage';
 import AppShell from './components/AppShell';
@@ -43,6 +44,7 @@ const AppContent: React.FC = () => {
         <Route path="/chat" element={<ErrorBoundary section="Chat"><Chat /></ErrorBoundary>} />
         <Route path="/settings" element={<ErrorBoundary section="Settings"><Settings /></ErrorBoundary>} />
         <Route path="/account-opening" element={<ErrorBoundary section="Account Opening"><AccountOpeningPage /></ErrorBoundary>} />
+        <Route path="/applications/:id/status" element={<ErrorBoundary section="Application Status"><CustomerApplicationStatusPage /></ErrorBoundary>} />
         {isAdmin && <Route path="/admin" element={<ErrorBoundary section="Admin"><AdminPage /></ErrorBoundary>} />}
         <Route path="/login" element={<Navigate to="/" />} />
         <Route path="*" element={<Navigate to="/" />} />
