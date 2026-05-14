@@ -22,6 +22,13 @@ resource "azapi_resource" "this" {
       allowProjectManagement = true
       customSubDomainName    = local.openai_name
       publicNetworkAccess    = "Disabled"
+      networkInjections = [
+        {
+          scenario                   = "agent"
+          useMicrosoftManagedNetwork = false
+          subnetArmId                = azurerm_subnet.agents.id
+        }
+      ]
       userOwnedStorageAccounts = [
         {
           id = azurerm_storage_account.main.id

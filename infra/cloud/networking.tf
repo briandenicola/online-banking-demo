@@ -58,6 +58,16 @@ resource "azurerm_subnet_network_security_group_association" "aks" {
   network_security_group_id = azurerm_network_security_group.aks.id
 }
 
+resource "azurerm_network_security_group" "agents" {
+  name                = "${local.resource_name}-agents-nsg"
+  location            = azurerm_resource_group.this.location
+  resource_group_name = azurerm_resource_group.this.name
+
+  tags = {
+    AppName = local.resource_name
+  }
+}
+
 resource "azurerm_subnet" "agents" {
   name                 = "agents"
   resource_group_name  = azurerm_resource_group.this.name
@@ -74,5 +84,5 @@ resource "azurerm_subnet" "agents" {
 
 resource "azurerm_subnet_network_security_group_association" "agents" {
   subnet_id                 = azurerm_subnet.agents.id
-  network_security_group_id = azurerm_network_security_group.aks.id
+  network_security_group_id = azurerm_network_security_group.agents.id
 }
