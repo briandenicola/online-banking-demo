@@ -35,7 +35,7 @@ resource "azapi_resource" "redis_access_policy_assignment" {
 
 # RBAC: Cognitive Services OpenAI User
 resource "azurerm_role_assignment" "banking_cognitive_services_openai_user" {
-  scope                = data.azurerm_cognitive_account.openai.id
+  scope                = azapi_resource.this.id
   role_definition_name = "Cognitive Services OpenAI User"
   principal_id         = azurerm_user_assigned_identity.banking_services.principal_id
 }

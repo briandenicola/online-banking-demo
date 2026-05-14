@@ -59,15 +59,9 @@ resource "azapi_resource" "this" {
   ]
 }
 
-data "azurerm_cognitive_account" "openai" {
-  depends_on          = [azapi_resource.this]
-  name                = local.openai_name
-  resource_group_name = azurerm_resource_group.this.name
-}
-
 # Grant the deployer (current user) OpenAI access
 resource "azurerm_role_assignment" "current_user_cognitive_services_openai_user" {
-  scope                = data.azurerm_cognitive_account.openai.id
+  scope                = azapi_resource.this.id
   role_definition_name = "Cognitive Services OpenAI User"
   principal_id         = data.azurerm_client_config.current.object_id
 }
@@ -115,7 +109,7 @@ data "azurerm_cognitive_account" "content_understanding" {
 resource "azapi_resource" "gpt54_mini" {
   type      = "Microsoft.CognitiveServices/accounts/deployments@2025-10-01-preview"
   name      = "gpt-5.4-mini"
-  parent_id = data.azurerm_cognitive_account.openai.id
+  parent_id = azapi_resource.this.id
 
   depends_on = [azapi_resource.this]
 
@@ -138,7 +132,7 @@ resource "azapi_resource" "text_embedding" {
   count     = var.deploy_embedding_model ? 1 : 0
   type      = "Microsoft.CognitiveServices/accounts/deployments@2025-10-01-preview"
   name      = "text-embedding-ada-002"
-  parent_id = data.azurerm_cognitive_account.openai.id
+  parent_id = azapi_resource.this.id
 
   depends_on = [azapi_resource.gpt54_mini]
 
@@ -204,7 +198,7 @@ resource "azapi_resource" "cus_text_embedding_3_large" {
 resource "azapi_resource" "ai_foundry_project" {
   type                      = "Microsoft.CognitiveServices/accounts/projects@2025-10-01-preview"
   name                      = local.project_name
-  parent_id                 = data.azurerm_cognitive_account.openai.id
+  parent_id                 = azapi_resource.this.id
   location                  = azurerm_resource_group.this.location
   schema_validation_enabled = false
 

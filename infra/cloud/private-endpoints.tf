@@ -177,7 +177,7 @@ resource "azurerm_private_endpoint" "ai" {
 
   private_service_connection {
     name                           = "${local.resource_name}-ai-psc"
-    private_connection_resource_id = data.azurerm_cognitive_account.openai.id
+    private_connection_resource_id = azapi_resource.this.id
     subresource_names              = ["account"]
     is_manual_connection           = false
   }

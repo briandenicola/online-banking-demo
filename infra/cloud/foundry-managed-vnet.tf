@@ -15,28 +15,9 @@
 # Total clean provisioning: 30+ minutes.
 #############################################
 
-# Managed network child resource on the Foundry account
-resource "azapi_resource" "managed_network" {
-  type      = "Microsoft.CognitiveServices/accounts/managedNetworks@2025-10-01-preview"
-  name      = "default"
-  parent_id = azapi_resource.this.id
-
-  schema_validation_enabled = false
-
-  body = {
-    properties = {
-      managedNetwork = {
-        isolationMode       = "AllowInternetOutbound"
-        managedNetworkKind  = "V2"
-        provisionNetworkNow = true
-      }
-    }
-  }
-
-  depends_on = [
-    azurerm_role_assignment.foundry_network_connection_approver
-  ]
-}
+# NOTE: Azure auto-creates managedNetworks/default when networkInjections is
+# configured on the Foundry account. We reference it directly in outbound rules
+# instead of creating it as a standalone resource to avoid conflicts.
 
 #############################################
 # 10-minute waits — backing services + their PEs must be fully provisioned
@@ -77,7 +58,7 @@ resource "time_sleep" "wait_aisearch_outbound" {
 resource "azapi_resource" "storage_outbound_rule" {
   type      = "Microsoft.CognitiveServices/accounts/managedNetworks/outboundRules@2025-10-01-preview"
   name      = "storage-blob-rule"
-  parent_id = azapi_resource.managed_network.id
+  parent_id = "${azapi_resource.this.id}/managedNetworks/default"
 
   schema_validation_enabled = false
 
@@ -102,7 +83,7 @@ resource "azapi_resource" "storage_outbound_rule" {
 resource "azapi_resource" "cosmos_outbound_rule" {
   type      = "Microsoft.CognitiveServices/accounts/managedNetworks/outboundRules@2025-10-01-preview"
   name      = "cosmos-sql-rule"
-  parent_id = azapi_resource.managed_network.id
+  parent_id = "${azapi_resource.this.id}/managedNetworks/default"
 
   schema_validation_enabled = false
 
@@ -128,7 +109,7 @@ resource "azapi_resource" "cosmos_outbound_rule" {
 resource "azapi_resource" "aisearch_outbound_rule" {
   type      = "Microsoft.CognitiveServices/accounts/managedNetworks/outboundRules@2025-10-01-preview"
   name      = "aisearch-rule"
-  parent_id = azapi_resource.managed_network.id
+  parent_id = "${azapi_resource.this.id}/managedNetworks/default"
 
   schema_validation_enabled = false
 
