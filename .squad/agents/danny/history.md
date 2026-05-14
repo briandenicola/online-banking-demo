@@ -994,3 +994,32 @@ Account-opening-service sidecar auth pattern (Entra Agent ID with dedicated auth
 - Idempotency key: `{appId}:{stage}:{attempt}` enforced at Redis (processed-set, 24h TTL), Cosmos (upsert-by-key on `agentResults`), and via stable Foundry agent_name.
 - Migration: forward-only, no backfill job. New fields default-empty on old docs.
 
+
+## Cross-Team Update: Foundry Private Networking Plan Corrections (2026-05-14)
+
+**From:** Basher (Backend)  
+**RE:** Issue #138 Phase 1 — Azure AI Search infrastructure
+
+Basher identified 4 critical corrections to the multi-phase Foundry private networking plan while implementing Phase 1:
+
+### 1. `networkInjections` Location (CRITICAL)
+- Original plan placed this on Foundry **project** (`azapi_resource.ai_foundry_project`)
+- **Correction:** Belongs on Foundry **ACCOUNT** (`azapi_resource.this`)
+- Reference Terraform shows it in `Microsoft.CognitiveServices/accounts` body. Phase 3 may require resource replacement.
+
+### 2. API Version Requirement
+- Original plan: `Microsoft.CognitiveServices/accounts@2025-04-01-preview`
+- **Correction:** Reference uses `@2025-10-01-preview`
+- Need to verify if `networkInjections` requires newer API. Phase 3 may need to bump both `azapi_resource.this` and `azapi_resource.content_understanding`.
+
+### 3. `capabilityHosts` Binding Mechanism
+- Original plan: Phase 2 creates connections, Phase 3 adds `networkInjections`
+- **Correction:** Phase 3 also needs `capabilityHosts` **sub-resource** on the project
+- Flow: Phase 2 creates connections; Phase 3 adds `networkInjections` to account + creates `capabilityHosts` sub-resource on project
+
+### 4. RBAC Propagation Wait
+- Original plan: No explicit wait after role assignments
+- **Correction:** Add `time_sleep` resource (60s) after role assignments, before `capabilityHost` creation
+- Canonical pattern to avoid RBAC propagation race conditions
+
+**Impact:** PR #139 (Phase 1) has no code-level changes, only infrastructure. Phase 2 & 3 plans need updates before execution.

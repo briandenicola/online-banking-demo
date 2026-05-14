@@ -6877,3 +6877,202 @@ Commit 243457f (#125) introduced OR-both-casings defensive queries to handle his
 
 **Reason for quarantine:** This file contains a misleading FoundryAgent(model=) generalization that led directly to the worker breakage in commit d120834. It was superseded by the basher-sdk-unified RCA (committed 3f23113), which correctly identified the root cause and the proper solution (extra_body wrapper). The file is kept in-place as historical artifact for post-mortem review but should NOT be consulted as reference material — use the unified RCA instead.
 
+
+---
+
+## Decision: Foundry Private Networking Phase 1 — Azure AI Search
+
+**Status:** ✅ Implemented
+**Date:** 2026-05-13
+**Author:** Basher (Backend Dev)
+**Issue:** #138
+**PR:** #139
+**Branch/Commit:** squad/p2-wave-3 / a5979f8
+
+### Context
+
+Azure AI Foundry deployment had `publicNetworkAccess = "Disabled"` and a private endpoint, but did not match Microsoft's documented standard setup for Foundry private networking. Missing:
+- BYO Azure AI Search resource (only had BYO Storage + Cosmos)
+- VNet injection for agent traffic
+- Project-scoped BYO connections
+
+### Decision
+
+Implemented Phase 1 of 3-phase plan to align with Microsoft standard setup:
+
+#### Added Infrastructure
+
+1. **Azure AI Search service** (`infra/cloud/search.tf`)
+   - `azapi_resource.ai_search` with `Microsoft.Search/searchServices@2025-05-01`
+   - SKU: `standard` (minimum for private endpoints)
+   - `publicNetworkAccess = "Disabled"`, `aadOrApiKey` auth with `aadAuthFailureMode = "http401WithBearerChallenge"`
+   - System-assigned identity
+
+2. **Private DNS zone** (`infra/cloud/private-endpoints.tf`)
+   - Added `search = "privatelink.search.windows.net"` to `local.private_dns_zones` map
+   - Existing `for_each` loops automatically create zone + VNet link
+
+3. **Private endpoint** (`infra/cloud/private-endpoints.tf`)
+   - `azurerm_private_endpoint.search` on `pe-subnet`
+   - Subresource: `searchService`
+   - DNS zone group references `search` zone
+
+4. **Deployer RBAC** (`infra/cloud/identity.tf`)
+   - `Search Service Contributor` — manage Search service
+   - `Search Index Data Contributor` — manage indexes
+
+5. **Naming convention** (`infra/cloud/locals.tf`)
+   - `local.search_service_name = "${local.resource_name}-search"`
+
+#### What Was NOT Changed (by design)
+
+Phase 1 scope was infrastructure-only:
+- ❌ NO changes to `azapi_resource.this` (Foundry account)
+- ❌ NO changes to `azapi_resource.ai_foundry_project`
+- ❌ NO `networkInjections` (Phase 3)
+- ❌ NO connections from project → Search (Phase 2)
+- ❌ NO Foundry MSI → Search role assignments (Phase 2)
+
+### Plan Corrections for Phases 2 & 3
+
+While implementing from reference Terraform, identified 4 critical corrections:
+
+#### 1. `networkInjections` Location (CRITICAL)
+
+**Original plan:** Add `networkInjections` to Foundry **project** (`azapi_resource.ai_foundry_project`)
+
+**Correction:** `networkInjections` belongs on Foundry **ACCOUNT** (`azapi_resource.this`), not project.
+
+Reference Terraform clearly shows `networkInjections` in `Microsoft.CognitiveServices/accounts` body. Phase 3 must mutate the account resource, which may require replacement.
+
+#### 2. API Version Requirement
+
+**Original plan:** Use `Microsoft.CognitiveServices/accounts@2025-04-01-preview` (current version)
+
+**Correction:** Reference uses `@2025-10-01-preview`.
+
+Need to verify whether `networkInjections` requires the newer API version. If so, Phase 3 must bump API version on both `azapi_resource.this` and `azapi_resource.content_understanding`.
+
+#### 3. `capabilityHosts` Binding Mechanism
+
+**Original plan:** Phase 2 creates connections, Phase 3 adds `networkInjections`
+
+**Correction:** Phase 3 also needs `capabilityHosts` **sub-resource** on the project.
+
+Reference shows Foundry agent integration uses `capabilityHosts` resource that explicitly binds search/storage/cosmos connections. Flow:
+1. Phase 2: Create connections (Storage, Cosmos, Search) on project
+2. Phase 3: Add `networkInjections` to account + create `capabilityHosts` sub-resource on project
+
+#### 4. RBAC Propagation Wait
+
+**Original plan:** No explicit wait after role assignments
+
+**Correction:** Add `time_sleep` resource (60s) after role assignments, before `capabilityHost`.
+
+Reference includes `resource "time_sleep" "wait_rbac"` with 60s delay after granting Foundry MSI roles on Search/Storage/Cosmos, before creating `capabilityHost`. Canonical pattern to avoid RBAC propagation race conditions.
+
+### Verification
+
+Terraform validation:
+- ✅ `terraform fmt` — all files formatted
+- ⏸ `terraform plan` — requires init/state (Brian will verify)
+
+Expected plan output:
+- +6 resources: 1 search service, 1 DNS zone, 1 VNet link, 1 private endpoint, 2 role assignments
+- 0 changes to Foundry account or project
+- 0 changes to existing private endpoints
+- No forced replacements
+
+### References
+
+- Issue #138 — full 5-phase plan
+- PR #139 — Phase 1 implementation
+- [Microsoft docs: Configure Foundry private link](https://learn.microsoft.com/en-us/azure/foundry/how-to/configure-private-link)
+- [Microsoft docs: Agent Service VNet injection](https://learn.microsoft.com/en-us/azure/ai-services/agents/how-to/virtual-networks)
+- Reference Terraform from Brian's `ai-application-architectures` repo
+
+### Next Steps
+
+- **Phase 2:** Wire BYO connections (Storage, Cosmos, Search) to Foundry project with AAD auth + Foundry MSI role assignments + `time_sleep`
+- **Phase 3:** Add `networkInjections` to Foundry account + create `capabilityHosts` sub-resource on project
+- **Phase 4:** DNS + connectivity validation from AKS pods
+- **Phase 5:** Documentation + guardrails
+
+Each phase will be a separate PR.
+
+---
+
+## Decision: ai-service eval-path telemetry (instrumentation only)
+
+**Date:** 2026-05-14
+**By:** Basher
+**Status:** Implemented (squad/p2-wave-3)
+**Related:** Issue #137 (raisvc 403 on Foundry eval), directive `copilot-directive-20260514T020930Z-observability-bias`
+
+### Scope
+
+Add structured telemetry around `src/ai-service` Foundry eval and agent.run() paths so the next #137 reproduction captures all evidence needed to confirm/refute the RBAC hypothesis on the first try. **No application logic changes, no SDK version changes, no retry/fallback logic.** Danny is running the RCA; this PR is purely instrumentation.
+
+### What was added
+
+| Location | Change |
+|---|---|
+| `src/ai-service/app/telemetry.py` (new) | JWT claim decode (logging only), bearer redaction, identity startup probe, openai/httpx error-field extractor, `httpx.AsyncClient.send` monkey-patch context manager for verbose wire logging. |
+| `src/ai-service/app/services/anomaly_service.py` lifespan | Calls `identity_startup_probe()` for `cognitiveservices.azure.com/.default` after the existing `ai.azure.com/.default` token acquisition. Non-fatal. |
+| `src/ai-service/app/services/anomaly_service.py` (`FoundryRiskAnalyzer.analyze`, `FoundryCategorizer.categorize`) | Existing exception handlers now emit structured `foundry.agent_run.failed` with `extract_openai_error_fields` output. Same fallback values returned — no behavior change. |
+| `src/ai-service/app/routes/api.py` (`run_foundry_evaluation`) | Generates `request_id`, structured-bind eval inputs, wraps `evals.evaluate(...)` in `foundry_http_debug(request_id)` + try/except logging; same wrap-and-log around per-transaction `eval_agent.run(...)`. |
+| `deploy/kustomize/base/ai-service.yaml` | Adds `AI_SERVICE_DEBUG_FOUNDRY: "1"` to main container (debug-on for #137 incident). |
+| `src/ai-service/tests/test_eval_telemetry.py` (new) | 5 unit tests; full suite still green (79 passed, 1 skipped). |
+
+### Env flag
+
+- **Name:** `AI_SERVICE_DEBUG_FOUNDRY`
+- **Values:** `"1"` enables verbose per-request httpx wire logging; anything else (default) disables it.
+- **Currently set to:** `"1"` in `deploy/kustomize/base/ai-service.yaml`.
+- **Always-on regardless of flag:** identity startup probe, structured exception field extraction on failures.
+
+### Structured log fields emitted
+
+- Startup (event `foundry.identity.probe.ok`): `principal_oid`, `principal_appid`, `token_aud`, `token_iss`, `token_tid`, `token_exp`, `foundry_endpoint`, `target_resource_host`, `debug_hook_enabled`.
+- Per HTTP call (events `foundry.http.request`, `foundry.http.response`): `request_id`, `http_method`, `http_url`, redacted `headers` (Authorization preserves decoded JWT claims), `body` (truncated 4KB), `status_code`, `ms_headers` (`x-ms-*`, `apim-request-id`, `correlation-id`).
+- On eval failure (event `foundry.eval.invoke.failed` / `foundry.eval.agent_run.failed` / `foundry.agent_run.failed`): `request_id`, `eval_name`, `eval_deployment`, `error_type`, `error_message`, `openai_status_code`, `openai_body`, `foundry_componentName`, `foundry_correlation`, `foundry_inner_code`, `foundry_inner_componentName`, `foundry_inner_correlation`, `http_status`, `http_ms_headers`, `http_body`, `traceback`.
+
+### How to disable
+
+1. Edit `deploy/kustomize/base/ai-service.yaml` — set `AI_SERVICE_DEBUG_FOUNDRY` to `"0"` (or delete the env entry).
+2. Re-run `task cloud:deploy` (do NOT `kubectl apply -k` directly — see repo memory on the rollout-restart requirement).
+3. Identity probe + exception field extraction remain active. Only the per-request httpx wire-trace stops.
+
+To remove all telemetry entirely: revert this commit. The instrumentation is contained — `app/telemetry.py` plus the four call-sites listed above.
+
+### Out of scope (intentional)
+
+- The actual RCA on #137 — Danny owns it.
+- Updates to the `foundry-eval-debugging` skill — Danny will fold telemetry guidance in.
+- Comments on #137 / #130 — Danny owns the issue narrative.
+- Any retry, fallback, or model-routing change.
+
+---
+
+## Directive: Observability Bias Prevention
+
+**Timestamp:** 2026-05-14T02:09:30Z  
+**By:** Brian (via Copilot)  
+**Status:** Standing team preference
+
+### What
+
+Going forward, when investigating production / cloud failures (especially Foundry, Cosmos, AKS, identity/RBAC paths), default to **adding more logging, structured tracing, and debug telemetry FIRST**, then diagnose. We have been guessing too much. Diagnostic guesses without telemetry have shipped two wrong RCAs in the last 24h (Basher's "model kwarg" generalization, Basher's "raisvc is payload shape" hand-wave on #137).
+
+### Concrete expectations for any debugging task involving an external service call
+
+1. Log the **full request** before send — URL, method, key headers (redact bearer values, KEEP `x-ms-client-request-id` / `correlation-id`), body shape (or full body if not sensitive).
+2. Log the **full response** — status code, ALL `x-ms-*` headers (especially `x-ms-correlation-request-id`, `x-ms-request-id`, `apim-request-id`), response body on non-2xx.
+3. Log the **identity claims** of the principal making the call — at minimum `oid`, `appid`, `aud`, `iss`, `tid`. Decode the JWT (no signature verify needed for logs).
+4. Log the **resolved Azure resource ID** the call is targeting and the **role assignments** discovered for the principal on that scope at startup (one-shot, not per request).
+5. Use structured logging (`structlog` for Python, `ILogger` for .NET) with consistent field names so we can grep across services.
+6. OpenTelemetry spans where instrumented — add `correlation_id`, `request_id`, `principal_oid`, `target_resource_id` as span attributes.
+
+### Why
+
+User direct quote — "We need more logging, debugging and tracing to see what is really going on IMO". Captured as standing team preference because we keep paying for the lack of it.
