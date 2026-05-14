@@ -1,59 +1,43 @@
 import React from 'react';
 import {
-  Alert,
   Box,
   Button,
   Card,
   CardContent,
-  LinearProgress,
   Step,
   StepLabel,
   Stepper,
   Typography,
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
-import AgentPipeline from '../components/account-opening/AgentPipeline';
 import ApplicationForm from '../components/account-opening/ApplicationForm';
 import DocumentUpload from '../components/account-opening/DocumentUpload';
-import ApplicationStatus, { ApplicationStatusData } from '../components/account-opening/ApplicationStatus';
 import {
   ApplicationCreateRequest,
   ApplicationFormData,
   ApplicationResponse,
   createApplication,
-  getApplication,
 } from '../api/accountOpening';
 
-type StepKey = 'form' | 'upload' | 'processing' | 'status';
+type StepKey = 'form' | 'upload';
 
 const steps: { key: StepKey; label: string }[] = [
   { key: 'form', label: 'Application Form' },
   { key: 'upload', label: 'Upload Documents' },
-  { key: 'processing', label: 'Processing' },
-  { key: 'status', label: 'Status' },
 ];
 
 const AccountOpeningPage: React.FC = () => {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = React.useState<StepKey>('form');
   const [application, setApplication] = React.useState<ApplicationResponse | null>(null);
-  const [statusData, setStatusData] = React.useState<ApplicationStatusData | null>(null);
-  const [processingLoading, setProcessingLoading] = React.useState(false);
-  const [processingError, setProcessingError] = React.useState<string | null>(null);
-  const [createdViaSimpleForm, setCreatedViaSimpleForm] = React.useState(false);
   const formMode = process.env.NODE_ENV === 'test' ? 'simple' : 'full';
 
   const handleApplicationCreated = (created: ApplicationResponse) => {
     setApplication(created);
-    setStatusData(null);
-    setCreatedViaSimpleForm(false);
     setCurrentStep('upload');
   };
 
   const handleSimpleSubmit = async (payload: ApplicationFormData) => {
-    // Simple-mode form lacks several backend-required fields; build a best-effort
-    // wire payload. Simple mode is only used in tests (see formMode below);
-    // production uses the full form which builds its own ApplicationCreateRequest.
     const wirePayload: ApplicationCreateRequest = {
       firstName: payload.firstName,
       lastName: payload.lastName,
@@ -79,61 +63,15 @@ const AccountOpeningPage: React.FC = () => {
     };
     const response = await createApplication(wirePayload);
     setApplication(response);
-    setStatusData(null);
-    setCreatedViaSimpleForm(true);
     setCurrentStep('upload');
   };
 
-  const normalizeStatusData = (response: ApplicationResponse): ApplicationStatusData => ({
-    id: response.id,
-    status: response.status,
-    createdAt: response.createdAt ?? new Date().toISOString(),
-    updatedAt: response.updatedAt ?? response.createdAt ?? new Date().toISOString(),
-    userId: response.userId,
-    accountId: response.accountId,
-    agentResults: response.agentResults as ApplicationStatusData['agentResults'],
-  });
-
   const handleContinueToProcessing = async () => {
     if (!application) return;
-    setCurrentStep('processing');
-    setProcessingLoading(true);
-    setProcessingError(null);
-    try {
-      const latest = await getApplication(application.id);
-      setApplication(latest);
-      const normalized = normalizeStatusData(latest);
-      setStatusData(normalized);
-      if (['approved', 'rejected', 'pending_review'].includes(latest.status)) {
-        setCurrentStep('status');
-      }
-    } catch (error: unknown) {
-      const message =
-        (error as { response?: { data?: { message?: string; detail?: string } } })?.response?.data?.message ||
-        (error as { response?: { data?: { message?: string; detail?: string } } })?.response?.data?.detail ||
-        'Unable to load application status.';
-      setProcessingError(message);
-      if (process.env.NODE_ENV === 'test' && !createdViaSimpleForm) {
-        setCurrentStep('status');
-      }
-    } finally {
-      setProcessingLoading(false);
-    }
+    navigate(`/applications/${application.id}/status`);
   };
 
   const activeStepIndex = steps.findIndex((step) => step.key === currentStep);
-  const pipelineStages = React.useMemo(
-    () =>
-      application?.stages?.length
-        ? application.stages
-        : [
-            { name: 'Document Extraction', status: 'pending' as const },
-            { name: 'Identity Verification', status: 'pending' as const },
-            { name: 'Compliance Check', status: 'pending' as const },
-            { name: 'Provisioning', status: 'pending' as const },
-          ],
-    [application]
-  );
 
   return (
     <Box>
@@ -168,24 +106,6 @@ const AccountOpeningPage: React.FC = () => {
       )}
       {currentStep === 'upload' && application && (
         <DocumentUpload applicationId={application.id} onUploadComplete={handleContinueToProcessing} />
-      )}
-      {currentStep === 'processing' && application && (
-        <Box>
-          {processingError && (
-            <Alert severity="error" sx={{ mb: 2 }}>
-              {processingError}
-            </Alert>
-          )}
-          {processingLoading && <LinearProgress sx={{ mb: 2 }} />}
-          <AgentPipeline stages={pipelineStages} />
-        </Box>
-      )}
-      {currentStep === 'status' && application && (
-        <ApplicationStatus
-          applicationId={application.id}
-          statusData={statusData ?? undefined}
-          pollInterval={statusData ? 0 : undefined}
-        />
       )}
 
       {currentStep === 'upload' && (
