@@ -441,7 +441,7 @@ async def run_foundry_evaluation(
         )
         # Simulate SDK's _evaluate_via_dataset dict construction to log what's being sent
         from agent_framework._evaluation import ConversationSplit
-        effective_split = sample_item.split_strategy or ConversationSplit.TURN
+        effective_split = sample_item.split_strategy or ConversationSplit.LAST_TURN
         query_msgs, response_msgs = sample_item.split_messages(effective_split)
         query_text = " ".join(m.text for m in query_msgs if m.role == "user" and m.text).strip()
         response_text = " ".join(m.text for m in response_msgs if m.role == "assistant" and m.text).strip()
