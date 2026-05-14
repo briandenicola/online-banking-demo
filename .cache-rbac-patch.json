@@ -1,0 +1,1 @@
+{"properties":{"publicNetworkAccess":"Enabled","networkAcls":{"defaultAction":"Deny","bypass":"AzureServices","ipRules":[],"virtualNetworkRules":[]}}}
