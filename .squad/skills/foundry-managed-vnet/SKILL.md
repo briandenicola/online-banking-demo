@@ -1,5 +1,12 @@
 # Skill: Azure AI Foundry Managed Virtual Network — Canonical Pattern
 
+> 🔗 **AUTHORITATIVE REFERENCE — read FIRST before touching this code.**
+> Microsoft official sample: <https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-terraform/18-managed-virtual-network>
+> Fetch raw: `https://raw.githubusercontent.com/microsoft-foundry/foundry-samples/main/infrastructure/infrastructure-setup-terraform/18-managed-virtual-network/ai-foundry.tf`
+> When this skill and the existing repo TF disagree, **the sample wins.**
+> History (2026-05-14): two days lost to whack-a-mole because we pattern-matched
+> from existing broken TF instead of diffing against this sample. Don't repeat.
+
 **When to use:** Deploying Azure AI Foundry with Microsoft-managed egress network isolation (no BYO subnet for agents).
 
 **Background:** The Managed Virtual Network feature lets Microsoft provision and manage a dedicated VNet for Foundry agent outbound traffic. Private endpoints to backing services (Storage, Cosmos, Search) are created *inside* the managed VNet — no customer subnet/delegation needed.
