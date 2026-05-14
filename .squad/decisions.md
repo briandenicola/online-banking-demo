@@ -143,6 +143,12 @@ Too many concurrent fixes in flight; settle and verify before more user-facing t
 **Date:** 2026-05-13
 **Author:** Linus (Frontend), Basher (Backend follow-up)
 **Branch/Commit:** squad/p2-wave-3 / 489527b (frontend), 5c12a20 (backend cleanup)
+## Decision: Defensive guard for Avg Risk Score tile (#119)
+
+**Status:** ✅ Implemented
+**Date:** 2026-05-13
+**Author:** Linus (Frontend)
+**Branch/Commit:** squad/p2-wave-3 / 489527b
 
 ### Context
 Admin dashboard "Avg Risk Score" tile was rendering `1,778,591,506.40` —
@@ -183,12 +189,14 @@ the underlying data is cleaned up.
    - Write path was already corrected at `anomaly_service.py:617` after #118's fix
    - This was data-only cleanup via `kubectl exec` pattern
 2. **Reusable Redis-from-pod pattern established** for future maintenance ops — any pod with workload identity + `redis.asyncio` can run ad-hoc Redis ops without hardcoding connection strings or pulling from KeyVault.
+**Flagged for Brian / Basher / Turk** — see comment on #119.
 
 ---
 
 ## Decision: Active AI Prompts — graceful fallback for missing body (#120)
 
 **Status:** ✅ Fully Implemented (Linus frontend + Basher backend)
+**Status:** ✅ Frontend implemented; backend fix flagged
 **Date:** 2026-05-13
 **Author:** Linus (Frontend)
 **Branch/Commit:** squad/p2-wave-3 / 489527b
@@ -254,6 +262,14 @@ $ curl -sk -X POST https://onlinebankingdemo.bjdazure.tech/api/chat \
 - Savings ****8917: $350,000.00
 - ... (29 accounts total) ..."}
 ```
+### What needs Basher (backend)
+1. Include `systemPrompt: analyzer.SYSTEM_PROMPT` (and same for
+   categorizers) in the `GET /api/admin/prompts` response.
+2. Confirm whether `analyzer.enabled` reflects "agent reachable" or just
+   "agent constructed" — the badge should mean the former.
+
+**Comment posted on #120 with the above; issue stays open until backend
+ships the body field.**
 
 ---
 

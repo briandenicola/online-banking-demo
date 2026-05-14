@@ -41,6 +41,8 @@ Manages the complete account opening lifecycle: application submission, identity
 | `FOUNDRY_PROJECT_ENDPOINT` | Azure AI Foundry project endpoint | Yes |
 | `FOUNDRY_MODEL` | Azure AI model name | Yes |
 | `CUS_ENDPOINT` | Custom understanding service endpoint | No |
+| `AGENT_ID_SIDECAR_URL` | Entra agent identity sidecar URL | Yes |
+| `AGENT_ID_AGENT_IDENTITY` | Agent identity for authentication | Yes |
 | `COSMOS_DB_ENDPOINT` | Cosmos DB endpoint | Yes |
 | `AZURE_STORAGE_ACCOUNT_NAME` | Blob storage account for documents | Yes |
 | `REDIS_CONNECTION_STRING` | Redis connection string | Yes |
