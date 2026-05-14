@@ -808,6 +808,11 @@ async def lifespan(app: FastAPI):
                 agent_version="1",
                 description="Financial transaction risk scoring agent",
                 instructions=FoundryRiskAnalyzer.SYSTEM_PROMPT,
+                # agent-framework-foundry 1.2.x: model deployment name MUST
+                # be passed via default_options, not `model=` (rejected by
+                # FoundryAgent.__init__) and not omitted (responses.create
+                # then 400s with "Missing required parameter: 'model'").
+                default_options={"extra_body": {"model": model_name}},
             )
             foundry_analyzer.initialize(risk_agent)
             logger.info("✅ Foundry risk agent created (persistent)")
@@ -819,6 +824,7 @@ async def lifespan(app: FastAPI):
                 agent_version="1",
                 description="Financial transaction categorization agent",
                 instructions=FoundryCategorizer.SYSTEM_PROMPT,
+                default_options={"extra_body": {"model": model_name}},
             )
             foundry_categorizer.initialize(categorizer_agent)
             logger.info("✅ Foundry categorizer agent created (persistent)")

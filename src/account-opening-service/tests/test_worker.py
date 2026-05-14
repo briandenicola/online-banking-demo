@@ -143,3 +143,72 @@ class TestWorkerFoundryCheck:
                             str(call) for call in mock_logger.error.call_args_list
                         ]
                         assert any("foundry" in m.lower() or "agent" in m.lower() for m in error_msgs)
+
+
+@pytest.mark.asyncio
+class TestFoundryAgentSignatureContract:
+    """Pin the FoundryAgent constructor contract for our pinned SDK version.
+
+    Regression guard for the recurring 'unexpected keyword argument' breakage
+    when preview agent-framework-foundry SDK signatures shift between releases.
+
+    Constructing FoundryAgent with kwargs the installed SDK does not accept
+    causes a TypeError at startup (Foundry connectivity check fails). These
+    tests verify each FoundryAgent call site uses ONLY kwargs accepted by the
+    pinned SDK version. If the SDK signature changes, these tests fail loudly
+    instead of waiting for a pod startup error in production.
+    """
+
+    def _agent_kwargs(self):
+        import inspect
+        from agent_framework_foundry import FoundryAgent
+        return set(inspect.signature(FoundryAgent.__init__).parameters.keys())
+
+    def test_worker_connectivity_check_kwargs_supported(self):
+        """worker.py main() FoundryAgent kwargs must all be in the SDK signature."""
+        import re
+        from pathlib import Path
+
+        worker_src = Path(__file__).resolve().parent.parent / "app" / "worker.py"
+        text = worker_src.read_text()
+        m = re.search(r"FoundryAgent\((.*?)\)", text, re.DOTALL)
+        assert m, "FoundryAgent() call not found in worker.py"
+        used_kwargs = set(re.findall(r"(\w+)\s*=", m.group(1)))
+
+        sdk_kwargs = self._agent_kwargs()
+        unsupported = used_kwargs - sdk_kwargs
+        assert not unsupported, (
+            f"worker.py FoundryAgent() uses kwargs not in SDK signature: "
+            f"{unsupported}. Supported: {sorted(sdk_kwargs)}"
+        )
+        # Specifically: 'model' is not a constructor kwarg in agent-framework-foundry 1.2.x
+        assert "model" not in used_kwargs, (
+            "worker.py must not pass model= to FoundryAgent — see history #137 follow-up"
+        )
+
+    @pytest.mark.parametrize(
+        "module_path",
+        [
+            "app/agents/identity_verification.py",
+            "app/agents/compliance_check.py",
+            "app/agents/provisioning.py",
+        ],
+    )
+    def test_agent_modules_kwargs_supported(self, module_path):
+        import re
+        from pathlib import Path
+
+        src = (Path(__file__).resolve().parent.parent / module_path).read_text()
+        m = re.search(r"FoundryAgent\((.*?)\)", src, re.DOTALL)
+        assert m, f"FoundryAgent() call not found in {module_path}"
+        used_kwargs = set(re.findall(r"(\w+)\s*=", m.group(1)))
+
+        sdk_kwargs = self._agent_kwargs()
+        unsupported = used_kwargs - sdk_kwargs
+        assert not unsupported, (
+            f"{module_path} FoundryAgent() uses kwargs not in SDK signature: "
+            f"{unsupported}. Supported: {sorted(sdk_kwargs)}"
+        )
+        assert "model" not in used_kwargs, (
+            f"{module_path} must not pass model= to FoundryAgent"
+        )

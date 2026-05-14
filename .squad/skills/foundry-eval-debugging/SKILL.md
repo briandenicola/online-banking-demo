@@ -2,7 +2,9 @@
 
 **When to use:** Any time the agent_framework / Azure AI Foundry "Evals" pipeline returns
 a 4xx (especially 400-wrapping-403 with `componentName: "raisvc"` and
-`innerError.code: "UnauthorizedUserAction"`).
+`innerError.code: "UnauthorizedUserAction"`) — **OR** any time you see a 400
+`Missing required parameter: 'model'` from `client.responses.create()` in a
+stack involving `agent_framework_foundry._agent._FoundryAgentChatClient`.
 
 **Background:** `raisvc` is the Responsible AI service backend that fronts Foundry's
 content-safety + quality evaluators. It is notorious for collapsing several distinct
@@ -11,6 +13,59 @@ failure modes onto a single confusing error code (`UnauthorizedUserAction` / 403
 than the next to verify, and the actual cause is almost always lower than you think.
 
 ## The Diagnostic Ladder
+
+### Rung 0 — FoundryAgent constructor contract (ADDED 2026-05-14, #137 + #130)
+
+If you see `Missing required parameter: 'model'` from `responses.create()`, OR
+`FoundryAgent.__init__() got an unexpected keyword argument 'model'`, OR if a
+counter/metric that depends on `agent.run()` succeeding is silently zero —
+this rung first. Almost certainly a FoundryAgent call site is wrong.
+
+`agent-framework-foundry` 1.2.x has **bidirectional signature drift** within
+the same package release:
+
+| Class                | Accepts `model=`? | How to set the model         |
+|----------------------|:-----------------:|------------------------------|
+| `FoundryAgent`       | ❌ NO             | `default_options={"extra_body": {"model": "<deployment>"}}` |
+| `FoundryChatClient`  | ✅ YES            | `model="<deployment>"`       |
+| `FoundryEvals`       | ✅ YES            | `model="<deployment>"` (or inherits from `client.model`) |
+| `OpenAIChatClient`   | ✅ YES (positional) | `OpenAIChatClient("<deployment>", ...)` |
+
+The **`extra_body`** wrapper is required because the OpenAI SDK silently
+strips unknown top-level keys from `default_options` before sending.
+`default_options={"model": ...}` is dropped on the floor; only fields under
+`extra_body` make it into the request body.
+
+**Verification command:**
+```bash
+kubectl exec -n <ns> deploy/<svc> -- python -c "
+import inspect
+from agent_framework_foundry import FoundryAgent, FoundryChatClient, FoundryEvals
+print('Agent:',  inspect.signature(FoundryAgent.__init__))
+print('Chat:',   inspect.signature(FoundryChatClient.__init__))
+print('Evals:',  inspect.signature(FoundryEvals.__init__))
+"
+```
+
+**Canonical correct construction:**
+```python
+agent = FoundryAgent(
+    project_endpoint=endpoint,
+    credential=credential,
+    agent_name="...",
+    agent_version="1",
+    description="...",
+    instructions=SYSTEM_PROMPT,
+    default_options={"extra_body": {"model": model_deployment_name}},
+)
+```
+
+**Regression guard:** Each Python service that constructs `FoundryAgent` has a
+pytest class `TestFoundryAgentSignatureContract` in its tests. It greps every
+`FoundryAgent(...)` call against `inspect.signature(FoundryAgent.__init__)`
+and asserts the `default_options.extra_body.model` shape. If the SDK signature
+changes again, those tests fail loudly in normal `pytest` — no waiting for a
+pod startup error in production.
 
 ### Rung 1 — RBAC (cheap, but rarely the cause)
 
@@ -136,6 +191,110 @@ The OpenAI client will log every request body. Look for:
 - Empty `response` strings in the JSONL items
 - Missing `query_messages` / `response_messages` arrays
 - `testing_criteria` referencing evaluators your project doesn't have permissions for
+
+### Rung 7 — `FoundryAgent` constructor / `model` errors (2026-05-14 incident)
+
+This rung covers TWO related symptoms that surface when constructing or running
+`FoundryAgent` for an `agent_name`/`agent_version`-bound persistent agent.
+
+**Symptom A — `FoundryAgent.__init__() got an unexpected keyword argument 'model'`**
+at startup.
+
+The `agent_framework_foundry==1.2.x` `FoundryAgent.__init__` is **keyword-only and
+does NOT accept `model`**. There's no `**kwargs` catch-all. This trips on any code
+copied from a tutorial, an older SDK, or a fix that was logically right (Responses
+API requires a model) but used the wrong shape.
+
+**Always verify against the deployed pod's installed SDK:**
+
+```bash
+kubectl exec -n <ns> deploy/<svc> -c <container> -- python -c "
+import inspect
+from agent_framework_foundry import FoundryAgent
+print(inspect.signature(FoundryAgent.__init__))"
+```
+
+**Fix:** Remove `model=` from the constructor. The model goes elsewhere — see
+Symptom B.
+
+**Symptom B — `Error code: 400 — Missing required parameter: 'model'`** from
+`POST .../openai/v1/responses` after the constructor succeeds.
+
+The SDK's request preparer at `agent_framework_foundry/_agent.py:_FoundryAgentChatClient`
+**actively pops `model` from outgoing run-options** (look for `run_options.pop("model", None)`)
+because it expects the model to be configured **server-side on the Foundry agent
+version**. When the server-side agent has `model=None`, the request body has no
+model field and the API rejects it. The error message is misleading: it implies a
+client-side parameter problem when the actual cause is a missing server-side
+configuration.
+
+**Diagnose:**
+
+```python
+# inside a working pod (any one with the SDK + workload identity)
+from azure.ai.projects.aio import AIProjectClient
+from azure.identity import DefaultAzureCredential
+import asyncio, os
+
+async def check(name):
+    c = AIProjectClient(endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"].rstrip("/"),
+                        credential=DefaultAzureCredential())
+    async for v in c.agents.list_versions(agent_name=name):
+        print(f"  v={v.version} model={getattr(v,'model',None)}")
+
+asyncio.run(check("identity-verifier"))
+# ⇒ if model=None, that's your bug
+```
+
+**Two fixes (preferred → workaround):**
+
+1. **Preferred — set `model` server-side on the agent version.** The SDK is
+   intentional about not sending model on every call. Update each agent's version
+   definition in the Foundry portal / Terraform / IaC to pin `model="gpt-5.4-mini"`
+   (or whichever deployment). All client services then "just work" with no
+   special construction.
+
+2. **Workaround — smuggle `model` through `extra_body`.** The SDK strips `model`
+   from `run_options` but preserves `extra_body`:
+
+   ```python
+   FoundryAgent(
+       project_endpoint=...,
+       credential=...,
+       agent_name="identity-verifier",
+       agent_version="1",
+       instructions=...,
+       default_options={"extra_body": {"model": foundry_model}},
+   )
+   ```
+
+   This sends `{"model": "..."}` in the request body and bypasses the strip.
+   Use this when you can't change the server-side agent definition, but treat it
+   as tech debt.
+
+**Things that look like they should work but don't:**
+
+- `default_options={"model": foundry_model}` — stripped by `pop("model")`.
+- `default_options=FoundryAgentOptions(model=foundry_model)` — same; `FoundryAgentOptions`
+  is a TypedDict, semantically identical to a plain dict here.
+- `agent.run(..., options=ChatOptions(model=foundry_model))` — stripped.
+- `agent.run(..., client_kwargs={"model": foundry_model})` — `client_kwargs`
+  goes to the underlying OpenAI client constructor, not the request body, so
+  `AsyncResponses.create()` then errors with "got an unexpected keyword argument
+  'model_id'" (the SDK normalises the name) and the request never goes out.
+
+**Contract test (regression guard):** see
+`src/account-opening-service/tests/test_worker.py::TestFoundryAgentSignatureContract`.
+It uses `inspect.signature(FoundryAgent.__init__)` against the *installed* SDK and
+asserts each call site only uses supported kwargs and never `model=`. Re-runs on
+every preview-SDK pin bump; will catch the next signature drift before pod
+startup.
+
+**Cross-service note:** if account-opening-worker is broken with Symptom B, every
+other Python service that calls `FoundryAgent.run(...)` against the same Foundry
+project is also broken — they may just be hiding it (e.g. swallowed in a
+"fallback" branch). Repro from inside each pod with the diagnose snippet above
+before declaring the incident scoped.
 
 ## Anti-Patterns (don't do these)
 

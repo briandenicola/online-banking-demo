@@ -96,11 +96,11 @@ class IdentityVerificationConsumer(AgentConsumer):
         self._agent = FoundryAgent(
             project_endpoint=foundry_endpoint.rstrip("/"),
             credential=self._credential,
-            model=foundry_model,
             agent_name="identity-verifier",
             agent_version="1",
             description="Identity verification agent",
             instructions=SYSTEM_PROMPT,
+            default_options={"extra_body": {"model": foundry_model}},
         )
 
 

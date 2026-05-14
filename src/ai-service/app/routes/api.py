@@ -344,13 +344,21 @@ async def run_foundry_evaluation(
         credential=state.foundry_credential,
     )
 
-    # Create a temporary agent with the prompt being evaluated
+    # Create a temporary agent with the prompt being evaluated.
+    # NOTE: agent-framework-foundry 1.2.x does NOT accept `model=` on the
+    # FoundryAgent constructor. The model deployment name flows to the
+    # underlying responses.create() call via `default_options`. Without it
+    # the call to eval_agent.run() returns 400 "Missing required parameter:
+    # 'model'" from /openai/v1/responses, which surfaces as both #137
+    # (eval failures) and #130 (counter stays 0 because evals never succeed).
+    eval_model = state.foundry_model or "gpt-5.4-mini"
     eval_agent = FoundryAgent(
         project_endpoint=state.foundry_endpoint,
         credential=state.foundry_credential,
         agent_name="risk-assessor",
         agent_version="1",
         instructions=request.system_prompt,
+        default_options={"extra_body": {"model": eval_model}},
     )
 
     eval_items = []

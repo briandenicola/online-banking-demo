@@ -100,11 +100,11 @@ class ComplianceCheckConsumer(AgentConsumer):
         self._agent = FoundryAgent(
             project_endpoint=foundry_endpoint.rstrip("/"),
             credential=self._credential,
-            model=foundry_model,
             agent_name="compliance-assessor",
             agent_version="1",
             description="KYC compliance assessment agent",
             instructions=SYSTEM_PROMPT,
+            default_options={"extra_body": {"model": foundry_model}},
         )
 
 

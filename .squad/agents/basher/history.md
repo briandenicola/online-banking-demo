@@ -2278,3 +2278,134 @@ I narrowed the shipped guard to *only* `agent-framework-*` per Brian's spec and 
 **Lesson:** Treat `componentName: raisvc` + `UnauthorizedUserAction` 403s as **payload validation failures first, RBAC second**. Always check that `query_text` *and* `response_text` will be non-empty after the SDK splits the conversation. If your eval is meant to test a prompt, you must run the prompt first and capture the model output — there is no "evaluate without a response" mode for the safety/quality evaluators.
 
 **Issue:** #137  **Branch:** current  **Tests:** 72 pass, 1 skip (no behavioural test of the eval flow yet — follow-up worth filing).
+
+## Learnings
+
+### FoundryAgent model parameter — `extra_body` smuggle pattern (2026-05-14)
+
+**Trigger:** account-opening-worker startup `Foundry connectivity check failed`:
+`FoundryAgent.__init__() got an unexpected keyword argument 'model'`. Then after removing `model=` (mistake from commit d120834), API rejected with `Missing required parameter: 'model'.`
+
+**Root cause: TWO compounding bugs.**
+
+**Bug A (Python signature drift):** Commit `d120834` (#137 follow-up, 2026-05-13) added `model=foundry_model` to all 4 FoundryAgent constructors in account-opening-service. **`agent_framework_foundry==1.2.2` does not accept `model` as a constructor kwarg** (verified via `inspect.signature` in deployed pod). The constructor's keyword-only signature is: `(*, project_endpoint, agent_name, agent_version, credential, project_client, allow_preview, tools, ..., default_options, ...)`. Brian's earlier diagnosis (Responses API requires model) was correct in spirit but the fix used a non-existent kwarg — which means it was deployed but never executed end-to-end (or the pod was crash-looping silently). ai-service never had this bug because its FoundryAgent calls never passed `model=`.
+
+**Bug B (Foundry server-side data):** All 5 server-side Foundry agents (`identity-verifier`, `compliance-assessor`, `account-provisioner`, `risk-assessor`, `transaction-categorizer`) exist with `version=1` but their `model` field is **`None`**. The Responses API call (`POST /openai/v1/responses`) at `agent_framework_foundry/_agent.py:353` actively **strips `model` from outgoing requests** (with comment "Skip model check — model is configured on the Foundry agent"). When the server-side agent has no model bound, the request fails with `400 Missing required parameter: 'model'` — a really misleading error because the SDK is supposed to omit it on purpose.
+
+**Why ai-service "looked" healthy:** ai-service logs show `✅ Foundry risk agent created (persistent)` at startup — but that's only the agent **definition load**, not a `.run()` call. Verified that `risk-assessor.run()` fails with the same 400 error in production. **All Python-service Foundry agent run() calls are currently broken.**
+
+**Fix (account-opening-service only this round):** Pass `model` via `default_options={"extra_body": {"model": foundry_model}}` on the FoundryAgent constructor. The SDK's request preparer preserves `extra_body` keys verbatim into the outgoing Responses API request body. This bypasses the `pop("model", None)` strip. Verified end-to-end:
+```
+{"event": "Foundry connectivity verified", "logger": "account-opening-worker", ...}
+```
+…and all 4 consumers registered.
+
+**Files changed:**
+- `src/account-opening-service/app/worker.py`
+- `src/account-opening-service/app/agents/identity_verification.py`
+- `src/account-opening-service/app/agents/compliance_check.py`
+- `src/account-opening-service/app/agents/provisioning.py`
+- `src/account-opening-service/tests/test_worker.py` (new `TestFoundryAgentSignatureContract` class — parses each FoundryAgent() call site, asserts every kwarg is in the SDK's actual `inspect.signature` for the pinned version, and asserts `model=` is never passed as a direct kwarg).
+
+**Correct constructor signature for `agent_framework_foundry==1.2.2`:**
+```python
+FoundryAgent(
+    project_endpoint=..., credential=...,
+    agent_name=..., agent_version=...,           # references server-side agent
+    description=..., instructions=...,
+    default_options={"extra_body": {"model": "<deployment>"}},  # smuggles model past the SDK strip
+)
+```
+
+**Outstanding follow-ups (filed in decision drop, NOT touched in this PR):**
+- `ai-service` risk-assessor + transaction-categorizer have the same Bug B; their `.run()` calls will fail. Either repeat the `extra_body` fix in `app/services/anomaly_service.py` and `app/routes/api.py:348` (eval_agent), OR — preferably — update the server-side Foundry agent definitions to set `model="gpt-5.4-mini"` on each version, which removes the need for client-side workarounds across all services.
+- Worth raising as an issue (Brian didn't open one).
+
+**Lesson — preview-SDK signatures shift between releases:** Always verify against the *deployed pod's* installed version with `inspect.signature(...)`. Do not trust prior code, tutorials, or even prior fixes from this same repo. Add a contract test that pins the call shape against the SDK signature so the next pin bump (which is gated by `task lint:preview-sdk-pins`) also re-runs `pytest` and catches the drift before it reaches a pod startup.
+
+## Learnings — 2026-05-14 (#137 + #130 unified — bidirectional SDK signature drift)
+
+**Both #137 and #130 reopened.** Symptoms presented as 3 separate failures but were a single coordinated SDK contract problem.
+
+### Ground-truth signatures (deployed pods, agent-framework-foundry==1.2.2)
+
+```text
+FoundryAgent.__init__(*, project_endpoint, agent_name, agent_version, credential,
+    project_client, allow_preview, tools, context_providers, middleware,
+    client_type, env_file_path, env_file_encoding, id, name, description,
+    instructions, default_options, ...)            # ← NO `model=`
+FoundryChatClient.__init__(*, project_endpoint, project_client, model, credential, ...)   # ← `model=` accepted
+FoundryEvals.__init__(*, client, project_client, model, evaluators, ...)                  # ← `model=` accepted
+```
+
+`FoundryAgent` has NO `model=` kwarg. The model deployment name reaches the
+underlying `_FoundryAgentChatClient.responses.create()` call **only** if it is
+passed via `default_options={"extra_body": {"model": "<deployment>"}}`. Note the
+`extra_body` wrapper — the OpenAI SDK strips unknown top-level options before
+sending the request, so a bare `default_options={"model": ...}` is silently
+dropped and the API rejects the request with `Missing required parameter:
+'model'`.
+
+### Why prior fixes didn't hold
+
+| Commit       | What it did                                     | Why it failed                                           |
+|--------------|-------------------------------------------------|---------------------------------------------------------|
+| `46d712a`    | #137 restored assistant turn in eval payload    | Correct, but eval_agent.run() itself never reached the model — `eval_agent` was constructed without any `model` propagation, so even building the eval items 400'd before submission. |
+| `d120834`    | #137 follow-up: passed `model=` to FoundryAgent | The SDK rejects `model=` (TypeError on init).            |
+| `8fc8c76`    | #130 moved counter to Redis                     | Counter logic was correct. But the success path that increments it was never executed because `risk_agent.run()` failed for the same reason as eval (no model in run_options). |
+| `0b6255a`    | Pinned agent-framework to 1.2.2                 | Version is stable; the contract change was always there in 1.2.x. Pinning was a red herring for this particular bug. |
+
+### The unified fix (this commit)
+
+Every `FoundryAgent(...)` call site must pass:
+
+```python
+FoundryAgent(
+    project_endpoint=endpoint,
+    credential=credential,
+    agent_name="...",
+    agent_version="1",
+    instructions=...,
+    default_options={"extra_body": {"model": model_name}},   # ← REQUIRED
+)
+```
+
+Sites updated:
+- `src/account-opening-service/app/worker.py` (connectivity check)
+- `src/account-opening-service/app/agents/{compliance_check,identity_verification,provisioning}.py`
+- `src/ai-service/app/services/anomaly_service.py` (risk_agent + categorizer_agent)
+- `src/ai-service/app/routes/api.py` (eval_agent)
+
+### Why "AI Calls Today" was 0 (#130)
+
+Counter logic was already correct (Redis INCR + 36h TTL on first write,
+swallowed errors, success-path-only). It just was never being hit because
+`risk_agent.run()` was failing with the same `Missing required parameter:
+'model'` error and falling into the catch-all `except Exception → fallback
+RiskAssessment` branch (which does NOT increment). Fixing the FoundryAgent
+construction makes the increment path hot again. Verified end-to-end in pod:
+counter 0 → 1 after a single successful `analyzer.analyze(tx)`.
+
+### Why the pin guard CI didn't catch this
+
+It wasn't an SDK pin drift. The pins are still 1.2.2 across all three Python
+services. The bug was a **call-site contract** issue: code passing
+unsupported kwargs (or missing required ones) to a correctly-pinned SDK. The
+pin guard intentionally only checks pyproject.toml. Static call-site
+validation lives in the new pytest contract tests
+(`TestFoundryAgentSignatureContract` in both `test_worker.py` and
+`test_detection.py`) which `inspect.signature(FoundryAgent.__init__)` and
+fail if any FoundryAgent call site uses a kwarg the SDK doesn't accept OR
+forgets `default_options={"extra_body": {"model": ...}}`.
+
+### Lesson — bidirectional signature drift in one SDK family
+
+In the same release of agent-framework, two adjacent classes have
+**opposite** model conventions:
+- `FoundryAgent`: model NOT a kwarg; must be tunneled via `default_options.extra_body.model`.
+- `FoundryChatClient`, `OpenAIChatClient`, `FoundryEvals`: `model=` IS a kwarg.
+
+Always `inspect.signature` BOTH sides in the deployed pod when debugging
+"unexpected keyword argument" or "missing required parameter" errors. They
+look like opposite bugs but they're often the same SDK family with
+inconsistent contracts.

@@ -81,11 +81,11 @@ async def main() -> int:
         connectivity_agent = FoundryAgent(
             project_endpoint=foundry_endpoint.rstrip("/"),
             credential=credential,
-            model=foundry_model,
             agent_name="identity-verifier",
             agent_version="1",
             description="Foundry connectivity check agent",
             instructions="Respond with JSON: {\"status\": \"ok\"}",
+            default_options={"extra_body": {"model": foundry_model}},
         )
         session = connectivity_agent.create_session()
         response = await connectivity_agent.run("ping", session=session)
