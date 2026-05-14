@@ -1089,3 +1089,24 @@ Basher identified 4 critical corrections to the multi-phase Foundry private netw
 - Retry limit: unlimited OK, or cap at N attempts?
 - Customer explanation prompt template: review before deploy?
 - Failed state admin visibility: separate tab or mixed with pending_review?
+
+---
+
+## 2026-05-14: Coordinated Plan — Issues #135 + #136
+
+**Batch:** Coordinated account opening resubmit (#135) + customer status page (#136) implementation
+
+**Role:** Architect — produced danny-135-136-plan.md covering:
+- Schema decision (extend account-applications container, not split)
+- Idempotency strategy (Redis-backed deduplication, 24h TTL)
+- Error classification (base consumer class)
+- Resubmit endpoint contract (202/409, retry cap < 2)
+- Customer explanation generation (provisioning stage, one-shot)
+- Customer status page polling (2s interval until terminal)
+- E2E test scenarios (happy path runnable; 6 skipped pending backend)
+
+**Coordination:** Aligned with Basher (backend), Linus (frontend), Livingston (tests) for parallel implementation. Incorporated Brian's retry cap directive (1 retry = 2 total attempts) as external constraint.
+
+**Status:** ✅ Plan complete; implementation in progress (Basher committed, Linus committed, Livingston committed).
+
+**Branch:** squad/135-136-account-opening-state-machine

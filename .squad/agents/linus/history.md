@@ -731,3 +731,53 @@ cd src/ui-app && npm run build
 5. `feat(ui): #136 Add customer status page route` (51f324d)
 6. `feat(ui): #136 Redirect to customer status page after upload` (f04f407)
 7. `feat(ui): #135 Add 'failed' status support to ApplicationStatus` (8e60df4)
+
+---
+
+## 2026-05-14: Frontend Implementation — Issues #135 + #136
+
+**Batch:** Coordinated account opening resubmit (#135) + customer status page (#136) implementation
+
+**Role:** Frontend Dev — implemented React/TypeScript UI for customer status page and retry UX
+
+**Component Architecture:**
+- Extracted ApplicationStages.tsx as shared component (147 lines)
+- Eliminates 68% duplication between admin (AgentPipeline) and customer views
+- Visual consistency: stage rendering (stepper, status icons, details) now unified
+
+**CustomerApplicationStatusPage:**
+- 283 lines with polling + retry UX
+- 2s polling interval until isTerminal(status)
+- useEffect cleanup prevents memory leak
+- useRef prevents stale closure issues
+
+**Retry Button Visibility Logic:**
+- Visible when: status='failed' AND lastError?.retryable=true AND stageAttempts?.[failedStage]<2
+- Implements retry cap per Brian's directive (max 1 retry = 2 total attempts)
+- Edge cases: handles missing stageAttempts dict key (defaults to 0)
+
+**AI Explanation Display:**
+- Renders customerExplanation ONLY for terminal statuses
+- One-shot generation at finalization (never regenerated)
+- Visual design: approved (green), rejected (red), pending review (yellow), failed (neutral)
+
+**Error Handling:**
+- resolveApiError() helper for all API calls
+- Handles FastAPI 422 validation arrays (coerces to human-readable strings)
+- 409 conflict: display backend message, hide retry button
+
+**MUI v9 Compliance:**
+- Uses ErrorOutlineRounded (v9 removed ErrorOutline)
+
+**Routing Integration:**
+- Redirect to /applications/:id/status after document upload
+- Enables bookmarking, sharing, cleaner separation of concerns
+
+**TypeScript Types:**
+- LastError interface (stage, code, message, retryable, occurredAt, attempt, correlationId)
+- Extended ApplicationResponse (lastError, stageAttempts, failedStage, customerOutcome, customerExplanation)
+
+**Status:** ✅ Complete; build verified (npm run build, non-blocking exhaustive-deps warning)  
+**Commits:** 743d627, 42ea60f, 9d86b7f, 2a8f5b7, 51f324d, f04f407, 8e60df4  
+**Branch:** squad/135-136-account-opening-state-machine  
+**Files Changed:** 7 files, +515 -230 lines (net +285)

@@ -2166,3 +2166,48 @@ This ensures:
 **Commit:** 345aa72 on branch `squad/135-136-account-opening-state-machine`
 
 **Decision summary:** `.squad/decisions/inbox/basher-135-136-implementation.md`
+
+---
+
+## 2026-05-14: Backend Implementation — Issues #135 + #136
+
+**Batch:** Coordinated account opening resubmit (#135) + customer status page (#136) implementation
+
+**Role:** Backend Dev — implemented Python FastAPI backend for state machine:
+
+**Schema Extensions:**
+- LastError model (stage, code, message, retryable, occurredAt, attempt, correlationId)
+- ApplicationResponse extended (lastError, stageAttempts, failedStage, customerOutcome, customerExplanation)
+- ApplicationStatus enum (added `failed` state)
+
+**Repository Methods:**
+- record_stage_failure() — persist error, increment stageAttempts
+- clear_stage_failure_for_retry() — clear error, reset status to stage
+- set_customer_explanation() — store AI explanation
+
+**Consumer Idempotency Layer:**
+- _derive_idempotency_key(app_id, attempt) → {applicationId}:{stage}:{attempt}
+- _is_already_processed(key) — Redis SET check, 24h TTL
+- _mark_processed(key) — Redis SET with SADD + EXPIRE
+
+**Error Classification:**
+- _classify_error(exc, stage, attempt) → LastError
+- Maps exceptions: timeout, auth_error, validation_error, connection_error, unknown_error
+- Sets retryable flag (true for transient, false for systemic)
+
+**Resubmit Endpoint:**
+- POST /api/account-opening/applications/{id}/resubmit
+- Pre-conditions: status="failed", retryable=true, stageAttempts[failedStage]<2
+- Response: 202 Accepted (resumedFromStage, attempt, status, message)
+- Error: 409 Conflict (retry_cap_exceeded)
+
+**Customer Explanation Generation:**
+- _generate_customer_explanation() in provisioning stage
+- Maps decision → customerOutcome (approved/declined/needs_review)
+- Foundry agent generates 2-3 sentence friendly explanation
+- One-shot at finalization, non-blocking
+
+**Status:** ✅ Complete; build verified (python -m py_compile)  
+**Commits:** 345aa72, 926e0d4  
+**Branch:** squad/135-136-account-opening-state-machine  
+**Dependencies:** ✅ Unblocked Linus (frontend) and Livingston (tests)

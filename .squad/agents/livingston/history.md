@@ -723,3 +723,62 @@ Issues #137 (eval failures) and #130 ("AI Calls Today" counter stuck at 0) are n
 - Tests will turn green as Basher + Linus land their work
 - Remove test.skip() once /resubmit endpoint and backend SSN triggers are deployed
 - Run `npm run test:chromium` in `tests/e2e/` to validate against deployed environment
+
+---
+
+## 2026-05-14: E2E Test Suite — Issues #135 + #136
+
+**Batch:** Coordinated account opening resubmit (#135) + customer status page (#136) implementation
+
+**Role:** Tester/QA — created Playwright E2E suite for state machine transitions and customer status flow
+
+**Test File:** tests/e2e/specs/core/account-opening-resubmit.spec.ts (601 lines, 4 test suites, 7 scenarios)
+
+**Test Scenarios:**
+
+1. **Happy Path — Terminal State with Customer Explanation** (✅ Runnable)
+   - Submit valid application
+   - Upload documents
+   - Poll GET /status every 2s until terminal
+   - Verify stages[] and customerExplanation present
+   - Verify polling stops at terminal
+
+2. **Failure + Successful Retry** (⏸️ Backend-blocked)
+   - SSN "9999" triggers single failure
+   - Poll until status='failed'
+   - Verify lastError.retryable=true
+   - POST /resubmit → 202 Accepted
+   - Verify resumedFromStage, attempt:2
+   - Poll to completion
+   - Verify stageAttempts incremented
+
+3. **Retry Cap Exceeded** (⏸️ Backend-blocked)
+   - SSN "8888" always fails
+   - First resubmit (202)
+   - Second failure (202)
+   - Second resubmit (409 retry_cap_exceeded)
+   - Verify lastError.retryable=false
+
+4. **Validation Suite** (⏸️ Backend-blocked)
+   - 409 on non-failed status
+   - 404 on missing app
+   - 401 on missing auth
+
+**Test Infrastructure:**
+- Auth fixture: authFixture.ts
+- Sample documents: tests/fixtures/sample-documents/john-smith/
+- Serial mode for stateful workflows
+- 2s polling cadence, 90-120s timeouts
+- Graceful degradation (fallback to GET if /status not implemented)
+
+**Patterns Documented:**
+- test.skip() with TODO for backend-blocked scenarios
+- SSN trigger patterns (9999=fail-once, 8888=always-fail)
+- Fallback patterns (alternate endpoints for partial deployment)
+- Contract design (lastError.retryable boolean > stageAttempts numeric comparison)
+- Health check gating (prevents false negatives)
+
+**Status:** ✅ Complete; 1 test runnable, 6 skipped pending backend/UI implementation  
+**Commits:** 464f7c5, a15498f  
+**Branch:** squad/135-136-account-opening-state-machine  
+**Unblock Path:** Basher (backend /resubmit, retry cap logic) → Linus (UI) → remove test.skip() → verify green
