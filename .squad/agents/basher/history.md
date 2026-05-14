@@ -2714,3 +2714,32 @@ Implemented Danny's full migration plan from BYO VNet injection to the **Managed
 - `terraform init -backend=false` — providers resolved
 - `terraform validate` — `Success! The configuration is valid.`
 - `terraform plan` — not run (no Azure auth in this env); Brian to run via `task cloud:up`
+
+### 2026-05-14 — Azure Foundry Managed VNet: auto-created managedNetworks/default
+
+**Problem:** After fresh `terraform destroy` + `task cloud:up` on branch 138-foundry-troubleshooting (PR #143), two errors:
+1. `Error: Resource already exists` on `azapi_resource.managed_network` at foundry-managed-vnet.tf:19
+2. `Error: parsing "": cannot parse an empty string` on `data.azurerm_cognitive_account.openai` at ai.tf:62
+
+**Root cause:**
+- **Bug 1**: Azure **auto-creates** `managedNetworks/default` as a child resource when `networkInjections` is configured on the Foundry account (`Microsoft.CognitiveServices/accounts`). Our explicit standalone `azapi_resource "managed_network"` then conflicts with the already-existing auto-created resource.
+- **Bug 2**: `data.azurerm_cognitive_account.openai` was attempting to read back the azapi-created Foundry account but failed due to timing/parsing issues. The data source was unnecessary since `azapi_resource.this.id` is directly available.
+
+**Fix:**
+- Removed standalone `azapi_resource.managed_network` block from foundry-managed-vnet.tf
+- Updated all three outbound rules (`storage_outbound_rule`, `cosmos_outbound_rule`, `aisearch_outbound_rule`) to reference the auto-created path via `parent_id = "${azapi_resource.this.id}/managedNetworks/default"`
+- Removed `data.azurerm_cognitive_account.openai` data source from ai.tf
+- Replaced all 6 references (role assignments, deployments, PE, project parent_id) with direct `azapi_resource.this.id`
+- Kept existing `time_sleep` delays (10m per backing service, 600s post-rules) and RBAC dependencies intact
+
+**Key insight:** When `networkInjections` with `useMicrosoftManagedNetwork: true` is present in the Foundry account body, Azure implicitly provisions `managedNetworks/default`. Terraform should reference this auto-created resource directly rather than attempting to create it explicitly. This differs from Microsoft's canonical sample (foundry-samples/18-managed-virtual-network), which explicitly creates the managed_network — likely because sample creation predates the auto-create behavior or uses different API versions.
+
+**Validation:** `terraform validate` passed, `terraform plan` showed 79 adds (expected for fresh state), no conflicts, all outbound rules as new `create` actions.
+
+**Files changed:**
+- `infra/cloud/foundry-managed-vnet.tf` — removed managed_network, updated outbound rule parent_ids
+- `infra/cloud/ai.tf` — removed data source, updated 4 references
+- `infra/cloud/private-endpoints.tf` — updated PE private_connection_resource_id
+- `infra/cloud/identity.tf` — updated role assignment scope
+
+**Refs:** #141, commit 89c888f
