@@ -3,7 +3,7 @@
 #############################################
 
 resource "azapi_resource" "this" {
-  type                      = "Microsoft.CognitiveServices/accounts@2025-04-01-preview"
+  type                      = "Microsoft.CognitiveServices/accounts@2025-10-01-preview"
   name                      = local.openai_name
   parent_id                 = azurerm_resource_group.this.id
   location                  = azurerm_resource_group.this.location
@@ -50,7 +50,7 @@ resource "azurerm_role_assignment" "current_user_cognitive_services_openai_user"
 }
 
 resource "azapi_resource" "content_understanding" {
-  type                      = "Microsoft.CognitiveServices/accounts@2025-04-01-preview"
+  type                      = "Microsoft.CognitiveServices/accounts@2025-10-01-preview"
   name                      = local.cus_name
   parent_id                 = azurerm_resource_group.this.id
   location                  = "westus"
@@ -90,7 +90,7 @@ data "azurerm_cognitive_account" "content_understanding" {
 }
 
 resource "azapi_resource" "gpt54_mini" {
-  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview"
+  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-10-01-preview"
   name      = "gpt-5.4-mini"
   parent_id = data.azurerm_cognitive_account.openai.id
 
@@ -113,7 +113,7 @@ resource "azapi_resource" "gpt54_mini" {
 
 resource "azapi_resource" "text_embedding" {
   count     = var.deploy_embedding_model ? 1 : 0
-  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview"
+  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-10-01-preview"
   name      = "text-embedding-ada-002"
   parent_id = data.azurerm_cognitive_account.openai.id
 
@@ -135,7 +135,7 @@ resource "azapi_resource" "text_embedding" {
 }
 
 resource "azapi_resource" "cus_gpt41" {
-  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview"
+  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-10-01-preview"
   name      = "gpt-4.1"
   parent_id = data.azurerm_cognitive_account.content_understanding.id
 
@@ -157,7 +157,7 @@ resource "azapi_resource" "cus_gpt41" {
 }
 
 resource "azapi_resource" "cus_text_embedding_3_large" {
-  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview"
+  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-10-01-preview"
   name      = "text-embedding-3-large"
   parent_id = data.azurerm_cognitive_account.content_understanding.id
 
@@ -179,7 +179,7 @@ resource "azapi_resource" "cus_text_embedding_3_large" {
 }
 
 resource "azapi_resource" "ai_foundry_project" {
-  type                      = "Microsoft.CognitiveServices/accounts/projects@2025-04-01-preview"
+  type                      = "Microsoft.CognitiveServices/accounts/projects@2025-10-01-preview"
   name                      = local.project_name
   parent_id                 = data.azurerm_cognitive_account.openai.id
   location                  = azurerm_resource_group.this.location

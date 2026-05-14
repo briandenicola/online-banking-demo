@@ -31,4 +31,128 @@ resource "azapi_resource" "application_insights_connection" {
   }
 }
 
+# BYO Storage connection (AAD auth)
+resource "azapi_resource" "storage_connection" {
+  depends_on = [
+    azapi_resource.ai_foundry_project,
+    azurerm_storage_account.main
+  ]
+  type                      = "Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01"
+  name                      = azurerm_storage_account.main.name
+  parent_id                 = azapi_resource.ai_foundry_project.id
+  schema_validation_enabled = false
+
+  body = {
+    name = azurerm_storage_account.main.name
+    properties = {
+      category      = "AzureStorage"
+      authType      = "AAD"
+      isSharedToAll = false
+      metadata = {
+        ApiType    = "Azure"
+        ResourceId = azurerm_storage_account.main.id
+      }
+      target = azurerm_storage_account.main.id
+    }
+  }
+}
+
+# BYO Cosmos DB connection (AAD auth)
+resource "azapi_resource" "cosmosdb_connection" {
+  depends_on = [
+    azapi_resource.ai_foundry_project,
+    azurerm_cosmosdb_account.main
+  ]
+  type                      = "Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01"
+  name                      = azurerm_cosmosdb_account.main.name
+  parent_id                 = azapi_resource.ai_foundry_project.id
+  schema_validation_enabled = false
+
+  body = {
+    name = azurerm_cosmosdb_account.main.name
+    properties = {
+      category      = "AzureCosmosDB"
+      authType      = "AAD"
+      isSharedToAll = false
+      metadata = {
+        ApiType    = "Azure"
+        ResourceId = azurerm_cosmosdb_account.main.id
+      }
+      target = azurerm_cosmosdb_account.main.id
+    }
+  }
+}
+
+# BYO AI Search connection (AAD auth)
+resource "azapi_resource" "aisearch_connection" {
+  depends_on = [
+    azapi_resource.ai_foundry_project,
+    azapi_resource.ai_search
+  ]
+  type                      = "Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01"
+  name                      = azapi_resource.ai_search.name
+  parent_id                 = azapi_resource.ai_foundry_project.id
+  schema_validation_enabled = false
+
+  body = {
+    name = azapi_resource.ai_search.name
+    properties = {
+      category      = "CognitiveSearch"
+      authType      = "AAD"
+      isSharedToAll = false
+      metadata = {
+        ApiType    = "Azure"
+        ResourceId = azapi_resource.ai_search.id
+      }
+      target = azapi_resource.ai_search.id
+    }
+  }
+}
+
+#############################################
+# RBAC PROPAGATION WAIT — Entra ID role assignments are eventually consistent
+#############################################
+
+resource "time_sleep" "wait_foundry_rbac" {
+  depends_on = [
+    azurerm_role_assignment.foundry_storage_blob_data_contributor,
+    azurerm_cosmosdb_sql_role_assignment.foundry_cosmos_contributor,
+    azurerm_role_assignment.foundry_search_index_data_contributor,
+    azurerm_role_assignment.foundry_search_service_contributor
+  ]
+  create_duration = "60s"
+}
+
+#############################################
+# CAPABILITY HOST — Binds BYO connections to Foundry project for agent runtime
+#############################################
+
+resource "azapi_resource" "ai_foundry_project_capability_host" {
+  depends_on = [
+    azapi_resource.aisearch_connection,
+    azapi_resource.cosmosdb_connection,
+    azapi_resource.storage_connection,
+    time_sleep.wait_foundry_rbac
+  ]
+  type                      = "Microsoft.CognitiveServices/accounts/projects/capabilityHosts@2025-10-01-preview"
+  name                      = "agents-capability-host"
+  parent_id                 = azapi_resource.ai_foundry_project.id
+  schema_validation_enabled = false
+
+  body = {
+    properties = {
+      capabilityHostKind = "Agents"
+      vectorStoreConnections = [
+        azapi_resource.ai_search.name
+      ]
+      storageConnections = [
+        azurerm_storage_account.main.name
+      ]
+      threadStorageConnections = [
+        azurerm_cosmosdb_account.main.name
+      ]
+    }
+  }
+}
+
 

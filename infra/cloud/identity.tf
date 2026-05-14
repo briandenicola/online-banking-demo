@@ -101,3 +101,37 @@ resource "azurerm_role_assignment" "current_user_search_index_data_contributor" 
   role_definition_name = "Search Index Data Contributor"
   principal_id         = data.azurerm_client_config.current.object_id
 }
+
+#############################################
+# FOUNDRY MSI — Grant Foundry account MSI data-plane access to BYO resources
+#############################################
+
+# RBAC: Storage Blob Data Contributor (Foundry → Storage)
+resource "azurerm_role_assignment" "foundry_storage_blob_data_contributor" {
+  scope                = azurerm_storage_account.main.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azapi_resource.this.output.identity.principalId
+}
+
+# RBAC: Cosmos DB Built-in Data Contributor (Foundry → Cosmos)
+resource "azurerm_cosmosdb_sql_role_assignment" "foundry_cosmos_contributor" {
+  resource_group_name = azurerm_resource_group.this.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  role_definition_id  = "${azurerm_cosmosdb_account.main.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
+  principal_id        = azapi_resource.this.output.identity.principalId
+  scope               = azurerm_cosmosdb_account.main.id
+}
+
+# RBAC: Search Index Data Contributor (Foundry → Search)
+resource "azurerm_role_assignment" "foundry_search_index_data_contributor" {
+  scope                = azapi_resource.ai_search.id
+  role_definition_name = "Search Index Data Contributor"
+  principal_id         = azapi_resource.this.output.identity.principalId
+}
+
+# RBAC: Search Service Contributor (Foundry → Search)
+resource "azurerm_role_assignment" "foundry_search_service_contributor" {
+  scope                = azapi_resource.ai_search.id
+  role_definition_name = "Search Service Contributor"
+  principal_id         = azapi_resource.this.output.identity.principalId
+}
