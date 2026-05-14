@@ -9,7 +9,7 @@ vars:
     sh: terraform -chdir=./{{.INFRA_DIR}} output -raw acr_name || true
   ACR_LOGIN_SERVER:
     sh: terraform -chdir=./{{.INFRA_DIR}} output -raw acr_login_server || true
-  TAG: '{{default "latest" .CLI_ARGS}}'
+  TAG: latest
   NAMESPACE: banking-demo
 
 includes:
@@ -81,6 +81,7 @@ tasks:
       - task: _images:update
       - kubectl apply -k deploy/kustomize/observability/
       - kubectl apply -k deploy/kustomize/base/
+      - task: _images:revert
       - task: _configmap:update
       - task: _secretproviderclass:update
       - kubectl apply -f cluster-config/istio/gateway/istio-ingress-gateway.yaml
@@ -286,19 +287,24 @@ tasks:
 
   _images:update:
     internal: true
-    desc: Update Kustomize image references to ACR
-    dir: deploy/kustomize/base
+    desc: Substitute ACR + tag placeholders in kustomization.yaml (template stays clean — restored after apply via _images:revert)
     cmds:
-      - kustomize edit set image ghcr.io/banking-demo/user-service={{.ACR_LOGIN_SERVER}}/user-service:{{.TAG}}
-      - kustomize edit set image ghcr.io/banking-demo/account-service={{.ACR_LOGIN_SERVER}}/account-service:{{.TAG}}
-      - kustomize edit set image ghcr.io/banking-demo/transaction-service={{.ACR_LOGIN_SERVER}}/transaction-service:{{.TAG}}
-      - kustomize edit set image ghcr.io/banking-demo/transfer-service={{.ACR_LOGIN_SERVER}}/transfer-service:{{.TAG}}
-      - kustomize edit set image ghcr.io/banking-demo/chatbot-service={{.ACR_LOGIN_SERVER}}/chatbot-service:{{.TAG}}
-      - kustomize edit set image ghcr.io/banking-demo/budget-service={{.ACR_LOGIN_SERVER}}/budget-service:{{.TAG}}
-      - kustomize edit set image ghcr.io/banking-demo/ai-service={{.ACR_LOGIN_SERVER}}/ai-service:{{.TAG}}
-      - kustomize edit set image ghcr.io/banking-demo/event-processor={{.ACR_LOGIN_SERVER}}/event-processor:{{.TAG}}
-      - kustomize edit set image ghcr.io/banking-demo/ui-app={{.ACR_LOGIN_SERVER}}/ui-app:{{.TAG}}
-      - kustomize edit set image ghcr.io/banking-demo/prompt-eval-service={{.ACR_LOGIN_SERVER}}/prompt-eval-service:{{.TAG}}
+      - |
+        if ! grep -q "REPLACE_WITH_ACR_LOGIN_SERVER" deploy/kustomize/base/kustomization.yaml || ! grep -q "REPLACE_WITH_TAG" deploy/kustomize/base/kustomization.yaml; then
+          echo "❌ kustomization.yaml is not in template form (missing REPLACE_WITH_ACR_LOGIN_SERVER or REPLACE_WITH_TAG placeholders)."
+          echo "   This usually means a prior deploy's substituted values got committed."
+          echo "   Restore with: git checkout deploy/kustomize/base/kustomization.yaml (if HEAD is clean)"
+          echo "   or manually re-template the file before retrying."
+          exit 1
+        fi
+      - sed -i "s|REPLACE_WITH_ACR_LOGIN_SERVER|{{.ACR_LOGIN_SERVER}}|g" deploy/kustomize/base/kustomization.yaml
+      - sed -i "s|REPLACE_WITH_TAG|{{.TAG}}|g" deploy/kustomize/base/kustomization.yaml
+
+  _images:revert:
+    internal: true
+    desc: Restore kustomization.yaml template placeholders so committed file stays cluster-agnostic
+    cmds:
+      - git checkout deploy/kustomize/base/kustomization.yaml
 
   _configmap:update:
     internal: true
