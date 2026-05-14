@@ -25,7 +25,6 @@
 
     <!-- Serialization -->
     <PackageVersion Include="Newtonsoft.Json" Version="13.0.3" />
-    <PackageVersion Include="System.Text.Json" Version="10.0.0" />
 
     <!-- API -->
     <PackageVersion Include="Swashbuckle.AspNetCore" Version="6.9.0" />
