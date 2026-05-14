@@ -2457,3 +2457,38 @@ inconsistent contracts.
 **Verified (this run):** Identity probe log appears in deployed pod (`principal_oid=05a5f8d1-df4d-413d-9495-498634639e1b`, `principal_appid=0a606c77-03f3-4e4c-9cc7-4d51b86c09ff`, `token_aud=https://cognitiveservices.azure.com`, `target_resource_host=modest-hippo-861-foundry.services.ai.azure.com`, `debug_hook_enabled=true`). Not triggering the eval — Brian is doing that himself.
 
 **Lane discipline:** Did NOT modify the foundry-eval-debugging skill (Danny owns the RCA pass; he'll fold guidance in). Did NOT comment on #137 or #130 (Danny owns the issue narrative). Did NOT add any retry / fallback logic — visibility only.
+
+### 2026-05-13 — Foundry Private Networking Phase 1 (#138)
+
+**Problem:** Azure AI Foundry deployment had `publicNetworkAccess = "Disabled"` but did not match Microsoft's documented standard setup for private networking. Missing BYO Azure AI Search resource, no VNet injection for agent traffic, no project-scoped BYO connections.
+
+**Phase 1 Implementation:** Added Azure AI Search infrastructure with private networking:
+- Created `infra/cloud/search.tf` with `azapi_resource.ai_search` using `Microsoft.Search/searchServices@2025-05-01`
+- SKU: `standard` (minimum for private endpoints), `publicNetworkAccess = "Disabled"`
+- Auth: `aadOrApiKey` with `aadAuthFailureMode = "http401WithBearerChallenge"` (enables Entra ID auth)
+- Added `search = "privatelink.search.windows.net"` to private DNS zones map
+- Created `azurerm_private_endpoint.search` on `pe-subnet` with subresource `searchService`
+- Granted deployer `Search Service Contributor` + `Search Index Data Contributor` roles
+- Added `local.search_service_name` to naming convention
+
+**Plan Corrections Discovered:** While implementing Phase 1 from reference Terraform, identified 4 critical corrections for Phases 2 & 3:
+
+1. **`networkInjections` belongs on Foundry ACCOUNT, not project.** Reference shows it on `Microsoft.CognitiveServices/accounts` body. Phase 3 must mutate `azapi_resource.this`, not `azapi_resource.ai_foundry_project`.
+
+2. **API version bump may be required.** Reference uses `@2025-10-01-preview` (we're on `@2025-04-01-preview`). Need to verify if `networkInjections` requires newer version before Phase 3.
+
+3. **`capabilityHosts` is the actual binding mechanism.** Not just connections — the project gets a `capabilityHosts` sub-resource that explicitly names search/storage/cosmos connections. Phase 2 creates connections → Phase 3 creates `capabilityHost` + `networkInjections`.
+
+4. **`time_sleep` for RBAC propagation** is the canonical pattern. Phase 2 needs `time_sleep.wait_rbac` (60s after role assignments, before `capabilityHost` creation).
+
+**Key Files:**
+- `infra/cloud/search.tf` — new Azure AI Search service
+- `infra/cloud/locals.tf` — added `search_service_name`
+- `infra/cloud/private-endpoints.tf` — added `search` DNS zone + private endpoint
+- `infra/cloud/identity.tf` — deployer role assignments for Search
+
+**References:**
+- Issue #138 — full multi-phase plan
+- PR #139 — Phase 1 implementation
+- Microsoft docs: [Configure Foundry private link](https://learn.microsoft.com/en-us/azure/foundry/how-to/configure-private-link)
+- Microsoft docs: [Agent Service VNet injection](https://learn.microsoft.com/en-us/azure/ai-services/agents/how-to/virtual-networks)
