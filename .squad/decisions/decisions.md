@@ -2317,3 +2317,188 @@ WHERE c.userId = @userId
 - Issue: #125
 - Hot-fix commit: `squad/p2-wave-3` (Basher's account-service OR-pattern + iterator drain fix)
 - Workload-identity pod pattern: `.squad/agents/basher/history.md` 2026-05-13 entry (Redis Stream consumer investigation)
+
+---
+
+# Decision: Redis-backed `aiCallsToday` counter (issue #130)
+
+**Author:** Basher
+**Status:** Accepted
+**Scope:** ai-service (Python/FastAPI). Pattern applies to any future per-day metric in any multi-replica Python service.
+
+## Context
+
+`aiCallsToday` was an in-process counter inside ai-service. With HPA min=2, the dashboard read landed on a random pod and returned that pod's local count, producing the now-infamous "17 → 68 → 17" flicker. `avgRiskScore` and `totalScored` were already correct because they live in Redis sorted sets.
+
+## Decision
+
+1. **Storage.** Redis string, key format `ai:metrics:calls:{YYYY-MM-DD}` (UTC). Value is the count, written via `INCR`.
+
+2. **TTL strategy.** `EXPIRE <key> 129600` (36 hours), set **only when `INCR` returns `1`** (i.e. on key creation). Never reset TTL on subsequent increments. 36h covers a full UTC day plus a 12h buffer for late traffic, monitoring, and clock skew.
+
+3. **Success-path-only.** Increment fires after `_parse_response()` succeeds, before the success return. Failure paths (HTTPX errors, parse errors, AI fallback) do **not** increment. Counter measures real AI work delivered, not attempts.
+
+4. **Resilience.** Increment runs through `_increment_ai_calls_counter()` which has its own `try/except Exception` that logs and returns. A Redis outage must never degrade the AI request path. The dashboard read function similarly returns `0` on Redis error (graceful degrade, never 500).
+
+5. **Counter semantics preserved.** Only the FoundryRiskAnalyzer's `analyze()` increments — same site as the original in-memory counter. Categorization is **not** counted (it was never counted in the in-memory version).
+
+## Key naming convention (proposed standard for ai-service metrics)
+
+| Prefix | Use |
+| --- | --- |
+| `ai:metrics:*` | All ai-service operational metrics (counters, gauges, snapshots) |
+| `ai:metrics:calls:{YYYY-MM-DD}` | Daily AI call counter (this decision) |
+| `ai:metrics:<name>:{YYYY-MM-DD}` | Future daily counters (errors, retries, etc.) |
+| `ai:metrics:<name>:{YYYY-MM-DD}:{HH}` | Future hourly counters (use 25h TTL) |
+
+`scored-transactions`, `flagged-transactions`, `flagged-tx:*` etc. remain unchanged — those are domain data, not metrics.
+
+## Why not a sliding window / atomic SET-NX-EX?
+
+Considered: `SET key 0 NX EX 129600` then `INCR`. Two round-trips either way; the `INCR == 1` branch is cleaner and avoids the race where a slow `SET NX` overlaps with a faster `INCR` from another pod.
+
+## Why not Prometheus/OTEL counter?
+
+OTEL counters are per-process and aggregated at the collector — same problem we're trying to solve.
+
+## Risks / open questions
+
+- **Token refresh during increment.** Redis is on Entra ID auth with 45-minute token refresh. If a token expires mid-increment, the helper logs and continues — count may be off by one until next call. Acceptable for a dashboard metric; not for billing.
+- **Day boundary at exactly 00:00:00 UTC.** Two pods racing across midnight may briefly write to two adjacent keys. Both keys exist with their own TTLs. Read endpoint always reads "today's" key, so the previous day's tail traffic just isn't shown. Acceptable.
+
+---
+
+# Decision: Exact-pin agent-framework preview SDKs (issue #137 — SDK drift prevention)
+
+**Author:** Basher
+**Date:** 2026-05-13
+**Status:** accepted
+**Issue:** #137 — Eval-403 partially caused by unpinned agent-framework preview SDKs
+**Branch:** squad/p2-wave-3
+
+## Context
+
+The eval pipeline broke when containers were rebuilt and pip resolved `agent-framework-core 1.3.0` / `agent-framework-foundry 1.3.0` (published 2026-05-08). Last-known-good is **1.2.2** (published 2026-04-29). SDK contract drift has bitten the squad multiple times.
+
+## Decision
+
+### 1. Exception to the "ranges, not pins" rule
+
+The repo standard for Python deps is `>=min,<next-major` ranges (caret pins) to keep transitive deps resolvable. **Preview-channel SDKs are the sole exception and MUST be exact-pinned.**
+
+The packages this exception currently applies to:
+
+| Package | Pinned version | Rationale |
+|---|---|---|
+| `agent-framework-core` | `1.2.2` | Last-known-good before 1.3.0 broke eval contract |
+| `agent-framework-foundry` | `1.2.2` | Must move in lockstep with `-core` (same publisher, daily-build cadence) |
+| `azure-ai-inference` | `1.0.0b9` | Beta-channel — every `bN` bump has historically been breaking |
+
+### 2. CI guard
+
+Added `.github/workflows/preview-sdk-pin-guard.yml` — runs on every PR that touches `src/**/pyproject.toml`. Fails the build if any unpinned preview-SDK line is found.
+
+Also added `task lint:preview-sdk-pins` (Taskfile.lint.yml) for local checks before pushing.
+
+### 3. Verified resolutions
+
+Ran `uv pip compile --python-version 3.11` against each pyproject.toml. All three services resolve cleanly with no transitive conflicts.
+
+### 4. Bump procedure (for future)
+
+When a future feature genuinely needs a new agent-framework release:
+
+1. Open a *separate* PR that only bumps the pin.
+2. Run `uv pip compile` on all three services to confirm no transitive break.
+3. **Run the eval smoke test** before merge.
+4. Commit message MUST list old → new versions and eval test result.
+
+### 5. Out of scope (follow-up tickets recommended)
+
+The CI guard surfaced two additional preview-SDK pin violations:
+
+- `src/account-opening-service/pyproject.toml:26` — `azure-ai-contentunderstanding = "*"`
+- `src/budget-service/pyproject.toml:13` — `azure-ai-inference = ">=1.0.0b9"`
+
+Recommend filing follow-up issues to exact-pin these too.
+
+## Why this resolves SDK drift for good
+
+Previous fixes corrected the pins but added no enforcement. The pins drifted back because contributors copy-pasted from older branches or Dependabot-style bumps weren't blocked. The CI guard makes regressing impossible without an explicit, reviewed override.
+
+---
+
+# Decision: Issue #137 — Real Root Cause of Foundry Eval 403
+
+**Author:** Basher
+**Date:** 2026-05-13
+**Status:** accepted
+**Supersedes:** the "Fix Applied" section in issue #137 (which claimed SDK pinning was the fix — incomplete)
+
+## TL;DR
+
+The eval 403 is **not RBAC** and **not SDK contract drift alone**. It's an **incomplete eval payload**. The `/api/admin/evaluate` endpoint was sending `[system, user]` conversations with **no assistant turn**. Foundry's raisvc rejects eval-run creation when there's nothing to evaluate, returning a confusing 400-wrapped 403 `UnauthorizedUserAction` that *looks* like an authorization failure but is actually "your request body is missing the response you want me to score."
+
+## What the issue body got wrong
+
+The issue's "Fix Applied" section claimed the cure was exact-pinning `agent-framework-core 1.2.2`, `agent-framework-foundry 1.2.2`, `azure-ai-inference 1.0.0b9` (commit `0b6255a`). That pin shipped and **the 403 still occurred** — which Brian confirmed. The pin was necessary (prevents future drift) but not sufficient — the bug was always in our caller code.
+
+## The real cause
+
+`src/ai-service/app/routes/api.py:run_foundry_evaluation` constructs each `EvalItem` from a two-message conversation:
+
+```python
+EvalItem(conversation=[
+    Message("system", [request.system_prompt]),
+    Message("user", [prompt]),
+])
+```
+
+The Foundry SDK's `_evaluate_via_dataset` then derives:
+
+```python
+query_text    = " ".join(m.text for m in query_msgs    if m.role == "user"      and m.text)
+response_text = " ".join(m.text for m in response_msgs if m.role == "assistant" and m.text)
+```
+
+With no assistant message, `response_text == ""`. The JSONL row submitted to `POST /openai/v1/evals/{id}/runs` has an empty `response` field. raisvc's evaluators have nothing to score, raisvc rejects, and the SDK surfaces the 403.
+
+A telltale sign in the current code: an `eval_agent = FoundryAgent(...)` is constructed and never used. That dead variable is residue from the original implementation (commit `bd4f6a7`) which did include the assistant turn.
+
+## When and where it broke
+
+| Commit    | Event                                                                                |
+|-----------|--------------------------------------------------------------------------------------|
+| `bd4f6a7` | Original eval impl in `app/main.py`. Three-turn conversation. Worked.                |
+| `39dfdbe` | **The break.** "P2 Wave 1: code quality + refactoring (#114)" extracted main.py → routes/api.py and dropped the `eval_agent.run()` call + the assistant `Message`. |
+| `4134138` | Fixed the immediate `AttributeError` and the `EvalItem` kwarg name. Did **not** notice the missing assistant turn. |
+| `0b6255a` | Pinned SDKs. No effect on the bug.                                                   |
+| `243457f` | Silent unrelated regression: reverted warm-up token scope in `anomaly_service.py`. Cosmetic only but worth fixing. |
+
+## Fix shipped
+
+**`src/ai-service/app/routes/api.py`** — restored the per-transaction agent run and the assistant turn:
+
+```python
+session = eval_agent.create_session()
+agent_response = await eval_agent.run(prompt, session=session)
+assistant_text = agent_response.text or ""
+
+eval_items.append(EvalItem(conversation=[
+    Message("system",    [request.system_prompt]),
+    Message("user",      [prompt]),
+    Message("assistant", [assistant_text]),
+]))
+```
+
+**`src/ai-service/app/services/anomaly_service.py`** — reverted the warm-up scope to `https://ai.azure.com/.default` to match `init_agents.py` and avoid diagnostic noise.
+
+## Recommended follow-ups
+
+- **Integration test (issue worth filing):** Mock `evals.create` / `evals.runs.create` and assert non-empty `response` per item. Would have caught both the 39dfdbe regression and the 4134138 incomplete fix.
+- **Audit other refactor casualties:** the same `#114` refactor pass touched several services. Worth a sweep for other dead-variable smells where the original behaviour was lost.
+- **File a Microsoft feedback item:** raisvc should distinguish "missing assistant turn" from "RBAC denied" instead of returning the same `UnauthorizedUserAction` code for both.
+
+## Skill captured
+
+`.squad/skills/foundry-eval-debugging/SKILL.md` — diagnostic ladder for raisvc 403s (RBAC → token scope/audience → SDK payload shape → endpoint/api_version → wrapper bugs).

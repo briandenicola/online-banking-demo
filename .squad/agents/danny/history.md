@@ -963,3 +963,13 @@ Account-opening-service sidecar auth pattern (Entra Agent ID with dedicated auth
 
 **Account-opening now mirrors ai-service pattern for Foundry agent authentication.**
 
+
+### 2026-05-13 — Foundry Eval Debugging Ladder (basher-137b)
+
+**Cross-team learning:** The eval-403 RCA revealed a reusable diagnostic pattern for Foundry payload issues. Basher's `.squad/skills/foundry-eval-debugging/SKILL.md` documents the ladder: RBAC → token scope/audience → SDK payload shape → endpoint/api_version → wrapper bugs.
+
+**Key insight:** Misleading error codes make RCA harder. raisvc returns the same `UnauthorizedUserAction` (403) for both RBAC failures and payload validation failures (e.g., missing `response` in eval JSONL). When debugging future Foundry errors, check payload shape (query_text/response_text derivation) early, not just RBAC and token scopes.
+
+**Pattern for SDK callers:** Dead variables like `eval_agent = FoundryAgent(...) # unused` are a red flag that a refactor dropped structural behavior. The original implementation called `eval_agent.run()` to get the assistant turn; commit 39dfdbe extracted to routes/api.py and dropped the call, breaking the eval pipeline invisibly until evaluation was later triggered.
+
+**For Danny:** If future SDK refactors land in orchestration or budget-service, look for similar dead-variable patterns where agent construction or runs were lost during code motion.

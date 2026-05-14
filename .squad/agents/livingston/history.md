@@ -599,3 +599,30 @@ Created comprehensive security tests for all Round 2 fixes:
 ### Report Location
 - **HTML Report:** `/home/brian/code/online-banking-demo/tests/e2e/playwright-report/index.html`
 - **Test Results:** `/home/brian/code/online-banking-demo/tests/e2e/test-results/`
+
+### 2026-05-13 — Test Gap Identified: Eval Payload Regression (basher-137b)
+
+**Cross-team finding:** Issue #137 (Foundry eval-403) was caused by a structural regression in commit 39dfdbe: the per-transaction `eval_agent.run()` call and the resulting assistant `Message` turn were dropped during refactoring main.py → routes/api.py. This went undetected until evaluation was later triggered in production.
+
+**Root cause of the gap:** There was no integration test mocking `evals.create` / `evals.runs.create` to assert that submitted JSONL has non-empty `response` per item. Such a test would have caught both the 39dfdbe regression (missing assistant turn) and the incomplete fix in 4134138 (fixed Message API but missed the structural omission).
+
+**Recommended test:** Add to `src/ai-service/tests/test_detection.py`:
+
+```python
+@pytest.mark.asyncio
+async def test_foundry_evaluation_payload_shape():
+    """Assert eval items include non-empty assistant turn (response_text)."""
+    with patch('src.ai_service.routes.api.evals') as mock_evals:
+        # Trigger evaluation with mock evals.create/runs.create
+        # Assert that submitted JSONL rows have non-empty 'response' field
+        # Fail if response_text is empty or assistant Message is missing
+```
+
+**For Livingston:** When writing eval integration tests, prioritize the payload shape assertion — it's a structural invariant that can't drift. This pattern applies to any multi-turn SDK pipeline (agents, evaluators, etc.).
+
+**Pattern:** When a refactor moves code between files (especially extractors like main.py → routes/api.py), check for:
+1. Dead variables (unused agent/client constructors)
+2. Lost function calls (agent.run(), pipeline.execute())
+3. Missing turns/messages in conversations
+
+A simple code smell check could catch these before deployment.
