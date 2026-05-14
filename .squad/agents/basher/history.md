@@ -2786,3 +2786,20 @@ body = {
 ```
 
 **Branch:** 138-foundry-troubleshooting
+
+## 2026-05-14 - Foundry Connection Schema Fix (Round 3)
+
+**Context:** HTTP 400 "unable to deserialize request body" on BYO storage/cosmos connections under Managed VNet.
+
+**Root cause (corrected):** Connection resources WERE needed (coordinator was wrong), but had incorrect schema:
+- Storage: Used category `AzureStorage` instead of `AzureStorageAccount`
+- Cosmos: Used category `AzureCosmosDB` instead of `CosmosDb`
+- AI Search: Used resource ID as target instead of HTTPS URL `https://{name}.search.windows.net`
+- All three had invalid `useWorkspaceManagedIdentity = true` property (doesn't exist in API schema)
+
+**Learning:** Microsoft's official foundry-samples (18-managed-virtual-network) DOES create explicit connection resources at project level, contrary to initial hypothesis. The connections use specific category values and the official sample never includes `useWorkspaceManagedIdentity`.
+
+**Action taken:** Fixed all three connection schemas per microsoft-foundry/foundry-samples reference implementation. 
+
+**Outcome:** Schema fixes committed. Full apply requires clean run without interruptions (state lock issues prevented completion in 2 attempts).
+

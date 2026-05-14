@@ -143,39 +143,86 @@ resource "azapi_resource" "project_capability_host" {
 
 Per docs: `customSubDomainName`, `allowProjectManagement`, and `networkInjections` cannot be added after account creation. Changing `useMicrosoftManagedNetwork` from `false` → `true` likely requires account recreate.
 
-### 1a. **Project Connections Require `useWorkspaceManagedIdentity: true`** (CRITICAL)
+### 1a. **Project Connections Must Use Correct Category Values** (CRITICAL)
 
-When the Foundry account uses Microsoft-managed VNet (`useMicrosoftManagedNetwork: true`), **all project connections** (type `Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01`) with `authType: "AAD"` **MUST** include `useWorkspaceManagedIdentity: true` in the properties block.
+When creating project connections (type `Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview`) with `authType: "AAD"`, the category field must match the exact API schema values:
 
-Without this flag, the API returns HTTP 400 "unable to deserialize request body". This is a schema enforcement specific to the managed VNet scenario.
+**CORRECT category values:**
+- Storage: `AzureStorageAccount` (NOT `AzureStorage`)
+- Cosmos DB: `CosmosDb` (NOT `AzureCosmosDB`)
+- AI Search: `CognitiveSearch`
 
-**Required connection schema for managed VNet:**
+**Do NOT use `useWorkspaceManagedIdentity` property** — this field does not exist in the API schema and causes HTTP 400 "unable to deserialize request body" errors.
+
+**Required connection schema per microsoft-foundry/foundry-samples:**
 ```hcl
+# Storage connection
 resource "azapi_resource" "storage_connection" {
-  type      = "Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01"
+  type      = "Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview"
   name      = azurerm_storage_account.main.name
   parent_id = azapi_resource.ai_foundry_project.id
 
   body = {
-    name = azurerm_storage_account.main.name
     properties = {
-      category                     = "AzureStorage"  # or "AzureCosmosDB", "CognitiveSearch"
-      authType                     = "AAD"
-      isSharedToAll                = false
-      useWorkspaceManagedIdentity  = true            # REQUIRED for managed VNet + AAD auth
+      category      = "AzureStorageAccount"        # NOT "AzureStorage"
+      authType      = "AAD"
+      isSharedToAll = false
       metadata = {
         ApiType    = "Azure"
         ResourceId = azurerm_storage_account.main.id
+        location   = var.location
       }
-      target = azurerm_storage_account.main.id
+      target = azurerm_storage_account.main.primary_blob_endpoint
+    }
+  }
+}
+
+# Cosmos DB connection
+resource "azapi_resource" "cosmosdb_connection" {
+  type      = "Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview"
+  name      = azurerm_cosmosdb_account.main.name
+  parent_id = azapi_resource.ai_foundry_project.id
+
+  body = {
+    properties = {
+      category      = "CosmosDb"                   # NOT "AzureCosmosDB"
+      authType      = "AAD"
+      isSharedToAll = false
+      metadata = {
+        ApiType    = "Azure"
+        ResourceId = azurerm_cosmosdb_account.main.id
+        location   = var.location
+      }
+      target = azurerm_cosmosdb_account.main.endpoint
+    }
+  }
+}
+
+# AI Search connection
+resource "azapi_resource" "aisearch_connection" {
+  type      = "Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview"
+  name      = azapi_resource.ai_search.name
+  parent_id = azapi_resource.ai_foundry_project.id
+
+  body = {
+    properties = {
+      category      = "CognitiveSearch"
+      authType      = "AAD"
+      isSharedToAll = false
+      metadata = {
+        ApiType    = "Azure"
+        ResourceId = azapi_resource.ai_search.id
+        location   = var.location
+      }
+      target = "https://${azapi_resource.ai_search.name}.search.windows.net"  # HTTPS URL, not resource ID
     }
   }
 }
 ```
 
-**Why:** The managed VNet delegates all egress to Microsoft's network. The workspace's system-assigned MSI is granted PE auto-approve rights and data-plane RBAC. Connections must explicitly opt into using that MSI rather than default AAD flows.
+**Why:** The API validates category values strictly. `userOwned*` arrays in the cognitive account properties bind resources at the account level, but explicit connection resources are still required at the project level for capabilityHost references. Foundry does NOT auto-create connections under managed VNet.
 
-**Applies to:** Storage (AzureStorage), Cosmos DB (AzureCosmosDB), AI Search (CognitiveSearch) connections. Not needed for AppInsights (uses ApiKey auth).
+**Applies to:** All BYO connections (Storage, Cosmos, Search). AppInsights connection uses `category: "AppInsights"` with ApiKey auth (unchanged).
 
 ### 2. Outbound Rule Provisioning is SLOW
 
