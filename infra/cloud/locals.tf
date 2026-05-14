@@ -24,6 +24,7 @@ locals {
   cus_name            = "${local.resource_name}-cus"
   project_name        = "${local.resource_name}-project"
   redis_name          = "${local.resource_name}-redis"
+  search_service_name = "${local.resource_name}-search"
   loganalytics_name   = "${local.resource_name}-logs"
   appinsights_name    = "${local.resource_name}-ai"
   keyvault_name       = substr("${replace(local.resource_name, "-", "")}kv", 0, 24)

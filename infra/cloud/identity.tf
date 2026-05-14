@@ -83,3 +83,21 @@ resource "azurerm_role_assignment" "banking_keyvault_secrets_user" {
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.banking_services.principal_id
 }
+
+#############################################
+# DEPLOYER / CURRENT USER — Grant admin access to new resources
+#############################################
+
+# RBAC: Search Service Contributor (for deployer to manage Search)
+resource "azurerm_role_assignment" "current_user_search_service_contributor" {
+  scope                = azapi_resource.ai_search.id
+  role_definition_name = "Search Service Contributor"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
+# RBAC: Search Index Data Contributor (for deployer to manage indexes)
+resource "azurerm_role_assignment" "current_user_search_index_data_contributor" {
+  scope                = azapi_resource.ai_search.id
+  role_definition_name = "Search Index Data Contributor"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
