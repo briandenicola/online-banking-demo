@@ -2635,3 +2635,82 @@ inconsistent contracts.
 ---
 
 **2026-05-14 16:57 Scribe:** ⚠️ Note from team: #141 was filed by Danny — Foundry Managed VNet migration plan (3 phases), blocked by your eventual infrastructure implementation. No action needed yet.
+
+## Learnings — .NET 10 build warning categories (PR #142)
+
+- **CS8604 (nullable reference args)**: .NET 10 / Roslyn flow analysis is stricter about
+  `IConfiguration` indexer returns (`config["Jwt:Key"]` is `string?`). Anywhere these get
+  passed into non-nullable `string` params (e.g. `Encoding.UTF8.GetBytes`, `int.Parse`)
+  must use fail-fast `?? throw new InvalidOperationException("X is not configured")`.
+  The pattern is already established in account-service/Program.cs — match it across
+  user-service, transaction-service, and any new JWT-consuming service. Also covers
+  controller `[FromBody]` DTOs with nullable string properties being passed to
+  non-nullable service params — guard with explicit null/empty check + `BadRequest`.
+
+- **NU1510 (package pruning)**: .NET 10 SDK now ships several previously-NuGet packages
+  in-framework and auto-prunes them. `System.Text.Json` is the big one — explicit
+  `<PackageReference Include="System.Text.Json" />` becomes redundant and emits NU1510.
+  Remove it from the .csproj AND from `Directory.Packages.props` (only after grepping
+  to confirm no other project still references it). Future .NET upgrades: re-grep for
+  framework-shipped packages flagged by NU1510 and prune centrally.
+
+---
+
+## 2026-05-14 — Foundry Managed VNet migration (#141)
+
+**Branch:** `138-foundry-troubleshooting` (this worktree)
+
+Implemented Danny's full migration plan from BYO VNet injection to the **Managed Virtual Network (preview)** pattern in a single PR (Phases A+B+C collapsed since Brian destroyed all Azure resources — clean recreate, no in-place migration risk).
+
+### TF changes
+
+**`infra/cloud/ai.tf`** — Foundry account (`azapi_resource.this`):
+- `useMicrosoftManagedNetwork: false → true`
+- `subnetArmId: azurerm_subnet.agents.id → ""`
+- Added `apiProperties = {}` (per canonical sample)
+- Added `networkAcls = { defaultAction = "Deny", virtualNetworkRules = [], ipRules = [] }`
+- Switched `userOwnedStorageAccounts = [{ id = ... }]` → `userOwnedStorage = [{ resourceId = ... }]` (canonical sample form for `2025-10-01-preview`)
+- Added `userOwnedCosmosDB = [{ resourceId = ... }]` and `userOwnedSearch = [{ resourceId = ... }]`
+- Left `content_understanding` resource untouched (separate AI Services account, not managed-VNet — keeps `userOwnedStorageAccounts` form).
+
+**`infra/cloud/foundry-managed-vnet.tf`** — NEW file:
+- `azapi_resource.managed_network` (`Microsoft.CognitiveServices/accounts/managedNetworks@2025-10-01-preview`, name `default`):
+  - `isolationMode = "AllowInternetOutbound"` (no firewall, internet outbound allowed; PE rules still create the private path)
+  - `managedNetworkKind = "V2"`
+  - `provisionNetworkNow = true`
+- 3× `time_sleep` `wait_<service>_outbound` (10m each, after backing service + its BYO PE)
+- 3× outbound rules (`outboundRules@2025-10-01-preview`, type `PrivateEndpoint`, category `UserDefined`):
+  - `storage-blob-rule` → `subresourceTarget = "blob"`
+  - `cosmos-sql-rule` → `subresourceTarget = "Sql"`
+  - `aisearch-rule` → `subresourceTarget = "searchService"`
+- `time_sleep.wait_outbound_rules` (600s, blocks capabilityHost binding)
+
+**`infra/cloud/identity.tf`** — added two role assignments:
+- `azurerm_role_assignment.foundry_network_connection_approver` — role `Azure AI Enterprise Network Connection Approver` (id `b556d68e-0be0-4f35-a333-ad7ee1ce17ea`), scope = RG, principal = Foundry MSI
+- `azurerm_role_assignment.foundry_cosmos_arm_contributor` — role `Contributor` at Cosmos account scope for Foundry MSI (per canonical sample; needed for managed PE provisioning; distinct from existing `azurerm_cosmosdb_sql_role_assignment.foundry_cosmos_contributor` which is data-plane).
+
+**`infra/cloud/ai-connections.tf`** — `ai_foundry_project_capability_host` `depends_on` now includes the three outbound rules + `time_sleep.wait_outbound_rules`.
+
+**`infra/cloud/networking.tf`** — REMOVED:
+- `azurerm_subnet.agents`
+- `azurerm_network_security_group.agents`
+- `azurerm_subnet_network_security_group_association.agents`
+
+**`infra/cloud/locals.tf`** — REMOVED `agent_subnet_cidr` local (no remaining references).
+
+### Deviations from prompt
+- **Kept** `azurerm_private_endpoint.ai` (Foundry inbound PE) and the `cogservices`/`openai`/`services_ai` private DNS zones. Brian's prompt said remove, but issue #141 explicitly lists them as KEEP and the canonical sample keeps them too — without an inbound PE, AKS pods (chatbot, ai-service) cannot reach Foundry while `publicNetworkAccess = "Disabled"`. The DNS zones are also still required for `azurerm_private_endpoint.content_understanding`. Documented in PR body for Brian to course-correct.
+- **Skipped** ServiceTag and FQDN outbound rules. With `AllowInternetOutbound` mode they are redundant (internet egress already allowed) and any FQDN rule would provision an Azure Firewall ($288–912/mo). Zero firewall cost.
+
+### Verified property names (from `microsoft-foundry/foundry-samples@main` `18-managed-virtual-network/ai-foundry.tf`, `cosmos.tf`, `aisearch.tf`)
+- Account props: `networkInjections[*].{scenario, subnetArmId, useMicrosoftManagedNetwork}`, `networkAcls.{defaultAction, virtualNetworkRules, ipRules}`, `userOwnedStorage[*].resourceId`, `userOwnedCosmosDB[*].resourceId`, `userOwnedSearch[*].resourceId`, `apiProperties = {}`
+- managedNetwork props: `managedNetwork.{isolationMode, managedNetworkKind, provisionNetworkNow}`
+- outboundRule props: `type = "PrivateEndpoint"`, `destination.{serviceResourceId, subresourceTarget}`, `category = "UserDefined"`
+- subresourceTarget values: `blob` (storage), `Sql` (cosmos), `searchService` (AI Search)
+- Capitalisation matters: `Sql` (not `sql`), `searchService` (camelCase)
+
+### Validation
+- `terraform fmt` — clean
+- `terraform init -backend=false` — providers resolved
+- `terraform validate` — `Success! The configuration is valid.`
+- `terraform plan` — not run (no Azure auth in this env); Brian to run via `task cloud:up`

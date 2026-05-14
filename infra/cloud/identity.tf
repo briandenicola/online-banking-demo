@@ -135,3 +135,28 @@ resource "azurerm_role_assignment" "foundry_search_service_contributor" {
   role_definition_name = "Search Service Contributor"
   principal_id         = azapi_resource.this.output.identity.principalId
 }
+
+#############################################
+# FOUNDRY MANAGED VNET — RBAC required for managed private endpoint provisioning
+# (issue #141 — Managed Virtual Network preview)
+#############################################
+
+# RBAC: Azure AI Enterprise Network Connection Approver (RG scope)
+# Required for the Foundry account MSI to auto-approve managed private endpoints
+# created inside the Microsoft-managed VNet by outbound rules.
+# Role ID: b556d68e-0be0-4f35-a333-ad7ee1ce17ea
+resource "azurerm_role_assignment" "foundry_network_connection_approver" {
+  scope                = azurerm_resource_group.this.id
+  role_definition_name = "Azure AI Enterprise Network Connection Approver"
+  principal_id         = azapi_resource.this.output.identity.principalId
+}
+
+# RBAC: Contributor on Cosmos DB (control-plane) — required by the canonical
+# managed-VNet sample so the Foundry MSI can provision/approve the managed PE
+# to Cosmos. This is the ARM Contributor role, distinct from the Cosmos SQL
+# data-plane role above.
+resource "azurerm_role_assignment" "foundry_cosmos_arm_contributor" {
+  scope                = azurerm_cosmosdb_account.main.id
+  role_definition_name = "Contributor"
+  principal_id         = azapi_resource.this.output.identity.principalId
+}

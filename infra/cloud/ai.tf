@@ -20,18 +20,34 @@ resource "azapi_resource" "this" {
     properties = {
       disableLocalAuth       = true
       allowProjectManagement = true
+      apiProperties          = {}
       customSubDomainName    = local.openai_name
       publicNetworkAccess    = "Disabled"
+      networkAcls = {
+        defaultAction       = "Deny"
+        virtualNetworkRules = []
+        ipRules             = []
+      }
       networkInjections = [
         {
           scenario                   = "agent"
-          useMicrosoftManagedNetwork = false
-          subnetArmId                = azurerm_subnet.agents.id
+          subnetArmId                = ""
+          useMicrosoftManagedNetwork = true
         }
       ]
-      userOwnedStorageAccounts = [
+      userOwnedStorage = [
         {
-          id = azurerm_storage_account.main.id
+          resourceId = azurerm_storage_account.main.id
+        }
+      ]
+      userOwnedCosmosDB = [
+        {
+          resourceId = azurerm_cosmosdb_account.main.id
+        }
+      ]
+      userOwnedSearch = [
+        {
+          resourceId = azapi_resource.ai_search.id
         }
       ]
     }

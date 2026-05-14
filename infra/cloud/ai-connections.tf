@@ -132,7 +132,13 @@ resource "azapi_resource" "ai_foundry_project_capability_host" {
     azapi_resource.aisearch_connection,
     azapi_resource.cosmosdb_connection,
     azapi_resource.storage_connection,
-    time_sleep.wait_foundry_rbac
+    time_sleep.wait_foundry_rbac,
+    # Managed VNet outbound rules must be Succeeded before the capability host
+    # binds the project to the agent runtime. See foundry-managed-vnet.tf.
+    azapi_resource.storage_outbound_rule,
+    azapi_resource.cosmos_outbound_rule,
+    azapi_resource.aisearch_outbound_rule,
+    time_sleep.wait_outbound_rules
   ]
   type                      = "Microsoft.CognitiveServices/accounts/projects/capabilityHosts@2025-10-01-preview"
   name                      = "agents-capability-host"
