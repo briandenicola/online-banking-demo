@@ -2502,3 +2502,250 @@ eval_items.append(EvalItem(conversation=[
 ## Skill captured
 
 `.squad/skills/foundry-eval-debugging/SKILL.md` — diagnostic ladder for raisvc 403s (RBAC → token scope/audience → SDK payload shape → endpoint/api_version → wrapper bugs).
+
+---
+
+# Decision: Azure AI Foundry Private Networking Phase 2 & 3 Implementation
+
+**Date:** 2026-05-13  
+**Author:** Basher (Backend Dev)  
+**Status:** Implemented (awaiting apply)  
+**Related:** Issue #138, PR #139 (Phase 1)
+
+## Context
+
+Issue #138 defines a 3-phase approach to enable Azure AI Foundry private networking with BYO VNet injection for agent runtime. Phase 1 (Azure AI Search + private endpoint + deployer roles) merged to main. Phases 2 and 3 complete the private networking setup.
+
+## Decisions
+
+### 1. API Version Bump to 2025-10-01-preview
+
+**Decision:** Bump all Foundry-related resources from `2025-04-01-preview` to `2025-10-01-preview`.
+
+**Rationale:** The `networkInjections` schema (required for Phase 3 agent VNet injection) is only available in `2025-10-01-preview` and later. Bumping account, project, and all deployments ensures consistent API surface.
+
+**Impact:** Changes 7 resource type declarations in `ai.tf`. No breaking schema changes observed between these preview versions.
+
+### 2. BYO Connections with AAD Auth (No Keys)
+
+**Decision:** Create three project-scoped BYO connections (Storage, Cosmos, Search) with `authType = "AAD"`, no API keys or connection strings in credentials.
+
+**Rationale:** 
+- Aligns with private networking security posture — all auth via Entra ID RBAC
+- Matches Microsoft's recommended pattern for Foundry private networking
+- Eliminates secrets management for connection strings
+- Consistent with existing pattern (Application Insights connection still uses ApiKey because it's AppInsights-specific)
+
+**Implementation:** New `azapi_resource` connections in `ai-connections.tf`:
+- `storage_connection` → `azurerm_storage_account.main` (category: `AzureStorage`)
+- `cosmosdb_connection` → `azurerm_cosmosdb_account.main` (category: `AzureCosmosDB`)
+- `aisearch_connection` → `azapi_resource.ai_search` (category: `CognitiveSearch`)
+
+All have `isSharedToAll = false` (project-scoped, not account-level).
+
+### 3. Foundry MSI Data-Plane RBAC
+
+**Decision:** Grant Foundry account MSI (not project MSI) data-plane access to all three BYO resources.
+
+**Rationale:**
+- The Foundry **account** MSI (`azapi_resource.this.output.identity.principalId`) is the runtime identity for agent execution
+- Project MSI is for control-plane operations; agent runtime needs account-level identity
+- Data-plane roles required:
+  - Storage Blob Data Contributor (read/write blobs for agent storage)
+  - Cosmos DB Built-in Data Contributor (SQL role for thread storage)
+  - Search Index Data Contributor + Search Service Contributor (read/write vector store indexes)
+
+**Implementation:** Four role assignments in `identity.tf`:
+- `foundry_storage_blob_data_contributor` → ARM RBAC role assignment
+- `foundry_cosmos_contributor` → Cosmos SQL role assignment (uses `azurerm_cosmosdb_sql_role_assignment`, not ARM RBAC)
+- `foundry_search_index_data_contributor` + `foundry_search_service_contributor` → ARM RBAC role assignments
+
+### 4. 60-Second RBAC Propagation Wait
+
+**Decision:** Add `time_sleep.wait_foundry_rbac` (60s) after all Foundry MSI role assignments, before creating capabilityHost.
+
+**Rationale:**
+- Entra ID role assignments are eventually consistent (30-90s propagation)
+- capabilityHost creation fails if Foundry MSI doesn't have data-plane access yet
+- 60s is the canonical pattern from SKILL.md and Brian's reference repo
+- No way to detect propagation completion — must use fixed sleep
+
+**Implementation:** `time_sleep` resource in `ai-connections.tf`, depends on all 4 role assignments.
+
+### 5. capabilityHost Sub-Resource (Binding Mechanism)
+
+**Decision:** Create `capabilityHosts` sub-resource on the Foundry **project** (not account) to bind the three BYO connections.
+
+**Rationale:**
+- `capabilityHosts` is the required API mechanism to activate BYO connections for agent runtime
+- Connections alone are not sufficient — the project needs a `capabilityHost` resource that explicitly names which connections to use for vector store, storage, and thread storage
+- `capabilityHostKind = "Agents"` specifies this is for agent runtime (as opposed to other future capability types)
+
+**Implementation:** `azapi_resource.ai_foundry_project_capability_host` with:
+- `vectorStoreConnections = [azapi_resource.ai_search.name]` — uses connection name, not ID
+- `storageConnections = [azurerm_storage_account.main.name]`
+- `threadStorageConnections = [azurerm_cosmosdb_account.main.name]`
+- `depends_on = [time_sleep.wait_foundry_rbac, <all connections>]`
+
+### 6. Split Agents Subnet NSG
+
+**Decision:** Create a dedicated NSG for agents subnet (was incorrectly sharing AKS NSG).
+
+**Rationale:**
+- Agents subnet has different traffic patterns than AKS nodes (agent runtime, not k8s workloads)
+- Foundry VNet injection may require specific NSG rules in the future (currently default allow-all is sufficient)
+- NSG split allows independent evolution of agent networking rules without affecting AKS
+
+**Implementation:** New `azurerm_network_security_group.agents` in `networking.tf` with default rules (no explicit security rules yet). Updated `azurerm_subnet_network_security_group_association.agents` to reference new NSG.
+
+### 7. networkInjections on Foundry ACCOUNT (Not Project)
+
+**Decision:** Add `networkInjections` array to the Foundry **account** resource (`azapi_resource.this`), NOT the project.
+
+**Rationale:**
+- SKILL.md explicitly states: "CRITICAL: `networkInjections` must be added to `Microsoft.CognitiveServices/accounts`, NOT the project resource."
+- Verified in Brian's reference repo: `networkInjections` is on the top-level `ai_foundry` account resource
+- `networkInjections` is account-level configuration that applies to all projects under that account
+- Putting it on the project would fail schema validation (property doesn't exist at project scope)
+
+**Implementation:** Added to `azapi_resource.this.body.properties` in `ai.tf`:
+```hcl
+networkInjections = [
+  {
+    scenario                   = "agent"
+    useMicrosoftManagedNetwork = false
+    subnetArmId                = azurerm_subnet.agents.id
+  }
+]
+```
+
+## Alternatives Considered
+
+### Alt 1: Use API Keys for Connections (Rejected)
+- Pros: Simpler setup, no RBAC propagation wait
+- Cons: Defeats private networking security posture, requires secret management, not aligned with Entra ID zero-trust pattern
+- **Why rejected:** Brian's requirement is full private networking with AAD auth. API keys don't align with the security goal.
+
+### Alt 2: Use Project MSI Instead of Account MSI (Rejected)
+- Pros: More granular identity per project
+- Cons: Agent runtime uses account MSI, not project MSI (verified in reference repo). Project MSI is for control-plane operations.
+- **Why rejected:** Foundry agent execution context uses account-level system-assigned MSI.
+
+### Alt 3: Skip time_sleep for RBAC Propagation (Rejected)
+- Pros: Faster plan/apply
+- Cons: capabilityHost creation fails intermittently due to race condition
+- **Why rejected:** SKILL.md explicitly recommends 60s sleep. Brian's reference repo uses it. No way to detect propagation completion.
+
+### Alt 4: Put networkInjections on Project (Rejected)
+- Pros: More intuitive (injection is project-specific)
+- Cons: Schema validation fails — `networkInjections` doesn't exist at project scope
+- **Why rejected:** API schema constraint. SKILL.md and reference repo confirm it's account-level only.
+
+## Validation
+
+- `terraform fmt -recursive` — clean
+- `terraform init -upgrade` — upgraded azapi to 2.9.0, azurerm to 4.72.0
+- `terraform validate` — Success
+- `terraform plan` — 106 to add, 0 to change, 0 to destroy (fresh deployment, no recreations)
+
+## Open Questions
+
+1. **NSG rules for agents subnet:** Currently using default rules (allow-all). May need explicit rules for Foundry agent traffic in the future. Monitor Azure activity logs after apply to identify required flows.
+
+2. **RBAC propagation timing:** 60s is the canonical pattern, but is it sufficient? May need to increase if capabilityHost creation fails in practice. No documented way to query propagation status.
+
+3. **capabilityHost naming:** Used `agents-capability-host` as a descriptive name. No naming convention documented. Brian's reference uses `local.capability_host_name` (not visible in fetched snippet).
+
+## Next Steps
+
+1. Brian: `terraform apply phase23.tfplan` in `infra/cloud/`
+2. Brian: Verify connections visible in Azure Portal (Project → Connections blade)
+3. Brian: Verify networkInjections active (Foundry account → Network tab)
+4. Brian: Test agent runtime connectivity to Storage/Cosmos/Search via private endpoints
+5. Basher: Update SKILL.md with Phase 2/3 implementation details (see task item 3)
+
+---
+
+# Decision Drop — Basher — #119 / #120 Backend Follow-ups
+
+**Date:** 2026-05-13
+**Branch:** squad/p2-wave-3
+**Issues closed:** #119, #120
+
+## What changed
+
+1. **`/api/admin/prompts` now returns `systemPrompt`** for each analyzer and categorizer (sourced from each class's `SYSTEM_PROMPT` constant). One-line API contract addition, frontend already optional-handles it (Linus, 489527b).
+
+2. **Redis `scored-transactions` sorted set purged** of 157 legacy entries with timestamp-shaped scores. Write path was already corrected at `anomaly_service.py:617`; this was data-only cleanup.
+
+## Conventions to lock in / propagate
+
+- **One-shot Redis maintenance against Azure Managed Redis is a `kubectl exec` away.** Any pod with workload identity + `redis.asyncio` (e.g. ai-service, event-processor) can run ad-hoc Redis ops without hardcoding connection strings or pulling from KeyVault manually. Pattern is now in basher/history.md ("Reusable Redis-from-pod pattern"). Use this for future Redis cleanups instead of asking Brian to hit the portal.
+- **For trivial dict-shape API changes, on-disk pod verification (`kubectl exec ... grep`) is acceptable** in lieu of an end-to-end curl. Saves the JWT-minting dance for changes where deploy + new code presence is the real concern.
+- **The `enabled` field on prompt entries currently means "agent constructed" not "agent reachable".** Scribe flagged this as a possible follow-up in Linus's wave. Punted — Linus's panel renders correctly with current semantics. Revisit if we ever see false-green badges.
+
+## Anti-patterns avoided
+
+- Did NOT pull the Redis hostname from a hardcoded constant — used the pod's existing `REDIS_CONNECTION_STRING` env (which itself comes from the configmap rendered from terraform output during `task cloud:deploy`).
+- Did NOT use a raw K8s secret or master key — Entra-only, workload identity, AAD token as Redis password.
+- Did NOT bypass `task cloud:deploy` — used it, confirming the coordinator's auto-rollout-restart from commit e57d5f0 still works for python services.
+
+## Files touched
+
+- `src/ai-service/app/routes/api.py` — `get_active_prompts` now includes `systemPrompt`
+- `.squad/agents/basher/history.md` — learnings appended
+
+## No follow-ups needed
+
+Both #119 and #120 closed (frontend half was Linus 489527b, backend half is this drop). UI panels should render fully on next user refresh.
+
+---
+
+# Decision: Chatbot account-balance lookup uses `/api/accounts` (not `/api/accounts/my`)
+
+**Author:** Turk (Backend)
+**Date:** 2026-05-13
+**Issue:** #121
+**Status:** ✅ Implemented & verified in cloud
+
+## Context
+
+`agent_tools.get_user_accounts()` in `src/chatbot-service/app/services/agent_tools.py` was calling `GET {ACCOUNT_SERVICE_URL}/api/accounts/my`. That route does not exist on `account-service` (the .NET `AccountsController` exposes only `[HttpGet] /api/accounts`, deriving the user from the JWT `userId` claim). Every chatbot balance query returned 404, which the tool wrapped into a friendly "couldn't retrieve your accounts" string — the exact symptom in #121.
+
+JWT forwarding (per Basher's #117 pattern) was already correct: the chat handler reads `Authorization` off the inbound request and the tool sets it on the outbound httpx call.
+
+## Decision
+
+1. Chatbot calls **`GET /api/accounts`** to list the authenticated user's accounts. The account-service derives the userId from the JWT claim — no `/my`, `/me`, or path-based user identifier is needed (or supported).
+2. When a chatbot tool consumes account JSON, it should accept both `accountType` (current account-service field name) and `type` (legacy / alternate). Use `acct.get("accountType", acct.get("type", ""))`.
+
+## Rationale
+
+- One round trip removed; no auth or routing changes needed elsewhere.
+- The defensive field fallback prevents another silent regression if the account-service contract is ever revised — the chatbot tool is far enough from the producing service that a strict-by-default read would be a needless coupling.
+
+## Alternatives considered
+
+1. **Add a `/api/accounts/my` route to account-service** that aliases the existing handler. Rejected — pure noise, the existing route already does what the tool needed; we'd be adding API surface to fix a client-side typo.
+2. **Define a Pydantic model in the chatbot for the account payload.** Useful but out of scope for a one-line URL fix; flagged as a follow-up if/when chatbot grows more downstream consumers.
+
+## Follow-ups (not blocking #121)
+
+1. **Logging level for downstream HTTP failures in agent tools.** Currently `logger.warning(...)` with the body truncated to 200 chars. Consider `logger.error` for non-2xx responses from in-cluster services, since these almost always indicate a real bug worth paging on.
+2. **Shared API contract / typed clients across services.** The chatbot is now the third place where a hand-written URL or field name has drifted from a producing service (after #117 and the account-opening sanitizer history). A small typed client per downstream service (mirroring what `apiClient` does in the React app) would shrink this class of bug.
+3. **Surface the actual downstream status code to the agent.** Right now any non-2xx becomes a single sad-face message. Distinguishing 401/403 (auth issue) from 404/500 (service issue) would let the agent give the user a more truthful response and make on-call triage faster.
+
+## Verification
+
+```
+$ curl -sk -X POST https://onlinebankingdemo.bjdazure.tech/api/chat \
+       -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+       -d '{"message":"What was my last account balance for each of my accounts","user_id":"x"}'
+{"response":"Here are your current balances by account, using masked account numbers:
+- Checking ****5852: $28,033.96
+- Savings ****8917: $350,000.00
+- ... (29 accounts total) ..."}
+```
+
+Fix landed in `src/chatbot-service/app/services/agent_tools.py`. Built via `task cloud:build:chatbot-service`, deployed via `task cloud:deploy` (which now rollout-restarts pods automatically per Coordinator's e57d5f0).
+
