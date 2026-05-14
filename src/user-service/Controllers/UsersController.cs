@@ -148,7 +148,10 @@ public class UsersController : ControllerBase
             return Unauthorized();
 
         // Limit avatar size to ~500KB base64
-        if (request.AvatarBase64?.Length > 700_000)
+        if (string.IsNullOrEmpty(request.AvatarBase64))
+            return BadRequest(new { Message = "AvatarBase64 is required." });
+
+        if (request.AvatarBase64.Length > 700_000)
             return BadRequest(new { Message = "Avatar too large. Max 500KB." });
 
         await _userService.SetAvatarAsync(userId, request.AvatarBase64);

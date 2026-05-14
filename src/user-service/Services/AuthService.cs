@@ -20,8 +20,8 @@ public class AuthService : IAuthService
 
     public async Task<string> GenerateTokenAsync(string userId, string username, string role)
     {
-        var key = Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]);
-        var expiresInMinutes = int.Parse(_configuration["Jwt:ExpiresInMinutes"]);
+        var key = Encoding.UTF8.GetBytes(_configuration["Jwt:Key"] ?? throw new InvalidOperationException("Jwt:Key is not configured"));
+        var expiresInMinutes = int.Parse(_configuration["Jwt:ExpiresInMinutes"] ?? throw new InvalidOperationException("Jwt:ExpiresInMinutes is not configured"));
 
         var claims = new List<Claim>
         {
@@ -51,7 +51,7 @@ public class AuthService : IAuthService
     public async Task<bool> ValidateTokenAsync(string token)
     {
         var tokenHandler = new JwtSecurityTokenHandler();
-        var key = Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]);
+        var key = Encoding.UTF8.GetBytes(_configuration["Jwt:Key"] ?? throw new InvalidOperationException("Jwt:Key is not configured"));
 
         try
         {
