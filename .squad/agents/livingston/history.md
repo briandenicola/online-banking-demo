@@ -639,3 +639,7 @@ Issues #137 (eval failures) and #130 ("AI Calls Today" counter stuck at 0) are n
 **New contract:** When instantiating any `FoundryAgent(...)`, pass model via `default_options={"extra_body": {"model": "<deployment_name>"}}` — do NOT pass `model=` as a direct kwarg.
 
 **Impact on #135/#136 work:** No impact. Your backend work for PR-1/PR-2/PR-3 proceeds normally; all three planning questions have been answered by Brian, unblocking implementation.
+
+---
+
+**2026-05-14 16:57 Scribe:** Heads-up: #141 filed — Foundry Managed VNet migration plan from Danny. See decisions.md for context.

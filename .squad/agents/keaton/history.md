@@ -10,3 +10,7 @@
 - **Replay endpoint is functional:** `POST /api/admin/replay-events` in transaction-service re-publishes all Cosmos tx to the Redis Stream. This is the backfill mechanism — it causes ai-service to re-score. Already tested in #123.
 - **Transaction model has no riskScore:** The Cosmos `Transaction` model (`Models/Transaction.cs`) has `Category` but no `riskScore` at all. The UI `Transaction` interface expects `riskScore?: number` but it's always null from Cosmos.
 - **StackExchange.Redis already in transaction-service:** The service uses Redis for event publishing via `IEventPublisher`. The connection/DI is already wired. Adding a read path should reuse this.
+
+---
+
+**2026-05-14 16:57 Scribe:** Heads-up: #141 filed — Foundry Managed VNet migration plan from Danny. See decisions.md for context.

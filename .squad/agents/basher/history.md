@@ -2608,3 +2608,30 @@ inconsistent contracts.
 - Verify agents subnet has active VNet injection (check Network tab on Foundry account)
 - Test agent runtime connectivity to Storage/Cosmos/Search via private endpoints
 
+
+---
+
+## .NET 9 → .NET 10 Upgrade (2026-05-14)
+
+**PR:** #142 (draft) — branch `dotnet-10-upgrade` off main, worktree `online-banking-demo-net10`.
+
+**Scope:** TFM bump + package version bumps + Dockerfile/global.json bumps. No new .NET 10 features, no behavior change.
+
+**Services upgraded:** account-service, transaction-service, transfer-service, user-service, prompt-eval-service (+ shared Contracts, Observability, all .Tests).
+
+### Learnings
+1. **.NET 10 SDK chosen:** `10.0.100` (matches the only `10.0.x` SDK installed locally; will track GA when available).
+2. **Microsoft package bumps required for net10.0:**
+   - `Microsoft.AspNetCore.Authentication.JwtBearer` 9.0.0 → 10.0.0
+   - `System.Text.Json` 9.0.0 → 10.0.0
+   - `Microsoft.AspNetCore.Mvc.Testing` 9.0.0 → 10.0.0
+3. **Packages left unchanged (build clean against .NET 10):** Azure.Identity 1.16.0, Microsoft.Azure.Cosmos 3.58.0, Newtonsoft.Json 13.0.3, StackExchange.Redis 2.8.24, all OpenTelemetry 1.8.x/1.15.x, Azure.Monitor.OpenTelemetry.Exporter 1.2.0, Serilog.AspNetCore 9.0.0, Swashbuckle 6.9.0, FluentValidation.AspNetCore 11.3.1, BCrypt.Net-Next 4.0.3, xunit 2.9.0, Moq 4.20.70, FluentAssertions 6.12.0, Microsoft.NET.Test.Sdk 17.11.0, Microsoft.IdentityModel.Tokens 8.3.1.
+4. **Dockerfile pattern:** All 5 service Dockerfiles use `mcr.microsoft.com/dotnet/sdk:9.0-alpine` (build) + `aspnet:9.0-alpine` (runtime). Bumped both to `:10.0-alpine`. No Dockerfile.test/.dev variants.
+5. **global.json scattered:** Each .NET service has its own `global.json` pinning the SDK (5 files including `src/shared/Contracts/global.json` which has a malformed two-document JSON layout — pre-existing oddity, only bumped the version line). No root-level global.json.
+6. **No CI workflows pin .NET version** — only `.github/workflows/preview-sdk-pin-guard.yml` exists for backend stuff and it's Python-only. No `actions/setup-dotnet` to update.
+7. **Breaking changes hit:** None. Build succeeded with zero errors on first attempt across all 5 services. Only warnings (CS8604 nullable + NU1510 about `System.Text.Json` now being trimmable from shared framework — both pre-existing).
+8. **Pre-existing test failures discovered:** `transfer-service.Tests` has 7/15 failing on `main` already (missing `AccountService` URL config + a `NullReferenceException` in `TransfersController.GetTransfer:46`). NOT introduced by .NET 10. Documented in PR body, did not delete tests (per Brian's rule). Worth filing a follow-up issue.
+
+---
+
+**2026-05-14 16:57 Scribe:** ⚠️ Note from team: #141 was filed by Danny — Foundry Managed VNet migration plan (3 phases), blocked by your eventual infrastructure implementation. No action needed yet.

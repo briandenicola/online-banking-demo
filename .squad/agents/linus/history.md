@@ -642,3 +642,7 @@ Issues #137 (eval failures) and #130 ("AI Calls Today" counter stuck at 0) are n
 **Prevention:** Both services now have runtime `TestFoundryAgentSignatureContract` tests that run on every pytest invocation. Catch signature drift on next SDK pin bump.
 
 **Impact on #135/#136 work:** No impact. Your frontend work proceeds normally; backend #135-PR1/PR2/PR3 execution is unblocked by the answers to Danny's 3 planning questions (see .squad/decisions.md).
+
+---
+
+**2026-05-14 16:57 Scribe:** Heads-up: #141 filed — Foundry Managed VNet migration plan from Danny. See decisions.md for context.

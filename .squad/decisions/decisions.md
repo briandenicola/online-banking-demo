@@ -1,5 +1,76 @@
 ---
 
+# Decision: Migrate Foundry to Managed Virtual Network (preview)
+
+**Date:** 2026-05-14  
+**Agent:** Danny (Lead/Architect)  
+**Issue:** #141  
+**Triggered by:** Brian's directive to pivot from BYO VNet injection to Managed VNet (see directive below)  
+**Status:** Plan complete, implementation pending approval  
+
+## Context
+
+Azure AI Foundry's private networking in #138 phases 1–3 used "bring-your-own" (BYO) private endpoints injected into the Foundry account from our shared VNet. This approach requires manual PE creation, NSG rules, and capabilityHost wiring. Microsoft now offers **Managed Virtual Network** (preview), which simplifies the architecture by letting Foundry manage its own egress VNet while we define inbound connectivity rules.
+
+**Reference architectures:**
+- https://learn.microsoft.com/en-us/azure/foundry/how-to/managed-virtual-network?tabs=azure-cli
+- https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-terraform/18-managed-virtual-network
+
+## Architecture Decision
+
+Adopt Managed Virtual Network on the Foundry account, replacing BYO VNet injection. Keep the inbound PE (AKS → Foundry project) in our VNet; all outbound backing-service access (Storage, Cosmos, AI Search) routed through PEs created inside the managed VNet.
+
+### Phase Breakdown
+
+| Phase | Scope | Reversibility |
+|-------|-------|---------------|
+| **A** | Enable managed VNet on Foundry account (`useMicrosoftManagedNetwork = true`), add `managedNetworks` child resource, configure outbound rules for Storage/Cosmos/Search, assign Network Connection Approver role | Partial — managed VNet cannot be disabled once enabled |
+| **B** | Update capabilityHost dependencies, remove agents subnet + NSG + delegation from Terraform | Full — re-add if needed |
+| **C** | Cleanup dead locals, update docs/skills/SKILL.md | Full |
+
+### Key Decisions
+
+1. **Isolation mode:** `AllowInternetOutbound` — avoids Azure Firewall cost; PE rules still enforce secure backing-service access.
+2. **Inbound PE remains:** AKS pods continue reaching Foundry project via our BYO private endpoint in the PE subnet. **No change.**
+3. **AKS-facing BYO PEs untouched:** All 11 existing private endpoints serve AKS workloads (Storage, Cosmos, Search, etc.), not Foundry agents. **Unchanged.**
+4. **Account recreate risk acknowledged:** If in-place update fails, will create new account in parallel and migrate project keys/settings.
+
+## Implementation Plan
+
+1. Deploy Phase A: Enable managed VNet, outbound rules
+2. Smoke test: Verify Foundry agent connectivity to backing services
+3. Deploy Phase B: Remove agents subnet infrastructure
+4. Deploy Phase C: Cleanup Terraform and documentation
+
+## Status
+
+- [x] Plan produced and filed as #141
+- [ ] Implementation (pending approval)
+
+---
+
+### 2026-05-14T12:47:00Z: User Directive — Pivot Foundry to Managed VNet (preview)
+
+**By:** Brian (via Copilot)
+
+Switch the AI Foundry private networking implementation from "BYO private endpoints in our VNet" to Foundry's **Managed Virtual Network** preview feature.
+
+**Why:** Aligns with Microsoft's recommended architecture — Foundry-managed egress VNet, BYO connections (Storage/Cosmos/AI Search) reachable via PEs created inside the managed VNet, internet outbound denied by default.
+
+**Impact:** Materially changes the work in #138. Existing BYO PE wiring will be replaced by managed VNet config + outbound rules.
+
+---
+
+### 2026-05-14T12:51:00Z: Note — .NET 10 upgrade ties to #113
+
+**By:** Brian (via Copilot)
+
+The dotnet-10-upgrade work Basher is doing addresses GitHub issue #113 ("🔧 Upgrade all .NET services to .NET 10", labels: type:chore, priority:p1). PR body should include `Closes #113` to link backlog item to work.
+
+---
+
+---
+
 # Decision: Block Multi-Select for Account Opening Document Upload
 
 **Date:** 2026-05-13  

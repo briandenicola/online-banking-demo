@@ -1023,3 +1023,22 @@ Basher identified 4 critical corrections to the multi-phase Foundry private netw
 - Canonical pattern to avoid RBAC propagation race conditions
 
 **Impact:** PR #139 (Phase 1) has no code-level changes, only infrastructure. Phase 2 & 3 plans need updates before execution.
+
+### 2026-05-14 — Managed Virtual Network Migration Plan (Issue #141)
+
+**Context:** Brian directed pivot from BYO VNet injection (Phases 1-3 of #138) to Foundry Managed Virtual Network (preview).
+
+**Key Learnings — Managed VNet vs BYO PE:**
+- `networkInjections.useMicrosoftManagedNetwork = true` + `subnetArmId = ""` replaces BYO subnet injection
+- NEW child resource: `Microsoft.CognitiveServices/accounts/managedNetworks@2025-10-01-preview` (name = "default")
+- NEW child resource: `Microsoft.CognitiveServices/accounts/managedNetworks/outboundRules@2025-10-01-preview` (one per backing service PE)
+- Role `Azure AI Enterprise Network Connection Approver` (ID: `b556d68e-0be0-4f35-a333-ad7ee1ce17ea`) must be assigned to Foundry MSI at RG scope for auto-approval of managed PEs
+- Outbound rules take ~10 minutes to provision; total pipeline = 30+ minutes
+- `isolationMode` choices: `AllowInternetOutbound` (no firewall), `AllowOnlyApprovedOutbound` (provisions Azure Firewall on first FQDN rule — costly)
+- Once managed VNet is enabled, **cannot be disabled** — only upgraded to stricter mode
+- **CRITICAL:** Docs state `networkInjections` must be set at creation time — changing `useMicrosoftManagedNetwork` from false→true may require account recreate (destroys all child resources)
+- Agents subnet + `Microsoft.App/environments` delegation is no longer needed (can be removed)
+- Inbound PE for Foundry account stays (AKS pods still need private access to Foundry data plane)
+- All BYO PEs for AKS pod → PaaS access remain unchanged
+
+**Issue:** #141 — 3-phase migration plan (Phase A: enable managed VNet + outbound rules; Phase B: update capabilityHost deps + remove agents subnet; Phase C: cleanup)
