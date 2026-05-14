@@ -2820,3 +2820,83 @@ $ curl -sk -X POST https://onlinebankingdemo.bjdazure.tech/api/chat \
 
 Fix landed in `src/chatbot-service/app/services/agent_tools.py`. Built via `task cloud:build:chatbot-service`, deployed via `task cloud:deploy` (which now rollout-restarts pods automatically per Coordinator's e57d5f0).
 
+
+
+# Decision: Azure AI Foundry Connection Target URIs
+
+**Date:** 2026-05-14  
+**Author:** Basher (Backend Dev)  
+**Status:** Implemented  
+**Branch:** 138-foundry-troubleshooting
+
+## Context
+
+Azure AI Foundry project connections (API version `2025-06-01`) were failing to provision for Storage and Cosmos DB with HTTP 400 "unable to deserialize request body" errors. AI Search connections succeeded, but Storage and Cosmos failed despite using identical schema patterns.
+
+## Investigation
+
+- **AI Search connection:** ✅ Succeeded with `target = azapi_resource.ai_search.id` (ARM resource ID)
+- **Storage connection:** ❌ Failed with `target = azurerm_storage_account.main.id` (ARM resource ID)
+- **Cosmos connection:** ❌ Failed with `target = azurerm_cosmosdb_account.main.id` (ARM resource ID)
+
+All three connections had identical structure:
+- `category`: Service-specific (CognitiveSearch, AzureStorage, AzureCosmosDB)
+- `authType`: "AAD"
+- `useWorkspaceManagedIdentity`: true
+- `metadata.ResourceId`: ARM resource ID
+- `target`: Originally ARM resource ID for all three
+
+## Root Cause
+
+The `target` field in Foundry project connection resources has **category-dependent semantics**:
+- **Data-plane services** (Storage, Cosmos): Require data-plane endpoint URLs
+- **Control-plane services** (CognitiveSearch): Accept ARM resource IDs
+
+This is documented in Microsoft Learn REST API examples but not explicitly called out in the schema reference.
+
+## Decision
+
+Use **endpoint URLs** for Storage and Cosmos connections, **ARM IDs** for control-plane services.
+
+## Rationale
+
+1. **Data-plane vs control-plane distinction:** Services like Storage and Cosmos DB expose data through REST APIs at specific endpoints (blob.core.windows.net, documents.azure.com). Foundry agents need these endpoints to access data at runtime.
+
+2. **ARM IDs are management-plane identifiers:** They route to Azure Resource Manager for control operations (create, delete, update), not data operations (read blob, query Cosmos).
+
+3. **AI Search uses control-plane patterns:** AI Search connections may rely on ARM-based service discovery rather than direct endpoint URLs, hence ARM IDs work.
+
+4. **`metadata.ResourceId` serves a different purpose:** This field identifies the Azure resource for RBAC and billing correlation. It's separate from the runtime `target` endpoint.
+
+## Consequences
+
+### Positive
+- ✅ Storage and Cosmos connections now use correct endpoint URLs
+- ✅ Pattern aligns with Microsoft Learn REST API examples
+- ✅ Clear distinction between data-plane (endpoint URL) and control-plane (ARM ID) connection types
+
+### Negative
+- ⚠️ Schema is not self-documenting — developers must know the category-specific rules
+- ⚠️ Terraform provider documentation doesn't highlight this distinction
+
+### Verification Status
+- ✅ **Verified (commit 3a6dd03):** TF apply succeeded with project-MSI RBAC fix + API version correction. Storage and Cosmos connections provisioned successfully.
+
+## Pattern for Future Connections
+
+| Service Category | `target` Field | Terraform Attribute |
+|-----------------|----------------|---------------------|
+| AzureStorage | Blob endpoint URL | `azurerm_storage_account.*.primary_blob_endpoint` |
+| AzureCosmosDB | Document endpoint URL | `azurerm_cosmosdb_account.*.endpoint` |
+| CognitiveSearch | HTTPS URL | `https://{ai_search_name}.search.windows.net` |
+| *Other data-plane* | Service-specific endpoint | Check provider schema for `*_endpoint` attributes |
+
+**Always include:**
+- `metadata.ResourceId` = ARM resource ID (for all categories)
+
+## References
+
+- [Project Connections - Create REST API (2025-06-01)](https://learn.microsoft.com/en-us/rest/api/aifoundry/accountmanagement/project-connections/create?view=rest-aifoundry-accountmanagement-2025-06-01)
+- [Add connections to Azure AI Foundry projects](https://learn.microsoft.com/en-us/azure/foundry/how-to/connections-add)
+- `.squad/skills/foundry-managed-vnet/SKILL.md` — Connection schema patterns
+- `.squad/agents/basher/history.md` — 2026-05-14 Learnings entry

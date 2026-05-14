@@ -525,6 +525,22 @@ User reported that a brand-new $500 "Coffee" transaction (ID `6d20dc52-c348-4661
 
 ## Learnings
 
+### 2026-05-14 — Foundry Managed VNet TF Gate Closed (Sample-First Rule Validated)
+
+**Context:** Foundry managed-VNet TF apply was blocked by two issues: wrong API version (2025-10-01-preview vs. 2025-04-01-preview) and missing project-MSI RBAC (5 roles: Storage Blob Data Contributor, Search Index Data Contributor, Search Service Contributor, Cosmos DB Account Reader, Cosmos DB Operator).
+
+**Root Cause Analysis:** Applied **sample-first discipline** against microsoft-foundry/foundry-samples 18-managed-virtual-network. Diff against canonical sample revealed both mismatches simultaneously.
+
+**Key Learning:** For complex Azure services in preview, official samples are authoritative. Our existing TF had drifted through trial-and-error workarounds and no longer tracked the reference implementation. Pattern-matching from our broken code masked both issues; diffing against the sample exposed both.
+
+**Solution:** Commit 3a6dd03 added 5 project-MSI roles + 90s wait (`wait_project_rbac = 90`) to allow IAM propagation before capability host creation. API version corrected to 2025-04-01-preview.
+
+**Result:** `task cloud:up` succeeded. TF created Foundry account, managed networks, capability host, and backing-service connections.
+
+**Lesson for Future Foundry Work:** When TF apply fails on Azure preview services, always diff against the official sample FIRST before chasing API docs. Samples stay current; docs lag. The sample is the spec.
+
+---
+
 ### 2026-05-13 — Chat Persistence Regression (Wave 3 Post-Deploy Investigation)
 
 **Context:** Brian reported "Chats aren't being persistent like they were before" after Wave 3 deploy to AKS (branch squad/p2-wave-3 @ 6ec9be1). All pods running healthy, no errors in logs, but chat history always returns empty `[]`.

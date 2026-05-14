@@ -115,6 +115,43 @@ resource "azurerm_role_assignment" "foundry_network_connection_approver" {
 
 Role ID: `b556d68e-0be0-4f35-a333-ad7ee1ce17ea`
 
+### 4a. **PROJECT Managed Identity RBAC — CRITICAL PREREQUISITE**
+
+**CONFIRMED (commit 3a6dd03):** The **project** managed identity (created by Foundry automatically) MUST have 5 specific roles on the backing services BEFORE capabilityHost creation. Without these, capability host provisioning hangs or fails.
+
+**5 Required Roles on Project MSI:**
+1. `Storage Blob Data Contributor` (on storage account)
+2. `Search Index Data Contributor` (on AI Search resource)
+3. `Search Service Contributor` (on AI Search resource)
+4. `Cosmos DB Account Reader` (on Cosmos account)
+5. `Cosmos DB Operator` (on Cosmos account)
+
+**Implementation Pattern:**
+```hcl
+resource "azurerm_role_assignment" "project_storage_blob_contributor" {
+  scope              = azurerm_storage_account.main.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id       = azapi_resource.ai_foundry_project.identity[0].principal_id
+}
+
+# Repeat for Search Index Data Contributor, Search Service Contributor, Cosmos DB Account Reader, Cosmos DB Operator
+```
+
+**IAM Propagation Wait:** Even after successful role assignment, Azure requires ~90 seconds for role propagation in Foundry's capability host backend. Use `wait_project_rbac = 90` in a `time_sleep` resource before capabilityHost creation.
+
+```hcl
+resource "time_sleep" "wait_project_rbac" {
+  create_duration = "90s"
+  depends_on      = [
+    azurerm_role_assignment.project_storage_blob_contributor,
+    azurerm_role_assignment.project_search_index_contributor,
+    # ... other role assignments
+  ]
+}
+```
+
+**Verified in:** Commit 3a6dd03 — TF apply succeeded after adding all 5 roles + 90s settle wait.
+
 ### 5. capabilityHost (same as BYO pattern, but depends on outbound rules)
 
 ```hcl
