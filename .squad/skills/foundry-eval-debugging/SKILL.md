@@ -458,3 +458,122 @@ if results.status not in ("completed",):
 
 **Citation:** `src/ai-service/app/routes/api.py:run_foundry_evaluation` (lines 441-494, post-fix), `src/prompt-eval-service/Services/EvaluationService.cs` (lines 121-162, post-fix).
 
+### Rung 10 — Empty Assistant Response Data Loss (ADDED 2026-05-15)
+
+**When this rung applies:** Foundry receives `data_source.source.content: []` (empty array) despite logs showing `n_test_inputs: N` where N > 0. The eval completes with `status="completed"` but `total=0`.
+
+**Root cause:** The SDK's `_evaluate_via_dataset` method builds JSONL rows from `EvalItem.conversation` using:
+
+```python
+query_text = " ".join(m.text for m in query_msgs if m.role == "user" and m.text).strip()
+response_text = " ".join(m.text for m in response_msgs if m.role == "assistant" and m.text).strip()
+```
+
+The filter condition `if m.role == "assistant" and m.text` drops messages where `.text` is falsy (empty string, None). If you construct:
+
+```python
+assistant_text = agent_response.text or ""  # WRONG: "" is falsy
+Message("assistant", [assistant_text])
+```
+
+...and `agent_response.text` is `None` or `""`, the message is created but the SDK's filter silently drops it. The resulting JSONL row has `response: ""`, which fails Foundry's schema validation and is excluded from the dataset. If ALL rows are dropped this way, Foundry receives an empty dataset.
+
+**Fix:** Always use a non-empty sentinel value if the agent returns empty text:
+
+```python
+assistant_text = agent_response.text or "(no response)"  # CORRECT: non-empty fallback
+Message("assistant", [assistant_text])
+```
+
+This ensures the message passes the SDK's `and m.text` filter and Foundry receives valid data.
+
+**Diagnostic steps:**
+1. Check logs for `n_test_inputs > 0` but `n_eval_items == 0` or missing — means items were collected but lost before SDK call
+2. Add debug logging RIGHT BEFORE `evals.evaluate(items)`:
+   ```python
+   logger.debug("sample_item", conversation=[{"role": m.role, "text_length": len(m.text)} for m in items[0].conversation])
+   ```
+3. If all messages show `text_length > 0` but Foundry still sees empty content, the bug is in the SDK call signature (wrong kwarg name)
+4. If any message shows `text_length == 0`, that's the data loss — fix the sentinel value
+
+**Citations:**
+- `src/ai-service/app/routes/api.py:399-403` — sentinel value fix + explanatory comment
+- `agent_framework_foundry/_foundry_evals.py:680-681` — SDK filter that drops empty messages
+- Issue: Brian's feedback "we need to understand WHY eval came back with 0 result counts" (2026-05-15)
+
+
+---
+
+### Rung 11 — Foundry Backend Dataset Discard (ADDED 2026-05-15, REVISED 2026-05-15c)
+
+**When this rung applies**: After confirming Rung 10's sentinel fix is deployed and `n_eval_items > 0`, Foundry STILL returns `content: []` and `total: 0`. HTTP debug logs show the SDK sent valid content in the POST request, and Foundry's 201 response **echoed the content back**, but subsequent GET polls show `content: []`.
+
+**Symptom timeline**:
+1. POST `/evals/.../runs` with `content: [N items]` where N > 0
+2. Foundry responds 201 Created with body showing `content: [N items]` (same array)
+3. First GET poll (1-5s later) returns `content: []`
+4. Run stuck in `status: "in_progress"` with `total: 0` until SDK timeout (180s)
+
+**Root cause (REVISED)**: **SDK version regression / missing agent_reference metadata**. Foundry's backend requires `agent_reference` in the request body for proper dataset persistence. This field is **missing in agent-framework-foundry 1.2.2** but **added in 1.3.0** (released 2026-05-08, issue #5582 fix).
+
+**Observed on SDK 1.2.2**:
+- Foundry accepts the inline `file_content` dataset but fails to persist it as the expected asset (metadata shows `"expected_inline_dataset_id": "azureai://.../data/eval-data-.../versions/1"`)
+- The backend clears the content array instead of transitioning the run to "failed", leaving it in perpetual "in_progress"
+- HTTP logs show valid SDK POST body, but missing `agent_reference` field prevents proper processing
+
+**Possible additional triggers** (if still fails on 1.3.0):
+- Response field contains JSON-as-string; evaluators (coherence, fluency, relevance) may reject structured data during validation
+- Backend asset persistence failure (RBAC issue, quota limit, service regression)
+- Known Foundry bug with inline datasets in certain configurations
+
+**Diagnostic steps**:
+1. **Check SDK version first**: `pip list | grep agent-framework-foundry`
+   - If 1.2.2 or earlier → upgrade to 1.3.0+ (see fix below)
+   - If already 1.3.0+ → proceed with Foundry-side diagnostics
+2. Enable HTTP debug logging (use `app.telemetry.foundry_http_debug` context manager)
+3. Capture the POST request body and 201 response body
+4. Check for `agent_reference` field in POST body — if missing and SDK <1.3.0, that's the bug
+5. If present: Check metadata field for `"expected_inline_dataset_id"` — if present, Foundry is trying to create a dataset asset
+6. Verify RBAC: Foundry project SAMI needs `Storage Blob Data Contributor` on the project storage account
+
+**FIX (SDK 1.2.2 → 1.3.0)**: Update `pyproject.toml` with proper version constraint:
+
+```diff
+- agent-framework-core = "1.2.2"
+- agent-framework-foundry = "1.2.2"
++ agent-framework-core = "^1.3.0"
++ agent-framework-foundry = "^1.3.0"
+```
+
+**Why this fixes it**: 1.3.0 adds `_build_agent_reference()` function and injects `agent_reference: {name, type, version}` in the request body for non-preview calls (SDK issue #5582). Foundry's backend needs this metadata to properly persist inline datasets.
+
+**Why the bug happened**: Commit fe0b20c (2026-05-14) used bare `"1.2.2"` instead of `"^1.2.2"` or `"==1.2.2"`. Poetry/pip treats bare versions as **minimum constraints** (`>=1.2.2`), so:
+- Local dev with `pip install .` resolved to 1.3.0 (latest)
+- Cluster from cached image had 1.2.2
+- No poetry.lock to enforce consistency
+
+**Additional mitigation options** (if still fails on 1.3.0+):
+1. **File Azure support ticket**: Include correlation_id, eval_id, run_id, and timeline from debug logs
+2. **Test response format workaround**: Change system_prompt to return plain text instead of JSON-as-string to see if Foundry's evaluators reject structured responses
+3. **Switch eval path**: Use trace-based eval (`evaluate_traces`) or target-based eval (`evaluate_foundry_target`) instead of dataset-based eval — both avoid inline `file_content`
+
+**Workaround example** (plain-text response):
+```python
+# Before (JSON response — may trigger Foundry validation rejection):
+instructions = "Classify the transaction. Respond with JSON: {\"category\": \"...\", \"confidence\": 0.9}"
+
+# After (plain-text response):
+instructions = "Classify the transaction. Respond with: 'Category: <name>, Confidence: <0.0-1.0>, Reasoning: <explanation>'"
+```
+
+If switching to plain text fixes it, confirms Foundry's coherence/fluency evaluators reject JSON-serialized responses during async validation.
+
+**Citations**:
+- `.squad/decisions/inbox/basher-eval-sdk-bisect.md` — SDK version constraint fix + 1.3.0 upgrade rationale
+- `.squad/agents/basher/history.md` Session 2026-05-15c — SDK bisect investigation
+- `.squad/decisions/inbox/basher-eval-foundry-backend-bug.md` — Original RCA with HTTP logs (SDK 1.2.2)
+- Foundry HTTP logs correlation_id: `0dfe381709664089a1d3b4e409300a1a` (eval run `evalrun_a0e9fd3868bb43f583f8ee481115118b`, SDK 1.2.2)
+- PyPI releases: 1.2.2 (2026-04-29), 1.3.0 (2026-05-08 00:09)
+- SDK issue #5582: agent_reference injection fix
+
+**Precedence**: If you encounter empty datasets, check Rung 10 (our bug) FIRST. Then check SDK version (Rung 11). Only escalate to Foundry support if SDK 1.3.0+ still fails and HTTP logs prove we sent valid data with agent_reference.

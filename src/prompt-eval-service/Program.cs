@@ -82,6 +82,15 @@ builder.Services.AddHttpClient("AiService", client =>
     client.Timeout = TimeSpan.FromSeconds(30);
 });
 
+// HttpClient for long-running Foundry evaluation calls
+// Foundry evals can take several minutes; 10min matches ai-service's Stainless timeout
+builder.Services.AddHttpClient("AiServiceEval", client =>
+{
+    var aiServiceUrl = builder.Configuration["AI_SERVICE_URL"] ?? "http://ai-service:80";
+    client.BaseAddress = new Uri(aiServiceUrl);
+    client.Timeout = TimeSpan.FromMinutes(10);
+});
+
 // Cosmos DB
 builder.Services.AddSingleton<CosmosClient>(sp =>
 {

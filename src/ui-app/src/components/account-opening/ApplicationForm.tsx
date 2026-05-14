@@ -478,9 +478,20 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
                   fullWidth
                   label="SSN (Last 4)"
                   value={values.ssnLastFour}
-                  onChange={handleChange('ssnLastFour')}
+                  onChange={(event) => {
+                    const digitsOnly = event.target.value.replace(/\D/g, '').slice(0, 4);
+                    setValues((prev) => ({ ...prev, ssnLastFour: digitsOnly }));
+                  }}
                   error={Boolean(errors.ssnLastFour)}
                   helperText={errors.ssnLastFour}
+                  slotProps={{
+                    htmlInput: {
+                      maxLength: 4,
+                      inputMode: 'numeric',
+                      pattern: '[0-9]*',
+                      autoComplete: 'off',
+                    },
+                  }}
                 />
               </Grid>
             </Grid>

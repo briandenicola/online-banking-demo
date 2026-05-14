@@ -396,7 +396,11 @@ async def run_foundry_evaluation(
                 **diag,
             )
             raise
-        assistant_text = agent_response.text or ""
+        # CRITICAL: assistant_text must be non-empty or the SDK's split_messages
+        # filter (`if m.role == "assistant" and m.text`) drops the message entirely,
+        # causing Foundry to receive an empty dataset (content: []).
+        # Use a sentinel value if the agent returns empty text.
+        assistant_text = agent_response.text or "(no response)"
 
         eval_items.append(
             EvalItem(
@@ -411,6 +415,7 @@ async def run_foundry_evaluation(
     evals = FoundryEvals(client=client, evaluators=request.evaluators)
 
     import uuid as _uuid
+    import json as _json
     request_id = _uuid.uuid4().hex
     eval_log = logger.bind(
         component="run_foundry_evaluation",
@@ -419,10 +424,35 @@ async def run_foundry_evaluation(
         eval_deployment=eval_model,
         evaluators=request.evaluators,
         n_test_inputs=len(request.transactions),
+        n_eval_items=len(eval_items),
         foundry_endpoint=state.foundry_endpoint,
         foundry_model=state.foundry_model,
         principal_user_id=getattr(user, "user_id", None),
     )
+    # DEBUG: Log the first eval item AND the dicts that will be sent to Foundry
+    if eval_items:
+        sample_item = eval_items[0]
+        eval_log.debug(
+            "foundry.eval.invoke.sample_item",
+            sample_conversation=[
+                {"role": m.role, "text_length": len(m.text), "text_preview": m.text[:50] if m.text else "(empty)"}
+                for m in sample_item.conversation
+            ],
+        )
+        # Simulate SDK's _evaluate_via_dataset dict construction to log what's being sent
+        from agent_framework._evaluation import ConversationSplit
+        effective_split = sample_item.split_strategy or ConversationSplit.TURN
+        query_msgs, response_msgs = sample_item.split_messages(effective_split)
+        query_text = " ".join(m.text for m in query_msgs if m.role == "user" and m.text).strip()
+        response_text = " ".join(m.text for m in response_msgs if m.role == "assistant" and m.text).strip()
+        eval_log.debug(
+            "foundry.eval.invoke.sdk_dict_preview",
+            query_len=len(query_text),
+            response_len=len(response_text),
+            query_preview=query_text[:100],
+            response_preview=response_text[:100],
+            response_is_json=(response_text.startswith("{") and response_text.endswith("}")),
+        )
     eval_log.info("foundry.eval.invoke.start")
 
     from app.telemetry import foundry_http_debug, extract_openai_error_fields
@@ -438,9 +468,57 @@ async def run_foundry_evaluation(
             **diag,
         )
         raise
-    eval_log.info("foundry.eval.invoke.ok", n_results=len(results) if results is not None else 0)
+    # BUG FIX: Check that evaluation actually completed before reporting success
+    if results is None:
+        eval_log.error("foundry.eval.invoke.failed", error="SDK returned None")
+        raise HTTPException(status_code=500, detail="Evaluation failed: SDK returned no results")
+    
+    if results.status not in ("completed",):
+        eval_log.error(
+            "foundry.eval.invoke.incomplete",
+            status=results.status,
+            n_results=results.total,
+            error=results.error,
+        )
+        error_detail = f"Evaluation did not complete (status: {results.status})"
+        if results.error:
+            error_detail += f": {results.error}"
+        raise HTTPException(status_code=500, detail=error_detail)
+    
+    if results.total == 0:
+        eval_log.warning("foundry.eval.invoke.ok_but_empty", n_results=0, status=results.status)
+    else:
+        eval_log.info("foundry.eval.invoke.ok", n_results=results.total, status=results.status)
+    
+    # BUG FIX: Flatten EvalResults into the contract prompt-eval-service expects.
+    # The C# code expects top-level fields (total, passed, failed, all_passed),
+    # but EvalResults has result_counts as a dict and all_passed as a @property.
+    # We must serialize manually to match the expected shape.
     return {
-        "status": "ok",
-        "eval_name": request.eval_name,
-        "results": results,
+        "total": results.total,
+        "passed": results.passed,
+        "failed": results.failed,
+        "all_passed": results.all_passed,
+        "per_evaluator": results.per_evaluator,
+        "eval_id": results.eval_id,
+        "run_id": results.run_id,
+        "status": results.status,
+        "items": [
+            {
+                "query": getattr(item, "query", ""),
+                "response": getattr(item, "response", ""),
+                "status": getattr(item, "status", ""),
+                "query_messages": getattr(item, "query_messages", []),
+                "response_messages": getattr(item, "response_messages", []),
+                "scores": {
+                    score.name: {
+                        "score": score.score,
+                        "passed": score.passed,
+                        "reason": getattr(score, "reason", None),
+                    }
+                    for score in getattr(item, "scores", [])
+                },
+            }
+            for item in results.items
+        ] if results.items else [],
     }

@@ -207,26 +207,21 @@ const AdminPage: React.FC = () => {
       {/* Tab Navigation */}
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
         <Tabs value={activeTab} onChange={(_, newValue) => setActiveTab(newValue)}>
-          <Tab label="Flagged Transactions" />
-          <Tab label="All Transactions" />
-          <Tab label="AI Evaluation" />
+          <Tab label="Account Applications" />
           <Tab label="User Management" />
+          <Tab label="All Transactions" />
+          <Tab label="Flagged Transactions" />
+          <Tab label="Chatbot Prompt" />
+          <Tab label="AI Evaluation" />
           <Tab label="Login Audit" />
           <Tab label="System Health" />
-          <Tab label="Chatbot Prompt" />
-          <Tab label="Account Applications" />
         </Tabs>
       </Box>
 
-      {activeTab === 0 && (
-        <FlaggedTransactionsTab
-          transactions={flaggedTransactions}
-          onRefresh={fetchData}
-          onError={setError}
-        />
-      )}
+      {activeTab === 0 && <AdminApplicationsTab />}
+      {activeTab === 1 && <AdminUserManagementTab />}
 
-      {activeTab === 1 && (
+      {activeTab === 2 && (
         <AllTransactionsTab
           transactions={allTransactions}
           onRefresh={fetchData}
@@ -234,12 +229,18 @@ const AdminPage: React.FC = () => {
         />
       )}
 
-      {activeTab === 2 && <AdminEvalTab />}
-      {activeTab === 3 && <AdminUserManagementTab />}
-      {activeTab === 4 && <AdminLoginAuditTab />}
-      {activeTab === 5 && <AdminFoundryStatusTab />}
-      {activeTab === 6 && <AdminChatbotPromptTab />}
-      {activeTab === 7 && <AdminApplicationsTab />}
+      {activeTab === 3 && (
+        <FlaggedTransactionsTab
+          transactions={flaggedTransactions}
+          onRefresh={fetchData}
+          onError={setError}
+        />
+      )}
+
+      {activeTab === 4 && <AdminChatbotPromptTab />}
+      {activeTab === 5 && <AdminEvalTab />}
+      {activeTab === 6 && <AdminLoginAuditTab />}
+      {activeTab === 7 && <AdminFoundryStatusTab />}
     </Box>
   );
 };

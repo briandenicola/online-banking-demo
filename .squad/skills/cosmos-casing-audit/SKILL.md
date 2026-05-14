@@ -259,3 +259,8 @@ Currently login E2E uses username — never exercised the email path post-sentin
 - Issue: #125
 - Decision drop: `.squad/decisions/inbox/turk-cosmos-serializer-pin.md`
 - Migration plan: `.squad/decisions/inbox/turk-125-cosmos-migration-plan.md`
+
+### Known Instances of ORDER BY Composite Index Fixes
+
+1. **prompt-eval-service (2026-05-12):** `CosmosEvaluationRunRepository.GetAllAsync()` + `CosmosPromptTemplateRepository.GetAllAsync()` — removed ORDER BY, added in-memory sort. Decision: `turk-orderby-composite-index.md`
+2. **user-service (2026-05-14):** `CosmosUserRepository.GetAllUsersAsync()` — removed ORDER BY (admin endpoint, small table). Decision: `turk-admin-users-500.md`

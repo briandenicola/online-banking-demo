@@ -69,9 +69,18 @@ const RegisterPage: React.FC = () => {
 
     setLoading(true);
     try {
-      // Backend validates username to only allow letters, digits, underscore, dot, or hyphen
-      // Generate a valid username from email by removing @ and domain
-      const username = email.split('@')[0].replace(/[^a-zA-Z0-9._-]/g, '');
+      // Backend validates username: ^[a-zA-Z0-9_.-]+$, length 3-50.
+      // Derive a collision-resistant username from the FULL email (not just local part)
+      // so that brian@x.com and brian@y.com don't collide. Append a short hash suffix
+      // so truncation of long emails still yields a unique username.
+      const sanitizedEmail = email.toLowerCase().replace('@', '.').replace(/[^a-zA-Z0-9._-]/g, '');
+      let hash = 0;
+      for (let i = 0; i < email.length; i++) {
+        hash = ((hash << 5) - hash + email.charCodeAt(i)) | 0;
+      }
+      const suffix = Math.abs(hash).toString(36).slice(0, 6);
+      const base = sanitizedEmail.slice(0, 50 - suffix.length - 1);
+      const username = `${base}-${suffix}`;
       
       await apiClient.post('/users/register', {
         username,

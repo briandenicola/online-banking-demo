@@ -201,6 +201,22 @@ resource "azurerm_role_assignment" "project_cosmos_operator" {
   principal_id         = azapi_resource.ai_foundry_project.output.identity.principalId
 }
 
+# Cosmos DB SQL data-plane RBAC for the project SAMI.
+# Required by the Foundry Agents service when it reads/writes BYO Cosmos via
+# the project identity (e.g. agent provisioning, thread/run state, evals).
+# Symptom if missing: HTTP 403 with
+#   "Request blocked by Auth ... does not have required RBAC permissions to
+#    perform action [Microsoft.DocumentDB/databaseAccounts/readMetadata]"
+# Role: Cosmos DB Built-in Data Contributor (00000000-0000-0000-0000-000000000002)
+# Ref: https://learn.microsoft.com/azure/cosmos-db/how-to-setup-rbac#built-in-role-definitions
+resource "azurerm_cosmosdb_sql_role_assignment" "project_cosmos_data_contributor" {
+  resource_group_name = azurerm_resource_group.this.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  role_definition_id  = "${azurerm_cosmosdb_account.main.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
+  principal_id        = azapi_resource.ai_foundry_project.output.identity.principalId
+  scope               = azurerm_cosmosdb_account.main.id
+}
+
 # Wait for project-level RBAC to propagate before creating the capability host.
 # Sample uses 90s; ARM RBAC propagation can take that long across regions.
 resource "time_sleep" "wait_project_rbac" {
@@ -212,5 +228,6 @@ resource "time_sleep" "wait_project_rbac" {
     azurerm_role_assignment.project_search_contributor,
     azurerm_role_assignment.project_cosmos_reader,
     azurerm_role_assignment.project_cosmos_operator,
+    azurerm_cosmosdb_sql_role_assignment.project_cosmos_data_contributor,
   ]
 }

@@ -884,3 +884,48 @@ Your `turk-orderby-composite-index` decision has been merged into the decisions 
 ---
 
 **2026-05-14 16:57 Scribe:** Heads-up: #141 filed — Foundry Managed VNet migration plan from Danny. See decisions.md for context.
+
+---
+
+### 2026-05-14T19:20:00Z: Admin Users 500 Fix — Missing Composite Index
+
+**Issue:** Admin Console "User Management" tab returned 500 Internal Server Error. Browser showed:
+```
+GET https://onlinebankingdemo.bjdazure.tech/api/admin/users 500 (Internal Server Error)
+```
+
+**Root Cause:** `CosmosUserRepository.GetAllUsersAsync()` used multi-field ORDER BY without a composite index:
+```csharp
+"SELECT * FROM c WHERE NOT STARTSWITH(c.id, 'email-lookup:') ORDER BY c.CreatedAt DESC, c.createdAt DESC"
+```
+
+Cosmos threw `BadRequest (400)`:
+> "The order by query does not have a corresponding composite index that it can be served from."
+
+**Why This Happened:**
+1. Users container in `infra/cloud/cosmos.tf` defines no indexing policy → uses Cosmos default automatic indexing
+2. Default indexing does NOT include composite indexes
+3. Multi-field ORDER BY requires a composite index
+
+**Additional Code Smell:** Query ordered by both `c.CreatedAt` and `c.createdAt` (case redundancy) — likely defensive casing but wasteful for ORDER BY.
+
+**Fix Applied:** Removed ORDER BY from query (lines 110-124 of `CosmosUserRepository.cs`):
+```csharp
+// Removed ORDER BY to avoid requiring composite index in Cosmos.
+// If sorted results are needed, either:
+//   1. Add composite index to infra/cloud/cosmos.tf (Users container)
+//   2. Sort in-memory after retrieval
+var query = new QueryDefinition(
+    "SELECT * FROM c WHERE NOT STARTSWITH(c.id, 'email-lookup:')");
+```
+
+**Rationale:** Users table is small (~10-100 users in typical deployment). Unsorted retrieval is acceptable for admin dashboard — UI can sort client-side if needed. Avoids infra coupling (adding composite index requires Terraform apply + container reindex).
+
+**Files Changed:**
+- `src/user-service/Repositories/CosmosUserRepository.cs`
+
+**Verification:** Code change verified by grep/view. Local build blocked by permission issues (Brian will verify via deployment).
+
+**Decision:** `.squad/decisions/inbox/turk-admin-users-500.md`
+
+**Key Pattern:** Same as prompt-eval-service crash (2026-05-12): ORDER BY on small tables → remove it, sort in-memory if needed. Reserve composite indexes for high-volume user-scoped queries.

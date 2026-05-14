@@ -47,8 +47,12 @@ public class CosmosUserRepository : IUserRepository
     public async Task<Models.User?> GetByEmailAsync(string email)
     {
         var normalizedEmail = email.ToLowerInvariant();
+        // NOT STARTSWITH(c.id, 'email-lookup:') excludes the deterministic
+        // email-uniqueness sentinel docs, which also carry an `email` field
+        // and would otherwise be deserialized into a User with no Username
+        // or PasswordHash — breaking login-by-email.
         var query = new QueryDefinition(
-                "SELECT * FROM c WHERE LOWER(c.Email) = @email OR LOWER(c.email) = @email")
+                "SELECT * FROM c WHERE (LOWER(c.Email) = @email OR LOWER(c.email) = @email) AND NOT STARTSWITH(c.id, 'email-lookup:')")
             .WithParameter("@email", normalizedEmail);
 
         var iterator = _container.GetItemQueryIterator<UserModel>(query);
@@ -105,8 +109,12 @@ public class CosmosUserRepository : IUserRepository
 
     public async Task<List<Models.User>> GetAllUsersAsync()
     {
+        // Removed ORDER BY to avoid requiring composite index in Cosmos.
+        // If sorted results are needed, either:
+        //   1. Add composite index to infra/cloud/cosmos.tf (Users container)
+        //   2. Sort in-memory after retrieval
         var query = new QueryDefinition(
-            "SELECT * FROM c WHERE NOT STARTSWITH(c.id, 'email-lookup:') ORDER BY c.CreatedAt DESC, c.createdAt DESC");
+            "SELECT * FROM c WHERE NOT STARTSWITH(c.id, 'email-lookup:')");
         var iterator = _container.GetItemQueryIterator<UserModel>(query);
         var users = new List<Models.User>();
 

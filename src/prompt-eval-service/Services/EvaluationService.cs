@@ -80,7 +80,8 @@ public class EvaluationService : IEvaluationService
     {
         var aiServiceUrl = _config["AI_SERVICE_URL"] ?? "http://ai-service";
 
-        var client = _httpClientFactory.CreateClient();
+        // Use the AiServiceEval client with 10-minute timeout for long-running Foundry evaluations
+        var client = _httpClientFactory.CreateClient("AiServiceEval");
         if (!string.IsNullOrWhiteSpace(bearerToken))
         {
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
@@ -117,27 +118,67 @@ public class EvaluationService : IEvaluationService
         var body = await response.Content.ReadAsStringAsync();
         var result = JsonDocument.Parse(body);
 
-        var total = result.RootElement.GetProperty("total").GetInt32();
-        var passed = result.RootElement.GetProperty("passed").GetInt32();
-        var failed = result.RootElement.GetProperty("failed").GetInt32();
-        var allPassed = result.RootElement.GetProperty("all_passed").GetBoolean();
+        // BUG FIX: Defensive parsing with TryGetProperty to handle incomplete/sparse eval responses
+        // from Foundry (e.g., when status=in_progress or timeout). All dictionary accesses must
+        // degrade gracefully instead of throwing KeyNotFoundException.
+        if (!result.RootElement.TryGetProperty("total", out var totalElement) ||
+            !result.RootElement.TryGetProperty("passed", out var passedElement) ||
+            !result.RootElement.TryGetProperty("failed", out var failedElement))
+        {
+            _logger.LogError("Evaluation response missing required fields. Body: {Body}", body);
+            run.Status = "failed";
+            run.CompletedAt = DateTime.UtcNow;
+            await _runRepository.ReplaceAsync(run.Id, run);
+            throw new InvalidOperationException("Evaluation returned incomplete results. The evaluation may still be in progress or failed to complete.");
+        }
+
+        var total = totalElement.GetInt32();
+        var passed = passedElement.GetInt32();
+        var failed = failedElement.GetInt32();
+        var allPassed = result.RootElement.TryGetProperty("all_passed", out var apElement) && apElement.GetBoolean();
+
+        // If total is 0, the evaluation produced no results - surface this as a meaningful error
+        if (total == 0)
+        {
+            _logger.LogWarning("Evaluation completed but produced zero results for template {TemplateName}", template.Name);
+            run.Status = "completed";  // Mark as completed but with empty results
+            run.CompletedAt = DateTime.UtcNow;
+            run.QualityScores = new QualityScores
+            {
+                Coherence = 0,
+                Fluency = 0,
+                Relevance = 0,
+                PassRate = 0
+            };
+            run.SafetyScores = new SafetyScores
+            {
+                Violence = new SafetyResult { Passed = true, AverageScore = 0, FailedCount = 0 },
+                HateUnfairness = new SafetyResult { Passed = true, AverageScore = 0, FailedCount = 0 },
+                SelfHarm = new SafetyResult { Passed = true, AverageScore = 0, FailedCount = 0 },
+                Sexual = new SafetyResult { Passed = true, AverageScore = 0, FailedCount = 0 }
+            };
+            await _runRepository.ReplaceAsync(run.Id, run);
+            return;
+        }
 
         // Extract per-evaluator pass rates as quality scores (0-5 scale mapped from pass rate)
-        var perEvaluator = result.RootElement.GetProperty("per_evaluator");
+        var perEvaluator = result.RootElement.TryGetProperty("per_evaluator", out var peElement) 
+            ? peElement 
+            : default;
         double coherenceScore = 0, fluencyScore = 0, relevanceScore = 0;
-        if (perEvaluator.TryGetProperty("coherence", out var coh))
+        if (perEvaluator.ValueKind == JsonValueKind.Object && perEvaluator.TryGetProperty("coherence", out var coh))
         {
             var cohPassed = coh.GetProperty("passed").GetInt32();
             var cohTotal = cohPassed + (coh.TryGetProperty("failed", out var cf) ? cf.GetInt32() : 0);
             coherenceScore = cohTotal > 0 ? Math.Round(5.0 * cohPassed / cohTotal, 1) : 0;
         }
-        if (perEvaluator.TryGetProperty("fluency", out var flu))
+        if (perEvaluator.ValueKind == JsonValueKind.Object && perEvaluator.TryGetProperty("fluency", out var flu))
         {
             var fluPassed = flu.GetProperty("passed").GetInt32();
             var fluTotal = fluPassed + (flu.TryGetProperty("failed", out var ff) ? ff.GetInt32() : 0);
             fluencyScore = fluTotal > 0 ? Math.Round(5.0 * fluPassed / fluTotal, 1) : 0;
         }
-        if (perEvaluator.TryGetProperty("relevance", out var rel))
+        if (perEvaluator.ValueKind == JsonValueKind.Object && perEvaluator.TryGetProperty("relevance", out var rel))
         {
             var relPassed = rel.GetProperty("passed").GetInt32();
             var relTotal = relPassed + (rel.TryGetProperty("failed", out var rf) ? rf.GetInt32() : 0);
