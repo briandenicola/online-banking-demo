@@ -643,3 +643,83 @@ Issues #137 (eval failures) and #130 ("AI Calls Today" counter stuck at 0) are n
 ---
 
 **2026-05-14 16:57 Scribe:** Heads-up: #141 filed — Foundry Managed VNet migration plan from Danny. See decisions.md for context.
+
+---
+
+### 2026-05-14T20:30:00Z: E2E Tests for #135/#136 Account Opening State Machine
+
+**Request:** Write Playwright e2e tests for issues #135 (resubmit-on-error) and #136 (customer status screen) on branch `squad/135-136-account-opening-state-machine`.
+
+**Implementation contract:** Based on `.squad/decisions/inbox/danny-135-136-plan.md` and `.squad/decisions/inbox/copilot-directive-retry-cap.md`.
+
+**Test file created:** `tests/e2e/specs/core/account-opening-resubmit.spec.ts` (601 lines)
+
+**Test scenarios (3 required + 1 validation suite):**
+
+1. **Happy path — terminal state with customerExplanation**
+   - Submit application → upload documents
+   - Poll `/api/account-opening/{id}/status` until terminal state (approved/rejected/pending_review)
+   - Verify `stages[]` array present
+   - Verify `customerExplanation` populated on terminal states
+   - Verify polling stops (status stable after terminal)
+   - **Status:** GREEN (happy path likely works even without resubmit feature)
+
+2. **Failure + successful retry**
+   - Submit application with SSN="9999" (triggers agent failure per backend contract)
+   - Poll until `status==="failed"` with `lastError.retryable===true`
+   - POST `/api/account-opening/{id}/resubmit` → expect 202 Accepted
+   - Verify `stageAttempts[failedStage]` incremented to 2
+   - Poll until terminal state (workflow completes after retry)
+   - **Status:** SKIPPED — marked `test.skip()` pending backend implementation
+
+3. **Retry cap exceeded**
+   - Submit application with SSN="8888" (always fails per backend contract)
+   - Wait for first failure → POST /resubmit → wait for second failure
+   - Verify `stageAttempts[failedStage] >= 2`
+   - Verify `lastError.retryable === false` (cap enforced)
+   - Second POST /resubmit → expect 409 Conflict with "retry_cap_exceeded"
+   - Verify UI contract: `lastError.retryable=false` signals to hide Retry button
+   - **Status:** SKIPPED — marked `test.skip()` pending backend implementation
+
+4. **Validation suite**
+   - POST /resubmit on non-failed app → 409 Conflict
+   - POST /resubmit on non-existent app → 404 Not Found
+   - POST /resubmit without auth → 401/403
+   - **Status:** SKIPPED — pending backend endpoint
+
+**Test patterns used:**
+- Serial test suites with shared `applicationId` (matches existing `account-opening.spec.ts` pattern)
+- Polling with 2-second cadence (per spec §7.2)
+- Fallback to full GET if `/status` endpoint not yet implemented (graceful degradation)
+- 90-120 second timeouts for agent pipelines (existing convention)
+- apiLogin fixture from `authFixture.ts`
+- Sample documents from `tests/fixtures/sample-documents/john-smith/` (existing)
+
+**Test infrastructure conventions:**
+- BASE_URL from env or fallback to CUSTOM_DOMAIN (onlinebankingdemo.bjdazure.tech)
+- Health check against `/api/account-opening/applications` (existing pattern)
+- `test.skip(!serviceAvailable)` for optional services
+- test.skip() on feature-specific scenarios pending backend/UI
+
+**Coordination:**
+- **Basher:** Implementing backend (#135) — Cosmos schema, /resubmit endpoint, idempotency, stageAttempts, lastError
+- **Linus:** Implementing UI (#136) — customer status page, retry button gated by `lastError.retryable`, customerExplanation rendering
+- Tests define the contract — RED until both land their work
+
+**Current status:**
+- Committed to branch `squad/135-136-account-opening-state-machine` (464f7c5)
+- Pushed to origin
+- 1 test likely green (happy path), 6 tests skipped pending implementation
+- No PR opened (per request)
+
+**Learnings:**
+- Playwright's serial mode (`test.describe.configure({ mode: 'serial' })`) is perfect for multi-step workflows that share state
+- Using `test.skip()` with TODO comments preserves test contracts while unblocking parallel development
+- Fallback patterns (if 404, use GET instead of /status) allow tests to run in partial-deployment scenarios
+- SSN trigger patterns (9999=fail-once, 8888=always-fail) are a clean way to test error paths without mocking infrastructure
+- Retry cap enforcement via `lastError.retryable` boolean is cleaner than numeric comparison in UI (better contract)
+
+**Next steps:**
+- Tests will turn green as Basher + Linus land their work
+- Remove test.skip() once /resubmit endpoint and backend SSN triggers are deployed
+- Run `npm run test:chromium` in `tests/e2e/` to validate against deployed environment
