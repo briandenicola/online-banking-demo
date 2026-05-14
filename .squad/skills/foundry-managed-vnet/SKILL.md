@@ -143,6 +143,40 @@ resource "azapi_resource" "project_capability_host" {
 
 Per docs: `customSubDomainName`, `allowProjectManagement`, and `networkInjections` cannot be added after account creation. Changing `useMicrosoftManagedNetwork` from `false` → `true` likely requires account recreate.
 
+### 1a. **Project Connections Require `useWorkspaceManagedIdentity: true`** (CRITICAL)
+
+When the Foundry account uses Microsoft-managed VNet (`useMicrosoftManagedNetwork: true`), **all project connections** (type `Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01`) with `authType: "AAD"` **MUST** include `useWorkspaceManagedIdentity: true` in the properties block.
+
+Without this flag, the API returns HTTP 400 "unable to deserialize request body". This is a schema enforcement specific to the managed VNet scenario.
+
+**Required connection schema for managed VNet:**
+```hcl
+resource "azapi_resource" "storage_connection" {
+  type      = "Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01"
+  name      = azurerm_storage_account.main.name
+  parent_id = azapi_resource.ai_foundry_project.id
+
+  body = {
+    name = azurerm_storage_account.main.name
+    properties = {
+      category                     = "AzureStorage"  # or "AzureCosmosDB", "CognitiveSearch"
+      authType                     = "AAD"
+      isSharedToAll                = false
+      useWorkspaceManagedIdentity  = true            # REQUIRED for managed VNet + AAD auth
+      metadata = {
+        ApiType    = "Azure"
+        ResourceId = azurerm_storage_account.main.id
+      }
+      target = azurerm_storage_account.main.id
+    }
+  }
+}
+```
+
+**Why:** The managed VNet delegates all egress to Microsoft's network. The workspace's system-assigned MSI is granted PE auto-approve rights and data-plane RBAC. Connections must explicitly opt into using that MSI rather than default AAD flows.
+
+**Applies to:** Storage (AzureStorage), Cosmos DB (AzureCosmosDB), AI Search (CognitiveSearch) connections. Not needed for AppInsights (uses ApiKey auth).
+
 ### 2. Outbound Rule Provisioning is SLOW
 
 - 10-minute wait after target resource creation before creating outbound rule

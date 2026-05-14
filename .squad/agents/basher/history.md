@@ -2743,3 +2743,46 @@ Implemented Danny's full migration plan from BYO VNet injection to the **Managed
 - `infra/cloud/identity.tf` — updated role assignment scope
 
 **Refs:** #141, commit 89c888f
+
+### 2026-05-13 — Foundry Managed VNet Connection Schema Fix (useWorkspaceManagedIdentity)
+
+**Problem:** After migrating to Azure AI Foundry Managed Virtual Network (issue #141), TF apply failed with 3 errors:
+1. `azapi_resource.storage_connection` — HTTP 400 "unable to deserialize request body" (API version 2025-06-01)
+2. `azapi_resource.cosmosdb_connection` — HTTP 400 "unable to deserialize request body" (API version 2025-06-01)
+3. `azapi_resource.cosmos_outbound_rule` — HTTP 404 "Resource referenced by capabilityHost 'cosmos-sql-rule' not found"
+
+The first two errors were the root cause — the connection body schema was missing a required property for managed VNet scenarios.
+
+**Root cause:** When using Azure AI Foundry with a Microsoft-managed VNet (`useMicrosoftManagedNetwork: true` in `networkInjections`), project connections MUST include `useWorkspaceManagedIdentity: true` in their properties block. The AI Foundry project connections API at 2025-06-01 requires this flag to tell the connection to use the workspace's system-assigned managed identity for authentication, rather than relying on default AAD flows. Without this flag, the API returns HTTP 400 with a deserialization error.
+
+The third error (cosmos outbound rule 404) was a cascade failure — the capability host references connections by name, and when those connections don't exist (because they failed to create), the outbound rule lookup fails.
+
+**Fix:** Added `useWorkspaceManagedIdentity = true` to the properties block of all three BYO connections in `infra/cloud/ai-connections.tf`:
+- `azapi_resource.storage_connection` (line 48)
+- `azapi_resource.cosmosdb_connection` (line 75)
+- `azapi_resource.aisearch_connection` (line 102)
+
+**Key files:**
+- `infra/cloud/ai-connections.tf` — connection body schema updated for managed VNet
+
+**Pattern:** For AI Foundry projects using Microsoft-managed VNet (via `useMicrosoftManagedNetwork: true`), all project connections (type `Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01`) require `useWorkspaceManagedIdentity: true` in properties when `authType: "AAD"`.
+
+**Connection schema for managed VNet (2025-06-01):**
+```hcl
+body = {
+  name = <resource_name>
+  properties = {
+    category                     = "AzureStorage" | "AzureCosmosDB" | "CognitiveSearch"
+    authType                     = "AAD"
+    isSharedToAll                = false
+    useWorkspaceManagedIdentity  = true    # REQUIRED for managed VNet
+    metadata = {
+      ApiType    = "Azure"
+      ResourceId = <resource_id>
+    }
+    target = <resource_id>
+  }
+}
+```
+
+**Branch:** 138-foundry-troubleshooting
