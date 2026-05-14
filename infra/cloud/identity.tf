@@ -160,3 +160,57 @@ resource "azurerm_role_assignment" "foundry_cosmos_arm_contributor" {
   role_definition_name = "Contributor"
   principal_id         = azapi_resource.this.output.identity.principalId
 }
+
+#############################################
+# FOUNDRY PROJECT MSI — Required by capability host (Agents runtime)
+# Per microsoft-foundry/foundry-samples 18-managed-virtual-network: the project's
+# system-assigned identity must have data-plane access to BYO Storage/Cosmos/Search
+# BEFORE the capability host is created. Otherwise capability host creation fails
+# with "CapabilityHostOperationFailed" and no further detail.
+#############################################
+
+resource "azurerm_role_assignment" "project_storage_blob" {
+  scope                = azurerm_storage_account.main.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azapi_resource.ai_foundry_project.output.identity.principalId
+}
+
+resource "azurerm_role_assignment" "project_search_index" {
+  scope                = azapi_resource.ai_search.id
+  role_definition_name = "Search Index Data Contributor"
+  principal_id         = azapi_resource.ai_foundry_project.output.identity.principalId
+}
+
+resource "azurerm_role_assignment" "project_search_contributor" {
+  scope                = azapi_resource.ai_search.id
+  role_definition_name = "Search Service Contributor"
+  principal_id         = azapi_resource.ai_foundry_project.output.identity.principalId
+}
+
+# Cosmos DB control-plane RBAC (NOT the SQL data-plane role — the capability
+# host validates these specific control-plane roles on the project MSI).
+resource "azurerm_role_assignment" "project_cosmos_reader" {
+  scope                = azurerm_cosmosdb_account.main.id
+  role_definition_name = "Cosmos DB Account Reader Role"
+  principal_id         = azapi_resource.ai_foundry_project.output.identity.principalId
+}
+
+resource "azurerm_role_assignment" "project_cosmos_operator" {
+  scope                = azurerm_cosmosdb_account.main.id
+  role_definition_name = "Cosmos DB Operator"
+  principal_id         = azapi_resource.ai_foundry_project.output.identity.principalId
+}
+
+# Wait for project-level RBAC to propagate before creating the capability host.
+# Sample uses 90s; ARM RBAC propagation can take that long across regions.
+resource "time_sleep" "wait_project_rbac" {
+  create_duration = "90s"
+
+  depends_on = [
+    azurerm_role_assignment.project_storage_blob,
+    azurerm_role_assignment.project_search_index,
+    azurerm_role_assignment.project_search_contributor,
+    azurerm_role_assignment.project_cosmos_reader,
+    azurerm_role_assignment.project_cosmos_operator,
+  ]
+}

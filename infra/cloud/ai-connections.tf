@@ -133,6 +133,15 @@ resource "azapi_resource" "ai_foundry_project_capability_host" {
     azapi_resource.cosmosdb_connection,
     azapi_resource.storage_connection,
     time_sleep.wait_foundry_rbac,
+    # CRITICAL: Project MSI RBAC must be propagated before capability host create —
+    # otherwise CapabilityHostOperationFailed (no detail). Per
+    # microsoft-foundry/foundry-samples 18-managed-virtual-network.
+    azurerm_role_assignment.project_storage_blob,
+    azurerm_role_assignment.project_search_index,
+    azurerm_role_assignment.project_search_contributor,
+    azurerm_role_assignment.project_cosmos_reader,
+    azurerm_role_assignment.project_cosmos_operator,
+    time_sleep.wait_project_rbac,
     # Managed VNet outbound rules must be Succeeded before the capability host
     # binds the project to the agent runtime. See foundry-managed-vnet.tf.
     azapi_resource.storage_outbound_rule,
@@ -140,7 +149,8 @@ resource "azapi_resource" "ai_foundry_project_capability_host" {
     azapi_resource.aisearch_outbound_rule,
     time_sleep.wait_outbound_rules
   ]
-  type                      = "Microsoft.CognitiveServices/accounts/projects/capabilityHosts@2025-10-01-preview"
+  # API version 2025-04-01-preview matches the working Microsoft sample.
+  type                      = "Microsoft.CognitiveServices/accounts/projects/capabilityHosts@2025-04-01-preview"
   name                      = "agents-capability-host"
   parent_id                 = azapi_resource.ai_foundry_project.id
   schema_validation_enabled = false
