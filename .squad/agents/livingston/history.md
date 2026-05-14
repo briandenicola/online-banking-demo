@@ -626,3 +626,16 @@ async def test_foundry_evaluation_payload_shape():
 3. Missing turns/messages in conversations
 
 A simple code smell check could catch these before deployment.
+
+---
+
+### 2026-05-14T02:03:23Z: Cross-team notification — #137/#130 resolved
+
+**By:** Scribe (Orchestration)  
+**Topics:** FoundryAgent SDK contract, unified fix scope
+
+Issues #137 (eval failures) and #130 ("AI Calls Today" counter stuck at 0) are now CLOSED and verified in production. Both services (account-opening-service, ai-service) are now using the correct FoundryAgent contract.
+
+**New contract:** When instantiating any `FoundryAgent(...)`, pass model via `default_options={"extra_body": {"model": "<deployment_name>"}}` — do NOT pass `model=` as a direct kwarg.
+
+**Impact on #135/#136 work:** No impact. Your backend work for PR-1/PR-2/PR-3 proceeds normally; all three planning questions have been answered by Brian, unblocking implementation.

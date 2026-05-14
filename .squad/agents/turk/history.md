@@ -865,3 +865,18 @@ Container: PromptTemplates
 **Decision:** `.squad/decisions/inbox/turk-orderby-composite-index.md`
 
 **Key Takeaway:** For small admin tables, prefer in-memory sort over composite indexes. Reserve composite indexes for user-scoped queries with 100s-1000s of docs per user.
+
+---
+
+### 2026-05-14T02:03:23Z: Cross-team notification — #137/#130 resolved
+
+**By:** Scribe (Orchestration)  
+**Topics:** FoundryAgent SDK contract, unified fix scope
+
+Issues #137 (eval failures) and #130 ("AI Calls Today" counter stuck at 0) are now CLOSED and verified in production. Root cause: FoundryAgent constructor signature drift in both account-opening-service and ai-service.
+
+**New contract:** When instantiating any `FoundryAgent(...)`, pass model via `default_options={"extra_body": {"model": "<deployment_name>"}}` — do NOT pass `model=` as a direct kwarg (SDK 1.2.2 rejects it).
+
+**Verification:** Both pods now succeed end-to-end. Prevention: runtime `TestFoundryAgentSignatureContract` tests added to both services.
+
+Your `turk-orderby-composite-index` decision has been merged into the decisions log as canonical reference. No follow-up work scoped.

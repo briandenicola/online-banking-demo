@@ -6571,3 +6571,309 @@ The OR-both-casings pattern in .NET repositories now handles both PascalCase and
 
 **Action:** None required at this time. Turk and Livingston own normalization + cleanup.
 
+
+---
+
+## Decision: Foundry SDK FoundryAgent Constructor Contract — Unified #137 + #130 Fix
+
+**Status:** ✅ Implemented & verified in production (2026-05-14)
+**Author:** Basher
+**Issues:** #137 (preview SDK evaluation failures), #130 (multi-pod counter stuck at 0)
+**Branch/Commit:** squad/p2-wave-3 / 3f23113 (unified fix for both services)
+
+### Root Cause — Two Compounding Bugs Unified
+
+Both #137 and #130 traced back to the same root cause: **every FoundryAgent constructor in the Python services was either passing `model=` (which SDK 1.2.2 rejects) or omitting it entirely (in which case the underlying `responses.create()` fails with 400).**
+
+#### Bug A: Signature Drift in account-opening-service
+
+Commit `d120834` ("fix(account-opening-worker): pass model deployment to FoundryAgent") added `model=foundry_model` to four `FoundryAgent(...)` call sites. However:
+- `agent-framework-foundry==1.2.2` `FoundryAgent.__init__` is keyword-only and **does not** accept `model=`
+- Direct inspection of deployed pod confirmed signature: `FoundryAgent(self, *, project_endpoint, agent_name, ..., default_options, ...)`
+- Result: `TypeError: got an unexpected keyword argument 'model'` at startup
+- This commit was deployed but **never executed end-to-end** — the worker has been CrashLoopBackOff since deployment
+
+#### Bug B: Server-side agents have `model=None`
+
+All five Foundry agents in the project exist at version `1` with `model=None`. The SDK's request preparer intentionally strips `model` from outgoing options (comment: "Skip model check — model is configured on the Foundry agent"). When the server-side agent definition has no model bound, the call to `POST /openai/v1/responses` is rejected with `Missing required parameter: 'model'`.
+
+This means **every Python service calling `FoundryAgent.run(...)` was silently broken in production**, not just account-opening-worker:
+- #137: `eval_agent.run()` in ai-service returns 400 → eval endpoint fails
+- #130: `risk_agent.run()` in ai-service returns 400 → exception handler catches it, counter increment skipped, "AI Calls Today" stuck at 0
+
+### Solution — Unified SDK Contract Fix
+
+`FoundryAgent` does **not** take `model=`. To put the model deployment name into the request body, use:
+
+```python
+FoundryAgent(
+    project_endpoint=...,
+    credential=...,
+    agent_name="identity-verifier",
+    agent_version="1",
+    default_options={"extra_body": {"model": foundry_model}},
+)
+```
+
+The `extra_body` wrapper is required because the OpenAI client strips unknown top-level options before sending; only fields under `extra_body` survive. (Note: sister classes `FoundryChatClient` and `FoundryEvals` do accept top-level `model=` — bidirectional signature drift in same SDK.)
+
+### Files Changed
+
+**account-opening-service:**
+- `src/account-opening-service/app/worker.py` — connectivity-check agent
+- `src/account-opening-service/app/agents/identity_verification.py`
+- `src/account-opening-service/app/agents/compliance_check.py`
+- `src/account-opening-service/app/agents/provisioning.py`
+- `src/account-opening-service/tests/test_worker.py` — added `TestFoundryAgentSignatureContract` (4 cases)
+
+**ai-service:**
+- `src/ai-service/app/services/anomaly_service.py` — risk_agent + categorizer_agent
+- `src/ai-service/app/routes/api.py` — eval_agent
+- `src/ai-service/tests/test_detection.py` — added `TestFoundryAgentSignatureContract`
+
+### Contract Tests — Prevention for Future SDK Pins
+
+Both services now have a `TestFoundryAgentSignatureContract` class that:
+- Reads `inspect.signature(FoundryAgent.__init__)` from the installed SDK
+- Greps every `FoundryAgent(...)` call in the service's source
+- Asserts no unsupported kwargs passed (catches `model=` regression immediately)
+- Asserts `default_options={"extra_body": {"model": ...}}` is present
+
+These run in normal pytest; no special harness needed. **Catches signature drift on the next preview-SDK pin bump.**
+
+### Verification (Production Pod)
+
+**account-opening-worker:**
+```
+HTTP Request: POST .../openai/v1/responses "HTTP/1.1 200 OK"
+{"event": "Foundry connectivity verified", "logger": "account-opening-worker"}
+Consumer groups started successfully
+```
+
+**ai-service — eval_agent (#137):**
+```
+agent.run OK, response_len= 18    # ← was 400 "Missing required parameter: 'model'"
+```
+
+**ai-service — risk_agent + counter (#130):**
+```
+counter BEFORE: 0
+analyze returned: riskScore=0.03 explanation='Routine small purchase…' flags=[]
+counter AFTER:  1
+```
+
+### Prevention
+
+| Layer | Mechanism |
+|---|---|
+| Pinning | `agent-framework-foundry = "1.2.2"` exact-pinned; enforced by CI pin guard |
+| Test | `TestFoundryAgentSignatureContract` — runtime introspection, re-runs on every pin bump |
+| Skill | `.squad/skills/foundry-eval-debugging/SKILL.md` — Rung 0 (FoundryAgent contract check) + Rung 7 (signature drift diagnosis) |
+| Decision log | This entry (canonical reference) |
+
+### Related Decisions
+
+- **Single commit covers both issues:** Unlike the initial diagnosis (d120834, which was incomplete), this unified fix resolves #137 and #130 simultaneously. The initial commit is subsumed; this is the canonical post-mortem.
+- **ai-service RCA:** See separate RCA in `basher-foundry-kwarg-rca.md` for account-opening-service-only analysis. This unified decision supersedes it.
+
+---
+
+## Decision: #135 + #136 Unified Plan — Persist Account Opening Workflow + Customer-Facing Status
+
+**Status:** PLAN — awaiting Brian sign-off (3 open questions answered 2026-05-14)
+**Author:** Danny (Lead/Architect)
+**Date:** 2026-05-13
+**Issues:** #135 (Persist Account Opening Workflow), #136 (Customer-Facing Status)
+**Impact:** Blocks Basher (PR-1, PR-2, PR-3), Linus (PR-4, PR-5), Livingston
+
+### Executive Summary
+
+#135 and #136 share the same workflow-state model and must be designed together:
+- #135 owns the **writer + recovery** half (backend persistence, error handling, resubmit logic)
+- #136 owns the **reader + UX** half (customer UI status view and real-time polling)
+
+The backend already persists all necessary data (`agentResults[]`, `auditTrail[]`, `formData`, timestamps). The #136 issue is primarily a **UI polling bug** (the customer "processing" step never polls; the "status" step has polling disabled). Both issues are now unblocked by the three answers below.
+
+### Open Questions Answered (2026-05-14)
+
+**Q1 — Promote `provisioning` to first-class status?**
+✅ **YES.** Add `provisioning` as a 5th pipeline tile alongside the existing 4 stages. UI must render it as a real status, not a transient sub-state.
+
+**Q2 — Resubmit allowed for owner OR admin-only?**
+✅ **OWNER + ADMIN**, with one constraint:
+- **Resubmit is only available for ERROR outcomes, not for DECLINE outcomes.**
+- Error = system failure, transient agent failure, infra issue → resubmittable
+- Decline = compliance/identity rejected the application on substance → NOT resubmittable from customer UI
+- Backend MUST add `failureKind: 'error' | 'decline'` field to failure records (may require PR-2 schema update)
+- Admin override path for DECLINE TBD separately; do not build into PR-3 or PR-5
+
+**Q3 — Privacy review on customer-facing decline reasons?**
+✅ **YES — required before #136 GA.** Decline reason text is generated inside the provisioning Foundry call (per the plan). Implications:
+- PR-5 (customer status screen) cannot ship to prod until privacy sign-off
+- Add privacy review gate to PR-5 acceptance criteria
+- Internal/admin views may show raw reason; customer view shows reviewed/sanitized version
+
+### PR Breakdown (5 PRs, two issues)
+
+| PR | Owner | Scope | Status |
+|---|---|---|---|
+| #135-PR1 | Basher | Backend state machine: add `failed` state, transitions, `failureKind` field | Ready to start |
+| #135-PR2 | Basher | Backend error handling: persist errors + audit + provisioning outcome in Cosmos | Blocked by PR1 |
+| #135-PR3 | Basher | Backend resubmit: new `/resubmit` endpoint, access control (owner/admin), ERROR-only gate | Blocked by PR1+PR2 |
+| #136-PR4 | Linus | Frontend status view: customer-facing outcome screen, privacy-sanitized decline reasons | Blocked by PR2 ✓ |
+| #136-PR5 | Linus | Frontend polling: fix processing-step polling (add `setInterval`), fix status-step polling gate (remove `disabled`), add privacy review gate | Blocked by PR2 + privacy sign-off ✓ |
+
+### Verification
+
+- Projection layer (`app/services/projection.py`) already outputs `stages[]` and `riskTier` correctly
+- Cosmos repository confirmed PK is `/id` (not `/userId`) — verified in repo code
+- Admin tab works; customer "processing" + "status" views fail only due to client-side polling disabled/missing
+
+---
+
+## Decision: Brian's Answers to #135/#136 Planning Open Questions
+
+**Status:** ✅ Recorded (unblocks implementation)
+**Date:** 2026-05-14T01:53:13Z
+**Input source:** User directive via Copilot
+**Referenced plan:** `.squad/decisions/inbox/danny-135-136-unified-plan.md`
+
+### Direct Answers
+
+**Q1 — Promote `provisioning` to first-class status?**
+✅ **YES.** Add `provisioning` as a 5th pipeline tile alongside the existing 4 stages. UI must render it as a real status, not a transient sub-state.
+
+**Q2 — Resubmit allowed for owner OR admin-only?**
+✅ **OWNER + ADMIN**, with one constraint: **resubmit is only available for ERROR outcomes, not for DECLINE outcomes.**
+- Error (system failure, transient agent failure, infra issue) → resubmittable by owner or admin
+- Decline (compliance/identity rejected the application on substance) → NOT resubmittable from customer UI. Admin override path TBD separately; do not build into PR-3 or PR-5.
+- Backend MUST distinguish error vs decline at persistence layer so UI can gate the resubmit button correctly. This may require adding a `failureKind: 'error' | 'decline'` field to the failure record in PR-2.
+
+**Q3 — Privacy review on customer-facing decline reasons?**
+✅ **YES — required before #136 GA.** Decline reason text generated inside provisioning Foundry call must pass privacy review before exposed to customers. Implications:
+- PR-5 (customer status screen) cannot ship to prod until privacy sign-off on the decline-reason copy
+- Add privacy review gate to PR-5 acceptance criteria
+- Internal/admin views may show raw reason; customer view shows reviewed/sanitized version
+
+### Why This Was Recorded
+
+Direct user answers captured for team memory and to unblock Basher (PR-1, PR-2, PR-3) and Linus (PR-4, PR-5) execution.
+
+---
+
+## Decision: agent-framework preview SDK version floor for @tool decorator
+
+**Status:** ✅ Implemented
+**Date:** 2026-05-13
+**Author:** Basher
+**Issue Context:** Chatbot-service crash after 0b6255a repin
+
+### Problem
+
+Chatbot-service crashed after repin with `TypeError: 'NoneType' object is not callable`. Root cause: `pyproject.toml` pinned only `agent-framework-foundry = "1.2.2"` but omitted `agent-framework-core`, which provides the `tool` decorator imported in `config.py`.
+
+### Decision
+
+**All Python services using agent-framework must pin BOTH core and foundry to the SAME version:**
+
+```
+agent-framework-core = "1.2.2"
+agent-framework-foundry = "1.2.2"
+```
+
+### Version Constraints
+
+- **Floor:** 1.2.2 (provides `@tool` decorator with `approval_mode` kwarg)
+- **Ceiling:** < 1.3.0 (1.3.0 breaks eval contract, causing 403 errors — ref #137 initial diagnosis)
+
+### Affected Services
+
+- ✅ **chatbot-service** — fixed in 65f6c9f (added missing core dep)
+- ✅ **ai-service** — already pins both
+- ✅ **account-opening-service** — already pins both
+
+### Rationale
+
+1. The `tool` decorator is provided by `agent-framework-core`, not `-foundry`
+2. Version 1.2.2 is the stable baseline that supports `@tool(approval_mode="never_require")` syntax
+3. Preview SDKs get exact pins (exception to `>=min,<next-major` rule) due to frequent breaking changes
+4. Version 1.3.0+ breaks eval contract (403 errors), creating urgent need to avoid it
+
+### Future Maintenance
+
+When upgrading agent-framework preview SDKs:
+- Pin both core AND foundry to the SAME version
+- Verify `@tool` decorator still works in chatbot-service
+- Run eval smoke test to ensure no 403 regressions
+- Stay below versions known to break eval contract
+
+---
+
+## Decision: Remove ORDER BY from prompt-eval-service Cosmos queries (#125 follow-up)
+
+**Status:** ✅ Implemented
+**Date:** 2026-05-12
+**Author:** Turk (Backend)
+**Issue:** #125 (Cosmos casing audit + serializer pinning)
+**Root issue:** Startup crash — BadRequest 400: "The order by query does not have a corresponding composite index"
+
+### Problem
+
+Commit 243457f (#125) introduced OR-both-casings defensive queries to handle historical PascalCase/camelCase field drift:
+
+1. `CosmosEvaluationRunRepository.GetAllAsync()`: `ORDER BY c.createdAt DESC, c.CreatedAt DESC`
+2. `CosmosPromptTemplateRepository.GetAllAsync()`: `ORDER BY c.updatedAt DESC, c.UpdatedAt DESC`
+
+**Root cause:** Cosmos DB cannot efficiently serve OR-pattern queries with ORDER BY without a composite index on each field combination. The containers lack these indexes in Terraform.
+
+### Options & Selection
+
+**Option A (SELECTED): In-Memory Sort**
+- Remove ORDER BY from query
+- Fetch all results, sort in-memory using LINQ
+- **Pros:** No infra changes, no terraform apply dependency, acceptable for small tables (<100 docs)
+- **Cons:** Slightly higher RU cost (full scan), not suitable for 1000s of docs
+- **Assessment:** Right choice — these are global admin tables with ~10-50 total docs max
+
+**Option B (REJECTED): Add Composite Index to Terraform**
+- Define composite indexes in `infra/cloud/cosmos.tf` for both fields on both containers
+- **Pros:** Server-side sort, lower RU cost
+- **Cons:** Blocks deployment (requires `terraform apply`), couples code to infra, overkill for small tables, requires 4 indexes total
+- **Assessment:** Not justified for admin tables
+
+### Implementation
+
+1. `src/prompt-eval-service/Repositories/CosmosEvaluationRunRepository.cs`
+   - Removed `ORDER BY` clause from query
+   - Added `.OrderByDescending(r => r.CreatedAt).ToList()` in-memory
+
+2. `src/prompt-eval-service/Repositories/CosmosPromptTemplateRepository.cs`
+   - Removed `ORDER BY` clause from query
+   - Added `.OrderByDescending(t => t.UpdatedAt).ToList()` in-memory
+
+3. `.squad/skills/cosmos-casing-audit/SKILL.md`
+   - Added "ORDER BY Pitfall" section documenting composite index requirement
+   - Recommended in-memory sort for admin tables
+
+### Learning: When to Use Composite Indexes
+
+**Use composite index when:**
+- User-scoped queries returning 100s-1000s of docs
+- High-traffic endpoints where RU cost matters
+- Pagination (need server-side ORDER BY + OFFSET/LIMIT)
+
+**Use in-memory sort when:**
+- Admin/global tables with <100 total docs
+- Low-traffic admin endpoints
+- Result set easily fits in memory
+
+**Key insight:** OR-both-casings + ORDER BY = composite index requirement. For small tables, avoid infra coupling by sorting in-memory.
+
+---
+
+## Quarantined Directives
+
+### _QUARANTINED-basher-foundry-model-param.md.bad
+
+**Reason for quarantine:** This file contains a misleading FoundryAgent(model=) generalization that led directly to the worker breakage in commit d120834. It was superseded by the basher-sdk-unified RCA (committed 3f23113), which correctly identified the root cause and the proper solution (extra_body wrapper). The file is kept in-place as historical artifact for post-mortem review but should NOT be consulted as reference material — use the unified RCA instead.
+

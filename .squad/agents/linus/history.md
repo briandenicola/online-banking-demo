@@ -623,3 +623,22 @@ Client-side regex must match backend regex exactly to avoid false positives.
   - `src/ui-app/src/components/account-opening/DocumentUpload.tsx` — removed `multiple`, updated copy ("Drop a file here", "Select File"), sliced `files[0]` in upload call
 - **Gotcha:** HTML input `multiple` can be bypassed by drag-drop — always defensively slice `selected.length > 1 ? [selected[0]] : selected` in drop handlers
 - **Rationale:** Backend contract is singular (one file per request). Multi-file support would require backend changes (`file: list[UploadFile] = File(...)`). Simpler to match frontend to actual backend behavior than risk silent failures.
+
+---
+
+### 2026-05-14T02:03:23Z: Cross-team notification — #137/#130 resolved
+
+**By:** Scribe (Orchestration)  
+**Topics:** FoundryAgent SDK contract, unified fix scope
+
+Issues #137 (eval failures) and #130 ("AI Calls Today" counter stuck at 0) are now CLOSED and verified in production. Both traced back to the same root cause: FoundryAgent constructor signature drift.
+
+**New contract:** When instantiating any `FoundryAgent(...)`, pass model via `default_options={"extra_body": {"model": "<deployment_name>"}}` — do NOT pass `model=` as a direct kwarg (SDK 1.2.2 rejects it).
+
+**Scope of fix:**
+- account-opening-service: all 4 FoundryAgent constructors fixed
+- ai-service: all 3 FoundryAgent constructors fixed (risk_agent, categorizer_agent, eval_agent)
+
+**Prevention:** Both services now have runtime `TestFoundryAgentSignatureContract` tests that run on every pytest invocation. Catch signature drift on next SDK pin bump.
+
+**Impact on #135/#136 work:** No impact. Your frontend work proceeds normally; backend #135-PR1/PR2/PR3 execution is unblocked by the answers to Danny's 3 planning questions (see .squad/decisions.md).
