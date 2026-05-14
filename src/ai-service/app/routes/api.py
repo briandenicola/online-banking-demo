@@ -378,7 +378,24 @@ async def run_foundry_evaluation(
         # Without the assistant turn, raisvc rejects the run with a 400-wrapped
         # 403 (UnauthorizedUserAction) — see issue #137.
         session = eval_agent.create_session()
-        agent_response = await eval_agent.run(prompt, session=session)
+        try:
+            agent_response = await eval_agent.run(prompt, session=session)
+        except Exception as e:  # noqa: BLE001
+            from app.telemetry import extract_openai_error_fields
+            import traceback
+            diag = extract_openai_error_fields(e)
+            logger.bind(
+                component="run_foundry_evaluation",
+                phase="eval_agent.run",
+                eval_name=request.eval_name,
+                eval_deployment=eval_model,
+                foundry_endpoint=state.foundry_endpoint,
+            ).error(
+                "foundry.eval.agent_run.failed",
+                traceback=traceback.format_exc(),
+                **diag,
+            )
+            raise
         assistant_text = agent_response.text or ""
 
         eval_items.append(
@@ -392,7 +409,36 @@ async def run_foundry_evaluation(
         )
 
     evals = FoundryEvals(client=client, evaluators=request.evaluators)
-    results = await evals.evaluate(eval_items, eval_name=request.eval_name)
+
+    import uuid as _uuid
+    request_id = _uuid.uuid4().hex
+    eval_log = logger.bind(
+        component="run_foundry_evaluation",
+        request_id=request_id,
+        eval_name=request.eval_name,
+        eval_deployment=eval_model,
+        evaluators=request.evaluators,
+        n_test_inputs=len(request.transactions),
+        foundry_endpoint=state.foundry_endpoint,
+        foundry_model=state.foundry_model,
+        principal_user_id=getattr(user, "user_id", None),
+    )
+    eval_log.info("foundry.eval.invoke.start")
+
+    from app.telemetry import foundry_http_debug, extract_openai_error_fields
+    try:
+        async with foundry_http_debug(request_id):
+            results = await evals.evaluate(eval_items, eval_name=request.eval_name)
+    except Exception as e:  # noqa: BLE001
+        import traceback
+        diag = extract_openai_error_fields(e)
+        eval_log.error(
+            "foundry.eval.invoke.failed",
+            traceback=traceback.format_exc(),
+            **diag,
+        )
+        raise
+    eval_log.info("foundry.eval.invoke.ok", n_results=len(results) if results is not None else 0)
     return {
         "status": "ok",
         "eval_name": request.eval_name,

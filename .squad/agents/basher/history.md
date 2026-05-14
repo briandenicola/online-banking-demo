@@ -2409,3 +2409,51 @@ Always `inspect.signature` BOTH sides in the deployed pod when debugging
 "unexpected keyword argument" or "missing required parameter" errors. They
 look like opposite bugs but they're often the same SDK family with
 inconsistent contracts.
+
+## Eval path instrumentation (2026-05-14)
+
+**Context:** Two consecutive wrong RCAs on issue #137 (raisvc 403 / `UnauthorizedUserAction`) burned credibility. New standing directive (`copilot-directive-20260514T020930Z-observability-bias.md`): **telemetry first, diagnosis after.** Danny is running the actual RCA; my job here was visibility only.
+
+**What I added (instrumentation only — zero behavior change):**
+
+- New module `src/ai-service/app/telemetry.py`:
+  - `decode_jwt_claims_unverified(token)` — base64-decode JWT payload, return `{oid, appid, aud, iss, tid, exp, ...}`. Logging only — no signature verify.
+  - `redact_authorization_header(value)` — keeps decoded JWT claims, drops the bearer token VALUE.
+  - `identity_startup_probe(credential, endpoint)` — one-shot async; acquires token for `https://cognitiveservices.azure.com/.default`, logs decoded claims + resolved Foundry endpoint host. Wired into lifespan in `app/services/anomaly_service.py`. Non-fatal on failure.
+  - `foundry_http_debug(request_id)` — async context manager that monkey-patches `httpx.AsyncClient.send` for the lifetime of the block. Logs full request line, redacted headers (with decoded JWT claims), request body summary, response status, all `x-ms-*` / `apim-request-id` / `correlation-id` headers, response body (truncated to 4KB). Why monkey-patch: `agent_framework_foundry.FoundryEvals` constructs its own AsyncOpenAI client internally; we cannot inject httpx event_hooks without touching SDK code.
+  - `extract_openai_error_fields(exc)` — pulls `status_code`, `body`, `componentName`, `correlation`, `innerError` (and `inner_*` variants), plus `response.headers` (`x-ms-*`, `apim-request-id`) from openai/httpx exceptions.
+
+- `app/routes/api.py::run_foundry_evaluation`:
+  - Generates `request_id` (uuid4), binds structlog with `eval_name`, `eval_deployment`, `evaluators`, `n_test_inputs`, `foundry_endpoint`, `foundry_model`, `principal_user_id`.
+  - Wraps `await evals.evaluate(...)` in `foundry_http_debug(request_id)` + try/except that calls `extract_openai_error_fields` and emits `foundry.eval.invoke.failed` with full traceback before re-raising.
+  - Same wrap-and-log around the per-transaction `eval_agent.run(...)` call (event: `foundry.eval.agent_run.failed`).
+
+- `app/services/anomaly_service.py`:
+  - `FoundryRiskAnalyzer.analyze` and `FoundryCategorizer.categorize` exception handlers now use `extract_openai_error_fields` and emit a structured `foundry.agent_run.failed` event (was previously a one-line f-string log). Behavior unchanged: same fallback `RiskAssessment` / `CategoryResult`.
+
+- `deploy/kustomize/base/ai-service.yaml`: added `AI_SERVICE_DEBUG_FOUNDRY: "1"` to the main container (debug-on for #137 incident; flip to `0` or remove after RCA).
+
+- Tests: `tests/test_eval_telemetry.py` — 5 tests verifying JWT claim extraction, bearer redaction, raisvc-shaped 400/403 envelope field extraction, and end-to-end structlog rendering of the diagnostic fields.
+
+**How to read the new logs (one-screen ops doc):**
+
+1. Pod startup — confirm identity is what you expect:
+   ```
+   kubectl logs -n banking-demo deployment/ai-service | grep foundry.identity.probe
+   ```
+   Look for: `principal_oid`, `principal_appid`, `token_aud=https://cognitiveservices.azure.com`, `token_tid`. **This is the principal whose role assignments need to be checked on the Foundry resource.**
+
+2. After an eval call (success or fail):
+   ```
+   kubectl logs -n banking-demo deployment/ai-service | grep -E "foundry\.(eval|http)\."
+   ```
+   - `foundry.eval.invoke.start` — start of evaluation, includes `request_id`.
+   - `foundry.http.request` / `foundry.http.response` — every HTTP call FoundryEvals makes (request_id correlates them). Look at `ms_headers.x-ms-correlation-request-id` / `apim-request-id` to file Azure support tickets.
+   - `foundry.eval.invoke.failed` on error — has `openai_status_code`, `foundry_componentName`, `foundry_correlation`, `foundry_inner_code` (e.g. `UnauthorizedUserAction`), `http_ms_headers`, full `http_body`, plus `traceback`.
+
+3. To disable verbose hook (response volume can be high):
+   - Set ConfigMap/env `AI_SERVICE_DEBUG_FOUNDRY=0` (or remove the key) and restart the deployment. Identity probe + structured exception logging stay on regardless — only the per-request httpx wire log is gated.
+
+**Verified (this run):** Identity probe log appears in deployed pod (`principal_oid=05a5f8d1-df4d-413d-9495-498634639e1b`, `principal_appid=0a606c77-03f3-4e4c-9cc7-4d51b86c09ff`, `token_aud=https://cognitiveservices.azure.com`, `target_resource_host=modest-hippo-861-foundry.services.ai.azure.com`, `debug_hook_enabled=true`). Not triggering the eval — Brian is doing that himself.
+
+**Lane discipline:** Did NOT modify the foundry-eval-debugging skill (Danny owns the RCA pass; he'll fold guidance in). Did NOT comment on #137 or #130 (Danny owns the issue narrative). Did NOT add any retry / fallback logic — visibility only.

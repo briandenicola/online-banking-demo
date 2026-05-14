@@ -85,6 +85,10 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: jwt-key
+        # Verbose Foundry HTTP wire logging — temporarily enabled for #137 RCA.
+        # Flip to "0" or remove once root cause is confirmed.
+        - name: AI_SERVICE_DEBUG_FOUNDRY
+          value: "1"
         envFrom:
         - configMapRef:
             name: banking-demo-config

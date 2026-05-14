@@ -197,7 +197,12 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
                 return result
 
             except Exception as e:
-                logger.error(f"Foundry risk assessment failed: {e}")
+                from app.telemetry import extract_openai_error_fields
+                diag = extract_openai_error_fields(e)
+                logger.bind(
+                    component="FoundryRiskAnalyzer.analyze",
+                    transaction_id=transaction.get("transactionId"),
+                ).error("foundry.agent_run.failed", **diag)
                 span.record_exception(e)
                 return RiskAssessment(
                     riskScore=0.5,
@@ -336,7 +341,12 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
                 return result
 
             except Exception as e:
-                logger.error(f"Foundry categorization failed: {e}")
+                from app.telemetry import extract_openai_error_fields
+                diag = extract_openai_error_fields(e)
+                logger.bind(
+                    component="FoundryCategorizer.categorize",
+                    transaction_id=transaction.get("transactionId"),
+                ).error("foundry.agent_run.failed", **diag)
                 span.record_exception(e)
                 return CategoryResult(
                     category=transaction.get("category", "Uncategorized"),
@@ -800,6 +810,13 @@ async def lifespan(app: FastAPI):
             state.foundry_model = model_name
             token = await asyncio.to_thread(credential.get_token, "https://ai.azure.com/.default")
             logger.info(f"✅ Azure credential acquired (expires: {token.expires_on})")
+
+            # One-shot identity probe for the cognitiveservices.azure.com audience —
+            # this is the audience raisvc / the eval pipeline checks. Logs decoded
+            # JWT claims (oid, appid, aud, iss, tid) so we can correlate role
+            # assignments against the actual principal at the time of the call.
+            from app.telemetry import identity_startup_probe
+            await identity_startup_probe(credential, endpoint)
 
             risk_agent = FoundryAgent(
                 project_endpoint=endpoint,
