@@ -400,3 +400,61 @@ data-plane endpoint, which only honors `sqlRoleAssignments`.
   query/response split happens.
 - `azure/ai/projects/aio/_patch.py:166` — where the SDK hardcodes
   `https://ai.azure.com/.default`.
+
+### Rung 9 — Response Serialization + Polling Termination (ADDED 2026-05-14)
+
+**When this rung applies:** KeyNotFoundException or missing fields when parsing Foundry eval responses, OR when evals report "ok" but have zero results / incomplete status.
+
+**Two related bugs:**
+
+#### A. FastAPI Serialization of SDK Objects
+
+When returning an `EvalResults` object (from `agent_framework_foundry.FoundryEvals.evaluate()`) directly from a FastAPI endpoint, only `__dict__` attributes are serialized to JSON. `@property` methods are NOT included.
+
+**EvalResults has:**
+- Instance attributes: `provider`, `eval_id`, `run_id`, `status`, `result_counts` (dict), `report_url`, `error`, `per_evaluator` (dict), `items` (list), `sub_results` (dict)
+- Properties (NOT serialized): `total`, `passed`, `failed`, `all_passed`
+
+If client code expects top-level `total`, `passed`, `failed`, `all_passed` fields, it will hit KeyNotFoundException / missing field errors.
+
+**Fix:** Always flatten SDK objects into explicit dicts matching the expected contract:
+```python
+return {
+    "total": results.total,           # property → top-level field
+    "passed": results.passed,         # property → top-level field
+    "failed": results.failed,         # property → top-level field
+    "all_passed": results.all_passed, # property → top-level field
+    "per_evaluator": results.per_evaluator,  # dict attribute
+    "eval_id": results.eval_id,
+    "run_id": results.run_id,
+    "status": results.status,
+    "items": [...]  # manually flatten items too if needed
+}
+```
+
+**Never** return the SDK object directly and expect properties to be serialized.
+
+#### B. Polling Termination Check
+
+The Foundry SDK's `_poll_eval_run` polls until `run.status in ("completed", "failed", "canceled")` OR timeout (default 180s). If timeout fires, it returns `status="timeout"`. If the eval fails, it returns `status="failed"`.
+
+**Always check `results.status == "completed"` before reporting success.** If status is anything else (`in_progress`, `timeout`, `failed`, `canceled`), the eval did NOT complete successfully. Log the incomplete status and raise an error with the status + error message:
+
+```python
+if results.status not in ("completed",):
+    logger.error(
+        "foundry.eval.invoke.incomplete",
+        status=results.status,
+        n_results=results.total,
+        error=results.error,
+    )
+    raise HTTPException(
+        status_code=500,
+        detail=f"Evaluation did not complete (status: {results.status}): {results.error or 'unknown'}"
+    )
+```
+
+**Zero-result completed evals:** A status of `"completed"` with `total == 0` is valid (all items errored or empty input). Surface as a warning, not an error.
+
+**Citation:** `src/ai-service/app/routes/api.py:run_foundry_evaluation` (lines 441-494, post-fix), `src/prompt-eval-service/Services/EvaluationService.cs` (lines 121-162, post-fix).
+

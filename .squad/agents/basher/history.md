@@ -1785,3 +1785,64 @@ The "subsequent signup" symptom is a UX artifact of a separate (real but minor) 
 - `GetAdminCountAsync` — sentinel docs lack `role` field.
 - `IsContainerEmptyAsync` / `GetAllUsersAsync` — already exclude sentinels.
 - Cosmos serializer config (CamelCase policy) — fine as-is, was not the cause.
+
+---
+
+## 2026-05-14 — Eval Pipeline: KeyNotFoundException + Incomplete Result Handling
+
+**Issue:** Prompt Evaluation UI showed "The given key was not present in the dictionary." error after running an eval. Status: Failed, Total: 1 (all other columns blank).
+
+### Root Cause Analysis
+
+**Bug A — KeyNotFoundException in prompt-eval-service (C#)**
+
+`EvaluationService.cs:121-125` expected flat JSON fields:
+```csharp
+var total = result.RootElement.GetProperty("total").GetInt32();        // KeyNotFoundException
+var allPassed = result.RootElement.GetProperty("all_passed").GetBoolean();  // KeyNotFoundException
+```
+
+But ai-service returned the raw `EvalResults` SDK object. FastAPI serialization only includes `__dict__` attributes:
+- `result_counts` (dict with nested `total`, `passed`, `failed`)
+- `per_evaluator` (dict)
+- NOT `total`, `passed`, `failed`, `all_passed` (these are `@property` methods, not serialized)
+
+C# hit `KeyNotFoundException` trying to access non-existent top-level fields.
+
+**Bug B — ai-service returning success on incomplete eval**
+
+`api.py:441` logged `foundry.eval.invoke.ok` even when `results.total == 0`. No check that `results.status == "completed"`.
+
+While the Foundry SDK DOES poll until completion (default 180s), if eval times out or fails, it returns `status="timeout"` or `status="failed"` — but ai-service treated ANY return as success. This caused prompt-eval-service to receive incomplete results and fail parsing.
+
+### Resolution
+
+**Fix A — Defensive Parsing (C#)**
+1. Use `TryGetProperty` for all field accesses instead of throwing `GetProperty`
+2. If required fields missing, log raw body and throw meaningful `InvalidOperationException`
+3. Handle `total == 0` gracefully: mark run as `completed` with empty scores, return early (no throw)
+4. Check `per_evaluator` existence with `ValueKind == JsonValueKind.Object` before accessing nested stats
+
+**Fix B — Completion Check + Response Flattening (Python)**
+1. Validate `results.status == "completed"` after SDK returns. If not, log `foundry.eval.invoke.incomplete` and raise `HTTPException(500)` with meaningful error
+2. Flatten response to match C# contract: manually construct dict with top-level `total`, `passed`, `failed`, `all_passed` by accessing `EvalResults` properties (don't return raw object)
+3. Log warning for `total == 0` but allow response through
+
+**New Contract:** ai-service returns flat fields at top level (total, passed, failed, all_passed, per_evaluator, etc.)
+
+### Key Learnings
+
+1. **FastAPI serialization of SDK objects is lossy**: Only `__dict__` attributes are serialized. `@property` methods are NOT included. Always flatten SDK objects into plain dicts with the exact contract the client expects.
+
+2. **Polling termination semantics**: agent-framework-foundry SDK polls until `status in ("completed", "failed", "canceled")` OR timeout (default 180s). ALWAYS check `results.status == "completed"` before treating as success. Never log "ok" unless status is actually completed.
+
+3. **Defensive dict access in C#**: Every `GetProperty()` call on `JsonElement` must be wrapped in `TryGetProperty()` when source is external API. Always degrade gracefully with meaningful error messages instead of surfacing raw `KeyNotFoundException`.
+
+4. **Zero-result evals are valid**: A Foundry eval can complete with `status="completed"` but `total=0` if all items errored or input set was empty. Surface as "No results" rather than error.
+
+### Files Changed
+- `src/ai-service/app/routes/api.py` — status completion check, flattened response dict
+- `src/prompt-eval-service/Services/EvaluationService.cs` — defensive parsing, zero-result handling
+
+### Decision Note
+`.squad/decisions/inbox/basher-eval-keynotfound-20260115.md`

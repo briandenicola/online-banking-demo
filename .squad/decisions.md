@@ -1,5 +1,111 @@
 # Decisions — Wave 3 Integration & Stabilization Sprint
 
+## Session: 2026-05-14 (Eval Pipeline Bugs + Deploy Refactor)
+
+---
+
+## Decision: Eval Pipeline — KeyNotFoundException + Incomplete Result Handling
+
+**Status:** ✅ Fixed  
+**Date:** 2026-05-14  
+**Author:** Basher (Backend Dev)  
+**Components:** prompt-eval-service (C#), ai-service (Python)  
+**Related Issues:** Foundry eval pipeline stability  
+
+### Context
+
+The Prompt Evaluation UI showed a popup error after running an eval:
+> **Evaluation Results: Risk Scoring — Conservative v1**  
+> ⓘ "The given key was not present in the dictionary."  
+> Status: Failed | Total: 1 | (all other columns: —)
+
+This was a .NET `KeyNotFoundException` from prompt-eval-service's response parser, surfaced through the API to the UI.
+
+### Investigation
+
+**Bug A — KeyNotFoundException in prompt-eval-service (.NET)**
+
+The C# code at `EvaluationService.cs:121-125` expected a flat JSON structure with top-level fields `total`, `passed`, `failed`, `all_passed`. But ai-service was returning the raw `EvalResults` object from the agent-framework-foundry SDK. When FastAPI serializes this object, it only includes `__dict__` attributes:
+- `result_counts` (dict with `total`, `passed`, `failed` nested inside)
+- `per_evaluator` (dict)
+- `status`, `eval_id`, `run_id`, etc.
+
+The properties `total`, `passed`, `failed`, `all_passed` are `@property` methods on `EvalResults`, NOT serialized to JSON. So the C# code hit `KeyNotFoundException` when trying to access non-existent top-level fields.
+
+**Bug B — ai-service returning success on incomplete eval**
+
+The Python code at `api.py:441` logged `foundry.eval.invoke.ok` and returned results even when `results.total == 0`. There was no check that the evaluation actually completed (`status == "completed"`).
+
+While the Foundry SDK's `_poll_eval_run` DOES poll until completion (default 180s timeout), if the eval times out or fails, it returns with `status="timeout"` or `status="failed"` — but ai-service was treating ANY return as success. This caused prompt-eval-service to receive incomplete/sparse results and fail parsing.
+
+### Decision
+
+**Fix A — Defensive Parsing in prompt-eval-service (C#)**
+
+Changed `EvaluationService.cs:ExecuteFoundryEvaluationAsync`:
+1. Use `TryGetProperty` for all field accesses instead of throwing `GetProperty`. If required fields are missing, log the raw body and throw a meaningful `InvalidOperationException`.
+2. Handle `total == 0` gracefully: mark the run as `completed` with empty scores and return early. Surface in UI with warning.
+3. Check `per_evaluator` existence with `TryGetProperty` + `ValueKind == JsonValueKind.Object`.
+
+**Fix B — Completion Check + Response Flattening in ai-service (Python)**
+
+Changed `api.py:run_foundry_evaluation`:
+1. Validate completion before logging success: Check `results.status == "completed"` after SDK returns. Raise `HTTPException(500)` if not completed.
+2. Flatten the response to match C# contract: Manually construct dict with top-level fields by accessing `EvalResults` properties. Don't return raw object.
+3. Special handling for `total == 0`: Log warning but allow response through.
+
+### Contract
+
+ai-service `/api/admin/evaluate` now returns top-level fields: `total`, `passed`, `failed`, `all_passed`, `per_evaluator`, `eval_id`, `run_id`, `status`, `items`.
+
+### Key Learnings
+
+1. **FastAPI serialization of SDK objects is lossy**: `@property` methods are NOT serialized. Always flatten SDK objects into plain dicts with the exact contract.
+2. **Polling termination semantics**: Always check `results.status == "completed"` before treating Foundry poll as success. Timeout → `status="timeout"`, failure → `status="failed"`.
+3. **Defensive dict access in C#**: Wrap `GetProperty()` in `TryGetProperty()` when source is external API. External systems return sparse/incomplete responses.
+4. **Zero-result evals are valid**: `total=0` with `status="completed"` is not failure — surface in UI as "No results".
+
+### Files Changed
+
+- `src/ai-service/app/routes/api.py` — added status completion check, flattened response dict
+- `src/prompt-eval-service/Services/EvaluationService.cs` — added defensive parsing, zero-result handling
+
+### Deployment
+
+Brian will rebuild + redeploy both services via `task cloud:deploy` (using pipe-pattern, no manifest mutation per commit 8edbf9b).
+
+---
+
+## Decision: Convention over Configuration — Deploy Pipeline Refactor
+
+**Status:** ✅ Implemented  
+**Date:** 2026-05-14  
+**Author:** Brian Denicola (via Copilot directive)  
+**Components:** Deploy pipeline (stream-substitute pattern)  
+
+### Directive
+
+Never persist hardcoded environment-specific values (ACR names, tags, endpoints, etc.) in committed manifests. All such values must be derived at deploy time from the Terraform state file (the source of truth).
+
+**Why:** Repeated drift bugs (modesthippo861acr ghost, kustomize substituted values getting committed) all stem from violating this principle.
+
+### Implementation
+
+Refactored deploy pipeline to use **stream-substitute pattern**:
+- Read manifest → substitute env vars via stream → pass to `kustomize build` via stdin/pipe
+- No file mutations (no dirty Git state)
+- Clean separation: Terraform outputs (source of truth) → stream substitution → Kustomize build
+- Replaces previous sed-mutate-then-revert pattern
+
+### Principles Encoded
+
+1. All env-specific config is DERIVED from Terraform state at deploy time
+2. Committed manifests contain ONLY templates with substitution markers
+3. No post-build revert cleanup required
+4. GitOps remains clean — no dirty working tree after deployment
+
+---
+
 ## Session: 2026-05-13 (Risk Score & Prompts Guards + OpenAPI, Docs, Test Recovery)
 
 ---

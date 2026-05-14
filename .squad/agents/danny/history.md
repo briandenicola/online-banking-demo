@@ -34,6 +34,7 @@
 **2026-05-14 Scribe note:** Important patterns for ai-service work:
 1. **EvalResults access pattern** — When handling `agent_framework.EvalResults` objects, use `.total` (not `len()`), `.passed`, `.failed` properties. The SDK doesn't implement `__len__()`. See decisions.md "EvalResults Access Pattern" for details.
 2. **HttpClient timeouts for Foundry calls** — Any .NET service calling long-running endpoints (evaluations, document analysis) must use named HttpClient with 10min timeout. Default 100s timeout will cancel mid-operation. Documented in decisions.md "All Foundry-facing HttpClients get 10-minute timeout".
+3. **Deploy pipeline refactoring (2026-05-14)** — Deploy now uses stream-substitute pattern (no manifest mutations). All env-specific values must be DERIVED from Terraform state at deploy time, never hardcoded in committed manifests (Convention over Configuration).
 - **Infra split:** `infra/local` = AI Foundry only (dev); `infra/cloud` = full AKS + Cosmos + EventHub + Redis + KeyVault
 - **IaC bug:** `infra/cloud/main.tf` has duplicate `azurerm_user_assigned_identity.openai_managed_identity` resource and a federated identity credential missing `user_assigned_identity_id`
 - **CI bug:** CI workflow uses `context: ./src/${{ matrix.service }}` but .NET Dockerfiles expect repo root context (they COPY src/shared/)

@@ -20,6 +20,8 @@
 - Nginx reverse proxy: `/api/` → `http://gateway:80/`
 - AuthContext: Global auth state + accounts + transfers (god object — P3 refactoring)
 
+**2026-05-14 Scribe note (Basher's eval fix):** Prompt Evaluation UI errors now have meaningful messages. Fixed two bugs: (1) FastAPI @property serialization → C# KeyNotFoundException, (2) ai-service incomplete-eval silent-success. See decisions.md "Eval Pipeline — KeyNotFoundException + Incomplete Result Handling".
+
 **Critical Bugs (Pre-Wave 1):**
 - Transfer API client had wrong shape (wrapped formData, FastAPI expects flat)
 - Duplicate test files: 7 pairs, __tests__/ vs. colocated versions out of sync
