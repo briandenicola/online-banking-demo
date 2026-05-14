@@ -2283,3 +2283,97 @@ Documented as known limitation. Production ai-service evals will remain broken u
 - `.squad/skills/foundry-eval-debugging/SKILL.md` — Add VNET empty-dataset failure mode
 - Decision: `.squad/decisions/inbox/basher-eval-empty-dataset-rca.md`
 
+
+---
+
+## 2026-05-14 — Foundry Eval Workaround Test: FAILED
+
+**Context:** Testing hypothesis that uploading datasets via `azure-ai-projects` SDK (using our workload identity PE access) would sidestep Foundry's broken inline dataset upload for VNET deployments.
+
+**Hypothesis:**
+```
+Instead of FoundryEvals.evaluate() with inline EvalItem → upload JSONL ourselves 
+via project_client.datasets.upload_file() → reference by file_id in evals.runs.create()
+```
+
+**Expected:** Dataset upload succeeds (proves PE write works), eval run completes (proves Foundry can read our uploaded blob).
+
+**Actual:** ❌ **WORKAROUND FAILED**
+
+### Evidence
+
+1. **Dataset upload API call succeeded:**
+   ```
+   dataset = project_client.datasets.upload_file(
+       name="eval-workaround-test-20260514_215223",
+       version="1",
+       file_path="/app/eval_workaround_dataset.jsonl",
+   )
+   # ✅ Returns: azureai://.../data/eval-workaround-test-20260514_215223/versions/1
+   ```
+
+2. **But storage account remained empty:**
+   ```bash
+   $ curl <storage-account>/...?restype=container&comp=list
+   <Blobs />  <!-- ZERO blobs despite "successful" upload -->
+   ```
+
+3. **Eval run stuck in "Starting" forever:**
+   ```
+   [  0s] Status: Starting  Total: 0
+   [  7s] Status: Starting  Total: 0
+   [ 89s] Status: Starting  Total: 0
+   ⏱️  TIMEOUT after 90s
+   ```
+
+### Root Cause
+
+**`project_client.datasets.upload_file()` is NOT a direct blob write** — it's another API facade over Foundry's backend dataset service. The SDK accepts the file, returns a `file_id`, but the actual blob write happens server-side **in the same Foundry backend that has the VNET/PE problem**.
+
+```
+Client Pod                      Foundry Dataset API           Storage (PE-only)
+    |                                  |                            |
+    |-- datasets.upload_file() ------> |                            |
+    |   (sends file bytes)             |                            |
+    |                                  |                            |
+    |<-- 200 OK with file_id --------  |                            |
+    |                                  |                            |
+    |                                  |-- Upload blob ----------X  |
+    |                                  |   (FAILS: no PE access)    |
+    |                                  |                            |
+    |-- evals.runs.create(file_id) ->  |                            |
+    |                                  |                            |
+    |<-- 201 Created, in_progress ---  |                            |
+    |                                  |                            |
+    |                                  |-- Eval worker reads blob    |
+    |                                  |   (blob doesn't exist)     |
+    |                                  |                            |
+    |                                  |-- Stuck: "Starting"        |
+```
+
+Both inline `EvalItem` and `datasets.upload_file()` hit **the same broken path**.
+
+### Learnings
+
+1. **azure-ai-projects SDK methods don't bypass Foundry** — they're client wrappers over Foundry's REST APIs, not direct Azure service calls.
+
+2. **"Success" responses are misleading** — APIs return 200/201 before the async backend operation completes. The failure happens silently during background blob write.
+
+3. **Storage verification is critical** — Always check actual blob storage after "successful" upload calls in VNET environments.
+
+4. **This is a platform bug** — All PE-only VNET Foundry deployments are broken for evaluations. Microsoft needs to fix Foundry's eval/dataset backend to support customer private endpoints.
+
+### Next Steps
+
+**Option 1:** Test direct blob write + azureml URI (bypass datasets API entirely)  
+**Option 2:** File Azure support ticket (correct fix — requires Microsoft)  
+**Option 3:** Temporarily enable public blob access (defeats PE purpose, security risk)
+
+**Decision:** Danny to file support ticket. No production workaround available without security tradeoff.
+
+### Files
+
+- Test script: `/app/eval_workaround.py` in `eval-sandbox` pod
+- Decision doc: `.squad/decisions/inbox/basher-eval-workaround-failed.md`
+- Original RCA: `.squad/agents/basher/eval-empty-dataset-summary.md`
+

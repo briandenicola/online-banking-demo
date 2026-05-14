@@ -20,7 +20,11 @@ than the next to verify, and the actual cause is almost always lower than you th
 or progress. Foundry REST API shows `tags.is_inline_dataset: "true"` and
 `tags.expected_inline_dataset_id` but the dataset has 0 rows.
 
-**Root Cause:** Foundry's eval backend **cannot upload inline datasets** (`data_source.source.type: "file_content"`) to private-endpoint-only blob storage in VNET deployments. The eval worker lacks network access or RBAC to write JSONL to the project storage account.
+**Root Cause:** Foundry's eval backend **cannot upload datasets** to private-endpoint-only blob storage in VNET deployments. This affects:
+1. **Inline datasets** (`FoundryEvals.evaluate()` with `EvalItem` list) — eval backend can't write JSONL
+2. **`project_client.datasets.upload_file()`** — SDK call succeeds but **backend upload to blob storage fails silently**
+
+The eval worker lacks network access or RBAC to write JSONL to the project storage account.
 
 **Verification:**
 ```bash
@@ -38,11 +42,15 @@ curl -H "Authorization: Bearer $TOKEN" -H "x-ms-version: 2021-08-06" \
 - ✅ Public Foundry (`publicNetworkAccess: "Enabled"`) — inline datasets work
 - ❌ VNET-only Foundry (private endpoints, public access disabled) — **broken**
 
-**Workaround:** Upload dataset to blob storage explicitly using pod's managed
-identity, then reference by URI (`"type": "uri_file"`). See
-`.squad/decisions/inbox/basher-eval-empty-dataset-rca.md` for implementation.
+**Failed Workaround (tested 2026-05-14):**
+Using `project_client.datasets.upload_file()` + `file_id` reference does NOT work. The SDK call returns success, but the backend blob write still fails (same broken Foundry path). See `.squad/decisions/inbox/basher-eval-workaround-failed.md` for proof.
 
-**Status:** Known Foundry service bug; support ticket filed 2026-05-14.
+**Next Steps:**
+1. Test direct blob write via `azure.storage.blob` + azureml URI (bypass Foundry dataset API entirely)
+2. File Azure support ticket (correct fix — requires Microsoft to grant Foundry workers PE access)
+3. Temporarily enable public blob access (security risk, defeats PE purpose)
+
+**Status:** Known Foundry service bug; no production workaround available. Support ticket pending.
 
 ---
 

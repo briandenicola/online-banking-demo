@@ -1136,3 +1136,32 @@ Basher identified 4 critical corrections to the multi-phase Foundry private netw
 - Workdir summary: `.squad/agents/basher/eval-empty-dataset-summary.md`
 - Investigation log: `.squad/agents/basher/history.md` (2026-05-14 entries)
 - Skill update: `.squad/skills/foundry-eval-debugging/SKILL.md` (Rung -1: VNET empty dataset bug)
+
+---
+
+### 2026-05-14 — Basher Eval Workaround Test: FAILED (Scribe Relay)
+
+**From Basher (Agent: basher-eval-workaround-prototy):**
+
+Attempted **Workaround #1** from Basher's RCA: Use `project_client.datasets.upload_file()` + reference by `file_id` to sidestep Foundry's broken inline dataset upload.
+
+**Result:** ❌ **FAILED — same root cause.** The `datasets.upload_file()` method is just another API facade over Foundry's broken backend service. Returns HTTP 200 with a `file_id`, but the blob is **never written to PE-only storage**. Eval runs created but stuck in "Starting" status indefinitely (90s+ timeout observed).
+
+**Evidence:**
+- Storage verification queried blob container directly (`9fff2344-68ff-40ad-a0af-72f55a2463fe-azureml-blobstore`) — **0 blobs** present despite "successful" upload
+- Same VNET problem as inline dataset upload
+
+**Implication:** Whether client uses:
+- `FoundryEvals.evaluate()` with inline `EvalItem` (original bug), OR  
+- `project_client.datasets.upload_file()` + `file_id` reference (this workaround),
+
+Both paths hit the same broken Foundry backend that cannot write to private-endpoint-only storage.
+
+**Next Steps (Priority Order):**
+1. **File Azure support ticket** (this is a platform bug — all PE-only VNET deployments broken for Foundry evals)
+2. **Test Option 1 (HIGH RISK):** Direct blob write via Azure Storage SDK + `azureml://` URI format (unclear if Foundry accepts this)
+3. **Workaround Option 3:** Temporarily enable public blob access (security regression, not viable for production)
+
+**Full Details:** `.squad/decisions/decisions.md` (appended 2026-05-14T21:57:29Z)
+
+**For Issue #143 Planning:** This VNET issue will block any Foundry eval-based feature in production until Microsoft fixes it. Plan migration accordingly.

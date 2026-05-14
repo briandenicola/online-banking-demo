@@ -3265,3 +3265,274 @@ resource "azurerm_cosmosdb_sql_container" "users" {
 - **Decision:** turk-admin-users-500 (this document)
 - **Prior Art:** turk-orderby-composite-index (prompt-eval-service, 2026-05-12)
 - **Skill:** cosmos-casing-audit (SKILL.md covers case-defensive queries)
+# Foundry Eval Workaround Test — FAILED
+
+**Date:** 2026-05-14  
+**Author:** Basher (Backend Dev)  
+**Status:** ❌ Workaround does NOT work
+
+---
+
+## TL;DR
+
+**HYPOTHESIS:** Upload dataset ourselves via `project_client.datasets.upload_file()` (using our workload identity with PE access), then reference it by `file_id` to sidestep Foundry's broken inline dataset upload.
+
+**RESULT:** ❌ **FAILED**. `datasets.upload_file()` also goes through Foundry's backend, which has the same VNET/PE storage write problem. The API call succeeds (returns a file_id) but **NO BLOB IS WRITTEN TO STORAGE**.
+
+---
+
+## Evidence
+
+### Test Setup
+- **Pod:** `eval-sandbox` deployment in `banking-demo` namespace
+- **Workload Identity:** Client ID `5db0f03a-0c11-4f2b-a489-63d4a6d54fb5`
+- **RBAC:** `Storage Blob Data Contributor` on project storage account
+- **Foundry Endpoint:** `https://funky-elephant-11797-foundry.services.ai.azure.com/api/projects/funky-elephant-11797-project`
+- **Model:** `gpt-5.4-mini`
+
+### Test Script
+```python
+# Full script at /app/eval_workaround.py in eval-sandbox pod
+from azure.ai.projects import AIProjectClient
+from azure.ai.projects.models import TestingCriterionAzureAIEvaluator
+from openai.types.evals.create_eval_jsonl_run_data_source_param import (
+    CreateEvalJSONLRunDataSourceParam,
+    SourceFileID
+)
+from openai.types.eval_create_params import DataSourceConfigCustom
+
+# 1. Upload dataset via project_client.datasets.upload_file()
+dataset = project_client.datasets.upload_file(
+    name="eval-workaround-test-20260514_215223",
+    version="1",
+    file_path="/app/eval_workaround_dataset.jsonl",
+)
+# ✅ Returns: azureai://accounts/.../data/eval-workaround-test-20260514_215223/versions/1
+
+# 2. Create eval with testing_criteria
+eval_object = client.evals.create(
+    name="workaround-test-eval",
+    data_source_config=DataSourceConfigCustom(...),
+    testing_criteria=[...],
+)
+# ✅ Returns: eval_0dfafc57b12b4ebe9f842a3329909530
+
+# 3. Create run with file_id reference
+eval_run = client.evals.runs.create(
+    eval_id=eval_object.id,
+    data_source=CreateEvalJSONLRunDataSourceParam(
+        type="jsonl",
+        source=SourceFileID(type="file_id", id=dataset.id),
+    ),
+)
+# ✅ Returns: evalrun_9ed944161bfa4bedaf7e311a0c0ee1f5, status: "in_progress"
+
+# 4. Poll run status
+# ❌ STUCK: Status remains "Starting" for 90+ seconds, total: 0
+```
+
+### Actual Output
+```
+================================================================================
+WORKAROUND TEST: Upload Dataset + Reference by file_id
+================================================================================
+Foundry endpoint: https://funky-elephant-11797-foundry.services.ai.azure.com/api/projects/funky-elephant-11797-project
+Model deployment: gpt-5.4-mini
+
+✅ AIProjectClient initialized
+
+📄 JSONL dataset written to /app/eval_workaround_dataset.jsonl
+   Size: 293 bytes
+
+STEP 1: Uploading dataset via project_client.datasets.upload_file()...
+✅ Dataset upload SUCCEEDED!
+   File ID: azureai://accounts/funky-elephant-11797-foundry/projects/funky-elephant-11797-project/data/eval-workaround-test-20260514_215223/versions/1
+   Name: eval-workaround-test-20260514_215223
+   Version: 1
+
+STEP 2: Creating eval with custom data source config...
+✅ Eval created!
+   Eval ID: eval_0dfafc57b12b4ebe9f842a3329909530
+
+STEP 3: Creating eval run with data_source = file_id...
+✅ Eval run created!
+   Run ID: evalrun_9ed944161bfa4bedaf7e311a0c0ee1f5
+   Status: in_progress
+
+STEP 4: Polling run status (90s timeout)...
+[  0s] Status: Starting         Total: 0  Error: None
+[  7s] Status: Starting         Total: 0  Error: None
+[ 12s] Status: Starting         Total: 0  Error: None
+[ 17s] Status: Starting         Total: 0  Error: None
+[ 22s] Status: Starting         Total: 0  Error: None
+[ 28s] Status: Starting         Total: 0  Error: None
+[ 33s] Status: Starting         Total: 0  Error: None
+[ 38s] Status: Starting         Total: 0  Error: None
+[ 43s] Status: Starting         Total: 0  Error: None
+[ 48s] Status: Starting         Total: 0  Error: None
+[ 53s] Status: Starting         Total: 0  Error: None
+[ 58s] Status: Starting         Total: 0  Error: None
+[ 63s] Status: Starting         Total: 0  Error: None
+[ 69s] Status: Starting         Total: 0  Error: None
+[ 74s] Status: Starting         Total: 0  Error: None
+[ 79s] Status: Starting         Total: 0  Error: None
+[ 84s] Status: Starting         Total: 0  Error: None
+[ 89s] Status: Starting         Total: 0  Error: None
+⏱️  TIMEOUT after 90s
+
+================================================================================
+TIMEOUT: Run stuck in non-terminal state
+Same VNET problem — workaround doesn't help
+================================================================================
+```
+
+### Storage Verification
+**Question:** Did the dataset actually get written to blob storage?
+
+```bash
+$ kubectl exec deploy/eval-sandbox -- bash -c '
+  TOKEN=$(python3 -c "from azure.identity import DefaultAzureCredential; print(DefaultAzureCredential().get_token(\"https://storage.azure.com/.default\").token)")
+  curl -H "Authorization: Bearer $TOKEN" -H "x-ms-version: 2021-08-06" \
+    "https://a676b825d5b2a5d641e032sa.blob.core.windows.net/9fff2344-68ff-40ad-a0af-72f55a2463fe-azureml-blobstore?restype=container&comp=list"
+'
+
+<?xml version="1.0" encoding="utf-8"?>
+<EnumerationResults ...>
+  <MaxResults>50</MaxResults>
+  <Blobs />  <!-- ❌ STILL ZERO BLOBS despite "successful" upload -->
+  <NextMarker />
+</EnumerationResults>
+```
+
+---
+
+## Root Cause Analysis
+
+### What We Learned
+
+1. **`project_client.datasets.upload_file()` is NOT a direct blob write**  
+   The SDK method accepts the file, returns a success response with a `file_id`, but **the actual blob write happens server-side in Foundry's backend**.
+
+2. **Foundry's dataset upload service has the same VNET problem**  
+   Whether you use:
+   - `FoundryEvals.evaluate()` with inline `EvalItem` (original reproducer), OR
+   - `project_client.datasets.upload_file()` + `file_id` reference (this workaround test)
+   
+   Both paths hit **the same broken Foundry backend service** that cannot write to private-endpoint-only blob storage.
+
+3. **The "success" response is misleading**  
+   - API returns HTTP 200/201 with a `file_id`
+   - Eval run creation succeeds (HTTP 201)
+   - But the run stays in "Starting" status forever because the dataset blob doesn't exist in storage
+
+### Why the Workaround Failed
+
+```
+Client Pod (eval-sandbox)                Foundry API Backend              Storage Account (PE-only)
+        |                                        |                                |
+        |-- datasets.upload_file() ----------->  |                                |
+        |   (sends file bytes to Foundry)        |                                |
+        |                                        |                                |
+        |<--------- 200 OK with file_id -----   |                                |
+        |   "azureai://.../data/eval-.../v1"     |                                |
+        |                                        |                                |
+        |                                        |-- Upload blob to storage --X   |
+        |                                        |   (FAILS: no PE access OR      |
+        |                                        |    no network path to PE)      |
+        |                                        |                                |
+        |-- evals.runs.create(file_id) ------->  |                                |
+        |                                        |                                |
+        |<--------- 201 Created, status:in_prog  |                                |
+        |                                        |                                |
+        |                                        |-- Eval worker tries to read    |
+        |                                        |   dataset from storage ------> |
+        |                                        |   (blob doesn't exist)         |
+        |                                        |                                |
+        |                                        |-- Run stuck: "Starting", no data
+        |                                        |   (stays stuck forever)        |
+```
+
+The workaround hypothesis was:  
+> "If WE upload the blob (using OUR workload identity with PE access), Foundry just needs to READ it."
+
+The reality is:  
+> "`datasets.upload_file()` doesn't let us upload — it's just another API facade over the same broken Foundry upload service."
+
+---
+
+## Next Steps
+
+### Option 1: Direct Blob Write + azureml URI (HIGH RISK)
+Try bypassing `datasets.upload_file()` entirely:
+
+```python
+from azure.storage.blob import BlobServiceClient
+from azure.identity import DefaultAzureCredential
+
+# 1. Write blob OURSELVES via Azure Storage SDK
+credential = DefaultAzureCredential()
+blob_service = BlobServiceClient(
+    account_url="https://a676b825d5b2a5d641e032sa.blob.core.windows.net",
+    credential=credential
+)
+container = blob_service.get_container_client("9fff2344-68ff-40ad-a0af-72f55a2463fe-azureml-blobstore")
+blob_name = "eval-datasets/workaround-direct-20260514.jsonl"
+
+with open("/app/dataset.jsonl", "rb") as f:
+    container.upload_blob(name=blob_name, data=f)
+
+# 2. Reference it with azureml:// URI (guess the format)
+data_source = CreateEvalJSONLRunDataSourceParam(
+    type="jsonl",
+    source=SourceFileID(
+        type="file_id",
+        id=f"azureml://datastores/workspaceblobstore/paths/{blob_name}"
+    ),
+)
+
+# 3. Create run
+eval_run = client.evals.runs.create(eval_id=eval_id, data_source=data_source)
+```
+
+**RISKS:**
+- Unclear if the `azureml://` URI format will be accepted by `evals.runs.create()`
+- Unclear if Foundry's eval worker can read blobs at arbitrary paths (might expect specific metadata/registration)
+- We're guessing at internal storage conventions
+
+**NEXT EXPERIMENT:** Test direct blob write + azureml URI in eval-sandbox.
+
+### Option 2: File Azure Support Ticket (CORRECT FIX)
+This is a **platform bug in Azure AI Foundry**. All PE-only VNET deployments are broken for evaluations. Microsoft needs to:
+- Grant Foundry eval workers network access to customer private endpoints, OR
+- Make dataset upload aware of customer PE DNS, OR
+- Provide a documented API for pre-uploading datasets with customer credentials
+
+**ACTION:** Danny to file support ticket with this RCA + evidence.
+
+### Option 3: Temporarily Enable Public Blob Access (WORKAROUND)
+For urgent eval testing:
+1. Temporarily set `publicNetworkAccess: "Enabled"` on storage account
+2. Run evals (will succeed)
+3. Re-disable public access after eval runs
+
+**RISKS:**
+- Security posture regression (defeats PE purpose)
+- Not viable for production
+
+---
+
+## Files
+
+- Test script: `/app/eval_workaround.py` in `eval-sandbox` pod
+- Test output: Captured above
+- Original RCA: `.squad/agents/basher/eval-empty-dataset-summary.md`
+- Skill doc: `.squad/skills/foundry-eval-debugging/SKILL.md` (Rung -1)
+
+---
+
+## Decision
+
+**REJECT** this workaround. `project_client.datasets.upload_file()` does NOT sidestep the VNET problem — it hits the same broken Foundry backend.
+
+**NEXT:** Test Option 1 (direct blob write + azureml URI) OR escalate to Microsoft support.
+
