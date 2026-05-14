@@ -14,3 +14,20 @@
 ---
 
 **2026-05-14 16:57 Scribe:** Heads-up: #141 filed — Foundry Managed VNet migration plan from Danny. See decisions.md for context.
+
+---
+
+### 2026-05-14 — Eval timeout fix (Foundry long-poll HttpClient issue)
+
+- **Root cause:** `EvaluationService.cs:83` used `_httpClientFactory.CreateClient()` with NO name parameter, which creates an HttpClient with the .NET default timeout of exactly 100 seconds. This client POSTs to ai-service's `/api/admin/evaluate`, which synchronously waits for Foundry's `evals.evaluate()` call—these can take 3-5+ minutes.
+- **The symptom signature:** The error message "The request was canceled due to the configured HttpClient.Timeout of 100 seconds elapsing" is the canonical .NET 5+ `HttpClient` TaskCanceledException message. That exact phrasing (with "100 seconds") is a dead giveaway for the default timeout.
+- **Named vs unnamed HttpClient:** `Program.cs:78-83` registered a named "AiService" client with 30s timeout, but `ExecuteFoundryEvaluationAsync` didn't use it. Meanwhile, `FetchTransactionsAsync:221` DID use the named client for quick transaction fetches. The eval call was the only place using an unnamed/default client.
+- **Fix pattern:** Added a second named client "AiServiceEval" with `Timeout = TimeSpan.FromMinutes(10)` (600s) matching ai-service's Stainless `x-stainless-read-timeout: 600` for Foundry SDK calls. Updated `ExecuteFoundryEvaluationAsync` to use `CreateClient("AiServiceEval")` instead of `CreateClient()`.
+- **Where else this could bite us:** Any .NET service calling a long-running endpoint should use named HttpClients with explicit timeouts. Grep for `CreateClient()` with no args in any service that talks to ai-service, account-opening-service, or any Python/FastAPI service doing AI work. Default 100s timeout is too short for Foundry/OpenAI operations.
+- **Files changed:**
+  - `src/prompt-eval-service/Program.cs:85-92` — added `AddHttpClient("AiServiceEval", ...)` with 10min timeout
+  - `src/prompt-eval-service/Services/EvaluationService.cs:84` — changed `CreateClient()` → `CreateClient("AiServiceEval")`
+
+---
+
+**2026-05-14 Scribe note:** Companion pattern for long-running operations: When handling `agent_framework.EvalResults` objects in the evaluation response, use `.total` (not `len()`), `.passed`, `.failed` properties. The SDK doesn't implement `__len__()`. See decisions.md "EvalResults Access Pattern — Use `.total`, Not `len()`" for details and impact on ai-service consumers.

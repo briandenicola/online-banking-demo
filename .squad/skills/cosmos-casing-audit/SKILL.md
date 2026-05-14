@@ -203,6 +203,57 @@ In those cases, you MUST add the composite index to Terraform and document the i
 - **redis-stream-consumer-resilience** — Defensive pattern for XGROUP CREATE (similar "fail on retry" trap)
 - **preview-sdk-pinning** — Exact-pin pattern to stop SDK drift (same root cause as serializer drift)
 
+## Rung 2 — Sentinel-Doc Pollution in Field-Match Queries (2026-05-14)
+
+**Confidence: HIGH (verified via prod-data repro + log evidence)**
+
+The same Cosmos container often holds **multiple document shapes** (real entities + sentinel/lookup docs used for uniqueness or indexing). A query that filters on a field shared by both shapes will return the sentinel doc — which deserializes into the entity POCO with mostly-null fields, silently breaking downstream auth/validation.
+
+### Concrete recurrence (user-service, Users container)
+
+- Real users live as `{id: <guid>, username, email, passwordHash, ...}`.
+- A deterministic **email-uniqueness sentinel** (`fix: prevent duplicate email registration via Cosmos lookup document pattern`, commit `1afec6e`) lives as `{id: "email-lookup:<email>", type: "email-lookup", userId, email}`.
+- `GetByEmailAsync` query was `SELECT * FROM c WHERE LOWER(c.Email)=@e OR LOWER(c.email)=@e` — no sentinel filter.
+- Cosmos returned the **lookup doc first** (no ORDER BY → arbitrary order). Deserialized into `User` with `Username=null`, `PasswordHash=null`.
+- Login-by-email path: `ValidateCredentialsAsync(user.Username=null, password)` → fails → 401. Audit log emitted `Login audit logged for user "email-lookup:brian@sample.com"` — the lookup-doc id leaked through as the user id, which was the smoking gun in the logs.
+
+### The pattern (memorize this)
+
+> **Any query that does NOT filter by `c.id` directly, on a container that holds sentinel/lookup docs, MUST include `AND NOT STARTSWITH(c.id, '<sentinel-prefix>:')`.**
+
+The two queries in `CosmosUserRepository` that already had this filter were `IsContainerEmptyAsync` and `GetAllUsersAsync`. The author of those queries knew about the pollution risk. `GetByEmailAsync` was added/modified later and missed the guard. **This is the recurrence pattern: when adding a new query, copy an existing query in the same repo as your template — don't write it from scratch.**
+
+### Audit checklist for any container with sentinel docs
+
+For each query in the repo:
+
+1. Does it filter on a field shared by the sentinel? (e.g., sentinel has `email`, real doc has `email` → AT RISK)
+2. Does it deserialize into the real-entity POCO? (yes → silent corruption on hit)
+3. Does it have `AND NOT STARTSWITH(c.id, '<prefix>:')`? (no → BUG)
+
+Run this grep before merging any new repo query:
+
+```bash
+grep -nE "WHERE c\." src/<service>/Repositories/*.cs | grep -v "STARTSWITH(c.id"
+# Each result must be justified — either the field is sentinel-exclusive,
+# or the query already filters by c.id directly (point read).
+```
+
+### Smoke-test that would have caught this
+
+A `LoginAsync(email, password)` integration test that:
+1. Registers a user (creates both real + sentinel docs).
+2. Logs in **using the email** (not the username).
+3. Asserts a 200 + valid JWT.
+
+Currently login E2E uses username — never exercised the email path post-sentinel-doc introduction.
+
+### Reference (Rung 2)
+
+- Decision drop: `.squad/decisions/inbox/basher-userservice-auth-regression.md`
+- Fix commit: pending — `src/user-service/Repositories/CosmosUserRepository.cs:GetByEmailAsync`
+- Related: `1afec6e` (introduced the sentinel doc pattern) — author did not retro-fit existing email-lookup queries.
+
 ## Reference
 
 - Issue: #125

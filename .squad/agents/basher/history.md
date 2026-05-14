@@ -1635,3 +1635,153 @@ terraform -chdir=./infra/cloud workspace show
 **Why:** Deploys have side effects (kubectl apply, TF state mutations). User-driven dispatch ensures deliberate, traceable operations with full oversight. Agent invocations remove that oversight.
 
 **Implication for this agent (Basher):** If future work requires deploy task changes, propose the fix and let Brian invoke the deploy. Do not run the deploy yourself.
+
+---
+
+### 2026-05-14 — Foundry Project SAMI Missing Cosmos Data-Plane RBAC (Agent Provisioning 403)
+
+**Symptom:** `task ai:agents:create` returned HTTP 403 from Foundry agents API:
+```
+Request blocked by Auth funky-elephant-11797-cosmos : principal
+[bfa1b145-d77e-4fca-b3cf-8635a2ade1ba] does not have required RBAC
+permissions to perform action [Microsoft.DocumentDB/databaseAccounts/readMetadata]
+```
+
+**Principal identification:**
+- `bfa1b145-d77e-4fca-b3cf-8635a2ade1ba` = **Foundry project SAMI**
+  (`funky-elephant-11797-project`, appId `038f48f8-eb94-426f-af72-fc112d1e435f`)
+- This is `azapi_resource.ai_foundry_project.output.identity.principalId` in our TF.
+- Distinct from the Foundry account MSI (`f7adca16-3dad-439e-983f-3bcbc6589a44`,
+  `azapi_resource.this`), which already had data-plane access via
+  `azurerm_cosmosdb_sql_role_assignment.foundry_cosmos_contributor`.
+
+**Root cause:** Project SAMI had ARM control-plane Cosmos roles (Account Reader +
+Operator) but no SQL data-plane role. The Foundry Agents service connects to BYO
+Cosmos as the **project** identity, not the account identity, so it needs its own
+`Microsoft.DocumentDB/.../sqlRoleAssignments` entry. The previous "Foundry
+capability host RBAC fix" decision only covered the account MSI.
+
+**TF resource added** (`infra/cloud/identity.tf`):
+```hcl
+resource "azurerm_cosmosdb_sql_role_assignment" "project_cosmos_data_contributor" {
+  resource_group_name = azurerm_resource_group.this.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  role_definition_id  = "${azurerm_cosmosdb_account.main.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
+  principal_id        = azapi_resource.ai_foundry_project.output.identity.principalId
+  scope               = azurerm_cosmosdb_account.main.id
+}
+```
+Plus added to `time_sleep.wait_project_rbac.depends_on`.
+
+**Validation:** `terraform validate` ✅; targeted plan shows clean `+ create`.
+Did NOT run `terraform apply` (per directive + pre-existing #138/#141 drift would
+replace Foundry/Cosmos/RG if a full apply ran).
+
+**Verification command (proposed for Brian):**
+```sh
+az cosmosdb sql role assignment create \
+  --account-name funky-elephant-11797-cosmos \
+  --resource-group <rg> \
+  --scope "/" \
+  --principal-id bfa1b145-d77e-4fca-b3cf-8635a2ade1ba \
+  --role-definition-id 00000000-0000-0000-0000-000000000002
+# then re-run: task ai:agents:create
+```
+
+**Cited sample (sample-first):** microsoft-foundry/foundry-samples is SAML-locked
+from this agent context; substituted Microsoft Learn canonical doc:
+https://learn.microsoft.com/azure/cosmos-db/how-to-setup-rbac#built-in-role-definitions
+
+**Lesson:** When a BYO-Cosmos 403 cites a principal GUID, ALWAYS run
+`az ad sp show --id <guid>` first. The displayName disambiguates account-MSI vs
+project-SAMI vs UAMI in seconds and prevents adding the role to the wrong
+principal. Foundry has at minimum **two** managed identities that touch BYO
+resources (account + each project), and they need separate data-plane grants.
+
+---
+
+## 2026-05-14 — Foundry project SAMI Cosmos 403 (re-verification + live apply)
+
+### Symptom (recurrence)
+`GET .../agents/transaction-categorizer/versions/1 → 403`
+`principal [bfa1b145-d77e-4fca-b3cf-8635a2ade1ba]` lacks
+`Microsoft.DocumentDB/databaseAccounts/readMetadata` on `/`.
+
+### Principal mapping (verified)
+- `bfa1b145-d77e-4fca-b3cf-8635a2ade1ba` → `funky-elephant-11797-foundry/projects/funky-elephant-11797-project` (project SAMI, appId `038f48f8-eb94-426f-af72-fc112d1e435f`).
+- This is a **separate** identity from the Foundry account SAMI already covered by `azurerm_cosmosdb_sql_role_assignment.foundry_cosmos_contributor`.
+
+### Root cause
+Project SAMI had only control-plane Cosmos roles (`Cosmos DB Account Reader`, `Cosmos DB Operator`) — no data-plane (`Built-in Data Contributor`). The agents data proxy uses the project SAMI for runtime reads and requires `readMetadata`, which is in the data-plane role.
+
+### Sample reference (charter rule)
+microsoft-foundry/foundry-samples → `infrastructure/infrastructure-setup-bicep/41-standard-agent-setup/modules-standard/cosmos-container-role-assignments.bicep` — assigns role `00000000-0000-0000-0000-000000000002` (Built-in Data Contributor) to `projectPrincipalId`. Sample scopes to `/dbs/enterprise_memory`; we scope to account root to also cover BYO containers, matching the existing pattern used for the account SAMI.
+
+### TF change (committed, NOT applied via terraform per Brian)
+- File: `infra/cloud/identity.tf`
+- Resource added: `azurerm_cosmosdb_sql_role_assignment.project_cosmos_data_contributor`
+- Added to `time_sleep.wait_project_rbac.depends_on` so future `terraform apply` orders capability-host creation after this grant.
+
+### Live apply (per Brian's directive: "fix in terraform but apply via az")
+```
+az cosmosdb sql role assignment create \
+  --account-name funky-elephant-11797-cosmos \
+  --resource-group funky-elephant-11797-rg \
+  --scope "/" \
+  --principal-id bfa1b145-d77e-4fca-b3cf-8635a2ade1ba \
+  --role-definition-id 00000000-0000-0000-0000-000000000002
+```
+Result: assignment id `8b56e73c-c92f-44bb-a356-6587fe6d1fd2` created.
+
+### Verification
+- Pre: `az cosmosdb sql role assignment list … --query "[?principalId=='bfa1b145-…']"` → `[]`.
+- Post: assignment present.
+- Re-triggered ai-service init by deleting both `Init:Error` pods. New pod `ai-service-58c8f58688-q5g4j` reached `2/2 Running` with all init containers `Completed (exit 0)`. The categorizer 403 is gone.
+
+### "Second error" note
+The `Init:CrashLoopBackOff` second pod was from a stale ReplicaSet (`ai-service-85549bc7f6`) that the deployment cleaned up after the new RS rolled successfully — no separate root cause. Only one underlying error (the 403).
+
+### Learning
+Brian's "TF for code, az for apply" directive is appropriate when the target Cosmos account has drift (e.g. storage queue/share properties) that would cause `terraform apply` to destructively churn unrelated resources. Always sanity-check with `terraform plan -target=<just-the-new-resource>` and look at the bottom-line summary; if the count includes destroys you don't want, switch to `az` for the surgical apply.
+
+---
+
+## 2026-05-14 — user-service auth regression: email-lookup sentinel doc poisoning GetByEmailAsync
+
+### Symptoms (Brian's report)
+1. Login with the only registered user → 401, audit log emits `UserId: "unknown"` (and on earlier attempts, `UserId: "email-lookup:brian@sample.com"` — the smoking gun).
+2. Subsequent signups appear to fail with "account already exists" (UI message).
+
+### Root cause
+`CosmosUserRepository.GetByEmailAsync` query was:
+```sql
+SELECT * FROM c WHERE LOWER(c.Email) = @email OR LOWER(c.email) = @email
+```
+The Users container holds both real user docs **and** email-uniqueness sentinel docs (`{id: "email-lookup:<email>", type: "email-lookup", userId, email}`, introduced by commit `1afec6e`). The sentinel docs carry an `email` field, so the query matched them. With no `ORDER BY`, Cosmos returned the lookup doc first (arbitrary). Newtonsoft case-insensitive deserialization happily produced a `User` POCO with `Id="email-lookup:brian@sample.com"`, `Username=null`, `PasswordHash=null`. Login flow then:
+1. AuthController.Login: `GetUserByUsernameAsync(email)` → null (no user has username = email)
+2. Fallback `GetUserByEmailAsync(email)` → returns the sentinel-as-User
+3. `ValidateCredentialsAsync(user.Username=null, password)` → false → 401
+4. Audit logs `user.Id` (the sentinel id) → `"email-lookup:..."` or `"unknown"` depending on which path tripped
+
+The "subsequent signup" symptom is a UX artifact of a separate (real but minor) bug in `RegisterPage.tsx`: UI auto-derives `username = email.split('@')[0]`, so `brian@sample.com` and `brian@gmail.com` both produce username `brian`, hitting the username-uniqueness check → 409 → UI shows "Email already registered". Not a server regression.
+
+### Verification
+- Live cluster image digest matches the freshly built ACR `latest` (`sha256:e848a4c0...`) — H2 (stale image) ruled out.
+- Direct Cosmos query via `account-opening-service` pod confirmed: 2 docs in Users container — one real user (camelCase fields), one `email-lookup:brian@sample.com` sentinel.
+- Log line `Login audit logged for user "email-lookup:brian@sample.com"` is exact-match proof of the sentinel-doc-as-user deserialization.
+
+### Fix (committed, awaiting Brian's `task cloud:deploy`)
+`src/user-service/Repositories/CosmosUserRepository.cs` — added `AND NOT STARTSWITH(c.id, 'email-lookup:')` to `GetByEmailAsync`. Same defensive filter already present in `IsContainerEmptyAsync` and `GetAllUsersAsync` — those query authors knew about sentinel pollution; the email-lookup query missed it.
+
+### Learnings (recorded in cosmos-casing-audit skill, Rung 2)
+- **Pattern:** Any repo query that does NOT filter directly by `c.id` and runs against a container with sentinel docs MUST include `AND NOT STARTSWITH(c.id, '<prefix>:')`. Audit by grepping `WHERE c\.` and excluding queries that already filter on `c.id`.
+- **Why this re-appeared:** The sentinel-doc uniqueness pattern (commit `1afec6e`) is a clever fix but introduces a second "shape" into the container. Whoever adds new queries later won't know about the sentinel unless docs/skills warn them. → New skill rung documents the pattern.
+- **Smoke test that would have caught it:** Integration test for `POST /api/auth/login` with the **email** (not username) as the credential. Current E2E only tests login-by-username, so the broken email path slipped through.
+- **No data corruption.** Sentinel doc is correct. Bad data hypothesis (H3) ruled out.
+- **No RBAC issue.** Cosmos data-plane access works; queries run successfully — just return the wrong row. H4 ruled out.
+
+### What did NOT need fixing
+- `GetByUsernameAsync` — sentinel docs lack `username` field, so the query can't match them.
+- `GetAdminCountAsync` — sentinel docs lack `role` field.
+- `IsContainerEmptyAsync` / `GetAllUsersAsync` — already exclude sentinels.
+- Cosmos serializer config (CamelCase policy) — fine as-is, was not the cause.

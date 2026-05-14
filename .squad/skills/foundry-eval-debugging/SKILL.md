@@ -296,6 +296,78 @@ project is also broken — they may just be hiding it (e.g. swallowed in a
 "fallback" branch). Repro from inside each pod with the diagnose snippet above
 before declaring the incident scoped.
 
+### Rung 8 — Cosmos DB SQL Data-Plane RBAC for Foundry Project SAMI (ADDED 2026-05-14)
+
+**When this rung applies:** Any Foundry agents/threads/runs/eval API call returns
+HTTP 403 with a body that names a *principal GUID* and `aka.ms/cosmos-native-rbac`.
+Common form:
+
+```
+HTTP/1.1 403 Forbidden
+{"code":"Forbidden","message":"Request blocked by Auth <cosmos-account>
+ : Request is blocked because principal [<guid>] does not have required RBAC
+ permissions to perform action [Microsoft.DocumentDB/databaseAccounts/readMetadata]
+ on resource [/]. Learn more: https://aka.ms/cosmos-native-rbac."}
+```
+
+This is **Cosmos native (data-plane) RBAC**, not Azure RBAC. Adding more
+`azurerm_role_assignment` entries does nothing — you need an
+`azurerm_cosmosdb_sql_role_assignment` resource (or `az cosmosdb sql role
+assignment create`).
+
+**Step 1 — Identify the principal first. Always.** A Foundry deployment with BYO
+Cosmos has *at least two* MIs that touch the account:
+
+| MI                          | TF expression                                                  | When it talks to Cosmos                  |
+|-----------------------------|----------------------------------------------------------------|------------------------------------------|
+| Foundry **account** MSI     | `azapi_resource.this.output.identity.principalId`              | Capability host provisioning, managed PE |
+| Foundry **project** SAMI    | `azapi_resource.ai_foundry_project.output.identity.principalId`| Agents data-plane proxy, threads, evals  |
+| AKS workload UAMI           | `azurerm_user_assigned_identity.banking_services.principal_id` | App-tier SDK calls                       |
+
+```bash
+az ad sp show --id <guid> --query "{name:displayName,appId:appId}" -o json
+```
+
+A `displayName` ending in `…/projects/<name>` is the project SAMI; just the
+account name is the account MSI.
+
+**Step 2 — Grant data-plane role.**
+Role: `Cosmos DB Built-in Data Contributor`, id `00000000-0000-0000-0000-000000000002`.
+This includes `Microsoft.DocumentDB/databaseAccounts/readMetadata` plus
+container R/W.
+
+Terraform (canonical):
+```hcl
+resource "azurerm_cosmosdb_sql_role_assignment" "<name>" {
+  resource_group_name = azurerm_resource_group.this.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  role_definition_id  = "${azurerm_cosmosdb_account.main.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
+  principal_id        = <principal_id>
+  scope               = azurerm_cosmosdb_account.main.id
+}
+```
+
+Out-of-band CLI fix (when TF state has unrelated drift you can't apply through):
+```bash
+az cosmosdb sql role assignment create \
+  --account-name <cosmos> --resource-group <rg> \
+  --scope "/" --principal-id <guid> \
+  --role-definition-id 00000000-0000-0000-0000-000000000002
+```
+The next clean `terraform apply` then reconciles (the resource imports cleanly).
+
+**Step 3 — Wire up wait.** If you also create the capability host or run agent
+provisioning right after the role assignment, add it to the
+`time_sleep.wait_*_rbac.depends_on` list. Cosmos data-plane RBAC is fast (seconds)
+but the existing 90s wait absorbs it.
+
+**Why control-plane roles aren't enough:** `Cosmos DB Account Reader` and
+`Cosmos DB Operator` are ARM roles — they let you manage the account *resource*
+but they grant ZERO data-plane access. Foundry agents authenticate to Cosmos's
+data-plane endpoint, which only honors `sqlRoleAssignments`.
+
+**Citation:** https://learn.microsoft.com/azure/cosmos-db/how-to-setup-rbac#built-in-role-definitions
+
 ## Anti-Patterns (don't do these)
 
 - **Adding more RBAC roles when you already have the documented set.** The error code

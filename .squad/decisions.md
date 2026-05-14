@@ -7526,3 +7526,259 @@ terraform -chdir=./infra/cloud workspace show
 2. **Deploy tasks should validate workspace** — Consider pre-flight check in Taskfile that asserts correct workspace before reading TF outputs.
 3. **Side effect history matters** — Basher's manual AcrPull role assignment and hardcoded ACR names were harmless because the sed fix will rewrite on next deploy, but highlighted that wrong context had already caused drift.
 
+
+---
+
+## Decision: Foundry Project SAMI needs Cosmos DB SQL Data-Plane Role
+
+**Author:** Basher
+**Date:** 2026-05-14
+**Status:** ✅ TF change committed; live-applied via `az` per Brian directive (2026-05-14)
+**Refs:** Brian's run output (agent provisioning 403); decisions.md "Foundry capability host RBAC fix"
+
+### Context
+
+`task ai:agents:create` (or equivalent agent-provisioning script) failed with HTTP 403 from Foundry agents API:
+
+```
+HTTP/1.1 403 Forbidden
+{"code":"Forbidden","message":"Request blocked by Auth funky-elephant-11797-cosmos
+ : Request is blocked because principal [bfa1b145-d77e-4fca-b3cf-8635a2ade1ba]
+ does not have required RBAC permissions to perform action
+ [Microsoft.DocumentDB/databaseAccounts/readMetadata] on resource [/]"}
+```
+
+### Investigation
+
+`az ad sp show --id bfa1b145-d77e-4fca-b3cf-8635a2ade1ba` confirmed the principal is the **Foundry project's system-assigned managed identity** used by the Agents data-plane proxy when reading/writing the BYO Cosmos account.
+
+State inspection showed the project SAMI had:
+- ✅ `azurerm_role_assignment.project_cosmos_reader` (Cosmos DB Account Reader — control plane)
+- ✅ `azurerm_role_assignment.project_cosmos_operator` (Cosmos DB Operator — control plane)
+- ❌ **No `azurerm_cosmosdb_sql_role_assignment` (data plane)**
+
+The previous "Foundry capability host RBAC fix" decision added a data-plane assignment for the **Foundry account MSI** but not for the **project MSI**, which is what the Agents service actually presents at the Cosmos data plane.
+
+### Decision
+
+Add **one** new Terraform resource in `infra/cloud/identity.tf`:
+
+```hcl
+resource "azurerm_cosmosdb_sql_role_assignment" "project_cosmos_data_contributor" {
+  resource_group_name = azurerm_resource_group.this.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  role_definition_id  = "${azurerm_cosmosdb_account.main.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
+  principal_id        = azapi_resource.ai_foundry_project.output.identity.principalId
+  scope               = azurerm_cosmosdb_account.main.id
+}
+```
+
+### Apply Path — Brian's Directive
+
+> Brian (2026-05-14): "fix in terraform but do not apply it via TF. Go ahead to fix it by apply it using az"
+
+TF state currently has unrelated drift on Foundry/Cosmos/Storage/RG/Search (carry-over from #138/#141), so a `terraform apply` would replace those core resources. Therefore: TF code is committed for future clean applies, and the live cluster is patched out-of-band via `az`.
+
+Live apply executed:
+```sh
+az cosmosdb sql role assignment create \
+  --account-name funky-elephant-11797-cosmos \
+  --resource-group funky-elephant-11797-rg \
+  --scope "/" \
+  --principal-id bfa1b145-d77e-4fca-b3cf-8635a2ade1ba \
+  --role-definition-id 00000000-0000-0000-0000-000000000002
+```
+
+Result — assignment id `8b56e73c-c92f-44bb-a356-6587fe6d1fd2`. The next clean `task cloud:up` will see the assignment already exists and be a no-op.
+
+### Verification
+
+Deleted the two `Init:Error` ai-service pods to force re-run. New pod reached `2/2 Running`; all init containers report `Completed (exit 0)`. The 403 is gone.
+
+---
+
+## Decision: Filter email-lookup sentinel docs out of `GetByEmailAsync`
+
+**Author:** Basher
+**Date:** 2026-05-14
+**Status:** ✅ Code fix committed, awaiting `task cloud:deploy` by Brian
+
+### Context
+
+After Brian's rebuild + redeploy of user-service to AKS, login by email failed with 401 for the only registered user. The audit log showed `UserId: "email-lookup:brian@sample.com"` — proving that `GetUserByEmailAsync` was returning the email-uniqueness sentinel doc as a `User` (with `Username=null`, `PasswordHash=null`).
+
+The sentinel docs were introduced in commit `1afec6e` and live in the same Users container as real user docs. They carry an `email` field, so any query filtering on `email` without excluding them will return them as candidate matches.
+
+### Decision
+
+Add `AND NOT STARTSWITH(c.id, 'email-lookup:')` to the `GetByEmailAsync` query in `CosmosUserRepository`:
+
+```csharp
+"SELECT * FROM c WHERE (LOWER(c.Email) = @email OR LOWER(c.email) = @email) AND NOT STARTSWITH(c.id, 'email-lookup:')"
+```
+
+This matches the existing defensive pattern used by `IsContainerEmptyAsync` and `GetAllUsersAsync` in the same repo.
+
+### Verification
+
+- One-line SQL guard. No POCO, serializer, or schema changes.
+- Symmetric with existing code — two of four list-style queries already had this filter. The fix harmonizes the third.
+- No data migration — existing sentinel doc is correct and stays.
+- Other queries are safe — `GetByUsernameAsync` / `GetAdminCountAsync` filter on fields the sentinel lacks, so they cannot be polluted.
+
+### Risk / Followup
+
+- Fix is at the repo layer — does not address the **UI bug** in `RegisterPage.tsx` where username collisions on shared email-local-parts produce a misleading "Email already registered" message. Recommend separate ticket for: (a) generate username server-side, OR (b) accept username from UI field, OR (c) translate username-collision 409 distinctly in the UI.
+- No automated test added; the cluster does not currently exercise login-by-email in any smoke/E2E test. Suggested followup: add Playwright assertion for "register, then login with the email (not username)".
+
+---
+
+## Directive: User Deploy Oversight — No Build, No Deploy
+
+**By:** Brian (via Copilot)
+**Date:** 2026-05-14T18:14:08Z
+**Status:** ✅ Binding
+
+Agents must NOT build container images and must NOT run `task cloud:deploy` or any deploy command. Image builds and deploys are Brian's responsibility exclusively. Agents may edit code, edit Terraform, run read-only diagnostics (`kubectl get/describe/logs`, `az ... show/list`), and may apply Cosmos data-plane fixes via `az` only when explicitly authorized.
+
+**Why:** User does not trust opaque build/deploy actions performed by background agents — wants visibility and control over what hits the registry and the cluster.
+
+---
+
+## Directive: Coordinator Hard Rules
+
+**By:** Brian (via Copilot CLI)
+**Date:** 2026-05-14T18:42:36Z
+**Status:** ✅ Binding
+
+Hard rules for Copilot/Squad coordinator behavior, captured after a session of repeated mistakes:
+
+1. **Never run `git checkout HEAD -- <path>` on files with uncommitted changes** without first showing the diff and getting explicit confirmation. Bulk-reverting "out-of-scope" agent edits has clobbered Brian's own uncommitted work.
+2. **Never build container images.** Brian owns all `docker build` / `task build:*` / image push operations. Agents may edit Dockerfiles and source but must not invoke builds.
+3. **Never run `task cloud:deploy`** (or any deploy task that pushes to AKS). Brian owns deploys.
+4. **Always verify ACR/cluster context before referencing image names or kustomize state.** Sources of truth, in order: `kubectl config current-context` → root `.env` (`CUSTOM_DOMAIN` maps to active cluster) → live `terraform output acr_name`. Do NOT infer cluster/ACR from session memory or recent log lines — they go stale across reboots and cluster swaps.
+5. **"Fix in TF but apply via az" means:** edit the `.tf` file for source-of-truth, then run the equivalent `az` command to apply the change live. Do NOT run `terraform apply`.
+
+**Why:** User request after repeated session mistakes — captured for team memory so every future agent spawn inherits these constraints.
+
+---
+
+## Directive: Kustomize Technical Debt — Prefer Helm
+
+**By:** Brian (via Copilot)
+**Date:** 2026-05-14T17:09Z
+**Status:** ⏳ Guidance for future work
+
+The kustomize-with-sed approach for region/ACR substitution is fragile and has caused repeated regressions (CLI_ARGS dual-use, stale image refs, broken rollouts). Going forward, prefer Helm over kustomize for any new templating needs in this repo. Treat the current kustomize setup as technical debt — work around it carefully but plan to replace, not extend.
+
+**Why:** Brian explicitly: "Kustomize is messed up. I should never have listened to you on it. We're hacking it. Should have used helm." — captured for team memory so no agent suggests adding more sed/kustomize hacks.
+
+---
+
+## Decision: EvalResults Access Pattern — Use `.total`, Not `len()`
+
+**Author:** fenster
+**Date:** 2026-05-14T18:52:00Z
+**Status:** ✅ Resolved
+
+### Decision
+
+When working with `agent_framework._evaluation.EvalResults` objects:
+- Use `results.total` to get the total count (passed + failed)
+- Use `results.passed` / `results.failed` for individual counts
+- Use `len(results.items)` if you need the item list length
+- DO NOT use `len(results)` — it raises `TypeError`
+
+### Context
+
+Production bug in `src/ai-service/app/routes/api.py:441`: the code called `len(results)` where `results` is an `EvalResults` object returned from `await evals.evaluate(...)`. `EvalResults` does NOT implement `__len__()`, so this raised:
+
+```
+TypeError: object of type 'EvalResults' has no len()
+```
+
+### Rationale
+
+The preview `agent_framework` SDK uses custom classes that don't follow standard Python collection protocols. `EvalResults` exposes `.total`, `.passed`, `.failed` properties (computed from `.result_counts`) rather than implementing `__len__`.
+
+### Impact
+
+- Fixed crash in `POST /api/evaluate/foundry` endpoint
+- Pattern documented in `.squad/skills/agent_framework-eval-shapes/SKILL.md`
+- All team members should use property accessors when working with agent_framework evaluation APIs
+
+---
+
+## Decision: All Foundry-facing HttpClients get 10-minute timeout
+
+**Author:** keaton
+**Date:** 2026-05-14T18:51:40Z
+**Status:** ✅ Enacted
+**Scope:** dotnet-services
+
+### Context
+
+UI showed eval failure: `"The request was canceled due to the configured HttpClient.Timeout of 100 seconds elapsing."` during "Risk Scoring — Conservative v1" evaluation. Foundry-side logs showed the eval run was healthy and `in_progress` well past 100s, with successful polling returning 200 OK.
+
+Root cause: `prompt-eval-service` used `_httpClientFactory.CreateClient()` (no name) when calling ai-service's `/api/admin/evaluate` endpoint. Unnamed HttpClients get .NET's default timeout of exactly **100 seconds**. Foundry evaluation runs can take 3-5+ minutes.
+
+### Decision
+
+**All .NET HttpClients that call Foundry-backed endpoints (directly or via ai-service) MUST use a named HttpClient with `Timeout = TimeSpan.FromMinutes(10)` (600 seconds).**
+
+Rationale:
+- Matches ai-service's `x-stainless-read-timeout: 600` for Foundry SDK calls
+- Allows margin for multi-transaction evals (10 txs × 30s/tx = 5min baseline)
+- Prevents premature client-side cancellation while server-side work continues
+
+### Implementation Pattern
+
+**Program.cs (or Startup.cs):**
+```csharp
+// Short timeout for quick CRUD operations
+builder.Services.AddHttpClient("AiService", client =>
+{
+    client.BaseAddress = new Uri(aiServiceUrl);
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+
+// Long timeout for Foundry evaluation calls
+builder.Services.AddHttpClient("AiServiceEval", client =>
+{
+    client.BaseAddress = new Uri(aiServiceUrl);
+    client.Timeout = TimeSpan.FromMinutes(10);
+});
+```
+
+**Service usage:**
+```csharp
+// For quick ops (transaction fetch, health checks)
+var client = _httpClientFactory.CreateClient("AiService");
+
+// For long-running ops (evaluations, document analysis)
+var client = _httpClientFactory.CreateClient("AiServiceEval");
+```
+
+### Enforcement
+
+**NEVER use `_httpClientFactory.CreateClient()` with no name.** Always use a named client.
+
+Grep check before merge:
+```bash
+# Should return ZERO matches in service .cs files:
+rg 'CreateClient\(\)' src/*/Services/ src/*/Controllers/
+```
+
+### Services to audit
+
+All .NET services that call:
+- `ai-service` (`/api/admin/evaluate`, `/detect`)
+- `account-opening-service` (document analysis endpoints)
+- Any Python/FastAPI service doing AI/LLM work
+
+Current inventory:
+- ✅ `prompt-eval-service` — FIXED (added "AiServiceEval" client, 10min timeout)
+- ⏸️ `account-service` — N/A (no AI calls)
+- ⏸️ `transaction-service` — N/A (no direct AI calls, uses Redis stream)
+- ⏸️ `transfer-service` — N/A (no AI calls)
+- ⏸️ `user-service` — N/A (no AI calls)
