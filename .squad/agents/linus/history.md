@@ -22,6 +22,8 @@
 
 **2026-05-14 Scribe note (Basher's eval fix):** Prompt Evaluation UI errors now have meaningful messages. Fixed two bugs: (1) FastAPI @property serialization → C# KeyNotFoundException, (2) ai-service incomplete-eval silent-success. See decisions.md "Eval Pipeline — KeyNotFoundException + Incomplete Result Handling".
 
+**2026-05-15 Linus note (Account Opening State Machine):** Customer status page now uses shared ApplicationStages component. Retry cap enforced at 1 (stageAttempts < 2). ErrorOutlineRounded used instead of ErrorOutline (MUI v9). Polling stops on terminal status.
+
 **Critical Bugs (Pre-Wave 1):**
 - Transfer API client had wrong shape (wrapped formData, FastAPI expects flat)
 - Duplicate test files: 7 pairs, __tests__/ vs. colocated versions out of sync
@@ -648,3 +650,84 @@ Issues #137 (eval failures) and #130 ("AI Calls Today" counter stuck at 0) are n
 ---
 
 **2026-05-14 16:57 Scribe:** Heads-up: #141 filed — Foundry Managed VNet migration plan from Danny. See decisions.md for context.
+
+### 2026-05-15 — Account Opening State Machine UI (#135 + #136)
+
+**Scope:** Customer-facing status page with retry UX and AI explanation rendering per Danny's coordinated plan.
+
+**Implementation:**
+
+1. **TypeScript Schema Extensions:**
+   - Added `'failed'` to `ApplicationStatus` type
+   - Added `LastError` interface: `{ stage, code, message, retryable, occurredAt, attempt, correlationId }`
+   - Extended `ApplicationResponse` with `lastError`, `stageAttempts`, `failedStage`, `customerOutcome`, `customerExplanation`, `customerExplanationGeneratedAt`
+   - Added `resubmitApplication()` API call: `POST /applications/{id}/resubmit` → 200 success, 409 conflict
+
+2. **Shared Component Extraction:**
+   - Created `ApplicationStages.tsx` — reusable stage stepper + detail cards
+   - Refactored `AgentPipeline.tsx` to delegate to `ApplicationStages` (eliminated 146 lines of duplication)
+   - Both admin and customer views now share stage rendering logic
+
+3. **Customer Status Page (`CustomerApplicationStatusPage.tsx`):**
+   - Polls `GET /applications/{id}` every 2s until terminal status
+   - Renders stage progress with stepper + status icons (CheckCircle, Error, Autorenew, HourglassEmpty)
+   - **Retry UX:** Shows "Retry" button when `status === 'failed'` AND `lastError.retryable === true` AND `stageAttempts[failedStage] < 2` (retry cap = 1)
+   - **Retry Cap Enforcement:** Hides button when `stageAttempts[failedStage] >= 2` OR `lastError.retryable === false`; shows "Contact support" message instead
+   - **409 Conflict Handling:** Catches 409 from resubmit endpoint, displays `message` from response body
+   - **AI Explanation Display:** Renders `customerExplanation` when terminal (approved/rejected/pending_review) with appropriate emoji + styling
+   - **Error Rendering:** Uses `resolveApiError()` helper to handle FastAPI 422 validation array (prevents React error #31)
+
+4. **Routing & Flow:**
+   - Added `/applications/:id/status` route in `App.tsx` (authenticated users, not admin-only)
+   - Simplified `AccountOpeningPage.tsx` to 2-step flow (form → upload); removed processing/status steps
+   - After document upload, redirect to customer status page: `navigate(\`/applications/\${application.id}/status\`)`
+   - Customer no longer sees in-progress UI on submission page — redirected to dedicated polling page
+
+5. **ApplicationStatus.tsx Updates:**
+   - Added `'failed'` to terminal statuses array
+   - Mapped `'failed'` to error color (red) and message: "We encountered an issue processing your application."
+
+**Key Patterns Followed:**
+
+- **Icon Choice:** Used `ErrorOutlineRounded` instead of `ErrorOutline` (MUI v9 — per skill: no `ErrorOutline` icon)
+- **Error Handling:** All API errors passed through `resolveApiError()` to avoid raw object rendering
+- **Polling Lifecycle:** `useEffect` with `setInterval` + cleanup; stops when `isTerminal(status)` returns true
+- **Retry Logic:** Client-side validation matches server-side cap: `stageAttempts[stage] < 2` (1 retry allowed)
+- **Terminal Checks:** `['approved', 'rejected', 'pending_review', 'failed'].includes(status)` — includes new `'failed'` state
+
+**Outcome:**
+- Build passes with TypeScript strict mode (`npm run build` → 241.18 KB gzip, warnings only)
+- 6 commits pushed to `origin/squad/135-136-account-opening-state-machine`
+- No backend modifications (frontend-only as required)
+- Ready for consolidation with Basher (backend) + Livingston (tests)
+
+**Contract Dependencies (awaiting Basher's push):**
+- `POST /applications/{id}/resubmit` endpoint: 202 accepted, 409 conflict with `{error, message}` body
+- `ApplicationResponse` fields: `lastError`, `stageAttempts`, `failedStage`, `customerOutcome`, `customerExplanation`, `customerExplanationGeneratedAt`
+- Backend retry cap enforcement: `stageAttempts[stage]` must match UI cap (max=2, i.e., 1 retry)
+
+**Known Gaps:**
+- No E2E tests yet (blocked on Livingston's Playwright suite)
+- AI explanation generation logic lives in backend (out of scope for Linus)
+- Admin override to reset attempts not implemented (Danny confirmed out-of-scope)
+
+**Reusable Patterns:**
+- `ApplicationStages.tsx` can be reused in any account-opening UI (admin detail dialogs, customer dashboards)
+- `resolveApiError()` pattern now documented in history — always use for FastAPI 422 responses
+- Retry cap check pattern: `(attempts[stage] ?? 0) < 2` — safe against undefined stageAttempts dict
+
+**Build Verification:**
+```bash
+cd src/ui-app && npm run build
+# → Compiled with warnings (exhaustive-deps only, not blocking)
+# → 241.18 kB gzip (-212 B from previous build)
+```
+
+**Commits:**
+1. `feat(ui): #136 Add TypeScript types for state machine fields` (743d627)
+2. `feat(ui): #136 Extract shared ApplicationStages component` (42ea60f)
+3. `feat(ui): #136 Refactor AgentPipeline to use shared component` (9d86b7f)
+4. `feat(ui): #136 Add customer application status page` (2a8f5b7)
+5. `feat(ui): #136 Add customer status page route` (51f324d)
+6. `feat(ui): #136 Redirect to customer status page after upload` (f04f407)
+7. `feat(ui): #135 Add 'failed' status support to ApplicationStatus` (8e60df4)
