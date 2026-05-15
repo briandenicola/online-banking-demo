@@ -62,10 +62,31 @@ def _latest_result_by_agent(agent_results: list[Any]) -> dict[str, dict[str, Any
     return latest
 
 
+_STAGE_TO_AGENT: dict[str, str] = {
+    "document_extraction": "document-extraction",
+    "identity_verification": "identity-verification",
+    "compliance_check": "compliance-check",
+    "provisioning": "provisioning",
+}
+
+
 def derive_stages(application: ApplicationResponse) -> list[dict[str, Any]]:
-    """Build the UI's `stages[]` array from the application's agentResults."""
+    """Build the UI's `stages[]` array from the application's agentResults.
+
+    A stage with no agentResults entry is normally rendered as "pending" or
+    "in_progress". For a failed application, `failedStage` + `lastError` mark
+    which stage actually broke — surface that as "failed" with the error
+    message so the customer-status and admin views show the truth instead of
+    a sea of "pending" rows.
+    """
     by_agent = _latest_result_by_agent(application.agentResults)
     in_progress_agent = _STATUS_TO_AGENT.get(application.status.value)
+    failed_agent = (
+        _STAGE_TO_AGENT.get(application.failedStage)
+        if application.failedStage
+        else None
+    )
+    last_error = application.lastError
 
     stages: list[dict[str, Any]] = []
     for agent_name, display_name in PIPELINE_STAGES:
@@ -94,8 +115,21 @@ def derive_stages(application: ApplicationResponse) -> list[dict[str, Any]]:
             if details_bits:
                 stage["details"] = " · ".join(details_bits)
         else:
-            status = "in_progress" if agent_name == in_progress_agent else "pending"
-            stage = {"name": display_name, "status": status}
+            if agent_name == failed_agent:
+                stage = {"name": display_name, "status": "failed"}
+                if last_error is not None:
+                    err = last_error.model_dump() if hasattr(last_error, "model_dump") else dict(last_error)
+                    msg = err.get("message")
+                    if msg:
+                        stage["details"] = str(msg)
+                    code = err.get("code")
+                    if code:
+                        stage["errorCode"] = str(code)
+                    if "retryable" in err:
+                        stage["retryable"] = bool(err["retryable"])
+            else:
+                status = "in_progress" if agent_name == in_progress_agent else "pending"
+                stage = {"name": display_name, "status": status}
         stages.append(stage)
     return stages
 

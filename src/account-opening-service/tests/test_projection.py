@@ -69,6 +69,43 @@ class TestDeriveStages:
         assert doc_stage["confidence"] == 0.92
         assert doc_stage["reasoning"] == "extracted ok"
 
+    def test_failed_stage_surfaced_from_failed_stage_field(self):
+        """When a stage fails before producing an agentResults entry, the
+        projection must mark that stage as 'failed' (not 'pending') and surface
+        the lastError message via stage.details. This is what the customer-
+        status and admin screens read to render the failure inline.
+        """
+        from app.models import LastError
+
+        app = _make_app(ApplicationStatus.failed)
+        app.failedStage = "document_extraction"
+        app.lastError = LastError(
+            stage="document_extraction",
+            code="content_understanding_error",
+            message="Defaults have not yet been set.",
+            occurredAt=datetime.now(timezone.utc),
+            retryable=True,
+            attempt=1,
+        )
+        stages = derive_stages(app)
+        by_name = {s["name"]: s for s in stages}
+        assert by_name["Document Extraction"]["status"] == "failed"
+        assert by_name["Document Extraction"]["details"] == "Defaults have not yet been set."
+        assert by_name["Document Extraction"]["errorCode"] == "content_understanding_error"
+        assert by_name["Document Extraction"]["retryable"] is True
+        # Downstream stages stay pending (no in_progress on a failed app)
+        assert by_name["Identity Verification"]["status"] == "pending"
+        assert by_name["Compliance Check"]["status"] == "pending"
+        assert by_name["Provisioning"]["status"] == "pending"
+
+    def test_failed_stage_without_last_error_still_marks_failed(self):
+        app = _make_app(ApplicationStatus.failed)
+        app.failedStage = "identity_verification"
+        stages = derive_stages(app)
+        by_name = {s["name"]: s for s in stages}
+        assert by_name["Identity Verification"]["status"] == "failed"
+        assert "details" not in by_name["Identity Verification"]
+
 
 class TestDeriveRiskTier:
     def test_returns_none_without_compliance_check(self):
