@@ -1228,3 +1228,25 @@ These are **NOT caused by the OpenApi migration** — they're pre-existing Depen
 6. Phase 6: Polish & End-to-End Tests
 
 **Status:** Tasks generated, validated, not yet committed (awaiting Brian review). Ready for issue creation or direct implementation.
+
+### 2026-05-15 — Spec Remediation Pass (017-loan-origination-workflow)
+
+**Trigger:** `/speckit.analyze` flagged 16 findings across spec docs. Brian requested full doc-remediation.
+
+**Architectural Decisions Made:**
+
+1. **M1 — Event scope: 5 events (not 2).** Expanded FR-14 from `loan.approved` + `loan.funded` to include `loan.application.submitted`, `loan.run.completed`, and `loan.declined`. Rationale: consistency with existing event-per-state-change pattern used by transaction-service, transfer-service, and ai-service. event-processor consumes generically — more events = better audit trail at zero coupling cost.
+
+2. **M2 — Keep `Foundry__Mode=offline` stub.** quickstart.md promises it, and local-dev affordance matters. Frontend engineers need to iterate on `/loans` UI without a Foundry connection. New task NT-4 (OfflineLoanAgentOrchestrator) added to remediation.
+
+3. **M3 — Keep docker-compose entry.** Constitution §Local Development requires all services runnable via `docker-compose up`. New task NT-5 added to remediation. Service defaults to `Foundry__Mode=offline` in docker-compose.
+
+**Critical Fix — C1 Separation of Concerns:**
+- data-model.md state machine incorrectly said `decided → funded` requires "account-service + transaction-service calls." Fixed to reference in-domain LoanAccount + LoanDisbursement writes + event publish. This is a NON-NEGOTIABLE boundary: loan-origination-service never calls account-service or transaction-service. Events are the ONLY cross-domain mechanism.
+
+**Key Learnings:**
+- Cross-artifact consistency audits catch real bugs — the state-machine wording could have misled an implementer into adding cross-service calls.
+- "Four containers" → "six containers" was a persistent pre-LoanAccount/LoanDisbursement fossil across 3 files. When adding entities to a data model, grep all docs for the old count.
+- Agent count wording (5 specialists + 1 underwriting + 1 health-check = 7) needs explicit enumeration in specs — "six agents" is ambiguous when there are multiple agent categories.
+
+**Deliverables:** REMEDIATION.md, 3 decision drops, updated spec/plan/data-model/research/quickstart docs.

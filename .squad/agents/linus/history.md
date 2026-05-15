@@ -781,3 +781,17 @@ cd src/ui-app && npm run build
 **Commits:** 743d627, 42ea60f, 9d86b7f, 2a8f5b7, 51f324d, f04f407, 8e60df4  
 **Branch:** squad/135-136-account-opening-state-machine  
 **Files Changed:** 7 files, +515 -230 lines (net +285)
+
+### 2026-05-15 — 017-Loan-Origination GREEN-ready (Scribe note)
+
+**Agents:** danny-017-remediation, speckit-tasks-017-v2  
+**Verdict:** 🟢 GREEN-ready  
+
+Feature spec/plan/task alignment complete. Three decisions finalized (M1/M2/M3):
+- **M1 (Event Scope):** 5 events for full lifecycle audit
+- **M2 (Offline Mode):** `Foundry__Mode=offline` for local dev (NT-4 OfflineLoanAgentOrchestrator)
+- **M3 (docker-compose):** Service entry in docker-compose.yml (NT-5)
+
+Tasks regenerated 75 → 80. C1 (separation-of-concerns) on T071/T072/T075 ensures no cross-service state mutations.
+
+Relevant for UI iteration: Phase 3 tasks (T051–T080) include frontend loan status polling, retry cap enforcement (same pattern as #135), and offline-mode event stubs.

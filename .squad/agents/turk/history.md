@@ -1154,3 +1154,16 @@ All service Dockerfiles used Docker Hub base images (python:3.11-slim, node:20-a
 **Verification:** Docker verification skipped (daemon not running in sandbox). MCR images pre-verified via API.
 
 **Decision Record:** No new decision — implementation of existing MCR base-image migration strategy. Gotcha documented in `.squad/skills/mcr-base-image-migration/SKILL.md` lines 293-321.
+### 2026-05-15 — 017-Loan-Origination GREEN-ready (Scribe note)
+
+**Agents:** danny-017-remediation, speckit-tasks-017-v2  
+**Verdict:** 🟢 GREEN-ready  
+
+Feature spec/plan/task alignment complete. Three M1/M2/M3 decisions finalized:
+- **M1 (Event Scope):** Expand to 5 events for full lifecycle audit
+- **M2 (Offline Mode):** Keep `Foundry__Mode=offline` promise (NT-4)
+- **M3 (docker-compose):** Add service entry (NT-5)
+
+Tasks regenerated (75 → 80). New task IDs NT-1 through NT-5 merged into main list. C1 (separation-of-concerns) enforced on T071/T072/T075.
+
+Relevant for cross-service consistency review: all 5 loan events now aligned with existing `transaction-service` / `transfer-service` / `ai-service` event publication patterns via `event-processor` (Go).

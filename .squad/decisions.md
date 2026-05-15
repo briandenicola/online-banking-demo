@@ -8360,3 +8360,91 @@ For any future Swashbuckle/Microsoft.OpenApi major version upgrades:
 - Swashbuckle.AspNetCore 10.1.7 GitHub releases
 - Microsoft.OpenApi 2.4.1 NuGet package documentation
 - CS0234 namespace resolution error diagnostics
+## Decision: Loan Event Scope — 5 Events (not 2)
+
+**Status:** ✅ Decided  
+**Date:** 2026-05-15  
+**Author:** Danny (Lead/Architect)  
+**Feature:** 017-loan-origination-workflow  
+**Finding:** M1 from /speckit.analyze  
+
+### Context
+
+spec.md FR-14 originally promised 2 events (`loan.approved`, `loan.funded`). data-model.md defined 5 (`loan.application.submitted`, `loan.run.completed`, `loan.approved`, `loan.funded`, `loan.declined`). Tasks (T073) implemented 2.
+
+### Decision
+
+**Expand to 5 events.** Every meaningful state change in the loan lifecycle publishes an event.
+
+### Rationale
+
+- The existing services (`transaction-service`, `transfer-service`, `ai-service`) publish a domain event per state change. `event-processor` (Go) consumes `banking-events` generically for audit logging. Consistency with this established pattern outweighs minimalism.
+- The 3 additional events (`loan.application.submitted`, `loan.run.completed`, `loan.declined`) are cheap to implement (same `LoanEventPublisher`, same Redis Stream, same payload schema) and provide audit completeness.
+- If `ai-service` or `chatbot-service` later want to react to loan events (e.g., anomaly detection on loan patterns, financial advice incorporating loan status), having the full event set available from day one avoids a re-deploy.
+
+### Impact
+
+- spec.md FR-14 and Goals §5 updated to list all 5 events.
+- plan.md summary and constitution check table updated.
+- data-model.md Lifecycle Events table was already correct (no change).
+- New tasks needed: NT-2 (extend LoanEventPublisher), NT-3 (extend event publisher tests).
+
+---
+
+## Decision: Keep `Foundry__Mode=offline` Stub Promise
+
+**Status:** ✅ Decided  
+**Date:** 2026-05-15  
+**Author:** Danny (Lead/Architect)  
+**Feature:** 017-loan-origination-workflow  
+**Finding:** M2 from /speckit.analyze  
+
+### Context
+
+quickstart.md promises `Foundry__Mode=offline` for local dev (canned-response mode). No implementation task existed.
+
+### Decision
+
+**Keep the promise.** Add an implementation task (NT-4) for `OfflineLoanAgentOrchestrator`.
+
+### Rationale
+
+- Local-dev affordance is critical for this team. Frontend engineers iterating on `/loans` UI components need to run the service without a Foundry connection.
+- The offline mode returns deterministic stub recommendations based on `applicationNo` hash, which is exactly what the synthetic data strategy (R6) already supports — the enrichment data is deterministic, so the offline orchestrator just needs to produce matching canned recommendations.
+- The `Foundry__Mode` flag is already documented in `appsettings.json` (T004) and quickstart.md. Not implementing it would leave a broken promise in operator-facing docs.
+- Implementation is lightweight: a second `ILoanAgentOrchestrator` implementation registered via DI when the flag is set. ~100 lines of C#.
+
+### Impact
+
+- quickstart.md: no change needed (already documents the feature correctly).
+- New task: NT-4 (`OfflineLoanAgentOrchestrator`), depends on T045.
+
+---
+
+## Decision: Keep docker-compose Entry for loan-origination-service
+
+**Status:** ✅ Decided  
+**Date:** 2026-05-15  
+**Author:** Danny (Lead/Architect)  
+**Feature:** 017-loan-origination-workflow  
+**Finding:** M3 from /speckit.analyze  
+
+### Context
+
+quickstart.md says `docker-compose up` should bring up the new service. The repo's `docker-compose.yml` at root doesn't have an entry, and no task adds one.
+
+### Decision
+
+**Keep the promise.** Add an implementation task (NT-5) for the docker-compose entry.
+
+### Rationale
+
+- Project constitution (§Local Development, per `docs/deployment-local.md`) requires all services to be runnable via `docker-compose up`.
+- Every existing service has a docker-compose entry following the same pattern: build from repo root context, Dockerfile path, port mapping, env vars, depends_on redis.
+- The new service should default to `Foundry__Mode=offline` in docker-compose (per M2 decision) so `docker-compose up` works without cloud credentials.
+- Without the entry, the quickstart's "Bring up the base stack" step is misleading — it claims `docker-compose up` starts everything but would silently omit the new service.
+
+### Impact
+
+- quickstart.md: no change needed (already assumes the entry exists).
+- New task: NT-5 (docker-compose.yml entry), depends on T003 (Dockerfile).
