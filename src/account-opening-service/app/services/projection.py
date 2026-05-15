@@ -97,9 +97,10 @@ def derive_stages(application: ApplicationResponse) -> list[dict[str, Any]]:
             stage: dict[str, Any] = {
                 "name": display_name,
                 "status": stage_status,
-                "confidence": result.get("confidence"),
-                "reasoning": result.get("reasoning"),
             }
+            if stage_status == "completed":
+                stage["confidence"] = result.get("confidence")
+                stage["reasoning"] = result.get("reasoning")
             timestamp = result.get("timestamp")
             if timestamp is not None:
                 stage["timestamp"] = timestamp
@@ -114,22 +115,24 @@ def derive_stages(application: ApplicationResponse) -> list[dict[str, Any]]:
                     details_bits.append(f"Flags: {', '.join(str(f) for f in flags[:3])}")
             if details_bits:
                 stage["details"] = " · ".join(details_bits)
+            if application.status == ApplicationStatus.failed and agent_name == failed_agent:
+                stage["status"] = "failed"
         else:
-            if agent_name == failed_agent:
-                stage = {"name": display_name, "status": "failed"}
-                if last_error is not None:
-                    err = last_error.model_dump() if hasattr(last_error, "model_dump") else dict(last_error)
-                    msg = err.get("message")
-                    if msg:
-                        stage["details"] = str(msg)
-                    code = err.get("code")
-                    if code:
-                        stage["errorCode"] = str(code)
-                    if "retryable" in err:
-                        stage["retryable"] = bool(err["retryable"])
-            else:
-                status = "in_progress" if agent_name == in_progress_agent else "pending"
-                stage = {"name": display_name, "status": status}
+            status = "in_progress" if agent_name == in_progress_agent else "pending"
+            stage = {"name": display_name, "status": status}
+
+        if application.status == ApplicationStatus.failed and agent_name == failed_agent:
+            stage["status"] = "failed"
+            if last_error is not None:
+                err = last_error.model_dump() if hasattr(last_error, "model_dump") else dict(last_error)
+                msg = err.get("message")
+                if msg:
+                    stage["details"] = str(msg)
+                code = err.get("code")
+                if code:
+                    stage["errorCode"] = str(code)
+                if "retryable" in err:
+                    stage["retryable"] = bool(err["retryable"])
         stages.append(stage)
     return stages
 

@@ -282,7 +282,7 @@ const ApplicationStatus: React.FC<ApplicationStatusProps> = ({
                 </Typography>
               )}
             </Stack>
-            <AgentPipeline stages={stages} />
+            <AgentPipeline stages={stages} showDetails={false} />
           </Box>
         ) : (
           <Alert severity="warning">No application data available.</Alert>

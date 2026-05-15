@@ -130,6 +130,23 @@ class ProvisioningConsumer(AgentConsumer):
         if not application:
             raise ValueError(f"Application {application_id} not found for provisioning")
 
+        if application.status != ApplicationStatus.compliance_check:
+            raise ValueError(
+                f"Invalid state for provisioning: {application.status.value}"
+            )
+
+        application.agentResults.append(
+            AgentResult(
+                agentName=AGENT_NAME,
+                status="in_progress",
+                confidence=0.0,
+                findings={},
+                reasoning=None,
+                timestamp=datetime.now(timezone.utc),
+            )
+        )
+        self._repository.update(application)
+
         verified = payload.get("verified")
         kyc_status = payload.get("kycStatus")
         risk_tier = payload.get("riskTier")

@@ -32,6 +32,18 @@ def _decode_token(token: str) -> dict:
     )
 
 
+def _extract_role(claims: dict) -> str:
+    role_claim = claims.get("role")
+    if isinstance(role_claim, str) and role_claim:
+        return role_claim
+
+    uri_role_claim = claims.get("http://schemas.microsoft.com/ws/2008/06/identity/claims/role")
+    if isinstance(uri_role_claim, str) and uri_role_claim:
+        return uri_role_claim
+
+    return "User"
+
+
 async def require_auth(request: Request) -> UserClaims:
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
@@ -50,7 +62,7 @@ async def require_auth(request: Request) -> UserClaims:
     return UserClaims(
         user_id=user_id,
         email=claims.get("email", ""),
-        role=claims.get("role", "User"),
+        role=_extract_role(claims),
     )
 
 

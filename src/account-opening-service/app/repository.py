@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Protocol
 
 from .models import (
+    LastError,
     ApplicationCreate,
     ApplicationResponse,
     ApplicationStatus,
@@ -21,6 +22,9 @@ class ApplicationRepository(Protocol):
     def get(self, application_id: str) -> ApplicationResponse | None:
         ...
 
+    def get_owner(self, application_id: str) -> str | None:
+        ...
+
     def get_all(self, status: ApplicationStatus | None = None) -> list[ApplicationResponse]:
         ...
 
@@ -34,6 +38,29 @@ class ApplicationRepository(Protocol):
         ...
 
     def add_audit_entry(self, application_id: str, entry: AuditEntry) -> ApplicationResponse | None:
+        ...
+
+    def record_stage_failure(
+        self,
+        application_id: str,
+        stage: str,
+        error: LastError,
+    ) -> ApplicationResponse | None:
+        ...
+
+    def clear_stage_failure_for_retry(
+        self,
+        application_id: str,
+        stage: str,
+    ) -> ApplicationResponse | None:
+        ...
+
+    def set_customer_explanation(
+        self,
+        application_id: str,
+        outcome: str,
+        explanation: str,
+    ) -> ApplicationResponse | None:
         ...
 
 
@@ -98,6 +125,69 @@ class InMemoryApplicationRepository:
         if not application:
             return None
         application.auditTrail.append(entry)
+        application.updatedAt = datetime.now(timezone.utc)
+        self._applications[application_id] = application
+        return application
+
+    def record_stage_failure(
+        self,
+        application_id: str,
+        stage: str,
+        error: LastError,
+    ) -> ApplicationResponse | None:
+        application = self._applications.get(application_id)
+        if not application:
+            return None
+
+        application.lastError = error
+        application.failedStage = stage
+        application.status = ApplicationStatus.failed
+        current_attempts = application.stageAttempts.get(stage, 0)
+        application.stageAttempts[stage] = current_attempts + 1
+        application.updatedAt = datetime.now(timezone.utc)
+        self._applications[application_id] = application
+        return application
+
+    def clear_stage_failure_for_retry(
+        self,
+        application_id: str,
+        stage: str,
+    ) -> ApplicationResponse | None:
+        application = self._applications.get(application_id)
+        if not application:
+            return None
+
+        resume_status_map = {
+            "document_extraction": ApplicationStatus.document_extraction,
+            "identity_verification": ApplicationStatus.identity_verification,
+            "compliance_check": ApplicationStatus.compliance_check,
+            # Provisioning is triggered by compliance_checked events.
+            "provisioning": ApplicationStatus.compliance_check,
+        }
+        resume_status = resume_status_map.get(stage)
+        if resume_status is None:
+            raise ValueError(f"Unknown stage: {stage}")
+
+        application.lastError = None
+        application.failedStage = None
+        application.status = resume_status
+        application.updatedAt = datetime.now(timezone.utc)
+        self._applications[application_id] = application
+        return application
+
+    def set_customer_explanation(
+        self,
+        application_id: str,
+        outcome: str,
+        explanation: str,
+    ) -> ApplicationResponse | None:
+        application = self._applications.get(application_id)
+        if not application:
+            return None
+
+        application.customerOutcome = outcome
+        application.customerExplanation = explanation
+        application.customerExplanationGeneratedAt = datetime.now(timezone.utc)
         application.updatedAt = datetime.now(timezone.utc)
         self._applications[application_id] = application
         return application

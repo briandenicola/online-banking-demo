@@ -120,8 +120,32 @@ class IdentityVerificationConsumer(AgentConsumer):
         if not application:
             raise ValueError(f"Application {application_id} not found for identity verification")
 
+        if application.status == ApplicationStatus.document_extraction:
+            application = self._state_machine.transition(
+                application,
+                ApplicationStatus.identity_verification,
+                agent_name=AGENT_NAME,
+                details={"action": "identity_verification_started"},
+            )
+        elif application.status != ApplicationStatus.identity_verification:
+            raise ValueError(
+                f"Invalid state for identity verification: {application.status.value}"
+            )
+
         extracted = payload.get("extracted") or {}
         form_data = application.formData or {}
+
+        application.agentResults.append(
+            AgentResult(
+                agentName=AGENT_NAME,
+                status="in_progress",
+                confidence=0.0,
+                findings={},
+                reasoning=None,
+                timestamp=datetime.now(timezone.utc),
+            )
+        )
+        self._repository.update(application)
 
         user_message = (
             "Application form data:\n"
@@ -142,21 +166,6 @@ class IdentityVerificationConsumer(AgentConsumer):
         confidence = float(parsed["confidence"])
         flags = parsed.get("flags", [])
         reasoning = parsed.get("reasoning", "")
-
-        details = {
-            "action": "identity_verified",
-            "verified": verified,
-            "confidence": confidence,
-            "flags": flags,
-            "reasoning": reasoning,
-        }
-
-        application = self._state_machine.transition(
-            application,
-            ApplicationStatus.identity_verification,
-            agent_name=AGENT_NAME,
-            details=details,
-        )
 
         application.agentResults.append(
             AgentResult(

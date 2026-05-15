@@ -144,12 +144,23 @@ class CosmosDBApplicationRepository:
         application = self.get(application_id)
         if not application:
             return None
-        
+
+        resume_status_map = {
+            "document_extraction": ApplicationStatus.document_extraction,
+            "identity_verification": ApplicationStatus.identity_verification,
+            "compliance_check": ApplicationStatus.compliance_check,
+            # Provisioning is triggered from the compliance-check checkpoint.
+            "provisioning": ApplicationStatus.compliance_check,
+        }
+        resume_status = resume_status_map.get(stage)
+        if resume_status is None:
+            raise ValueError(f"Unknown stage: {stage}")
+
         application.lastError = None
         application.failedStage = None
-        application.status = ApplicationStatus(stage)
+        application.status = resume_status
         application.updatedAt = datetime.now(timezone.utc)
-        
+
         self.update(application)
         return application
 

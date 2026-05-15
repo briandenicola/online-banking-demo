@@ -73,11 +73,11 @@ const filterOptions: { label: string; value: FilterValue }[] = [
 const statusChip = (status: ApplicationStatus) => {
   switch (status) {
     case 'approved':
-      return <Chip label="accepted" color="success" size="small" aria-label="approved" />;
+      return <Chip label="approved" color="success" size="small" aria-label="approved" />;
     case 'rejected':
-      return <Chip label="declined" color="error" size="small" aria-label="rejected" />;
+      return <Chip label="rejected" color="error" size="small" aria-label="rejected" />;
     case 'pending_review':
-      return <Chip label="pending_review" color="warning" size="small" aria-label="pending_review" />;
+      return <Chip label="pending review" color="warning" size="small" aria-label="pending_review" />;
     default:
       return <Chip label={status} size="small" />;
   }

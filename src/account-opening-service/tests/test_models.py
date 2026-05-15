@@ -2,7 +2,7 @@
 
 Validates model schemas, enums, and validation rules defined in the spec:
 - ApplicationCreate: required fields, format validation
-- ApplicationStatus: 7-state enum
+- ApplicationStatus: 8-state enum
 - AgentResult: confidence range
 - DocumentMetadata: type constraints
 - AuditEntry: serialization
@@ -12,13 +12,13 @@ from pydantic import ValidationError
 
 
 class TestApplicationStatus:
-    """Verify the ApplicationStatus enum contains all 7 pipeline states."""
+    """Verify the ApplicationStatus enum contains all pipeline states."""
 
-    def test_enum_has_exactly_seven_values(self):
-        """ApplicationStatus must define exactly 7 states per the spec."""
+    def test_enum_has_exactly_eight_values(self):
+        """ApplicationStatus must define exactly 8 states."""
         from app.models import ApplicationStatus
 
-        assert len(ApplicationStatus) == 7
+        assert len(ApplicationStatus) == 8
 
     def test_all_expected_states_exist(self):
         """Every state from the spec must be present in the enum."""
@@ -32,6 +32,7 @@ class TestApplicationStatus:
             "approved",
             "rejected",
             "pending_review",
+            "failed",
         }
         actual = {s.value for s in ApplicationStatus}
         assert actual == expected, f"Missing or extra states: {actual.symmetric_difference(expected)}"

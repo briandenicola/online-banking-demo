@@ -124,6 +124,18 @@ class ComplianceCheckConsumer(AgentConsumer):
         if not application:
             raise ValueError(f"Application {application_id} not found for compliance check")
 
+        if application.status == ApplicationStatus.identity_verification:
+            application = self._state_machine.transition(
+                application,
+                ApplicationStatus.compliance_check,
+                agent_name=AGENT_NAME,
+                details={"action": "compliance_check_started"},
+            )
+        elif application.status != ApplicationStatus.compliance_check:
+            raise ValueError(
+                f"Invalid state for compliance check: {application.status.value}"
+            )
+
         form_data = application.formData or {}
         identity_summary = {
             "verified": payload.get("verified"),
@@ -131,6 +143,18 @@ class ComplianceCheckConsumer(AgentConsumer):
             "flags": payload.get("flags", []),
             "reasoning": payload.get("reasoning", ""),
         }
+
+        application.agentResults.append(
+            AgentResult(
+                agentName=AGENT_NAME,
+                status="in_progress",
+                confidence=0.0,
+                findings={},
+                reasoning=None,
+                timestamp=datetime.now(timezone.utc),
+            )
+        )
+        self._repository.update(application)
 
         user_message = (
             "Identity verification summary:\n"
@@ -152,22 +176,6 @@ class ComplianceCheckConsumer(AgentConsumer):
         confidence = float(parsed["confidence"])
         flags = parsed.get("flags", [])
         reasoning = parsed.get("reasoning", "")
-
-        details = {
-            "action": "compliance_checked",
-            "kycStatus": kyc_status,
-            "riskTier": risk_tier,
-            "confidence": confidence,
-            "flags": flags,
-            "reasoning": reasoning,
-        }
-
-        application = self._state_machine.transition(
-            application,
-            ApplicationStatus.compliance_check,
-            agent_name=AGENT_NAME,
-            details=details,
-        )
 
         application.agentResults.append(
             AgentResult(

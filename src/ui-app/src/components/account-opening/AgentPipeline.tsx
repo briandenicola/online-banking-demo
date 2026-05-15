@@ -20,9 +20,14 @@ export interface AgentStage {
 interface AgentPipelineProps {
   stages: AgentStage[];
   currentStageIndex?: number;
+  showDetails?: boolean;
 }
 
-const AgentPipeline: React.FC<AgentPipelineProps> = ({ stages, currentStageIndex }) => {
+const AgentPipeline: React.FC<AgentPipelineProps> = ({
+  stages,
+  currentStageIndex,
+  showDetails = true,
+}) => {
   const stagesData: Stage[] = stages.map((stage) => ({
     name: stage.name,
     status: stage.status,
@@ -38,7 +43,11 @@ const AgentPipeline: React.FC<AgentPipelineProps> = ({ stages, currentStageIndex
         <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
           Application Processing Pipeline
         </Typography>
-        <ApplicationStages stages={stagesData} currentStageIndex={currentStageIndex} showDetails />
+        <ApplicationStages
+          stages={stagesData}
+          currentStageIndex={currentStageIndex}
+          showDetails={showDetails}
+        />
       </CardContent>
     </Card>
   );

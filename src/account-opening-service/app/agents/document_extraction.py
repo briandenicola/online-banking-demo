@@ -64,11 +64,30 @@ class DocumentExtractionConsumer(AgentConsumer):
             endpoint=cus_endpoint.rstrip("/"),
             credential=self._credential,
         )
-        if model_deployments:
-            try:
-                self._client.update_defaults(model_deployments=model_deployments)
-            except Exception as exc:
-                logger.warning("Failed to set CUS model deployments", error=str(exc))
+        self._ensure_defaults(model_deployments)
+
+    def _ensure_defaults(self, model_deployments: dict[str, str] | None) -> None:
+        try:
+            self._client.get_defaults()
+            return
+        except Exception as exc:
+            # New CUS resources may not have defaults initialized yet.
+            if "DefaultsNotSet" not in str(exc):
+                logger.error("Failed to read CUS defaults", error=str(exc))
+                raise
+
+        try:
+            if model_deployments:
+                self._client.update_defaults({}, model_deployments=model_deployments)
+            else:
+                self._client.update_defaults({})
+            logger.info(
+                "Initialized CUS defaults",
+                model_deployments_configured=bool(model_deployments),
+            )
+        except Exception as exc:
+            logger.error("Failed to initialize CUS defaults", error=str(exc))
+            raise
 
     async def process_event(self, event_data: dict, idempotency_key: str | None = None) -> None:
         if event_data.get("eventType") != "document_uploaded":
@@ -82,6 +101,17 @@ class DocumentExtractionConsumer(AgentConsumer):
         application = self._repository.get(application_id)
         if not application:
             raise ValueError(f"Application {application_id} not found for document extraction")
+
+        if application.status not in {
+            ApplicationStatus.submitted,
+            ApplicationStatus.document_extraction,
+        }:
+            logger.info(
+                "Skipping document extraction for already-progressed application",
+                application_id=application_id,
+                status=application.status.value,
+            )
+            return
 
         blob_url = payload.get("blobUrl")
         if not blob_url:
@@ -129,10 +159,7 @@ class DocumentExtractionConsumer(AgentConsumer):
             "extracted": extracted,
         }
 
-        # Multiple document_uploaded events fire (photo_id, proof_of_address).
-        # Only transition on the first; subsequent documents are additive.
-        already_in_extraction = application.status == ApplicationStatus.document_extraction
-        if not already_in_extraction:
+        if application.status == ApplicationStatus.submitted:
             application = self._state_machine.transition(
                 application,
                 ApplicationStatus.document_extraction,
@@ -140,6 +167,16 @@ class DocumentExtractionConsumer(AgentConsumer):
                 details=details,
             )
 
+        application.agentResults.append(
+            AgentResult(
+                agentName=AGENT_NAME,
+                status="in_progress",
+                confidence=0.0,
+                findings={"documentType": document_type},
+                reasoning=None,
+                timestamp=datetime.now(timezone.utc),
+            )
+        )
         application.agentResults.append(
             AgentResult(
                 agentName=AGENT_NAME,
