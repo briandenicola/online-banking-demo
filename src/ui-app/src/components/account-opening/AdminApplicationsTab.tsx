@@ -73,11 +73,11 @@ const filterOptions: { label: string; value: FilterValue }[] = [
 const statusChip = (status: ApplicationStatus) => {
   switch (status) {
     case 'approved':
-      return <Chip label="accepted" color="success" size="small" aria-label="approved" />;
+      return <Chip label="approved" color="success" size="small" aria-label="approved" />;
     case 'rejected':
-      return <Chip label="declined" color="error" size="small" aria-label="rejected" />;
+      return <Chip label="rejected" color="error" size="small" aria-label="rejected" />;
     case 'pending_review':
-      return <Chip label="pending_review" color="warning" size="small" aria-label="pending_review" />;
+      return <Chip label="pending review" color="warning" size="small" aria-label="pending_review" />;
     default:
       return <Chip label={status} size="small" />;
   }
@@ -378,6 +378,26 @@ const ApiAdminApplicationsTab: React.FC = () => {
   React.useEffect(() => {
     fetchApplications();
   }, [fetchApplications]);
+
+  const shouldAutoRefresh = React.useMemo(() => {
+    if (process.env.NODE_ENV === 'test') return false;
+    return applications.some((application) =>
+      [
+        'submitted',
+        'document_extraction',
+        'identity_verification',
+        'compliance_check',
+      ].includes(application.status)
+    );
+  }, [applications]);
+
+  React.useEffect(() => {
+    if (!shouldAutoRefresh) return undefined;
+    const interval = setInterval(() => {
+      void fetchApplications();
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [fetchApplications, shouldAutoRefresh]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {

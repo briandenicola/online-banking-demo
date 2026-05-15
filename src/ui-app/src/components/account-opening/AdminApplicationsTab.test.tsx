@@ -137,7 +137,7 @@ describe('AdminApplicationsTab', () => {
 
       // Should have filter options for different statuses
       expect(
-        screen.getByText(/Pending Review/i) ||
+        screen.getByRole('tab', { name: /Pending Review/i }) ||
         screen.getByRole('button', { name: /pending/i })
       ).toBeTruthy();
     });
@@ -166,7 +166,7 @@ describe('AdminApplicationsTab', () => {
         expect(screen.getByText(/Jane/)).toBeInTheDocument();
       });
 
-      const pendingFilter = screen.getByText(/Pending Review/i) ||
+      const pendingFilter = screen.getByRole('tab', { name: /Pending Review/i }) ||
         screen.getByRole('button', { name: /pending/i });
       fireEvent.click(pendingFilter);
 
@@ -185,7 +185,7 @@ describe('AdminApplicationsTab', () => {
         expect(screen.getByText(/Jane/)).toBeInTheDocument();
       });
 
-      const approvedFilter = screen.getByText(/Approved/i);
+      const approvedFilter = screen.getByRole('tab', { name: /Approved/i });
       fireEvent.click(approvedFilter);
 
       await waitFor(() => {
@@ -200,7 +200,7 @@ describe('AdminApplicationsTab', () => {
         expect(screen.getByText(/Jane/)).toBeInTheDocument();
       });
 
-      const rejectedFilter = screen.getByText(/Rejected/i);
+      const rejectedFilter = screen.getByRole('tab', { name: /Rejected/i });
       fireEvent.click(rejectedFilter);
 
       await waitFor(() => {

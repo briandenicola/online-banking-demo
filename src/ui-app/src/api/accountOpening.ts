@@ -11,7 +11,8 @@ export type ApplicationStatus =
   | 'compliance_check'
   | 'pending_review'
   | 'approved'
-  | 'rejected';
+  | 'rejected'
+  | 'failed';
 
 export interface ApplicationFormData {
   firstName: string;
@@ -80,6 +81,16 @@ export interface AuditEntry {
   reasoning?: string;
 }
 
+export interface LastError {
+  stage: string;
+  code: string;
+  message: string;
+  retryable: boolean;
+  occurredAt: string;
+  attempt: number;
+  correlationId?: string;
+}
+
 export interface ApplicationResponse {
   id: string;
   status: ApplicationStatus;
@@ -96,6 +107,12 @@ export interface ApplicationResponse {
   documents?: DocumentUploadResponse[];
   auditTrail?: AuditEntry[];
   riskTier?: string;
+  lastError?: LastError;
+  stageAttempts?: Record<string, number>;
+  failedStage?: string;
+  customerOutcome?: string;
+  customerExplanation?: string;
+  customerExplanationGeneratedAt?: string;
 }
 
 export interface DocumentUploadResponse {
@@ -163,5 +180,18 @@ export const reviewApplication = async (
   review: ReviewDecisionRequest
 ): Promise<ApplicationResponse> => {
   const response = await apiClient.patch(`/account-opening/applications/${applicationId}/review`, review);
+  return response.data;
+};
+
+export interface ResubmitResponse {
+  applicationId: string;
+  resumedFromStage: string;
+  attempt: number;
+  status: ApplicationStatus;
+  message: string;
+}
+
+export const resubmitApplication = async (applicationId: string): Promise<ResubmitResponse> => {
+  const response = await apiClient.post(`/account-opening/applications/${applicationId}/resubmit`);
   return response.data;
 };

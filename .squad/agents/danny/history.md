@@ -1049,3 +1049,119 @@ Basher identified 4 critical corrections to the multi-phase Foundry private netw
 - All BYO PEs for AKS pod → PaaS access remain unchanged
 
 **Issue:** #141 — 3-phase migration plan (Phase A: enable managed VNet + outbound rules; Phase B: update capabilityHost deps + remove agents subnet; Phase C: cleanup)
+
+### 2026-05-XX — Account Opening State Machine + Customer Status (Issues #135 & #136)
+
+**Context:** Brian requested coordinated implementation plan for two related issues:
+- #135: Persist workflow stages with recoverable failed state and resubmit capability
+- #136: Customer-facing progress screen with AI-generated explanations
+
+**Key Architectural Decisions:**
+
+1. **Schema Location — Extend existing document (NOT new container)**
+   - Applied `cosmos-workflow-state` skill guidance: splitting workflow state into separate container causes cross-container reads, double-writes, and serialization drift
+   - Added `lastError`, `stageAttempts`, `failedStage`, `customerOutcome`, `customerExplanation` to existing `ApplicationResponse`
+   - Partition key unchanged: `/id` (application is its own partition)
+
+2. **Idempotency Key Shape: `{applicationId}:{stage}:{attempt}`**
+   - Three-layer dedup: Redis SET (24h TTL), Cosmos agentResults upsert-by-key, Foundry session ID prefix
+   - Resubmit increments attempt BEFORE publishing — ensures fresh key for manual retry, drops accidental redelivery
+
+3. **Failure Path Centralized in AgentConsumer Base Class**
+   - Each consumer declares `STAGE_NAME` and optionally overrides `_classify(exc)`
+   - Base class handles: idempotency check → process → mark processed → on exception: persist lastError → ACK message
+   - ACK on failure is intentional — don't redeliver; let `/resubmit` drive retry
+
+4. **Customer Explanation Generation — One-shot at Finalization**
+   - Generated in `ProvisioningConsumer` when workflow reaches terminal state
+   - Stored on document (`customerExplanation`, `customerExplanationGeneratedAt`)
+   - NOT regenerated on each view — UI reads stored text
+   - Prompt template in codebase (workflow-specific), not Cosmos prompt-templates container
+
+5. **Polling over SSE for Customer Status**
+   - 2-second intervals, stop on terminal status
+   - SSE adds complexity without proportional benefit for 10-30 second workflows
+   - ~30 RU per workflow (2 RU × 15 polls) is acceptable
+
+**Plan Deliverable:** `.squad/decisions/inbox/danny-135-136-plan.md` (awaiting Brian's sign-off before implementation)
+
+**Open Questions for Brian:**
+- Retry limit: unlimited OK, or cap at N attempts?
+- Customer explanation prompt template: review before deploy?
+- Failed state admin visibility: separate tab or mixed with pending_review?
+
+---
+
+## 2026-05-14: Coordinated Plan — Issues #135 + #136
+
+**Batch:** Coordinated account opening resubmit (#135) + customer status page (#136) implementation
+
+**Role:** Architect — produced danny-135-136-plan.md covering:
+- Schema decision (extend account-applications container, not split)
+- Idempotency strategy (Redis-backed deduplication, 24h TTL)
+- Error classification (base consumer class)
+- Resubmit endpoint contract (202/409, retry cap < 2)
+- Customer explanation generation (provisioning stage, one-shot)
+- Customer status page polling (2s interval until terminal)
+- E2E test scenarios (happy path runnable; 6 skipped pending backend)
+
+**Coordination:** Aligned with Basher (backend), Linus (frontend), Livingston (tests) for parallel implementation. Incorporated Brian's retry cap directive (1 retry = 2 total attempts) as external constraint.
+
+**Status:** ✅ Plan complete; implementation in progress (Basher committed, Linus committed, Livingston committed).
+
+**Branch:** squad/135-136-account-opening-state-machine
+
+---
+
+## 2026-05-14: CROSS-AGENT — Foundry Eval VNET Bug RCA Complete
+
+**Notification:** Basher completed RCA on Foundry eval empty-dataset bug affecting production (all 6 eval runs stuck in "Starting").
+
+**Root Cause:** Foundry eval backend **cannot upload inline datasets to private-endpoint-only blob storage**. When `publicNetworkAccess: "Disabled"` on storage account, Foundry's eval worker fails to materialize inline `file_content` datasets—the runs register but dataset uploads fail silently, leaving runs frozen in "Starting" state indefinitely.
+
+**Impact Chain:**
+- ✅ SDK (agent-framework-foundry 1.3.0) constructs valid JSONL and sends it (201 Created)
+- ❌ Foundry backend attempts upload to project blob storage, fails (no network path to private endpoint)
+- ❌ All 6 runs from 2026-05-14 stuck; storage container remains empty (0 blobs)
+
+**Decision:** Implement **Workaround #1 (explicit dataset upload)** — Upload JSONL using pod's managed identity + reference by URI. File Azure support ticket as long-term fix.
+
+**Your Next Action:** Plan azure-ai-projects migration (Issue #143) considering:
+1. This VNET issue affects all Foundry eval-based features in production
+2. Workaround requires patching SDK or forking `_evaluate_via_dataset()`
+3. Migration should include regression test for when Foundry bug is fixed (test both inline and URI paths)
+
+**Files:**
+- Full RCA: `.squad/decisions/decisions.md` (appended 2026-05-14T21:41:57Z)
+- Workdir summary: `.squad/agents/basher/eval-empty-dataset-summary.md`
+- Investigation log: `.squad/agents/basher/history.md` (2026-05-14 entries)
+- Skill update: `.squad/skills/foundry-eval-debugging/SKILL.md` (Rung -1: VNET empty dataset bug)
+
+---
+
+### 2026-05-14 — Basher Eval Workaround Test: FAILED (Scribe Relay)
+
+**From Basher (Agent: basher-eval-workaround-prototy):**
+
+Attempted **Workaround #1** from Basher's RCA: Use `project_client.datasets.upload_file()` + reference by `file_id` to sidestep Foundry's broken inline dataset upload.
+
+**Result:** ❌ **FAILED — same root cause.** The `datasets.upload_file()` method is just another API facade over Foundry's broken backend service. Returns HTTP 200 with a `file_id`, but the blob is **never written to PE-only storage**. Eval runs created but stuck in "Starting" status indefinitely (90s+ timeout observed).
+
+**Evidence:**
+- Storage verification queried blob container directly (`9fff2344-68ff-40ad-a0af-72f55a2463fe-azureml-blobstore`) — **0 blobs** present despite "successful" upload
+- Same VNET problem as inline dataset upload
+
+**Implication:** Whether client uses:
+- `FoundryEvals.evaluate()` with inline `EvalItem` (original bug), OR  
+- `project_client.datasets.upload_file()` + `file_id` reference (this workaround),
+
+Both paths hit the same broken Foundry backend that cannot write to private-endpoint-only storage.
+
+**Next Steps (Priority Order):**
+1. **File Azure support ticket** (this is a platform bug — all PE-only VNET deployments broken for Foundry evals)
+2. **Test Option 1 (HIGH RISK):** Direct blob write via Azure Storage SDK + `azureml://` URI format (unclear if Foundry accepts this)
+3. **Workaround Option 3:** Temporarily enable public blob access (security regression, not viable for production)
+
+**Full Details:** `.squad/decisions/decisions.md` (appended 2026-05-14T21:57:29Z)
+
+**For Issue #143 Planning:** This VNET issue will block any Foundry eval-based feature in production until Microsoft fixes it. Plan migration accordingly.

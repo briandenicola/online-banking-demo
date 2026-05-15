@@ -14,6 +14,46 @@ than the next to verify, and the actual cause is almost always lower than you th
 
 ## The Diagnostic Ladder
 
+### Rung -1 — VNET Empty Dataset Bug (ADDED 2026-05-14, eval-sandbox RCA)
+
+**Symptom:** All eval runs stuck in `status: "Starting"` with no `result_counts`
+or progress. Foundry REST API shows `tags.is_inline_dataset: "true"` and
+`tags.expected_inline_dataset_id` but the dataset has 0 rows.
+
+**Root Cause:** Foundry's eval backend **cannot upload datasets** to private-endpoint-only blob storage in VNET deployments. This affects:
+1. **Inline datasets** (`FoundryEvals.evaluate()` with `EvalItem` list) — eval backend can't write JSONL
+2. **`project_client.datasets.upload_file()`** — SDK call succeeds but **backend upload to blob storage fails silently**
+
+The eval worker lacks network access or RBAC to write JSONL to the project storage account.
+
+**Verification:**
+```bash
+# Check if project storage container is empty despite eval runs submitted
+kubectl exec -n <ns> deploy/<svc> -- bash -c '
+TOKEN=$(python3 -c "from azure.identity import DefaultAzureCredential; print(DefaultAzureCredential().get_token(\"https://storage.azure.com/.default\").token)")
+STORAGE_ACCOUNT=$(echo $FOUNDRY_PROJECT_ENDPOINT | grep -oP "(?<=accounts/)[^/]+")
+curl -H "Authorization: Bearer $TOKEN" -H "x-ms-version: 2021-08-06" \
+  "https://${STORAGE_ACCOUNT}.blob.core.windows.net/{workspace-guid}-azureml-blobstore?restype=container&comp=list"
+'
+# If <Blobs /> is empty but you've submitted evals, dataset upload is failing
+```
+
+**Affected Environments:**
+- ✅ Public Foundry (`publicNetworkAccess: "Enabled"`) — inline datasets work
+- ❌ VNET-only Foundry (private endpoints, public access disabled) — **broken**
+
+**Failed Workaround (tested 2026-05-14):**
+Using `project_client.datasets.upload_file()` + `file_id` reference does NOT work. The SDK call returns success, but the backend blob write still fails (same broken Foundry path). See `.squad/decisions/inbox/basher-eval-workaround-failed.md` for proof.
+
+**Next Steps:**
+1. Test direct blob write via `azure.storage.blob` + azureml URI (bypass Foundry dataset API entirely)
+2. File Azure support ticket (correct fix — requires Microsoft to grant Foundry workers PE access)
+3. Temporarily enable public blob access (security risk, defeats PE purpose)
+
+**Status:** Known Foundry service bug; no production workaround available. Support ticket pending.
+
+---
+
 ### Rung 0 — FoundryAgent constructor contract (ADDED 2026-05-14, #137 + #130)
 
 If you see `Missing required parameter: 'model'` from `responses.create()`, OR

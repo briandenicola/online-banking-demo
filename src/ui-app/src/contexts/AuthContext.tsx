@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import apiClient from '../api/client';
+import { ACCOUNT_OPENING_STORAGE_KEY } from '../api/accountOpening';
 
 interface User {
   id: string;
@@ -104,6 +105,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     localStorage.removeItem('auth_token');
     localStorage.removeItem('auth_email');
     localStorage.removeItem('auth_role');
+    localStorage.removeItem(ACCOUNT_OPENING_STORAGE_KEY);
   };
 
   const isAdmin = user?.role === 'admin';

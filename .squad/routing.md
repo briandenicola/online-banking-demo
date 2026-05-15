@@ -7,7 +7,7 @@ How to decide who handles what.
 | Work Type | Route To | Examples |
 |-----------|----------|----------|
 | Architecture, design, scope | Danny | Project structure, service boundaries, decisions |
-| .NET services, Python services, APIs, DB | Basher | Backend bugs, API quality, service patterns |
+| .NET services, Python services, APIs, DB | _(unassigned — Basher retired)_ | Backend bugs, API quality, service patterns |
 | React UI, components, frontend | Linus | UI quality, component structure, accessibility |
 | Code review | Danny | Review PRs, check quality, suggest improvements |
 | Testing, QA, coverage | Livingston | Write tests, find edge cases, verify fixes |

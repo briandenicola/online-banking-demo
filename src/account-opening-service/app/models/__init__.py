@@ -15,6 +15,7 @@ class ApplicationStatus(str, Enum):
     approved = "approved"
     rejected = "rejected"
     pending_review = "pending_review"
+    failed = "failed"
 
 
 class Address(BaseModel):
@@ -64,6 +65,16 @@ class AgentResult(BaseModel):
     }
 
 
+class LastError(BaseModel):
+    stage: str
+    code: str
+    message: str
+    retryable: bool
+    occurredAt: datetime
+    attempt: int
+    correlationId: str | None = None
+
+
 class AuditEntry(BaseModel):
     timestamp: datetime
     agent: str
@@ -89,3 +100,13 @@ class ApplicationResponse(BaseModel):
     documents: list[DocumentMetadata] = Field(default_factory=list)
     agentResults: list[AgentResult] = Field(default_factory=list)
     auditTrail: list[AuditEntry] = Field(default_factory=list)
+    
+    # Error tracking fields
+    lastError: LastError | None = None
+    stageAttempts: dict[str, int] = Field(default_factory=dict)
+    failedStage: str | None = None
+    
+    # Customer explanation fields
+    customerOutcome: str | None = None
+    customerExplanation: str | None = None
+    customerExplanationGeneratedAt: datetime | None = None

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Any
 
 import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -18,6 +18,7 @@ from app.dependencies import (
 )
 from app.events import publish_event
 from app.models import (
+    AgentResult,
     ApplicationCreate,
     ApplicationStatus,
     AuditEntry,
@@ -30,6 +31,110 @@ from app.state_machine import ApplicationStateMachine
 
 router = APIRouter(prefix="/api/account-opening", tags=["account-opening"])
 logger = structlog.get_logger("account-opening-routes")
+
+
+def _latest_agent_result_by_name(application, agent_name: str) -> AgentResult | None:
+    latest: AgentResult | None = None
+    for result in application.agentResults or []:
+        if result.agentName != agent_name:
+            continue
+        if latest is None:
+            latest = result
+            continue
+        if result.timestamp and (not latest.timestamp or result.timestamp >= latest.timestamp):
+            latest = result
+    return latest
+
+
+def _build_resubmit_event_payload(application, failed_stage: str) -> tuple[str, dict[str, Any]]:
+    if failed_stage == "document_extraction":
+        if not application.documents:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot retry document extraction without uploaded documents",
+            )
+        latest_doc = sorted(
+            application.documents,
+            key=lambda d: d.uploadedAt,
+            reverse=True,
+        )[0]
+        return (
+            "document_uploaded",
+            {
+                "applicationId": application.id,
+                "documentType": latest_doc.type,
+                "blobUrl": latest_doc.blobUrl,
+                "filename": latest_doc.filename,
+            },
+        )
+
+    if failed_stage == "identity_verification":
+        extraction = _latest_agent_result_by_name(application, "document-extraction")
+        if not extraction:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot retry identity verification without document extraction output",
+            )
+        findings = extraction.findings or {}
+        return (
+            "document_extracted",
+            {
+                "applicationId": application.id,
+                "documentType": findings.get("documentType"),
+                "extracted": findings.get("extracted") or {},
+            },
+        )
+
+    if failed_stage == "compliance_check":
+        identity = _latest_agent_result_by_name(application, "identity-verification")
+        extraction = _latest_agent_result_by_name(application, "document-extraction")
+        if not identity:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot retry compliance check without identity verification output",
+            )
+        findings = identity.findings or {}
+        extracted = (extraction.findings or {}).get("extracted") if extraction else {}
+        return (
+            "identity_verified",
+            {
+                "applicationId": application.id,
+                "verified": findings.get("verified"),
+                "confidence": identity.confidence,
+                "flags": findings.get("flags", []),
+                "reasoning": identity.reasoning,
+                "extracted": extracted or {},
+            },
+        )
+
+    if failed_stage == "provisioning":
+        compliance = _latest_agent_result_by_name(application, "compliance-check")
+        identity = _latest_agent_result_by_name(application, "identity-verification")
+        if not compliance:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot retry provisioning without compliance output",
+            )
+        compliance_findings = compliance.findings or {}
+        identity_findings = identity.findings or {}
+        return (
+            "compliance_checked",
+            {
+                "applicationId": application.id,
+                "verified": identity_findings.get("verified"),
+                "identityConfidence": identity.confidence if identity else None,
+                "identityFlags": identity_findings.get("flags", []),
+                "kycStatus": compliance_findings.get("kycStatus"),
+                "riskTier": compliance_findings.get("riskTier"),
+                "flags": compliance_findings.get("flags", []),
+                "reasoning": compliance.reasoning,
+            },
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=f"Unknown stage: {failed_stage}",
+    )
 
 
 @router.post("/applications", status_code=status.HTTP_201_CREATED)
@@ -226,3 +331,88 @@ async def get_audit_trail(
         )
 
     return application.auditTrail
+
+
+@router.post("/applications/{application_id}/resubmit", status_code=status.HTTP_202_ACCEPTED)
+async def resubmit_application(
+    application_id: str,
+    user: Annotated[UserClaims, Depends(require_auth)],
+    repository: ApplicationRepository = Depends(get_repository),
+    redis_client=Depends(get_redis_client),
+):
+    """
+    Resubmit a failed application to retry from the failed stage.
+    Enforces retry cap: max 2 attempts per stage (initial + 1 retry).
+    """
+    application = repository.get(application_id)
+    if not application:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
+
+    owner = repository.get_owner(application_id)
+    if user.role.lower() != "admin" and owner != user.user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    # Validate application status
+    if application.status != ApplicationStatus.failed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Application is not in failed state",
+        )
+
+    # Validate lastError exists and is retryable
+    if not application.lastError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No error information available for retry",
+        )
+
+    if not application.lastError.retryable:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This error is not retryable. Please contact support.",
+        )
+
+    # Check retry cap (max 2 attempts per stage: initial + 1 retry)
+    failed_stage = application.failedStage or application.lastError.stage
+    current_attempts = application.stageAttempts.get(failed_stage, 0)
+    
+    if current_attempts >= 2:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "retry_cap_exceeded",
+                "message": "Maximum retry attempts exceeded. Please contact support for assistance.",
+            },
+        )
+
+    # Clear failure and resume from failed stage
+    try:
+        application = repository.clear_stage_failure_for_retry(application_id, failed_stage)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    if not application:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update application",
+        )
+
+    event_type, replay_data = _build_resubmit_event_payload(application, failed_stage)
+
+    # Re-publish the event to trigger stage processing
+    await publish_event(
+        redis_client,
+        event_type=event_type,
+        data={**replay_data, "resubmit": True, "attempt": current_attempts + 1},
+    )
+
+    return {
+        "applicationId": application_id,
+        "resumedFromStage": failed_stage,
+        "attempt": current_attempts + 1,
+        "status": application.status.value,
+        "message": f"Application resumed from {failed_stage} stage.",
+    }

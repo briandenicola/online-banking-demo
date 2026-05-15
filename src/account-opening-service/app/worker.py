@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -41,6 +42,13 @@ def _configure_logging() -> None:
     )
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    for noisy_logger in (
+        "azure",
+        "azure.identity",
+        "azure.cosmos",
+        "azure.core.pipeline.policies.http_logging_policy",
+    ):
+        logging.getLogger(noisy_logger).setLevel(logging.WARNING)
 
 
 async def main() -> int:
@@ -61,6 +69,25 @@ async def main() -> int:
     foundry_endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT")
     foundry_model = os.getenv("FOUNDRY_MODEL", "gpt-5.4-mini")
     cus_endpoint = os.getenv("CUS_ENDPOINT")
+    cus_model_deployments = None
+    cus_model_deployments_json = os.getenv("CUS_MODEL_DEPLOYMENTS_JSON", "").strip()
+    if cus_model_deployments_json:
+        try:
+            parsed_deployments = json.loads(cus_model_deployments_json)
+        except json.JSONDecodeError as exc:
+            logger.error("CUS_MODEL_DEPLOYMENTS_JSON must be valid JSON", error=str(exc))
+            return 1
+        if not isinstance(parsed_deployments, dict) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in parsed_deployments.items()
+        ):
+            logger.error("CUS_MODEL_DEPLOYMENTS_JSON must be a JSON object of string:string")
+            return 1
+        cus_model_deployments = parsed_deployments
+        logger.info(
+            "Loaded CUS model deployment mapping",
+            count=len(cus_model_deployments),
+        )
 
     if not foundry_endpoint:
         logger.error("FOUNDRY_PROJECT_ENDPOINT is not set")
@@ -145,6 +172,7 @@ async def main() -> int:
             consumer_name=f"{worker_id}-document-extraction",
             cus_endpoint=cus_endpoint,
             blob_service_client=blob_service_client,
+            model_deployments=cus_model_deployments,
         ),
         IdentityVerificationConsumer(
             redis_client,

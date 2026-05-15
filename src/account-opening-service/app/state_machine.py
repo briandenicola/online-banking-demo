@@ -16,6 +16,12 @@ VALID_TRANSITIONS: dict[ApplicationStatus, set[ApplicationStatus]] = {
         ApplicationStatus.pending_review,
     },
     ApplicationStatus.pending_review: {ApplicationStatus.approved, ApplicationStatus.rejected},
+    # failed can resume back to any processing stage
+    ApplicationStatus.failed: {
+        ApplicationStatus.document_extraction,
+        ApplicationStatus.identity_verification,
+        ApplicationStatus.compliance_check,
+    },
 }
 
 

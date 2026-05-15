@@ -929,3 +929,21 @@ var query = new QueryDefinition(
 **Decision:** `.squad/decisions/inbox/turk-admin-users-500.md`
 
 **Key Pattern:** Same as prompt-eval-service crash (2026-05-12): ORDER BY on small tables → remove it, sort in-memory if needed. Reserve composite indexes for high-volume user-scoped queries.
+
+---
+
+### 2026-05-14 — Basher Eval Workaround Test: FAILED (Scribe Relay)
+
+**From Basher (Agent: basher-eval-workaround-prototy):**
+
+Attempted `project_client.datasets.upload_file()` workaround for Foundry PE-only storage bug. API returns HTTP 200 + `file_id`, but **zero blobs written to storage**. Eval runs stuck in "Starting" status indefinitely.
+
+**Root Cause Confirmed:** Whether client uses:
+- Inline dataset upload (original bug), OR  
+- `project_client.datasets.upload_file()` + `file_id` reference (this workaround),
+
+Both hit the same broken Foundry backend service that cannot access private-endpoint-only blob storage.
+
+**Next:** Test direct blob write + `azureml://` URI (Option 1, HIGH RISK) OR escalate to Microsoft support.
+
+**Full RCA:** `.squad/decisions/decisions.md` (appended 2026-05-14T21:57:29Z)

@@ -20,7 +20,7 @@ class TestConsumerGroupCreation:
         from app.consumer import AgentConsumer
 
         class TestConsumer(AgentConsumer):
-            async def process_event(self, event_data: dict) -> None:
+            async def process_event(self, event_data: dict, idempotency_key=None) -> None:
                 pass
 
         consumer = TestConsumer(
@@ -43,7 +43,7 @@ class TestConsumerGroupCreation:
         from app.consumer import AgentConsumer
 
         class TestConsumer(AgentConsumer):
-            async def process_event(self, event_data: dict) -> None:
+            async def process_event(self, event_data: dict, idempotency_key=None) -> None:
                 pass
 
         # Simulate "BUSYGROUP Consumer Group name already exists"
@@ -73,7 +73,7 @@ class TestEventProcessing:
         processed_events = []
 
         class TestConsumer(AgentConsumer):
-            async def process_event(self, event_data: dict) -> None:
+            async def process_event(self, event_data: dict, idempotency_key=None) -> None:
                 processed_events.append(event_data)
 
         # Simulate xreadgroup returning one message
@@ -110,7 +110,7 @@ class TestAcknowledgement:
         from app.consumer import AgentConsumer
 
         class TestConsumer(AgentConsumer):
-            async def process_event(self, event_data: dict) -> None:
+            async def process_event(self, event_data: dict, idempotency_key=None) -> None:
                 pass  # Success
 
         mock_redis.xreadgroup.return_value = [
@@ -133,6 +133,85 @@ class TestAcknowledgement:
 
 
 @pytest.mark.asyncio
+class TestEventTypeFiltering:
+    """Regression: events outside EVENT_TYPES must not poison idempotency keys.
+
+    Bug: when an agent's process_event() returned early on a non-matching
+    eventType, the base consumer still derived and marked the per-stage
+    idempotency key as 'processed'. The next (correct) event for that stage
+    then matched the same key and was silently skipped, leaving applications
+    stuck at 'submitted' with empty agentResults.
+    """
+
+    async def test_unrelated_event_is_acked_without_processing(self, mock_redis):
+        from app.consumer import AgentConsumer
+
+        process_calls: list[dict] = []
+
+        class FilteredConsumer(AgentConsumer):
+            STAGE_NAME = "document_extraction"
+            EVENT_TYPES = frozenset({"document_uploaded"})
+
+            async def process_event(self, event_data: dict, idempotency_key=None) -> None:
+                process_calls.append(event_data)
+
+        mock_redis.xreadgroup.return_value = [
+            (
+                b"account-opening-events",
+                [(b"1-0", {b"data": b'{"applicationId": "app-1"}', b"eventType": b"application_submitted"})],
+            )
+        ]
+
+        consumer = FilteredConsumer(
+            redis=mock_redis,
+            stream="account-opening-events",
+            group="document-extraction-group",
+            consumer_name="c1",
+        )
+        await consumer.setup()
+        await consumer.process_one()
+
+        # Event must be acked so it doesn't redeliver forever...
+        mock_redis.xack.assert_called_once()
+        # ...but process_event must NOT run...
+        assert process_calls == []
+        # ...and idempotency must NOT be touched (no sadd/sismember).
+        mock_redis.sadd.assert_not_called()
+        mock_redis.sismember.assert_not_called()
+
+    async def test_matching_event_still_processes(self, mock_redis):
+        from app.consumer import AgentConsumer
+
+        process_calls: list[dict] = []
+
+        class FilteredConsumer(AgentConsumer):
+            STAGE_NAME = "document_extraction"
+            EVENT_TYPES = frozenset({"document_uploaded"})
+
+            async def process_event(self, event_data: dict, idempotency_key=None) -> None:
+                process_calls.append(event_data)
+
+        mock_redis.xreadgroup.return_value = [
+            (
+                b"account-opening-events",
+                [(b"2-0", {b"data": b'{"applicationId": "app-2"}', b"eventType": b"document_uploaded"})],
+            )
+        ]
+
+        consumer = FilteredConsumer(
+            redis=mock_redis,
+            stream="account-opening-events",
+            group="document-extraction-group",
+            consumer_name="c1",
+        )
+        await consumer.setup()
+        await consumer.process_one()
+
+        assert len(process_calls) == 1
+        mock_redis.xack.assert_called_once()
+
+
+@pytest.mark.asyncio
 class TestErrorHandling:
     """Verify resilience when process_event fails."""
 
@@ -141,7 +220,7 @@ class TestErrorHandling:
         from app.consumer import AgentConsumer
 
         class FailingConsumer(AgentConsumer):
-            async def process_event(self, event_data: dict) -> None:
+            async def process_event(self, event_data: dict, idempotency_key=None) -> None:
                 raise RuntimeError("Agent processing failed")
 
         mock_redis.xreadgroup.return_value = [
@@ -163,11 +242,16 @@ class TestErrorHandling:
         await consumer.process_one()
 
     async def test_no_ack_on_process_event_failure(self, mock_redis):
-        """If process_event fails, the message must NOT be ACKed (for retry)."""
+        """On failure the consumer ACKs anyway so the resubmit endpoint drives
+        retry — see consumer.py:194 ('Always ACK — let resubmit drive retry').
+        Originally this asserted no-ack, but the resubmit-driven retry model
+        was adopted in #135/#136. This test now pins the current behavior so
+        future changes can't silently regress it.
+        """
         from app.consumer import AgentConsumer
 
         class FailingConsumer(AgentConsumer):
-            async def process_event(self, event_data: dict) -> None:
+            async def process_event(self, event_data: dict, idempotency_key=None) -> None:
                 raise RuntimeError("Agent processing failed")
 
         mock_redis.xreadgroup.return_value = [
@@ -186,5 +270,6 @@ class TestErrorHandling:
         await consumer.setup()
         await consumer.process_one()
 
-        # Message should NOT be acknowledged since processing failed
-        mock_redis.xack.assert_not_called()
+        # Message IS acked even on failure; retry is driven by the
+        # resubmit endpoint, not stream redelivery.
+        mock_redis.xack.assert_called_once()

@@ -29,6 +29,13 @@ def configure_logging() -> structlog.stdlib.BoundLogger:
     )
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    for noisy_logger in (
+        "azure",
+        "azure.identity",
+        "azure.cosmos",
+        "azure.core.pipeline.policies.http_logging_policy",
+    ):
+        logging.getLogger(noisy_logger).setLevel(logging.WARNING)
     return structlog.get_logger("account-opening-service")
 
 

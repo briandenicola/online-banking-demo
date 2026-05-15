@@ -7888,3 +7888,141 @@ Current inventory:
 - ⏸️ `transaction-service` — N/A (no direct AI calls, uses Redis stream)
 - ⏸️ `transfer-service` — N/A (no AI calls)
 - ⏸️ `user-service` — N/A (no AI calls)
+
+---
+
+## Batch Decision: Issues #135 + #136 — Account Opening Resubmit + Customer Status Page
+
+**Status:** ✅ Coordinated Plan + Implementation Complete  
+**Date:** 2026-05-14  
+**Authors:** Danny (Plan), Basher (Backend), Linus (Frontend), Livingston (Tests)  
+**Branch:** `squad/135-136-account-opening-state-machine`  
+**Related Decisions:** Brian's retry cap directive (2026-05-14T20:21:00Z)
+
+### Context
+
+Two tightly coupled issues requiring coordinated backend (Python FastAPI), frontend (React), and E2E test implementation:
+- **#135:** Account opening resubmit workflow — allow customers to retry failed applications with error classification, idempotency, and retry cap enforcement
+- **#136:** Customer status page — show application status with polling, AI-generated customer explanation, and retry button UX
+
+### Decision Framework (Danny's Plan)
+
+#### 1. Schema Location — Extend account-applications Container
+
+**Decision:** Extend existing `account-applications` Cosmos container with new fields. Do NOT create separate `account-opening-runs` container.
+
+**Rationale:**
+- Avoid cross-container reads for every UI poll (performance + consistency)
+- Existing `ApplicationResponse` already holds workflow state (formData, agentResults, auditTrail, documents)
+- Single point read on `container.read_item(item=id, partition_key=id)` keeps data normalized
+- Partition key unchanged: `/id` (application's own ID)
+
+#### 2. Extended ApplicationResponse Schema
+
+**New fields for #135 (resubmit):**
+```
+lastError: LastError | None
+  - stage: str (e.g., "identity_verification")
+  - code: str (timeout, auth_error, validation_error, connection_error, unknown_error)
+  - message: str (human-safe summary)
+  - retryable: bool (false → UI hides Retry button)
+  - occurredAt: datetime
+  - attempt: int
+  - correlationId: str | None
+
+stageAttempts: dict[str, int]  # stage → attempt count
+failedStage: str | None  # mirror of lastError.stage for query filters
+```
+
+**New fields for #136 (customer explanation):**
+```
+customerOutcome: str | None  # "approved" | "declined" | "needs_review"
+customerExplanation: str | None  # AI-generated 2-3 sentence explanation
+customerExplanationGeneratedAt: datetime | None
+```
+
+**ApplicationStatus enum:** Added `failed = "failed"` state (recoverable terminal, distinct from `rejected`)
+
+#### 3. Consumer Idempotency Layer
+
+**Pattern:** Redis-backed deduplication with 24h TTL
+- Idempotency key: `{applicationId}:{stage}:{attempt}`
+- Stored in Redis SET with EXPIRE 86400
+- Checked before processing, skipped if duplicate
+
+#### 4. Error Classification
+
+**Location:** Base consumer `_classify_error()` → `LastError`
+
+**Retryable:** timeout, connection_error, auth_error (transient)  
+**Not retryable:** validation_error, unknown_error (systemic)
+
+#### 5. Resubmit Endpoint
+
+**Endpoint:** `POST /api/account-opening/applications/{id}/resubmit`  
+**Response:** 202 Accepted or 409 Conflict (retry cap exceeded)  
+**Pre-conditions:** status="failed", lastError.retryable=true, stageAttempts[failedStage] < 2
+
+#### 6. Customer Explanation Generation
+
+**Timing:** One-shot at workflow finalization after provisioning  
+**Non-blocking:** Failure doesn't fail provisioning
+
+#### 7. Customer Status Page
+
+**Polling:** 2s until terminal status  
+**Retry button:** Visible when status='failed' AND retryable=true AND stageAttempts<2  
+**Component:** Shared `ApplicationStages.tsx` eliminates 68% duplication with admin view
+
+#### 8. E2E Test Suite
+
+**Happy path:** ✅ Runnable  
+**Failure+retry, retry cap, validation:** ⏸️ Skipped (test.skip) pending backend implementation
+
+### External Constraint: Retry Cap = 1 (Brian's Directive)
+
+**Decision:** Maximum **1 retry** (2 total attempts: initial + 1 retry)
+
+**Enforcement:**
+- Backend: `stageAttempts[stage] < 2` on /resubmit
+- UI: Retry button hidden when `stageAttempts >= 2`
+
+### Implementation Summary
+
+| Component | Owner | Status | Commits |
+|-----------|-------|--------|---------|
+| Backend | Basher | ✅ Complete | 345aa72, 926e0d4 |
+| Frontend | Linus | ✅ Complete | 743d627–8e60df4 |
+| E2E Tests | Livingston | ✅ Complete | 464f7c5, a15498f |
+
+---
+
+## Decision: Retry Cap Enforcement — Maximum 1 Retry (#135)
+
+**Status:** ✅ Implemented  
+**Date:** 2026-05-14T20:21:00Z  
+**Author:** Brian Denicola  
+**Related:** #135 (Account Opening Resubmit)
+
+### Directive
+
+Account opening resubmits are capped at **1 retry**. After the single manual resubmit attempt fails, the application is locked from further user-initiated retries and requires admin intervention.
+
+### Rationale
+
+- **Blast radius:** Bounds repeated failed Foundry/Cosmos calls
+- **Ops escalation:** Clear escalation point for manual intervention
+- **UX clarity:** "You've exhausted auto-retry; please contact support"
+
+### Enforcement
+
+**Backend:**
+- Pre-condition: `stageAttempts[failedStage] < 2`
+- Response on cap: 409 Conflict with `error: "retry_cap_exceeded"`
+- Sets `lastError.retryable = false` at cap
+
+**Frontend:**
+- Retry button: `stageAttempts?.[failedStage] ?? 0 < 2`
+- On 409: hide Retry, show "Contact support"
+
+**Admin override:** Out of scope; manual API override available if needed

@@ -40,7 +40,8 @@ Manages the complete account opening lifecycle: application submission, identity
 |----------|-------------|----------|
 | `FOUNDRY_PROJECT_ENDPOINT` | Azure AI Foundry project endpoint | Yes |
 | `FOUNDRY_MODEL` | Azure AI model name | Yes |
-| `CUS_ENDPOINT` | Custom understanding service endpoint | No |
+| `CUS_ENDPOINT` | Custom understanding service endpoint | Yes |
+| `CUS_MODEL_DEPLOYMENTS_JSON` | Optional JSON map for CUS model deployment defaults (e.g. `{"gpt-4.1":"gpt-5.4-mini"}`) | No |
 | `AGENT_ID_SIDECAR_URL` | Entra agent identity sidecar URL | Yes |
 | `AGENT_ID_AGENT_IDENTITY` | Agent identity for authentication | Yes |
 | `COSMOS_DB_ENDPOINT` | Cosmos DB endpoint | Yes |

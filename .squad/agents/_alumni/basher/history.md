@@ -2042,3 +2042,338 @@ This ensures:
 3. Test eval endpoint — if evals now succeed, confirms 1.3.0 fix
 4. If still fails, update Rung 11 with correlation_id from new logs
 
+---
+
+### 2026-05-14 — Account Opening Error Handling and Customer Explanations (#135 + #136)
+
+**Context:** Implemented backend state machine improvements for account opening workflow recovery and customer communication.
+
+**What was implemented:**
+
+1. **Error Handling (#135):**
+   - Extended `ApplicationResponse` model with error tracking fields: `lastError`, `stageAttempts`, `failedStage`
+   - Added `failed` status to `ApplicationStatus` enum — recoverable terminal state
+   - Created `LastError` model with classification (code, message, retryable, attempt)
+   - Repository methods: `record_stage_failure`, `clear_stage_failure_for_retry`
+   - Consumer base class now includes:
+     - Idempotency via Redis SET: `{applicationId}:{stage}:{attempt}` with 24h TTL
+     - Error classification logic mapping exceptions → error codes (timeout, auth_error, validation_error, etc.)
+     - Automatic failure recording + ACK (no redelivery — manual retry only)
+   - All agent consumers updated with `STAGE_NAME` class attribute
+   - State machine allows `failed → stage` transitions for resubmit
+   - New endpoint: `POST /applications/{id}/resubmit` with retry cap enforcement (max 2 attempts per stage)
+
+2. **Customer Explanations (#136):**
+   - Added customer-facing fields: `customerOutcome`, `customerExplanation`, `customerExplanationGeneratedAt`
+   - Repository method: `set_customer_explanation`
+   - Provisioning agent generates friendly 2-3 sentence explanations using Foundry
+   - One-shot generation at terminal state (approved/declined/needs_review)
+   - Non-blocking — failure doesn't fail provisioning
+
+**Key Patterns:**
+
+1. **Idempotency Key Shape:** `{applicationId}:{stage}:{attempt}`
+   - Stored in Redis SET with 24h TTL
+   - Checked before processing each event
+   - Prevents duplicate Foundry/Cosmos calls on redelivery
+
+2. **Error Classification:** Base class `_classify_error()` maps exceptions to structured errors with retryability
+   - Timeout/connection → retryable
+   - Auth/validation → non-retryable
+   - Default: unknown_error, retryable=true
+
+3. **Retry Cap Enforcement:** Max 2 attempts per stage (initial + 1 manual resubmit)
+   - Enforced in `/resubmit` endpoint
+   - Returns 409 Conflict with `{error: "retry_cap_exceeded", message: "..."}` when exceeded
+
+4. **Resubmit Flow:**
+   - Clears `lastError`, sets status back to stage
+   - Re-publishes upstream event (e.g., `document_uploaded` for `document_extraction`)
+   - Worker processes as new attempt with incremented idempotency key
+
+**Testing:**
+- Build verification: ✅ All Python files compile without errors
+- Integration tests: Deferred to Livingston (e2e test suite)
+
+**Coordination:**
+- Linus working on customer UI screen — GET endpoint auto-serializes new fields
+- Livingston writing e2e tests — resubmit endpoint contract documented
+- All backend changes are backward-compatible (new fields optional)
+
+**Commit:** 345aa72 on branch `squad/135-136-account-opening-state-machine`
+
+**Decision summary:** `.squad/decisions/inbox/basher-135-136-implementation.md`
+
+
+---
+
+### 2026-05-14 — Account Opening Error Handling and Customer Explanations (#135 + #136)
+
+**Context:** Implemented backend state machine improvements for account opening workflow recovery and customer communication.
+
+**What was implemented:**
+
+1. **Error Handling (#135):**
+   - Extended `ApplicationResponse` model with error tracking fields: `lastError`, `stageAttempts`, `failedStage`
+   - Added `failed` status to `ApplicationStatus` enum — recoverable terminal state
+   - Created `LastError` model with classification (code, message, retryable, attempt)
+   - Repository methods: `record_stage_failure`, `clear_stage_failure_for_retry`
+   - Consumer base class now includes:
+     - Idempotency via Redis SET: `{applicationId}:{stage}:{attempt}` with 24h TTL
+     - Error classification logic mapping exceptions → error codes (timeout, auth_error, validation_error, etc.)
+     - Automatic failure recording + ACK (no redelivery — manual retry only)
+   - All agent consumers updated with `STAGE_NAME` class attribute
+   - State machine allows `failed → stage` transitions for resubmit
+   - New endpoint: `POST /applications/{id}/resubmit` with retry cap enforcement (max 2 attempts per stage)
+
+2. **Customer Explanations (#136):**
+   - Added customer-facing fields: `customerOutcome`, `customerExplanation`, `customerExplanationGeneratedAt`
+   - Repository method: `set_customer_explanation`
+   - Provisioning agent generates friendly 2-3 sentence explanations using Foundry
+   - One-shot generation at terminal state (approved/declined/needs_review)
+   - Non-blocking — failure doesn't fail provisioning
+
+**Key Patterns:**
+
+1. **Idempotency Key Shape:** `{applicationId}:{stage}:{attempt}`
+   - Stored in Redis SET with 24h TTL
+   - Checked before processing each event
+   - Prevents duplicate Foundry/Cosmos calls on redelivery
+
+2. **Error Classification:** Base class `_classify_error()` maps exceptions to structured errors with retryability
+   - Timeout/connection → retryable
+   - Auth/validation → non-retryable
+   - Default: unknown_error, retryable=true
+
+3. **Retry Cap Enforcement:** Max 2 attempts per stage (initial + 1 manual resubmit)
+   - Enforced in `/resubmit` endpoint
+   - Returns 409 Conflict with `{error: "retry_cap_exceeded", message: "..."}` when exceeded
+
+4. **Resubmit Flow:**
+   - Clears `lastError`, sets status back to stage
+   - Re-publishes upstream event (e.g., `document_uploaded` for `document_extraction`)
+   - Worker processes as new attempt with incremented idempotency key
+
+**Testing:**
+- Build verification: ✅ All Python files compile without errors
+- Integration tests: Deferred to Livingston (e2e test suite)
+
+**Coordination:**
+- Linus working on customer UI screen — GET endpoint auto-serializes new fields
+- Livingston writing e2e tests — resubmit endpoint contract documented
+- All backend changes are backward-compatible (new fields optional)
+
+**Commit:** 345aa72 on branch `squad/135-136-account-opening-state-machine`
+
+**Decision summary:** `.squad/decisions/inbox/basher-135-136-implementation.md`
+
+---
+
+## 2026-05-14: Backend Implementation — Issues #135 + #136
+
+**Batch:** Coordinated account opening resubmit (#135) + customer status page (#136) implementation
+
+**Role:** Backend Dev — implemented Python FastAPI backend for state machine:
+
+**Schema Extensions:**
+- LastError model (stage, code, message, retryable, occurredAt, attempt, correlationId)
+- ApplicationResponse extended (lastError, stageAttempts, failedStage, customerOutcome, customerExplanation)
+- ApplicationStatus enum (added `failed` state)
+
+**Repository Methods:**
+- record_stage_failure() — persist error, increment stageAttempts
+- clear_stage_failure_for_retry() — clear error, reset status to stage
+- set_customer_explanation() — store AI explanation
+
+**Consumer Idempotency Layer:**
+- _derive_idempotency_key(app_id, attempt) → {applicationId}:{stage}:{attempt}
+- _is_already_processed(key) — Redis SET check, 24h TTL
+- _mark_processed(key) — Redis SET with SADD + EXPIRE
+
+**Error Classification:**
+- _classify_error(exc, stage, attempt) → LastError
+- Maps exceptions: timeout, auth_error, validation_error, connection_error, unknown_error
+- Sets retryable flag (true for transient, false for systemic)
+
+**Resubmit Endpoint:**
+- POST /api/account-opening/applications/{id}/resubmit
+- Pre-conditions: status="failed", retryable=true, stageAttempts[failedStage]<2
+- Response: 202 Accepted (resumedFromStage, attempt, status, message)
+- Error: 409 Conflict (retry_cap_exceeded)
+
+**Customer Explanation Generation:**
+- _generate_customer_explanation() in provisioning stage
+- Maps decision → customerOutcome (approved/declined/needs_review)
+- Foundry agent generates 2-3 sentence friendly explanation
+- One-shot at finalization, non-blocking
+
+**Status:** ✅ Complete; build verified (python -m py_compile)  
+**Commits:** 345aa72, 926e0d4  
+**Branch:** squad/135-136-account-opening-state-machine  
+**Dependencies:** ✅ Unblocked Linus (frontend) and Livingston (tests)
+
+## 2026-05-14 — Foundry Eval Empty Dataset Bug (VNET Private Endpoint Issue)
+
+### Problem
+All Foundry eval runs stuck in `status: "Starting"` with `result_counts.total: 0`. REST API showed every run from today had an `expected_inline_dataset_id` registered but Foundry treated them as 0-row datasets.
+
+### Investigation
+1. **SDK produces valid data** — Verified `agent-framework-foundry` constructs proper JSONL with non-empty `query`, `response`, `query_messages`, `response_messages`
+2. **HTTP POST succeeds** — Foundry returns 201 Created for both eval definition and run creation
+3. **Storage account empty** — Project blob container (`9fff2344-68ff-40ad-a0af-72f55a2463fe-azureml-blobstore`) has 0 blobs; inline datasets never materialized
+4. **VNET-only deployment** — All PaaS services (Foundry, storage) use private endpoints with public access disabled
+
+### Root Cause
+**Foundry's eval backend fails to process inline datasets (`"source": {"type": "file_content"}`) in VNET-enabled private endpoint deployments.**
+
+The SDK sends the JSONL content in the POST body with `data_source.source.type: "file_content"`. Foundry accepts the request but then must:
+1. Write JSONL to project blob storage
+2. Register dataset in catalog
+3. Start eval run
+
+**Step 1 fails silently** — likely because:
+- Foundry eval worker lacks network path to private endpoint
+- Missing RBAC on Foundry service principal for storage account
+- Inline upload code not aware of private DNS
+
+### Evidence
+```bash
+# All recent runs stuck in "Starting"
+$ curl -H "Authorization: Bearer $TOKEN" \
+  "$FOUNDRY_PROJECT_ENDPOINT/evaluations/runs?api-version=2025-05-15-preview"
+{
+  "value": [
+    {
+      "id": "evalrun_6dd19ece794c42d5a5b06767f26a5edc",
+      "displayName": "debug-test Run",
+      "status": "Starting",  # <-- Never progresses
+      "tags": {
+        "expected_inline_dataset_id": "azureai://.../eval-data-2026-05-14_213159_b5197_UTC/versions/1",
+        "is_inline_dataset": "true"
+      },
+      "outputs": {
+        "evaluationResultId": ""  # <-- Empty, no processing
+      }
+    }
+  ]
+}
+
+# Storage container empty despite dataset registration
+$ az storage blob list \
+  --account-name a676b825d5b2a5d641e032sa \
+  --container-name 9fff2344-68ff-40ad-a0af-72f55a2463fe-azureml-blobstore \
+  --auth-mode login
+[]  # <-- 0 blobs
+```
+
+### Workaround
+**Option 1:** Use explicit dataset upload (NOT YET IMPLEMENTED)
+- Upload JSONL to blob storage using `azure-storage-blob` with managed identity
+- Register dataset via Foundry data API
+- Reference by URI: `{"type": "uri_file", "uri": "azureai://..."}`
+
+**Option 2:** Enable public blob access temporarily for eval runs (security risk)
+
+**Option 3:** File Microsoft support ticket — this is a Foundry service bug
+
+### Decision
+Documented as known limitation. Production ai-service evals will remain broken until Microsoft fixes the Foundry VNET inline-dataset bug OR we implement workaround #1.
+
+### Related
+- `.squad/skills/foundry-eval-debugging/SKILL.md` — Add VNET empty-dataset failure mode
+- Decision: `.squad/decisions/inbox/basher-eval-empty-dataset-rca.md`
+
+
+---
+
+## 2026-05-14 — Foundry Eval Workaround Test: FAILED
+
+**Context:** Testing hypothesis that uploading datasets via `azure-ai-projects` SDK (using our workload identity PE access) would sidestep Foundry's broken inline dataset upload for VNET deployments.
+
+**Hypothesis:**
+```
+Instead of FoundryEvals.evaluate() with inline EvalItem → upload JSONL ourselves 
+via project_client.datasets.upload_file() → reference by file_id in evals.runs.create()
+```
+
+**Expected:** Dataset upload succeeds (proves PE write works), eval run completes (proves Foundry can read our uploaded blob).
+
+**Actual:** ❌ **WORKAROUND FAILED**
+
+### Evidence
+
+1. **Dataset upload API call succeeded:**
+   ```
+   dataset = project_client.datasets.upload_file(
+       name="eval-workaround-test-20260514_215223",
+       version="1",
+       file_path="/app/eval_workaround_dataset.jsonl",
+   )
+   # ✅ Returns: azureai://.../data/eval-workaround-test-20260514_215223/versions/1
+   ```
+
+2. **But storage account remained empty:**
+   ```bash
+   $ curl <storage-account>/...?restype=container&comp=list
+   <Blobs />  <!-- ZERO blobs despite "successful" upload -->
+   ```
+
+3. **Eval run stuck in "Starting" forever:**
+   ```
+   [  0s] Status: Starting  Total: 0
+   [  7s] Status: Starting  Total: 0
+   [ 89s] Status: Starting  Total: 0
+   ⏱️  TIMEOUT after 90s
+   ```
+
+### Root Cause
+
+**`project_client.datasets.upload_file()` is NOT a direct blob write** — it's another API facade over Foundry's backend dataset service. The SDK accepts the file, returns a `file_id`, but the actual blob write happens server-side **in the same Foundry backend that has the VNET/PE problem**.
+
+```
+Client Pod                      Foundry Dataset API           Storage (PE-only)
+    |                                  |                            |
+    |-- datasets.upload_file() ------> |                            |
+    |   (sends file bytes)             |                            |
+    |                                  |                            |
+    |<-- 200 OK with file_id --------  |                            |
+    |                                  |                            |
+    |                                  |-- Upload blob ----------X  |
+    |                                  |   (FAILS: no PE access)    |
+    |                                  |                            |
+    |-- evals.runs.create(file_id) ->  |                            |
+    |                                  |                            |
+    |<-- 201 Created, in_progress ---  |                            |
+    |                                  |                            |
+    |                                  |-- Eval worker reads blob    |
+    |                                  |   (blob doesn't exist)     |
+    |                                  |                            |
+    |                                  |-- Stuck: "Starting"        |
+```
+
+Both inline `EvalItem` and `datasets.upload_file()` hit **the same broken path**.
+
+### Learnings
+
+1. **azure-ai-projects SDK methods don't bypass Foundry** — they're client wrappers over Foundry's REST APIs, not direct Azure service calls.
+
+2. **"Success" responses are misleading** — APIs return 200/201 before the async backend operation completes. The failure happens silently during background blob write.
+
+3. **Storage verification is critical** — Always check actual blob storage after "successful" upload calls in VNET environments.
+
+4. **This is a platform bug** — All PE-only VNET Foundry deployments are broken for evaluations. Microsoft needs to fix Foundry's eval/dataset backend to support customer private endpoints.
+
+### Next Steps
+
+**Option 1:** Test direct blob write + azureml URI (bypass datasets API entirely)  
+**Option 2:** File Azure support ticket (correct fix — requires Microsoft)  
+**Option 3:** Temporarily enable public blob access (defeats PE purpose, security risk)
+
+**Decision:** Danny to file support ticket. No production workaround available without security tradeoff.
+
+### Files
+
+- Test script: `/app/eval_workaround.py` in `eval-sandbox` pod
+- Decision doc: `.squad/decisions/inbox/basher-eval-workaround-failed.md`
+- Original RCA: `.squad/agents/basher/eval-empty-dataset-summary.md`
+

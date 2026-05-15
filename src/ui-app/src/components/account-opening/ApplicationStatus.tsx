@@ -40,7 +40,7 @@ interface ApplicationStatusProps {
   application?: ApplicationResponse;
 }
 
-const terminalStatuses: ApplicationStatusType[] = ['approved', 'rejected', 'pending_review'];
+const terminalStatuses: ApplicationStatusType[] = ['approved', 'rejected', 'pending_review', 'failed'];
 
 const defaultStages: AgentStage[] = [
   { name: 'Document Extraction', status: 'pending' },
@@ -57,6 +57,7 @@ const statusColors: Record<ApplicationStatusType, 'success' | 'warning' | 'error
   pending_review: 'warning',
   approved: 'success',
   rejected: 'error',
+  failed: 'error',
 };
 
 const statusMessages: Record<ApplicationStatusType, string> = {
@@ -67,6 +68,7 @@ const statusMessages: Record<ApplicationStatusType, string> = {
   pending_review: 'Your application requires manual review.',
   approved: 'Congratulations! Your application has been approved.',
   rejected: 'Unfortunately, your application has been rejected.',
+  failed: 'We encountered an issue processing your application.',
 };
 
 const formatStatusLabel = (status: ApplicationStatusType) =>
@@ -280,7 +282,7 @@ const ApplicationStatus: React.FC<ApplicationStatusProps> = ({
                 </Typography>
               )}
             </Stack>
-            <AgentPipeline stages={stages} />
+            <AgentPipeline stages={stages} showDetails={false} />
           </Box>
         ) : (
           <Alert severity="warning">No application data available.</Alert>

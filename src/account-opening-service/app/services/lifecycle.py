@@ -14,9 +14,14 @@ from app.repository import InMemoryApplicationRepository
 logger = structlog.get_logger("account-opening-service")
 
 
+def _allow_inmemory_on_cosmos_failure() -> bool:
+    return os.getenv("ALLOW_INMEMORY_ON_COSMOS_FAILURE", "").strip().lower() in {"1", "true", "yes"}
+
+
 async def lifespan(app: FastAPI):
     cosmos_endpoint = os.getenv("COSMOS_DB_ENDPOINT")
-    is_production = bool(os.getenv("AZURE_CLIENT_ID"))
+    allow_inmemory_fallback = _allow_inmemory_on_cosmos_failure()
+
     if cosmos_endpoint and cosmos_endpoint != "REPLACE_WITH_COSMOS_ENDPOINT":
         try:
             from azure.cosmos import CosmosClient
@@ -27,28 +32,45 @@ async def lifespan(app: FastAPI):
             db = cosmos_client.get_database_client("BankingDemo")
             container = db.get_container_client("account-applications")
             app.state.repository = CosmosDBApplicationRepository(container)
+            app.state.repository_mode = "cosmos"
             logger.info("Using Cosmos DB repository", endpoint=cosmos_endpoint)
         except CosmosHttpResponseError as exc:
-            if is_production:
-                logger.error("Cosmos DB initialization failed in production — aborting startup", error=str(exc))
+            if allow_inmemory_fallback:
+                logger.warning(
+                    "Cosmos DB request failed, falling back to in-memory (override enabled)",
+                    error=str(exc),
+                )
+                app.state.repository = InMemoryApplicationRepository()
+                app.state.repository_mode = "memory"
+            else:
+                logger.error("Cosmos DB initialization failed — aborting startup", error=str(exc))
                 raise
-            logger.warning("Cosmos DB request failed, falling back to in-memory", error=str(exc))
-            app.state.repository = InMemoryApplicationRepository()
         except (ConnectionError, OSError) as exc:
-            if is_production:
-                logger.error("Cosmos DB network error in production — aborting startup", error=str(exc))
+            if allow_inmemory_fallback:
+                logger.warning(
+                    "Cosmos DB unreachable, falling back to in-memory (override enabled)",
+                    error=str(exc),
+                )
+                app.state.repository = InMemoryApplicationRepository()
+                app.state.repository_mode = "memory"
+            else:
+                logger.error("Cosmos DB network error — aborting startup", error=str(exc))
                 raise
-            logger.warning("Cosmos DB unreachable, falling back to in-memory", error=str(exc))
-            app.state.repository = InMemoryApplicationRepository()
         except Exception as exc:
-            if is_production:
-                logger.error("Unexpected Cosmos DB init failure in production — aborting startup", error=str(exc))
+            if allow_inmemory_fallback:
+                logger.warning(
+                    "Unexpected Cosmos DB init error, falling back to in-memory (override enabled)",
+                    error=str(exc),
+                )
+                app.state.repository = InMemoryApplicationRepository()
+                app.state.repository_mode = "memory"
+            else:
+                logger.error("Unexpected Cosmos DB init failure — aborting startup", error=str(exc))
                 raise
-            logger.warning("Unexpected Cosmos DB init error, falling back to in-memory", error=str(exc))
-            app.state.repository = InMemoryApplicationRepository()
     else:
         logger.warning("COSMOS_DB_ENDPOINT not set — using in-memory repository")
         app.state.repository = InMemoryApplicationRepository()
+        app.state.repository_mode = "memory"
 
     app.state.redis = await create_redis_client()
 
