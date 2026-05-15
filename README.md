@@ -91,14 +91,14 @@ This project was built using AI-assisted development practices:
 
 **Infrastructure & Admin Services**:
 - **Event Processor** (Go) — Redis Streams consumer, async event routing
-- **Prompt Eval Service** (.NET) — AI prompt evaluation with admin UI
+- **Prompt Eval Service** (.NET) — Prompt template management and admin evaluation UI; delegates eval execution to ai-service's LLM-as-judge pipeline (see [ADR-006](docs/adr/006-llm-as-judge-evaluation.md))
 - **UI Application** (React 18 + MUI v9) — Web frontend with admin panel
 
 ### Key Features
 
 - **Event-Driven**: Redis Streams (`banking-events`) for inter-service communication
 - **JWT Authentication**: Tokens issued by User Service, validated across all services
-- **Agentic AI**: Chatbot with real data tools, anomaly detection, budget analysis, AI-powered account opening via Azure AI Foundry
+- **Agentic AI**: Chatbot with real data tools, anomaly detection, budget analysis, AI-powered account opening, and LLM-as-judge prompt evaluation — all via Azure AI Foundry
 - **Chat Persistence**: Cosmos DB-backed chat history with 30-day TTL
 - **Cloud-Native**: AKS with Istio service mesh, Workload Identity, KeyVault CSI driver
 - **Private Networking**: All PaaS services accessed via private endpoints with private DNS zones
