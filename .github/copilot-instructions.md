@@ -1,6 +1,6 @@
 # online-banking-demo Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-05-12
+Auto-generated from all feature plans. Last updated: 2026-05-15
 
 ## Active Technologies
 - Terraform (HCL) with AzureRM + AzAPI providers + `azurerm_subnet`, `azurerm_network_security_group`, `azurerm_subnet_network_security_group_association` (001-backlog-implementation-plan)
@@ -13,6 +13,7 @@ Auto-generated from all feature plans. Last updated: 2026-05-12
 - N/A (infrastructure-only change) (001-azure-private-endpoints)
 - Python 3.11+ + `fpdf2` (PDF generation — pure Python, LGPL v3, no system deps) (016-sample-documents-account-opening)
 - File system — static PDFs + JSON committed to `tests/fixtures/sample-documents/` (016-sample-documents-account-opening)
+- C# / .NET 10.0 (ASP.NET Core Web API). Frontend additions: React 19 + TypeScript + MUI v9. (017-loan-origination-workflow)
 
 - ASP.NET Core, Gin/stdlib, FastAPI, React + MUI v9, OTEL SDK (001-backlog-implementation-plan)
 
@@ -51,9 +52,9 @@ tests/
 : Follow standard conventions
 
 ## Recent Changes
+- 017-loan-origination-workflow: Added C# / .NET 10.0 (ASP.NET Core Web API). Frontend additions: React 19 + TypeScript + MUI v9.
 - 016-sample-documents-account-opening: Added Python 3.11+ + `fpdf2` (PDF generation — pure Python, LGPL v3, no system deps)
 - 001-azure-private-endpoints: Added Terraform HCL (AzureRM ~> 4, AzAPI ~> 2, Random ~> 3) + `azurerm_private_endpoint`, `azurerm_private_dns_zone`, `azurerm_private_dns_zone_virtual_network_link`, `azapi_resource` (for AI Services PE)
-- 002-ai-anomaly-detection: Added C# / .NET 9.0 (ASP.NET Core Web API) + Azure.AI.Projects (prerelease), Microsoft.Azure.Cosmos, Azure.Identity, Microsoft.AspNetCore.Authentication.JwtBearer
 
 
 <!-- MANUAL ADDITIONS START -->

@@ -1,0 +1,470 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Loan Origination Service API",
+    "version": "1.0.0",
+    "description": "Multi-agent loan underwriting via Azure AI Foundry workflow / code-based coordinator. Ported from briandenicola/loan-originations-demo (workflow path only). Spec 017 — feature 017-loan-origination-workflow."
+  },
+  "servers": [
+    { "url": "https://onlinebankingdemo.bjdazure.tech", "description": "Production (Istio gateway)" },
+    { "url": "http://localhost:5290", "description": "Local Docker" }
+  ],
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/api/loans/applications": {
+      "post": {
+        "summary": "Submit a new loan application",
+        "tags": ["applications"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/SubmitApplicationRequest" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoanApplication" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      },
+      "get": {
+        "summary": "List loan applications. Non-admin users see only their own.",
+        "tags": ["applications"],
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["submitted","recommended","decided","funded"] } },
+          { "name": "limit",  "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 100 } },
+          { "name": "continuationToken", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoanApplicationPage" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/loans/applications/{applicationNo}": {
+      "parameters": [{ "name": "applicationNo", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "summary": "Get a loan application + last run + last decision",
+        "tags": ["applications"],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoanApplicationDetail" } } }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/loans/applications/{applicationNo}/run": {
+      "parameters": [{ "name": "applicationNo", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": {
+        "summary": "Run the S01–S10 underwriting workflow synchronously",
+        "tags": ["workflow"],
+        "responses": {
+          "200": {
+            "description": "Recommendation produced",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRunResponse" } } }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "503": { "$ref": "#/components/responses/AgentUnavailable" }
+        }
+      }
+    },
+    "/api/loans/applications/{applicationNo}/run-stream": {
+      "parameters": [{ "name": "applicationNo", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "summary": "Run the S01–S10 workflow with Server-Sent Events for live step updates",
+        "tags": ["workflow"],
+        "responses": {
+          "200": {
+            "description": "SSE stream. Events: `step` (per workflow step), `complete` (final AgentRunResponse), `error`.",
+            "content": {
+              "text/event-stream": {
+                "schema": { "type": "string", "description": "SSE — see WorkflowStep / AgentRunResponse schemas" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/loans/applications/{applicationNo}/recompute": {
+      "parameters": [{ "name": "applicationNo", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": {
+        "summary": "Re-run S07–S09 with adjusted terms",
+        "tags": ["workflow"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/RecomputeRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "New recommendation",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRunResponse" } } }
+          }
+        }
+      }
+    },
+    "/api/loans/applications/{applicationNo}/decisions": {
+      "parameters": [{ "name": "applicationNo", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": {
+        "summary": "Record a human reviewer decision (Admin only). On approve, also creates a LoanAccount + initial LoanDisbursement and publishes loan.approved + loan.funded events.",
+        "tags": ["decisions"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/DecisionRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Decision recorded; on approve, LoanAccount + LoanDisbursement created in the loan domain (no deposit account, no transaction-service write)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Decision" } } }
+          },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "get": {
+        "summary": "List decisions for an application",
+        "tags": ["decisions"],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Decision" } } } }
+          }
+        }
+      }
+    },
+    "/api/loans/accounts": {
+      "get": {
+        "summary": "List the caller's loan accounts. Admin may pass ?userId= to scope to another user.",
+        "tags": ["loan-accounts"],
+        "parameters": [
+          { "name": "userId", "in": "query", "schema": { "type": "string" }, "description": "Admin only — scope to another user's loan accounts" }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/LoanAccount" } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/loans/accounts/{loanAccountId}": {
+      "parameters": [{ "name": "loanAccountId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "summary": "Get a single loan account",
+        "tags": ["loan-accounts"],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoanAccount" } } }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/loans/accounts/{loanAccountId}/disbursements": {
+      "parameters": [{ "name": "loanAccountId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "summary": "List disbursements (funding + future payment entries) for a loan account",
+        "tags": ["loan-accounts"],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/LoanDisbursement" } } } }
+          }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "summary": "Liveness probe",
+        "security": [],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "summary": "Readiness probe (verifies Cosmos + Foundry connectivity via health-check agent)",
+        "security": [],
+        "responses": {
+          "200": { "description": "Ready" },
+          "503": { "description": "Not ready" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" }
+    },
+    "responses": {
+      "BadRequest":         { "description": "Invalid request",   "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Unauthorized":       { "description": "Missing/invalid JWT", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Forbidden":          { "description": "Caller lacks required role (Admin)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "NotFound":           { "description": "Application not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "AgentUnavailable":   { "description": "Foundry agent service is unavailable", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": ["error_code", "message"],
+        "properties": {
+          "error_code": { "type": "string", "example": "BAD_REQUEST" },
+          "message":    { "type": "string" }
+        }
+      },
+      "SubmitApplicationRequest": {
+        "type": "object",
+        "required": ["applicant", "loanRequest", "financials"],
+        "properties": {
+          "applicant":    { "$ref": "#/components/schemas/Applicant" },
+          "loanRequest":  { "$ref": "#/components/schemas/LoanRequest" },
+          "financials":   { "$ref": "#/components/schemas/Financials" }
+        }
+      },
+      "Applicant": {
+        "type": "object",
+        "required": ["name", "dob", "ssnLast4", "email", "currentAddress", "cityStateZip"],
+        "properties": {
+          "name":           { "type": "string" },
+          "dob":            { "type": "string", "format": "date" },
+          "ssnLast4":       { "type": "string", "pattern": "^[0-9]{4}$" },
+          "phone":          { "type": "string" },
+          "email":          { "type": "string", "format": "email" },
+          "currentAddress": { "type": "string" },
+          "cityStateZip":   { "type": "string" }
+        }
+      },
+      "LoanRequest": {
+        "type": "object",
+        "required": ["amount", "termMonths", "loanType", "purpose"],
+        "properties": {
+          "amount":         { "type": "number", "minimum": 1000, "maximum": 500000 },
+          "purpose":        { "type": "string" },
+          "termMonths":     { "type": "integer", "enum": [12,24,36,48,60,72,84,120,180,240,360] },
+          "loanType":       { "type": "string", "enum": ["personal","auto","mortgage","small_business"] },
+          "paymentMethod":  { "type": "string", "default": "AUTO_DEBIT" }
+        }
+      },
+      "Financials": {
+        "type": "object",
+        "required": ["grossAnnualIncome", "monthlyNetIncome", "totalMonthlyDebtPayments", "housingStatus"],
+        "properties": {
+          "grossAnnualIncome":         { "type": "number", "minimum": 0 },
+          "monthlyNetIncome":          { "type": "number", "minimum": 0 },
+          "otherIncomeMonthly":        { "type": "number", "minimum": 0, "default": 0 },
+          "totalMonthlyDebtPayments":  { "type": "number", "minimum": 0 },
+          "housingStatus":             { "type": "string", "enum": ["own","rent","mortgage","other"] },
+          "housingPaymentMonthly":     { "type": "number", "minimum": 0 },
+          "declaredDtiPct":            { "type": "number", "minimum": 0 },
+          "estimatedSavings":          { "type": "number", "minimum": 0 },
+          "retirementInvestments":     { "type": "number", "minimum": 0 }
+        }
+      },
+      "LoanApplication": {
+        "type": "object",
+        "properties": {
+          "applicationNo":     { "type": "string", "example": "APP-2026-000123" },
+          "userId":            { "type": "string" },
+          "applicationDate":   { "type": "string", "format": "date-time" },
+          "status":            { "type": "string", "enum": ["submitted","recommended","decided","funded"] },
+          "applicant":         { "$ref": "#/components/schemas/Applicant" },
+          "loanRequest":       { "$ref": "#/components/schemas/LoanRequest" },
+          "financials":        { "$ref": "#/components/schemas/Financials" },
+          "lastRunId":         { "type": "string", "nullable": true },
+          "lastDecisionId":    { "type": "string", "nullable": true },
+          "fundedLoanAccountId": { "type": "string", "nullable": true, "description": "FK → loan-accounts.id (NOT accounts.id — see ADR-007 / spec 017 for the in-domain ownership rationale)" },
+          "createdAt":         { "type": "string", "format": "date-time" },
+          "updatedAt":         { "type": "string", "format": "date-time" }
+        }
+      },
+      "LoanApplicationDetail": {
+        "allOf": [
+          { "$ref": "#/components/schemas/LoanApplication" },
+          {
+            "type": "object",
+            "properties": {
+              "lastRun":      { "$ref": "#/components/schemas/LoanRun" },
+              "lastDecision": { "$ref": "#/components/schemas/Decision" }
+            }
+          }
+        ]
+      },
+      "LoanApplicationPage": {
+        "type": "object",
+        "properties": {
+          "items":             { "type": "array", "items": { "$ref": "#/components/schemas/LoanApplication" } },
+          "continuationToken": { "type": "string", "nullable": true }
+        }
+      },
+      "WorkflowStep": {
+        "type": "object",
+        "properties": {
+          "stepId":    { "type": "string", "example": "S03" },
+          "stepName":  { "type": "string", "example": "Credit Profile Agent" },
+          "status":    { "type": "string", "enum": ["pending","running","completed","failed"] },
+          "timestamp": { "type": "string", "format": "date-time" },
+          "agentName": { "type": "string", "nullable": true, "example": "credit-profile-agent" },
+          "detail":    { "type": "string", "nullable": true }
+        }
+      },
+      "RecommendationFactor": {
+        "type": "object",
+        "properties": {
+          "factorName":   { "type": "string" },
+          "direction":    { "type": "string", "enum": ["positive","negative","neutral"] },
+          "impactWeight": { "type": "number" },
+          "explanation":  { "type": "string" }
+        }
+      },
+      "PolicyHit": {
+        "type": "object",
+        "properties": {
+          "ruleId":  { "type": "string" },
+          "outcome": { "type": "string", "enum": ["pass","warn","fail"] },
+          "message": { "type": "string" }
+        }
+      },
+      "UnderwritingRecommendation": {
+        "type": "object",
+        "properties": {
+          "recommendationStatus": { "type": "string", "enum": ["APPROVE","CONDITIONAL","DECLINE"] },
+          "confidenceScore":      { "type": "number", "minimum": 0, "maximum": 1 },
+          "rationaleSummary":     { "type": "string" },
+          "keyFactors":           { "type": "array", "items": { "$ref": "#/components/schemas/RecommendationFactor" } },
+          "conditions":           { "type": "array", "items": { "type": "string" } },
+          "policyHits":           { "type": "array", "items": { "$ref": "#/components/schemas/PolicyHit" } }
+        }
+      },
+      "AgentRunResponse": {
+        "type": "object",
+        "properties": {
+          "runId":          { "type": "string" },
+          "applicationNo":  { "type": "string" },
+          "prepared":       { "type": "object", "additionalProperties": true },
+          "workflowLog":    { "type": "array", "items": { "$ref": "#/components/schemas/WorkflowStep" } },
+          "recommendation": { "$ref": "#/components/schemas/UnderwritingRecommendation" }
+        }
+      },
+      "LoanRun": {
+        "type": "object",
+        "properties": {
+          "runId":          { "type": "string" },
+          "applicationNo":  { "type": "string" },
+          "startedAt":      { "type": "string", "format": "date-time" },
+          "completedAt":    { "type": "string", "format": "date-time", "nullable": true },
+          "durationMs":     { "type": "integer" },
+          "triggerKind":    { "type": "string", "enum": ["run","recompute"] },
+          "prepared":       { "type": "object", "additionalProperties": true },
+          "workflowLog":    { "type": "array", "items": { "$ref": "#/components/schemas/WorkflowStep" } },
+          "recommendation": { "$ref": "#/components/schemas/UnderwritingRecommendation" },
+          "errors":         { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "RecomputeRequest": {
+        "type": "object",
+        "required": ["requestedAmount", "requestedTermMonths", "loanType"],
+        "properties": {
+          "runId":               { "type": "string", "default": "RECOMPUTE" },
+          "requestedAmount":     { "type": "number" },
+          "requestedTermMonths": { "type": "integer" },
+          "loanType":            { "type": "string", "enum": ["personal","auto","mortgage","small_business"] }
+        }
+      },
+      "DecisionRequest": {
+        "type": "object",
+        "required": ["runId", "decision"],
+        "properties": {
+          "runId":              { "type": "string" },
+          "decision":           { "type": "string", "enum": ["approve","conditional","decline"] },
+          "adjustedAmount":     { "type": "number", "nullable": true },
+          "adjustedTermMonths": { "type": "integer", "nullable": true },
+          "adjustedRate":       { "type": "number", "nullable": true },
+          "notes":              { "type": "string" }
+        }
+      },
+      "Decision": {
+        "type": "object",
+        "properties": {
+          "id":                     { "type": "string" },
+          "applicationNo":          { "type": "string" },
+          "runId":                  { "type": "string" },
+          "reviewerId":             { "type": "string" },
+          "reviewerName":           { "type": "string" },
+          "decision":               { "type": "string", "enum": ["approve","conditional","decline"] },
+          "adjustedAmount":         { "type": "number", "nullable": true },
+          "adjustedTermMonths":     { "type": "integer", "nullable": true },
+          "adjustedRate":           { "type": "number", "nullable": true },
+          "notes":                  { "type": "string" },
+          "recommendationSnapshot": { "$ref": "#/components/schemas/UnderwritingRecommendation" },
+          "fundingResult": {
+            "type": "object",
+            "nullable": true,
+            "description": "Populated when decision == 'approve'. References loan-domain entities only — no deposit account is created and no transaction is written to the deposit-side ledger.",
+            "properties": {
+              "loanAccountId":      { "type": "string", "description": "FK → loan-accounts.id" },
+              "loanDisbursementId": { "type": "string", "description": "FK → loan-disbursements.id" },
+              "fundedAt":           { "type": "string", "format": "date-time" }
+            }
+          },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "LoanAccount": {
+        "type": "object",
+        "description": "A funded loan record (principal owed). NOT a deposit/checking/savings account.",
+        "properties": {
+          "id":                   { "type": "string", "example": "loan-acc-7d2f9a3e" },
+          "userId":               { "type": "string" },
+          "applicationNo":        { "type": "string" },
+          "decisionId":           { "type": "string" },
+          "loanType":             { "type": "string", "enum": ["personal","auto","mortgage","small_business"] },
+          "principalBalance":     { "type": "number" },
+          "originalPrincipal":    { "type": "number" },
+          "aprPct":               { "type": "number" },
+          "termMonths":           { "type": "integer" },
+          "monthlyPayment":       { "type": "number" },
+          "totalRepayableAmount": { "type": "number" },
+          "originationDate":      { "type": "string", "format": "date-time" },
+          "firstPaymentDate":     { "type": "string", "format": "date" },
+          "payoffDate":           { "type": "string", "format": "date" },
+          "status":               { "type": "string", "enum": ["funded"] },
+          "createdAt":            { "type": "string", "format": "date-time" },
+          "updatedAt":            { "type": "string", "format": "date-time" }
+        }
+      },
+      "LoanDisbursement": {
+        "type": "object",
+        "description": "Internal accounting entry for a loan-domain disbursement. NOT a deposit-side transaction — never written to the transactions container.",
+        "properties": {
+          "id":             { "type": "string", "example": "loan-disb-3a91c4f2" },
+          "loanAccountId":  { "type": "string" },
+          "userId":         { "type": "string" },
+          "kind":           { "type": "string", "enum": ["funding"] },
+          "amount":         { "type": "number" },
+          "currency":       { "type": "string", "default": "USD" },
+          "occurredAt":     { "type": "string", "format": "date-time" },
+          "memo":           { "type": "string" },
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "applicationNo": { "type": "string" },
+              "decisionId":    { "type": "string" }
+            }
+          },
+          "createdAt":      { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}
