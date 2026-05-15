@@ -62,6 +62,7 @@ SYSTEM_PROMPT = (
 
 class IdentityVerificationConsumer(AgentConsumer):
     STAGE_NAME = "identity_verification"
+    EVENT_TYPES = frozenset({"document_extracted"})
     
     def __init__(
         self,

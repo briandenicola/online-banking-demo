@@ -66,6 +66,7 @@ SYSTEM_PROMPT = (
 
 class ComplianceCheckConsumer(AgentConsumer):
     STAGE_NAME = "compliance_check"
+    EVENT_TYPES = frozenset({"identity_verified"})
     
     def __init__(
         self,

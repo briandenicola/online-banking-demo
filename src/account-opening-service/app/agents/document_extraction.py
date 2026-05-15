@@ -23,6 +23,7 @@ ANALYZER_NAME = "prebuilt-documentSearch"
 
 class DocumentExtractionConsumer(AgentConsumer):
     STAGE_NAME = "document_extraction"
+    EVENT_TYPES = frozenset({"document_uploaded"})
     
     def __init__(
         self,

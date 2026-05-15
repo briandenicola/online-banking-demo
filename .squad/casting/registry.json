@@ -14,7 +14,9 @@
       "role": "Backend Dev",
       "created_at": "2026-05-05T16:29:00Z",
       "legacy_named": false,
-      "status": "active"
+      "status": "retired",
+      "retired_at": "2026-05-15T00:30:00Z",
+      "retired_reason": "Repeated incomplete/inaccurate work across #135/#136 implementation; archived to .squad/agents/_alumni/basher/"
     },
     {
       "persistent_name": "Linus",

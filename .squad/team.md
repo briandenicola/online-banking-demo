@@ -13,7 +13,7 @@
 | Name | Role | Charter | Status |
 |------|------|---------|--------|
 | Danny | Lead/Architect | .squad/agents/danny/charter.md | 🏗️ Active |
-| Basher | Backend Dev | .squad/agents/basher/charter.md | 🔧 Active |
+| Basher | Backend Dev | .squad/agents/_alumni/basher/charter.md | 🚪 Retired (2026-05-15) |
 | Linus | Frontend Dev | .squad/agents/linus/charter.md | ⚛️ Active |
 | Livingston | Tester/QA | .squad/agents/livingston/charter.md | 🧪 Active |
 | Turk | Backend Dev | .squad/agents/turk/charter.md | 🔧 Active |

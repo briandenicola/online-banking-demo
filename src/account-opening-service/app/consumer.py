@@ -14,7 +14,12 @@ logger = structlog.get_logger("account-opening-consumer")
 
 class AgentConsumer(abc.ABC):
     STAGE_NAME: str = ""  # Subclasses must set this
-    
+    # Event types this consumer handles. The base loop ack-skips any event
+    # whose type is not in this set BEFORE touching idempotency, so unrelated
+    # events (e.g. application_submitted reaching the provisioning consumer)
+    # never poison the per-stage idempotency key.
+    EVENT_TYPES: frozenset[str] = frozenset()
+
     def __init__(
         self,
         redis,
@@ -138,7 +143,18 @@ class AgentConsumer(abc.ABC):
         for _, entries in messages:
             for message_id, fields in entries:
                 event_data = self._decode_fields(fields)
-                
+
+                # Drop events not handled by this consumer BEFORE deriving any
+                # idempotency state. Without this filter, the base loop would
+                # mark the per-stage idempotency key as "processed" for events
+                # the agent's process_event() returns early on, which would
+                # then cause the real trigger event to be skipped forever.
+                event_type = event_data.get("eventType")
+                if self.EVENT_TYPES and event_type not in self.EVENT_TYPES:
+                    await self.redis.xack(self.stream_name, self.consumer_group, message_id)
+                    processed += 1
+                    continue
+
                 # Extract application ID for idempotency
                 payload = event_data.get("data") or {}
                 application_id = payload.get("applicationId") or event_data.get("applicationId")

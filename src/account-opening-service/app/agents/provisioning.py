@@ -66,6 +66,7 @@ SYSTEM_PROMPT = (
 
 class ProvisioningConsumer(AgentConsumer):
     STAGE_NAME = "provisioning"
+    EVENT_TYPES = frozenset({"compliance_checked"})
     
     def __init__(
         self,
