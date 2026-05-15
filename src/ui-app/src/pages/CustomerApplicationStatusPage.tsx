@@ -14,6 +14,7 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import { useParams, useNavigate } from 'react-router-dom';
 import ApplicationStages from '../components/account-opening/ApplicationStages';
 import {
+  ACCOUNT_OPENING_STORAGE_KEY,
   ApplicationResponse,
   getApplication,
   resubmitApplication,
@@ -50,6 +51,15 @@ const CustomerApplicationStatusPage: React.FC = () => {
   React.useEffect(() => {
     fetchApplication();
   }, [fetchApplication]);
+
+  React.useEffect(() => {
+    if (!id) return;
+    try {
+      localStorage.setItem(ACCOUNT_OPENING_STORAGE_KEY, id);
+    } catch {
+      // No-op when storage is unavailable.
+    }
+  }, [id]);
 
   React.useEffect(() => {
     if (!application || isTerminal(application.status)) {
@@ -91,6 +101,15 @@ const CustomerApplicationStatusPage: React.FC = () => {
     }
   };
 
+  const handleStartNewApplication = () => {
+    try {
+      localStorage.removeItem(ACCOUNT_OPENING_STORAGE_KEY);
+    } catch {
+      // No-op when storage is unavailable.
+    }
+    navigate('/account-opening');
+  };
+
   if (!id) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
@@ -113,7 +132,7 @@ const CustomerApplicationStatusPage: React.FC = () => {
     return (
       <Box sx={{ p: 3 }}>
         <Alert severity="error">{error}</Alert>
-        <Button variant="outlined" onClick={() => navigate('/account-opening')} sx={{ mt: 2 }}>
+        <Button variant="outlined" onClick={handleStartNewApplication} sx={{ mt: 2 }}>
           Back to Application Form
         </Button>
       </Box>
@@ -124,7 +143,7 @@ const CustomerApplicationStatusPage: React.FC = () => {
     return (
       <Box sx={{ p: 3 }}>
         <Alert severity="warning">Application not found</Alert>
-        <Button variant="outlined" onClick={() => navigate('/account-opening')} sx={{ mt: 2 }}>
+        <Button variant="outlined" onClick={handleStartNewApplication} sx={{ mt: 2 }}>
           Back to Application Form
         </Button>
       </Box>
@@ -272,7 +291,7 @@ const CustomerApplicationStatusPage: React.FC = () => {
       {renderTerminalMessage()}
 
       <Box sx={{ mt: 3 }}>
-        <Button variant="outlined" onClick={() => navigate('/account-opening')}>
+        <Button variant="outlined" onClick={handleStartNewApplication}>
           Start New Application
         </Button>
       </Box>

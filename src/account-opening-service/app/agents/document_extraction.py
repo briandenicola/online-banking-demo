@@ -116,6 +116,27 @@ class DocumentExtractionConsumer(AgentConsumer):
         blob_url = payload.get("blobUrl")
         if not blob_url:
             raise ValueError("document_uploaded event missing blobUrl")
+        document_type = payload.get("documentType")
+
+        if application.status == ApplicationStatus.submitted:
+            application = self._state_machine.transition(
+                application,
+                ApplicationStatus.document_extraction,
+                agent_name=AGENT_NAME,
+                details={"action": "document_extraction_started", "documentType": document_type},
+            )
+
+        application.agentResults.append(
+            AgentResult(
+                agentName=AGENT_NAME,
+                status="in_progress",
+                confidence=0.0,
+                findings={"documentType": document_type},
+                reasoning=None,
+                timestamp=datetime.now(timezone.utc),
+            )
+        )
+        self._repository.update(application)
 
         # Download blob content so CUS doesn't need direct network access
         try:
@@ -151,32 +172,7 @@ class DocumentExtractionConsumer(AgentConsumer):
             raise
 
         extracted = _extract_fields(analysis)
-        document_type = payload.get("documentType")
 
-        details = {
-            "action": "document_extracted",
-            "documentType": document_type,
-            "extracted": extracted,
-        }
-
-        if application.status == ApplicationStatus.submitted:
-            application = self._state_machine.transition(
-                application,
-                ApplicationStatus.document_extraction,
-                agent_name=AGENT_NAME,
-                details=details,
-            )
-
-        application.agentResults.append(
-            AgentResult(
-                agentName=AGENT_NAME,
-                status="in_progress",
-                confidence=0.0,
-                findings={"documentType": document_type},
-                reasoning=None,
-                timestamp=datetime.now(timezone.utc),
-            )
-        )
         application.agentResults.append(
             AgentResult(
                 agentName=AGENT_NAME,

@@ -379,6 +379,26 @@ const ApiAdminApplicationsTab: React.FC = () => {
     fetchApplications();
   }, [fetchApplications]);
 
+  const shouldAutoRefresh = React.useMemo(() => {
+    if (process.env.NODE_ENV === 'test') return false;
+    return applications.some((application) =>
+      [
+        'submitted',
+        'document_extraction',
+        'identity_verification',
+        'compliance_check',
+      ].includes(application.status)
+    );
+  }, [applications]);
+
+  React.useEffect(() => {
+    if (!shouldAutoRefresh) return undefined;
+    const interval = setInterval(() => {
+      void fetchApplications();
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [fetchApplications, shouldAutoRefresh]);
+
   const handleSort = (field: SortField) => {
     if (sortField === field) {
       setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));

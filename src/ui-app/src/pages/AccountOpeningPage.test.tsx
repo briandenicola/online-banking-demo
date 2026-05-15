@@ -1,6 +1,14 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import AccountOpeningPage from './AccountOpeningPage';
+import { ACCOUNT_OPENING_STORAGE_KEY } from '../api/accountOpening';
+
+const mockNavigate = jest.fn();
+
+jest.mock('react-router-dom', () => ({
+  ...jest.requireActual('react-router-dom'),
+  useNavigate: () => mockNavigate,
+}));
 
 // Mock child components to isolate page orchestration logic
 jest.mock('../components/account-opening/ApplicationForm', () => {
@@ -72,6 +80,11 @@ const renderPage = () => {
 };
 
 describe('AccountOpeningPage', () => {
+  beforeEach(() => {
+    localStorage.removeItem(ACCOUNT_OPENING_STORAGE_KEY);
+    mockNavigate.mockClear();
+  });
+
   describe('Initial state', () => {
     test('renders the application form initially', () => {
       renderPage();
@@ -134,7 +147,7 @@ describe('AccountOpeningPage', () => {
   });
 
   describe('Document Upload → Status Tracking transition', () => {
-    test('transitions to status tracking after document upload', async () => {
+    test('navigates to status page after document upload', async () => {
       renderPage();
 
       // Step 1: Submit form
@@ -147,11 +160,11 @@ describe('AccountOpeningPage', () => {
       fireEvent.click(screen.getByText('Mock Upload Complete'));
 
       await waitFor(() => {
-        expect(screen.getByTestId('application-status')).toBeInTheDocument();
+        expect(mockNavigate).toHaveBeenCalledWith('/applications/app-1/status');
       });
     });
 
-    test('passes application ID to status tracker', async () => {
+    test('passes application ID in status route', async () => {
       renderPage();
 
       fireEvent.click(screen.getByText('Mock Submit'));
@@ -162,11 +175,11 @@ describe('AccountOpeningPage', () => {
       fireEvent.click(screen.getByText('Mock Upload Complete'));
 
       await waitFor(() => {
-        expect(screen.getByText('Status for app-1')).toBeInTheDocument();
+        expect(mockNavigate).toHaveBeenCalledWith('/applications/app-1/status');
       });
     });
 
-    test('hides document upload after upload complete', async () => {
+    test('triggers navigation after upload complete', async () => {
       renderPage();
 
       fireEvent.click(screen.getByText('Mock Submit'));
@@ -177,7 +190,7 @@ describe('AccountOpeningPage', () => {
       fireEvent.click(screen.getByText('Mock Upload Complete'));
 
       await waitFor(() => {
-        expect(screen.queryByTestId('document-upload')).toBeNull();
+        expect(mockNavigate).toHaveBeenCalledTimes(1);
       });
     });
   });
@@ -196,12 +209,10 @@ describe('AccountOpeningPage', () => {
         expect(screen.queryByTestId('application-form')).toBeNull();
       });
 
-      // Complete upload → shows status
+      // Complete upload → routes to status page
       fireEvent.click(screen.getByText('Mock Upload Complete'));
       await waitFor(() => {
-        expect(screen.getByTestId('application-status')).toBeInTheDocument();
-        expect(screen.queryByTestId('document-upload')).toBeNull();
-        expect(screen.queryByTestId('application-form')).toBeNull();
+        expect(mockNavigate).toHaveBeenCalledWith('/applications/app-1/status');
       });
     });
   });
