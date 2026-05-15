@@ -4,9 +4,12 @@ AI-powered Anomaly Detection Service using Azure AI Foundry.
 import abc
 import asyncio
 import base64
+import contextvars
+import inspect
 import json
 import os
 import uuid
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -17,6 +20,7 @@ import redis.asyncio as redis
 import structlog
 from fastapi import FastAPI, Request
 from opentelemetry import trace
+from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
 
 from app.config import AGENT_FRAMEWORK_AVAILABLE, Agent, DefaultAzureCredential, FoundryAgent, FoundryChatClient
 from app.models import CategoryResult, RiskAssessment, ScoredTransaction
@@ -38,7 +42,102 @@ FLAGGING_THRESHOLD = 0.7
 # flicker under HPA min>=2 (issue #130). Storage: ai:metrics:calls:{YYYY-MM-DD}
 # (UTC date-bucketed, INCR + 36h TTL set only on key creation).
 AI_CALLS_COUNTER_PREFIX = "ai:metrics:calls"
+AI_TOKENS_COUNTER_PREFIX = "ai:metrics:tokens"
 AI_CALLS_COUNTER_TTL_SECONDS = 36 * 60 * 60  # 36h: covers UTC day boundary + buffer
+OTEL_GEN_AI_OPERATION_ATTR = "gen_ai.operation.name"
+OTEL_GEN_AI_OPERATION_INVOKE_AGENT = "invoke_agent"
+OTEL_GEN_AI_INPUT_TOKENS_ATTR = "gen_ai.usage.input_tokens"
+OTEL_GEN_AI_OUTPUT_TOKENS_ATTR = "gen_ai.usage.output_tokens"
+OTEL_AI_TOKEN_TRACKING_ACTIVE: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "ai_otel_token_tracking_active",
+    default=False,
+)
+
+
+def _extract_tokens_from_otel_span_attributes(attributes: Mapping[str, Any] | None) -> int:
+    """Extract token usage from Agent Framework OTEL span attributes."""
+    if not attributes:
+        return 0
+    input_tokens = _coerce_positive_int(attributes.get(OTEL_GEN_AI_INPUT_TOKENS_ATTR))
+    output_tokens = _coerce_positive_int(attributes.get(OTEL_GEN_AI_OUTPUT_TOKENS_ATTR))
+    return input_tokens + output_tokens
+
+
+class _AiTokenSpanProcessor(SpanProcessor):
+    """Collect token usage from Agent Framework invoke spans into an async queue."""
+
+    def __init__(self, token_queue: asyncio.Queue[int]) -> None:
+        self._token_queue = token_queue
+        self._shutdown = False
+
+    def on_start(self, span, parent_context=None) -> None:  # noqa: ANN001
+        return
+
+    def on_end(self, span: ReadableSpan) -> None:
+        if self._shutdown:
+            return
+        if not OTEL_AI_TOKEN_TRACKING_ACTIVE.get():
+            return
+        attributes = span.attributes or {}
+        operation = attributes.get(OTEL_GEN_AI_OPERATION_ATTR)
+        if operation != OTEL_GEN_AI_OPERATION_INVOKE_AGENT:
+            return
+        token_count = _extract_tokens_from_otel_span_attributes(attributes)
+        if token_count <= 0:
+            return
+        try:
+            self._token_queue.put_nowait(token_count)
+        except asyncio.QueueFull:
+            logger.warning("OTEL token queue full; dropping token usage event", tokens=token_count)
+
+    def shutdown(self) -> None:
+        self._shutdown = True
+
+    def force_flush(self, timeout_millis: int = 30_000) -> bool:
+        return True
+
+
+async def _consume_otel_token_queue(redis_client: Optional[redis.Redis], token_queue: asyncio.Queue[int]) -> None:
+    """Drain OTEL token events and persist into the daily Redis token counter."""
+    while True:
+        token_count = await token_queue.get()
+        try:
+            await _increment_ai_tokens_counter(redis_client, token_count)
+        except Exception as e:
+            logger.warning("Failed to persist OTEL token usage event", error=str(e), tokens=token_count)
+        finally:
+            token_queue.task_done()
+
+
+def _enable_agent_framework_otel_instrumentation() -> bool:
+    """Enable Agent Framework OTEL instrumentation so token attrs are emitted."""
+    if not AGENT_FRAMEWORK_AVAILABLE:
+        return False
+    try:
+        from agent_framework.observability import enable_instrumentation
+
+        enable_instrumentation(enable_sensitive_data=False)
+        return True
+    except Exception as e:
+        logger.warning("Failed to enable Agent Framework OpenTelemetry instrumentation", error=str(e))
+        return False
+
+
+def _attach_otel_token_span_processor(
+    token_queue: asyncio.Queue[int],
+) -> Optional[_AiTokenSpanProcessor]:
+    """Attach token span processor to the current SDK tracer provider when available."""
+    tracer_provider = trace.get_tracer_provider()
+    if not isinstance(tracer_provider, TracerProvider):
+        logger.warning(
+            "OTEL tracer provider is not SDK-backed; falling back to response usage token tracking",
+            provider_type=type(tracer_provider).__name__,
+        )
+        return None
+
+    processor = _AiTokenSpanProcessor(token_queue)
+    tracer_provider.add_span_processor(processor)
+    return processor
 
 
 async def _increment_ai_calls_counter(redis_client: Optional[redis.Redis]) -> None:
@@ -58,6 +157,96 @@ async def _increment_ai_calls_counter(redis_client: Optional[redis.Redis]) -> No
         logger.warning("Failed to increment AI calls counter (non-fatal)", error=str(e))
 
 
+def _coerce_positive_int(value: Any) -> int:
+    try:
+        parsed = int(value)
+        return parsed if parsed > 0 else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _extract_tokens_from_usage_dict(usage: dict[str, Any]) -> int:
+    total = _coerce_positive_int(
+        usage.get("total_token_count")
+        or usage.get("total_tokens")
+    )
+    if total:
+        return total
+
+    input_tokens = _coerce_positive_int(
+        usage.get("input_token_count")
+        or usage.get("prompt_tokens")
+    )
+    output_tokens = _coerce_positive_int(
+        usage.get("output_token_count")
+        or usage.get("completion_tokens")
+    )
+    return input_tokens + output_tokens
+
+
+def _extract_ai_total_tokens(response: Any) -> int:
+    """Best-effort extraction of token usage from AgentResponse-like objects."""
+    usage_details = getattr(response, "usage_details", None)
+    if usage_details is not None:
+        total = _coerce_positive_int(getattr(usage_details, "total_token_count", None))
+        if total:
+            return total
+        input_tokens = _coerce_positive_int(getattr(usage_details, "input_token_count", None))
+        output_tokens = _coerce_positive_int(getattr(usage_details, "output_token_count", None))
+        if input_tokens or output_tokens:
+            return input_tokens + output_tokens
+
+    if isinstance(response, dict):
+        usage = response.get("usage_details") or response.get("usage")
+        if isinstance(usage, dict):
+            total = _extract_tokens_from_usage_dict(usage)
+            if total:
+                return total
+
+    raw = getattr(response, "raw_representation", None)
+    if isinstance(raw, dict):
+        usage = raw.get("usage_details") or raw.get("usage")
+        if isinstance(usage, dict):
+            total = _extract_tokens_from_usage_dict(usage)
+            if total:
+                return total
+
+    return 0
+
+
+async def _increment_ai_tokens_counter(redis_client: Optional[redis.Redis], tokens: int) -> None:
+    """Increment today's token counter in Redis. Non-fatal on failure."""
+    if not redis_client or tokens <= 0:
+        return
+    try:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        key = f"{AI_TOKENS_COUNTER_PREFIX}:{today}"
+        new_value = await redis_client.incrby(key, tokens)
+        if new_value == tokens:
+            await redis_client.expire(key, AI_CALLS_COUNTER_TTL_SECONDS)
+    except Exception as e:
+        logger.warning("Failed to increment AI token counter (non-fatal)", error=str(e), tokens=tokens)
+
+
+async def _record_ai_usage(
+    redis_client: Optional[redis.Redis],
+    response: Any,
+    *,
+    increment_calls: bool = True,
+    increment_tokens_from_response: bool = True,
+) -> None:
+    """Record AI usage counters for dashboard statistics.
+
+    Calls are always counted from service control flow; token counting can come
+    either from response usage_details (fallback) or from OTEL span attributes.
+    """
+    if increment_calls:
+        await _increment_ai_calls_counter(redis_client)
+    if increment_tokens_from_response:
+        token_count = _extract_ai_total_tokens(response)
+        await _increment_ai_tokens_counter(redis_client, token_count)
+
+
 async def get_ai_calls_today_from_redis(redis_client: Optional[redis.Redis]) -> int:
     """Read today's AI-call count. Returns 0 if Redis is unavailable so the
     dashboard degrades gracefully instead of 500-ing."""
@@ -72,6 +261,20 @@ async def get_ai_calls_today_from_redis(redis_client: Optional[redis.Redis]) -> 
         logger.warning("Failed to read AI calls counter from Redis", error=str(e))
         return 0
 
+
+async def get_ai_tokens_today_from_redis(redis_client: Optional[redis.Redis]) -> int:
+    """Read today's AI-token usage. Returns 0 when unavailable."""
+    if not redis_client:
+        return 0
+    try:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        key = f"{AI_TOKENS_COUNTER_PREFIX}:{today}"
+        count = await redis_client.get(key)
+        return int(count) if count else 0
+    except Exception as e:
+        logger.warning("Failed to read AI token counter from Redis", error=str(e))
+        return 0
+
 @dataclass
 class AnomalyState:
     redis_client: Optional[redis.Redis] = None
@@ -80,6 +283,9 @@ class AnomalyState:
     foundry_endpoint: Optional[str] = None
     foundry_model: Optional[str] = None
     token_refresh_task: Optional[asyncio.Task] = None
+    otel_token_consumer_task: Optional[asyncio.Task] = None
+    otel_token_span_processor: Optional[_AiTokenSpanProcessor] = None
+    otel_token_tracking_enabled: bool = False
 
 
 def get_anomaly_state(request: Request) -> AnomalyState:
@@ -149,6 +355,7 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
     def __init__(self):
         self._agent: Optional["FoundryAgent"] = None
         self._ready = False
+        self._increment_tokens_from_response = True
 
     @property
     def name(self) -> str:
@@ -162,6 +369,9 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
         """Initialize with a persistent FoundryAgent instance."""
         self._agent = agent
         self._ready = True
+
+    def set_response_token_tracking(self, enabled: bool) -> None:
+        self._increment_tokens_from_response = enabled
 
     async def analyze(self, transaction: dict, redis_client: Optional[redis.Redis] = None) -> RiskAssessment:
         tracer = trace.get_tracer(__name__)
@@ -185,14 +395,22 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
                 )
 
                 session = self._agent.create_session()
-                response = await self._agent.run(user_message, session=session)
+                token_tracking_ctx = OTEL_AI_TOKEN_TRACKING_ACTIVE.set(not self._increment_tokens_from_response)
+                try:
+                    response = await self._agent.run(user_message, session=session)
+                finally:
+                    OTEL_AI_TOKEN_TRACKING_ACTIVE.reset(token_tracking_ctx)
 
                 result = self._parse_response(str(response))
                 span.set_attribute("risk.score", result.riskScore)
 
-                # Success path only: increment cross-replica AI call counter.
-                # Helper swallows any Redis error so the AI result is never lost.
-                await _increment_ai_calls_counter(redis_client)
+                # Success path only: record usage metrics (calls + tokens).
+                # Helpers swallow Redis errors so AI results are never lost.
+                await _record_ai_usage(
+                    redis_client,
+                    response,
+                    increment_tokens_from_response=self._increment_tokens_from_response,
+                )
 
                 return result
 
@@ -251,7 +469,12 @@ class BaseCategorizer(abc.ABC):
         ...
 
     @abc.abstractmethod
-    async def categorize(self, transaction: dict, hints: list[str] | None = None) -> CategoryResult:
+    async def categorize(
+        self,
+        transaction: dict,
+        hints: list[str] | None = None,
+        redis_client: Optional[redis.Redis] = None,
+    ) -> CategoryResult:
         """Categorize a transaction, optionally using user-defined category hints."""
         ...
 
@@ -298,6 +521,7 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
     def __init__(self):
         self._agent: Optional["FoundryAgent"] = None
         self._ready = False
+        self._increment_tokens_from_response = True
 
     @property
     def name(self) -> str:
@@ -312,7 +536,15 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
         self._agent = agent
         self._ready = True
 
-    async def categorize(self, transaction: dict, hints: list[str] | None = None) -> CategoryResult:
+    def set_response_token_tracking(self, enabled: bool) -> None:
+        self._increment_tokens_from_response = enabled
+
+    async def categorize(
+        self,
+        transaction: dict,
+        hints: list[str] | None = None,
+        redis_client: Optional[redis.Redis] = None,
+    ) -> CategoryResult:
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("foundry.transaction-categorization") as span:
             span.set_attribute("categorizer.name", self.name)
@@ -333,11 +565,21 @@ Respond with ONLY a JSON object (no markdown, no text outside JSON):
                 )
 
                 session = self._agent.create_session()
-                response = await self._agent.run(user_message, session=session)
+                token_tracking_ctx = OTEL_AI_TOKEN_TRACKING_ACTIVE.set(not self._increment_tokens_from_response)
+                try:
+                    response = await self._agent.run(user_message, session=session)
+                finally:
+                    OTEL_AI_TOKEN_TRACKING_ACTIVE.reset(token_tracking_ctx)
 
                 result = self._parse_response(str(response))
                 span.set_attribute("category.result", result.category)
                 span.set_attribute("category.confidence", result.confidence)
+                await _record_ai_usage(
+                    redis_client,
+                    response,
+                    increment_calls=False,
+                    increment_tokens_from_response=self._increment_tokens_from_response,
+                )
                 return result
 
             except Exception as e:
@@ -408,9 +650,9 @@ class AnalyzerPipeline:
             if not analyzer.enabled:
                 continue
             try:
-                # Pass redis_client to analyzers that support it (FoundryRiskAnalyzer)
-                if isinstance(analyzer, FoundryRiskAnalyzer):
-                    result = await analyzer.analyze(transaction, redis_client)
+                analyze_params = inspect.signature(analyzer.analyze).parameters
+                if "redis_client" in analyze_params:
+                    result = await analyzer.analyze(transaction, redis_client=redis_client)
                 else:
                     result = await analyzer.analyze(transaction)
                 results.append(result)
@@ -427,12 +669,20 @@ class AnalyzerPipeline:
         # Return highest risk score (conservative approach)
         return max(results, key=lambda r: r.riskScore)
 
-    async def categorize(self, transaction: dict, hints: list[str] | None = None) -> CategoryResult:
+    async def categorize(
+        self,
+        transaction: dict,
+        hints: list[str] | None = None,
+        redis_client: Optional[redis.Redis] = None,
+    ) -> CategoryResult:
         """Run the first enabled categorizer to assign a category."""
         for categorizer in self._categorizers:
             if not categorizer.enabled:
                 continue
             try:
+                categorize_params = inspect.signature(categorizer.categorize).parameters
+                if "redis_client" in categorize_params:
+                    return await categorizer.categorize(transaction, hints=hints, redis_client=redis_client)
                 return await categorizer.categorize(transaction, hints=hints)
             except Exception as e:
                 logger.error(f"Categorizer {categorizer.name} failed: {e}")
@@ -596,7 +846,11 @@ async def score_and_store_transaction(
     existing_category = transaction.get("category", "")
     if not existing_category or existing_category == "Uncategorized":
         user_hints = await _fetch_user_category_hints(transaction.get("userId"))
-        cat_result = await analyzer_pipeline.categorize(transaction, hints=user_hints or None)
+        cat_result = await analyzer_pipeline.categorize(
+            transaction,
+            hints=user_hints or None,
+            redis_client=redis_client,
+        )
         category = cat_result.category
         logger.info(
             f"🏷️ Categorized transaction: {category} "
@@ -869,6 +1123,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ Redis connection failed: {e}")
 
+    # Enable Agent Framework OTEL emission and collect tokens from invoke spans.
+    if _enable_agent_framework_otel_instrumentation():
+        token_queue: asyncio.Queue[int] = asyncio.Queue(maxsize=4096)
+        state.otel_token_span_processor = _attach_otel_token_span_processor(token_queue)
+        if state.otel_token_span_processor is not None:
+            state.otel_token_consumer_task = asyncio.create_task(
+                _consume_otel_token_queue(redis_client, token_queue)
+            )
+            state.otel_token_tracking_enabled = True
+            foundry_analyzer.set_response_token_tracking(False)
+            foundry_categorizer.set_response_token_tracking(False)
+            logger.info("✅ AI token tracking source: OTEL invoke_agent span attributes")
+        else:
+            logger.info("ℹ️ AI token tracking source: response usage_details fallback")
+    else:
+        logger.info("ℹ️ Agent Framework OTEL instrumentation unavailable — using response usage_details fallback")
+
     # Start the consumer as a background task
     consumer_task = asyncio.create_task(consume_redis_stream(redis_client, state.analyzer_pipeline))
     logger.info("🟢 Anomaly detection service ready — consuming from Redis Stream")
@@ -880,9 +1151,18 @@ async def lifespan(app: FastAPI):
     consumer_task.cancel()
     if state.token_refresh_task:
         state.token_refresh_task.cancel()
+    if state.otel_token_consumer_task:
+        state.otel_token_consumer_task.cancel()
+    if state.otel_token_span_processor:
+        state.otel_token_span_processor.shutdown()
     try:
         await consumer_task
     except asyncio.CancelledError:
         pass
+    if state.otel_token_consumer_task:
+        try:
+            await state.otel_token_consumer_task
+        except asyncio.CancelledError:
+            pass
     await redis_client.aclose()
     state.redis_client = None

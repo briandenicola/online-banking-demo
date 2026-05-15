@@ -3,7 +3,7 @@ import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.models import AdminStats, FlaggedTransaction, RiskAssessment, ScoredTransaction
+from app.models import AdminStats, CategoryResult, FlaggedTransaction, RiskAssessment, ScoredTransaction
 from app.services.anomaly_service import AnalyzerPipeline, FoundryRiskAnalyzer, FLAGGING_THRESHOLD
 from tests.conftest import FakeAnalyzer
 
@@ -81,6 +81,50 @@ class TestAnalyzerPipeline:
         pipeline.register(FakeAnalyzer("a", 0.1))
         assert len(pipeline.analyzers) == 1
         assert pipeline.analyzers[0].name == "a"
+
+    @pytest.mark.asyncio
+    async def test_pipeline_passes_redis_to_analyzer_by_signature(self, sample_transaction):
+        pipeline = AnalyzerPipeline()
+        fake_redis = AsyncMock()
+
+        class RedisAwareAnalyzer(FakeAnalyzer):
+            def __init__(self):
+                super().__init__("redis-aware", 0.4, "Redis-aware score")
+                self.seen_redis = None
+
+            async def analyze(self, transaction: dict, redis_client=None):
+                self.seen_redis = redis_client
+                return RiskAssessment(riskScore=0.4, explanation="Redis-aware score", flags=[])
+
+        analyzer = RedisAwareAnalyzer()
+        pipeline.register(analyzer)
+
+        result = await pipeline.assess(sample_transaction, redis_client=fake_redis)
+        assert result.riskScore == 0.4
+        assert analyzer.seen_redis is fake_redis
+
+    @pytest.mark.asyncio
+    async def test_pipeline_passes_redis_to_categorizer_by_signature(self, sample_transaction):
+        pipeline = AnalyzerPipeline()
+        fake_redis = AsyncMock()
+
+        class RedisAwareCategorizer:
+            name = "redis-aware-categorizer"
+            enabled = True
+
+            def __init__(self):
+                self.seen_redis = None
+
+            async def categorize(self, transaction: dict, hints=None, redis_client=None):
+                self.seen_redis = redis_client
+                return CategoryResult(category="Test", confidence=1.0, reasoning="ok")
+
+        categorizer = RedisAwareCategorizer()
+        pipeline.register_categorizer(categorizer)
+
+        result = await pipeline.categorize(sample_transaction, redis_client=fake_redis)
+        assert result.category == "Test"
+        assert categorizer.seen_redis is fake_redis
 
 
 class TestFoundryRiskAnalyzer:
@@ -227,6 +271,128 @@ class TestAiCallsCounter:
         fake_redis = AsyncMock()
         fake_redis.get = AsyncMock(return_value=b"17")
         assert await anomaly_service.get_ai_calls_today_from_redis(fake_redis) == 17
+
+    @pytest.mark.asyncio
+    async def test_increment_tokens_uses_utc_day_bucketed_key_and_sets_ttl_on_create(self):
+        from app.services import anomaly_service
+
+        fake_redis = AsyncMock()
+        fake_redis.incrby = AsyncMock(return_value=23)  # first write with 23 tokens
+        fake_redis.expire = AsyncMock()
+
+        await anomaly_service._increment_ai_tokens_counter(fake_redis, 23)
+
+        from datetime import datetime, timezone
+        expected_key = f"ai:metrics:tokens:{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+        fake_redis.incrby.assert_awaited_once_with(expected_key, 23)
+        fake_redis.expire.assert_awaited_once_with(expected_key, 36 * 60 * 60)
+
+    @pytest.mark.asyncio
+    async def test_get_tokens_returns_int_from_redis_value(self):
+        from app.services import anomaly_service
+
+        fake_redis = AsyncMock()
+        fake_redis.get = AsyncMock(return_value=b"321")
+        assert await anomaly_service.get_ai_tokens_today_from_redis(fake_redis) == 321
+
+    def test_extract_ai_total_tokens_prefers_total_usage_count(self):
+        from app.services import anomaly_service
+
+        usage = MagicMock()
+        usage.total_token_count = 111
+        usage.input_token_count = 50
+        usage.output_token_count = 61
+
+        response = MagicMock()
+        response.usage_details = usage
+
+        assert anomaly_service._extract_ai_total_tokens(response) == 111
+
+    def test_extract_ai_total_tokens_falls_back_to_input_plus_output(self):
+        from app.services import anomaly_service
+
+        usage = MagicMock()
+        usage.total_token_count = None
+        usage.input_token_count = 17
+        usage.output_token_count = 9
+
+        response = MagicMock()
+        response.usage_details = usage
+
+        assert anomaly_service._extract_ai_total_tokens(response) == 26
+
+    def test_extract_ai_total_tokens_reads_raw_representation_usage(self):
+        from app.services import anomaly_service
+
+        response = MagicMock()
+        response.usage_details = None
+        response.raw_representation = {"usage": {"prompt_tokens": 20, "completion_tokens": 5}}
+
+        assert anomaly_service._extract_ai_total_tokens(response) == 25
+
+    def test_extract_tokens_from_otel_span_attributes_sums_input_and_output(self):
+        from app.services import anomaly_service
+
+        attrs = {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.usage.input_tokens": 31,
+            "gen_ai.usage.output_tokens": 9,
+        }
+        assert anomaly_service._extract_tokens_from_otel_span_attributes(attrs) == 40
+
+    def test_extract_tokens_from_otel_span_attributes_handles_missing_values(self):
+        from app.services import anomaly_service
+
+        assert anomaly_service._extract_tokens_from_otel_span_attributes(None) == 0
+        assert anomaly_service._extract_tokens_from_otel_span_attributes({}) == 0
+
+    def test_otel_span_processor_enqueues_only_invoke_agent_spans(self):
+        from app.services import anomaly_service
+        import asyncio
+
+        queue: asyncio.Queue[int] = asyncio.Queue()
+        processor = anomaly_service._AiTokenSpanProcessor(queue)
+
+        tracking_token = anomaly_service.OTEL_AI_TOKEN_TRACKING_ACTIVE.set(True)
+        try:
+            non_agent_span = MagicMock()
+            non_agent_span.attributes = {
+                "gen_ai.operation.name": "chat",
+                "gen_ai.usage.input_tokens": 11,
+                "gen_ai.usage.output_tokens": 5,
+            }
+            processor.on_end(non_agent_span)
+            assert queue.empty()
+
+            invoke_span = MagicMock()
+            invoke_span.attributes = {
+                "gen_ai.operation.name": "invoke_agent",
+                "gen_ai.usage.input_tokens": 11,
+                "gen_ai.usage.output_tokens": 5,
+            }
+            processor.on_end(invoke_span)
+            assert queue.get_nowait() == 16
+        finally:
+            anomaly_service.OTEL_AI_TOKEN_TRACKING_ACTIVE.reset(tracking_token)
+
+    @pytest.mark.asyncio
+    async def test_record_ai_usage_skips_response_tokens_when_otel_source_is_enabled(self):
+        from app.services import anomaly_service
+
+        fake_redis = AsyncMock()
+        fake_redis.incr = AsyncMock(return_value=1)
+        fake_redis.expire = AsyncMock()
+        fake_redis.incrby = AsyncMock()
+
+        await anomaly_service._record_ai_usage(
+            fake_redis,
+            {"usage": {"total_tokens": 99}},
+            increment_calls=True,
+            increment_tokens_from_response=False,
+        )
+
+        fake_redis.incr.assert_awaited_once()
+        fake_redis.incrby.assert_not_awaited()
 
     def test_no_in_memory_counter_attribute_on_pipeline(self):
         """Guard against regression: no module/class-level counter state."""

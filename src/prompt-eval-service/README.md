@@ -91,9 +91,12 @@ See `../prompt-eval-service.Tests/` for unit and integration tests.
 1. Create prompt templates via `POST /api/evaluations/prompts`
 2. Define test dataset (transaction samples)
 3. Run evaluation via `POST /api/evaluations/run` with prompt IDs
-4. Service calls ai-service with each prompt variant
-5. Results stored in Cosmos DB with metrics (accuracy, latency, cost)
-6. Compare runs via `GET /api/evaluations/compare`
+4. Service calls `ai-service` `POST /api/admin/evaluate` for each prompt variant
+5. `ai-service` runs an **LLM-as-judge** pipeline (candidate `FoundryAgent` + judge `FoundryAgent` scoring 1–5 per evaluator) and returns per-item scores. See [ADR-006](../../docs/adr/006-llm-as-judge-evaluation.md) for the rationale.
+6. Results stored in Cosmos DB with metrics (per-evaluator scores, pass/fail, latency)
+7. Compare runs via `GET /api/evaluations/compare`
+
+> **Note:** This service does not call Foundry's hosted `FoundryEvals`/`raisvc` backend directly. All evaluation execution is delegated to `ai-service`, which runs LLM-as-judge inside the Managed VNet. Eval IDs returned by `ai-service` use the synthetic `local-llm-judge-{uuid}` format and are not visible in the Foundry portal's Evaluations pane.
 
 ## Notes
 

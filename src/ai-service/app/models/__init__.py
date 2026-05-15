@@ -1,4 +1,5 @@
 from .schemas import (
+    AdminOverride,
     AdminStats,
     CategoryResult,
     DetectRequest,
@@ -7,9 +8,11 @@ from .schemas import (
     ReviewRequest,
     RiskAssessment,
     ScoredTransaction,
+    ScoreOverrideRequest,
 )
 
 __all__ = [
+    "AdminOverride",
     "AdminStats",
     "CategoryResult",
     "DetectRequest",
@@ -18,4 +21,5 @@ __all__ = [
     "ReviewRequest",
     "RiskAssessment",
     "ScoredTransaction",
+    "ScoreOverrideRequest",
 ]

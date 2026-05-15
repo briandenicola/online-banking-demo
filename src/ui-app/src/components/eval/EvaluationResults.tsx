@@ -54,6 +54,7 @@ const SafetyChip: React.FC<{ result: SafetyResult }> = ({ result }) => (
 const EvaluationResults: React.FC<EvaluationResultsProps> = ({ runs, onRefresh, onError }) => {
   const [selectedRun, setSelectedRun] = useState<EvaluationRunDetail | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [reviewingAction, setReviewingAction] = useState<string | null>(null);
 
   const handleViewRun = async (id: string) => {
     try {
@@ -82,6 +83,43 @@ const EvaluationResults: React.FC<EvaluationResultsProps> = ({ runs, onRefresh, 
     a.download = `eval-${selectedRun.id}-results.json`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const getDecisionColor = (decision?: string): 'default' | 'success' | 'warning' | 'error' => {
+    if (decision === 'approved') return 'success';
+    if (decision === 'escalated') return 'warning';
+    if (decision === 'disputed') return 'error';
+    return 'default';
+  };
+
+  const handleReviewItem = async (itemIndex: number, decision: 'approved' | 'disputed' | 'escalated') => {
+    if (!selectedRun) return;
+    const actionKey = `${itemIndex}:${decision}`;
+    setReviewingAction(actionKey);
+    try {
+      let notes: string | undefined;
+      if (decision !== 'approved') {
+        const prompted = window.prompt(
+          'Optional notes for this review decision:',
+          selectedRun.outputItems?.[itemIndex]?.adminNotes || '',
+        );
+        if (prompted === null) return;
+        notes = prompted;
+      }
+      const res = await apiClient.put(
+        `/evaluations/${selectedRun.id}/items/${itemIndex}/review`,
+        {
+          decision,
+          notes: notes?.trim() || undefined,
+        },
+      );
+      setSelectedRun(res.data);
+      await onRefresh();
+    } catch {
+      onError('Failed to update evaluation review decision.');
+    } finally {
+      setReviewingAction(null);
+    }
   };
 
   return (
@@ -311,7 +349,9 @@ const EvaluationResults: React.FC<EvaluationResultsProps> = ({ runs, onRefresh, 
                           <TableCell>Fluency</TableCell>
                           <TableCell>Relevance</TableCell>
                           <TableCell>Safety</TableCell>
+                          <TableCell>Review</TableCell>
                           <TableCell>Response Preview</TableCell>
+                          <TableCell>Action</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
@@ -319,7 +359,7 @@ const EvaluationResults: React.FC<EvaluationResultsProps> = ({ runs, onRefresh, 
                           <TableRow key={idx}>
                             <TableCell>
                               <Typography variant="caption">
-                                {item.transactionId.substring(0, 8)}...
+                                {(item.transactionId || 'n/a').substring(0, 8)}...
                               </Typography>
                             </TableCell>
                             <TableCell>
@@ -340,6 +380,22 @@ const EvaluationResults: React.FC<EvaluationResultsProps> = ({ runs, onRefresh, 
                               />
                             </TableCell>
                             <TableCell>
+                              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                                <Chip
+                                  label={item.adminDecision || 'pending'}
+                                  color={getDecisionColor(item.adminDecision)}
+                                  size="small"
+                                  variant={item.adminDecision ? 'filled' : 'outlined'}
+                                />
+                                {item.reviewedAt && (
+                                  <Typography variant="caption" color="text.secondary">
+                                    {item.reviewedBy || 'admin'} •{' '}
+                                    {new Date(item.reviewedAt).toLocaleString()}
+                                  </Typography>
+                                )}
+                              </Box>
+                            </TableCell>
+                            <TableCell>
                               <Typography
                                 variant="caption"
                                 sx={{
@@ -350,8 +406,38 @@ const EvaluationResults: React.FC<EvaluationResultsProps> = ({ runs, onRefresh, 
                                   whiteSpace: 'nowrap',
                                 }}
                               >
-                                {item.response.substring(0, 100)}
+                                {(item.response || '').substring(0, 100)}
                               </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                                <Button
+                                  size="small"
+                                  variant={item.adminDecision === 'approved' ? 'contained' : 'text'}
+                                  disabled={Boolean(reviewingAction)}
+                                  onClick={() => handleReviewItem(idx, 'approved')}
+                                >
+                                  {reviewingAction === `${idx}:approved` ? 'Saving...' : 'Approve'}
+                                </Button>
+                                <Button
+                                  size="small"
+                                  color="error"
+                                  variant={item.adminDecision === 'disputed' ? 'contained' : 'text'}
+                                  disabled={Boolean(reviewingAction)}
+                                  onClick={() => handleReviewItem(idx, 'disputed')}
+                                >
+                                  {reviewingAction === `${idx}:disputed` ? 'Saving...' : 'Dispute'}
+                                </Button>
+                                <Button
+                                  size="small"
+                                  color="warning"
+                                  variant={item.adminDecision === 'escalated' ? 'contained' : 'text'}
+                                  disabled={Boolean(reviewingAction)}
+                                  onClick={() => handleReviewItem(idx, 'escalated')}
+                                >
+                                  {reviewingAction === `${idx}:escalated` ? 'Saving...' : 'Escalate'}
+                                </Button>
+                              </Box>
                             </TableCell>
                           </TableRow>
                         ))}

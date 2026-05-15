@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eval-debug
+  namespace: banking-demo
+  labels:
+    app: eval-debug
+    app.kubernetes.io/part-of: banking-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: eval-debug
+  template:
+    metadata:
+      labels:
+        app: eval-debug
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: banking-workload-identity
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: eval-debug
+        image: ghcr.io/banking-demo/eval-debug:1.0.0
+        imagePullPolicy: Always
+        command: ["sleep", "infinity"]
+        env:
+        - name: FOUNDRY_PROJECT_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: openai-endpoint
+        - name: FOUNDRY_MODEL
+          value: "gpt-5.4-mini"
+        envFrom:
+        - configMapRef:
+            name: banking-demo-config
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "250m"
+        volumeMounts:
+        - name: secrets-store
+          mountPath: "/mnt/secrets-store"
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+      volumes:
+      - name: secrets-store
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: banking-secrets-provider

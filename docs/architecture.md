@@ -31,7 +31,7 @@ The Online Banking Demo is a microservices-based banking platform built on .NET 
 | Service | Responsibility | Communication | Dependencies |
 |---------|-----------------|----------------|--------------|
 | **Event Processor** (Go) | Redis Streams consumer, audit routing, event fan-out | Redis Streams | Subscribes to banking-events stream |
-| **Prompt Eval Service** (.NET 9) | AI prompt evaluation, admin evaluation UI | REST/HTTP | Azure AI Foundry, Cosmos DB |
+| **Prompt Eval Service** (.NET 9) | Prompt template CRUD and admin evaluation orchestration; delegates eval execution to ai-service | REST/HTTP | ai-service (`/api/admin/evaluate`), Cosmos DB |
 | **UI Application** (React 18 + MUI v9) | Web frontend, admin panel, chat UI | HTTP, REST | Consumes Istio gateway |
 | **Redis** | Event streaming (Redis Streams as event bus) | Redis protocol | Shared by producer/consumer services |
 
@@ -160,6 +160,29 @@ Stage 4 — Account Provisioning (Foundry Agent):
 - **Worker container** (`account-opening-worker`) — Background processor running 4 agent consumers
 - **Init container** (`provision-agents`) — Provisions Foundry agents at startup
 - **Entra Agent ID auth-sidecar** — Handles Foundry authentication via Microsoft Entra Agent ID (worker only)
+
+### Prompt Evaluation Pipeline (LLM-as-Judge)
+
+The admin "Run Evaluation" feature uses an LLM-as-judge pipeline implemented in `ai-service` (`POST /api/admin/evaluate`):
+
+```
+Admin clicks "Run" in UI
+
+prompt-eval-service (.NET):
+  ├─ Loads prompt template + transaction samples + selected evaluators
+  ├─ Calls ai-service POST /api/admin/evaluate
+  └─ Persists returned per-evaluator scores in Cosmos (evaluation-runs)
+
+ai-service (Python):
+  ├─ Candidate FoundryAgent runs the prompt against the transaction
+  ├─ Judge FoundryAgent scores the candidate's response against each
+  │   evaluator on a 1–5 scale, returning a JSON rubric
+  ├─ Score ≥ 3 ⇒ passed = true
+  └─ Returns { total, passed, failed, all_passed, per_evaluator,
+               items[].scores, eval_id, run_id, status }
+```
+
+Both the candidate and the judge run on `gpt-5.4-mini` via the standard Foundry agent path inside the Managed VNet. See [ADR-006](adr/006-llm-as-judge-evaluation.md) for why this replaced Foundry's hosted `FoundryEvals`/`raisvc` backend.
 
 **Key files:**
 - `src/account-opening-service/app/main.py` — API endpoints

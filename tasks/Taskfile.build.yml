@@ -73,6 +73,12 @@ tasks:
     cmds:
       - az acr build --registry {{.ACR_NAME}} --image ai-service:{{.DOCKER_TAG}} ./src/ai-service/
 
+  eval-debug:
+    desc: Build eval-debug container image (ai-service code + az CLI for in-cluster eval debugging — issue #145)
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - az acr build --registry {{.ACR_NAME}} --image eval-debug:{{.DOCKER_TAG}} -f ./src/ai-service/Dockerfile.eval-debug ./src/ai-service/
+
   event-processor:
     desc: Build event-processor container image
     dir: '{{.ROOT_DIR}}'

@@ -239,6 +239,18 @@ The Account Opening Service has a unique deployment model with multiple containe
 
 Both the API and worker use the `banking-workload-identity` service account. The worker's sidecar authenticates with Foundry using the `AGENT_ID_SIDECAR_URL` (http://localhost:5000) and the workload identity client ID set via `AGENT_ID_AGENT_IDENTITY`.
 
+### Eval Debug Pod (optional)
+
+A separate `eval-debug` Pod can be deployed for in-cluster Foundry / eval debugging. It carries the `ai-service` Python code plus the Azure CLI and network diagnostics tools (`curl`, `jq`, `dig`, `openssl`) and runs under the same workload identity as the rest of the platform.
+
+```bash
+task cloud:build:eval-debug      # builds the dedicated image in ACR
+task cloud:deploy                # ships the Pod manifest
+kubectl exec -it -n banking-demo deploy/eval-debug -- python -m app.eval_debug
+```
+
+The REPL imports the production LLM-as-judge helpers from `ai-service`, so behavior matches `/api/admin/evaluate` exactly. See `src/ai-service/README.md` for command reference and [ADR-006](adr/006-llm-as-judge-evaluation.md) for the eval architecture.
+
 ## TLS Configuration (Optional)
 
 TLS is handled by cert-manager with Let's Encrypt. Requires `CUSTOM_DOMAIN` set in `.env`. The setup is idempotent — safe to re-run if needed.

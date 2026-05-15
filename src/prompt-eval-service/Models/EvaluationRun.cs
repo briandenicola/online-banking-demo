@@ -129,4 +129,16 @@ public class EvaluationOutputItem
 
     [JsonProperty("safetyDetails")]
     public Dictionary<string, double> SafetyDetails { get; set; } = new();
+
+    [JsonProperty("adminDecision")]
+    public string? AdminDecision { get; set; }
+
+    [JsonProperty("adminNotes")]
+    public string? AdminNotes { get; set; }
+
+    [JsonProperty("reviewedBy")]
+    public string? ReviewedBy { get; set; }
+
+    [JsonProperty("reviewedAt")]
+    public DateTime? ReviewedAt { get; set; }
 }

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PromptEvalService.Models;
 using PromptEvalService.Services;
+using System.Security.Claims;
 
 namespace PromptEvalService.Controllers;
 
@@ -66,6 +67,37 @@ public class EvaluationsController : ControllerBase
         var run = await _evalService.GetRunAsync(id);
         if (run == null) return NotFound();
         return Ok(run);
+    }
+
+    [HttpPut("{id}/items/{itemIndex}/review")]
+    public async Task<ActionResult<EvaluationRun>> ReviewOutputItem(
+        string id,
+        int itemIndex,
+        [FromBody] EvaluationItemReviewRequest request)
+    {
+        if (itemIndex < 0)
+            return BadRequest(new { error = "Item index must be non-negative" });
+
+        try
+        {
+            var reviewer = User.FindFirstValue("userId")
+                ?? User.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? User.Identity?.Name
+                ?? "admin";
+
+            var run = await _evalService.ReviewOutputItemAsync(id, itemIndex, request.Decision, request.Notes, reviewer);
+            return Ok(run);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { error = "Run or output item not found" });
+        }
+        catch (Exception ex)
+        {
+            var correlationId = HttpContext.TraceIdentifier;
+            _logger.LogError(ex, "Output item review failed. CorrelationId: {CorrelationId}", correlationId);
+            return StatusCode(500, new { error = "An internal error occurred", correlationId });
+        }
     }
 
     [HttpGet("compare")]

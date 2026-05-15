@@ -37,6 +37,16 @@ class ScoredTransaction(BaseModel):
     scoredAt: str
     status: str = "scored"
     notes: Optional[str] = None
+    adminOverride: Optional["AdminOverride"] = None
+
+
+class AdminOverride(BaseModel):
+    decision: str = Field(..., pattern=r"^(approved|disputed|escalated)$")
+    correctedScore: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    rationale: str = Field(..., min_length=1, max_length=2000)
+    reviewedBy: str
+    reviewedByUsername: str
+    reviewedAt: str
 
 
 class FlaggedTransaction(BaseModel):
@@ -52,6 +62,15 @@ class FlaggedTransaction(BaseModel):
     flaggedAt: str
     status: str = "pending"
     notes: Optional[str] = None
+    outcome: Optional[str] = None
+    reviewedBy: Optional[str] = None
+    reviewedByUsername: Optional[str] = None
+    reviewedAt: Optional[str] = None
+    adminConfidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    adminOverrideScore: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    rationaleCategory: Optional[str] = None
+    rationaleText: Optional[str] = None
+    escalatedTo: Optional[str] = None
 
 
 class AdminStats(BaseModel):
@@ -62,12 +81,25 @@ class AdminStats(BaseModel):
     avgRiskScore: float
     totalScored: int
     highRiskCount: int
+    aiTokensToday: int
     aiCallsToday: int
 
 
 class ReviewRequest(BaseModel):
-    status: str = Field(..., pattern=r"^(reviewed|cleared)$")
-    notes: str = Field(..., min_length=1, max_length=2000)
+    status: Optional[str] = Field(default=None, pattern=r"^(pending|reviewed|cleared|confirmed_fraud|false_positive|suspicious_activity|under_investigation|escalated)$")
+    outcome: Optional[str] = Field(default=None, pattern=r"^(pending|reviewed|cleared|confirmed_fraud|false_positive|suspicious_activity|under_investigation|escalated)$")
+    notes: Optional[str] = Field(default=None, min_length=1, max_length=2000)
+    rationaleCategory: Optional[str] = Field(default=None, max_length=100)
+    rationaleText: Optional[str] = Field(default=None, max_length=5000)
+    adminConfidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    overrideScore: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    escalateTo: Optional[str] = Field(default=None, max_length=128)
+
+
+class ScoreOverrideRequest(BaseModel):
+    decision: str = Field(..., pattern=r"^(approved|disputed|escalated)$")
+    correctedScore: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    rationale: str = Field(..., min_length=1, max_length=2000)
 
 
 class DetectRequest(BaseModel):

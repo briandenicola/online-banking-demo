@@ -56,6 +56,10 @@ export interface EvaluationOutputItem {
   relevanceScore: number;
   safetyPassed: boolean;
   safetyDetails: Record<string, number>;
+  adminDecision?: string;
+  adminNotes?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
 }
 
 export interface EvaluationRunDetail extends EvaluationRunSummary {

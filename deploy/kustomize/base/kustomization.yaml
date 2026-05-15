@@ -14,6 +14,7 @@ resources:
 - transaction-service.yaml
 - transfer-service.yaml
 - ai-service.yaml
+- eval-debug.yaml
 - account-opening-service.yaml
 - budget-service.yaml
 - chatbot-service.yaml
@@ -29,6 +30,9 @@ images:
   newTag: REPLACE_WITH_TAG
 - name: ghcr.io/banking-demo/ai-service
   newName: REPLACE_WITH_ACR_LOGIN_SERVER/ai-service
+  newTag: REPLACE_WITH_TAG
+- name: ghcr.io/banking-demo/eval-debug
+  newName: REPLACE_WITH_ACR_LOGIN_SERVER/eval-debug
   newTag: REPLACE_WITH_TAG
 - name: ghcr.io/banking-demo/budget-service
   newName: REPLACE_WITH_ACR_LOGIN_SERVER/budget-service

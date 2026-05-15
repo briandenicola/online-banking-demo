@@ -52,6 +52,22 @@ Using `project_client.datasets.upload_file()` + `file_id` reference does NOT wor
 
 **Status:** Known Foundry service bug; no production workaround available. Support ticket pending.
 
+**Production workaround (ADOPTED 2026-05-15, issue #145 closed):**
+We replaced `FoundryEvals.evaluate()` with an LLM-as-judge implementation in
+`src/ai-service/app/routes/api.py::run_foundry_evaluation`. Two `FoundryAgent`
+calls per item: (1) candidate agent runs the prompt under test, (2) judge
+agent scores the conversation against the requested evaluators on a 1-5
+scale and returns JSON. Threshold ≥3 = passed. Same response shape as the
+old FoundryEvals path, so prompt-eval-service and the admin UI didn't
+change. See `_build_judge_instructions` / `_parse_judge_scores` in api.py
+and the test suite at `tests/test_llm_judge.py`. The same path is mirrored
+in `app/eval_debug.py` so the in-pod debugger and prod use identical
+prompts and parsers.
+
+When Microsoft fixes the underlying raisvc / dataset issue, swap back by
+restoring the FoundryEvals call (the helpers stay useful for any future
+custom-judge use case).
+
 ---
 
 ### Rung 0 — FoundryAgent constructor contract (ADDED 2026-05-14, #137 + #130)

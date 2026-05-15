@@ -66,7 +66,7 @@ public class EvaluationService : IEvaluationService
             TemplateName = template.Name,
             TemplateVersion = template.Version,
             TransactionCount = transactions.Count,
-            Status = "running"
+            Status = "pending"
         };
 
         await _runRepository.CreateAsync(run);
@@ -79,6 +79,8 @@ public class EvaluationService : IEvaluationService
     public async Task ExecuteFoundryEvaluationAsync(EvaluationRun run, PromptTemplate template, List<TransactionData> transactions, string? bearerToken = null)
     {
         var aiServiceUrl = _config["AI_SERVICE_URL"] ?? "http://ai-service";
+        run.Status = "running";
+        await _runRepository.ReplaceAsync(run.Id, run);
 
         // Use the AiServiceEval client with 10-minute timeout for long-running Foundry evaluations
         var client = _httpClientFactory.CreateClient("AiServiceEval");
@@ -210,10 +212,16 @@ public class EvaluationService : IEvaluationService
         if (result.RootElement.TryGetProperty("items", out var itemsElement))
         {
             run.OutputItems = new List<EvaluationOutputItem>();
+            var idx = 0;
             foreach (var item in itemsElement.EnumerateArray())
             {
                 var outputItem = new EvaluationOutputItem
                 {
+                    TransactionId = idx < transactions.Count
+                        ? (!string.IsNullOrWhiteSpace(transactions[idx].TransactionId)
+                            ? transactions[idx].TransactionId
+                            : transactions[idx].Id)
+                        : string.Empty,
                     Query = item.TryGetProperty("query", out var q) ? q.GetString() ?? "" : "",
                     Response = item.TryGetProperty("response", out var r) ? r.GetString() ?? "" : "",
                     Status = item.TryGetProperty("status", out var s) ? s.GetString() ?? "" : "",
@@ -227,6 +235,7 @@ public class EvaluationService : IEvaluationService
                     outputItem.Scores = JsonSerializer.Deserialize<Dictionary<string, object>>(sc.GetRawText());
 
                 run.OutputItems.Add(outputItem);
+                idx++;
             }
         }
 
@@ -236,6 +245,22 @@ public class EvaluationService : IEvaluationService
             total, passed, failed);
 
         await _runRepository.ReplaceAsync(run.Id, run);
+    }
+
+    public async Task<EvaluationRun> ReviewOutputItemAsync(string runId, int itemIndex, string decision, string? notes, string reviewedBy)
+    {
+        var run = await _runRepository.GetByIdAsync(runId)
+            ?? throw new KeyNotFoundException($"Run {runId} not found");
+        if (run.OutputItems == null || itemIndex < 0 || itemIndex >= run.OutputItems.Count)
+            throw new KeyNotFoundException($"Output item {itemIndex} not found for run {runId}");
+
+        var item = run.OutputItems[itemIndex];
+        item.AdminDecision = decision;
+        item.AdminNotes = notes;
+        item.ReviewedBy = reviewedBy;
+        item.ReviewedAt = DateTime.UtcNow;
+
+        return await _runRepository.ReplaceAsync(run.Id, run);
     }
 
     private static string FormatTransactionQuery(TransactionData tx, string target)

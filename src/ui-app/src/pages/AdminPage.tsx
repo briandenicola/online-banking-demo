@@ -37,7 +37,8 @@ interface AdminStats {
   avgRiskScore: number;
   totalScored: number;
   highRiskCount: number;
-  aiCallsToday: number;
+  aiTokensToday: number;
+  aiCallsToday?: number;
 }
 
 // Risk scores are 0.0–1.0 from the model. Anything outside that range is
@@ -193,10 +194,10 @@ const AdminPage: React.FC = () => {
               <CardContent sx={{ textAlign: 'center' }}>
                 <SmartToyIcon color="secondary" sx={{ fontSize: 40 }} />
                 <Typography variant="h4" sx={{ mt: 1 }}>
-                  {stats.aiCallsToday}
+                  {stats.aiTokensToday.toLocaleString()}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  AI Calls Today
+                  AI Tokens Today
                 </Typography>
               </CardContent>
             </Card>

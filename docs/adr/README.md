@@ -11,6 +11,7 @@ This directory contains Architecture Decision Records for the Online Banking Dem
 | [003](003-jwt-claim-roles.md) | JWT claim-based roles over external RBAC | Accepted | 2026-05 |
 | [004](004-redis-streams-event-bus.md) | Redis Streams as event bus over dedicated message brokers | Accepted | 2026-05 |
 | [005](005-foundry-agents-over-direct-openai.md) | Azure AI Foundry agents over direct OpenAI calls | Accepted | 2026-05 |
+| [006](006-llm-as-judge-evaluation.md) | LLM-as-judge for prompt evaluations over Foundry's hosted evals (raisvc) | Accepted | 2026-05 |
 
 ## ADR Format
 

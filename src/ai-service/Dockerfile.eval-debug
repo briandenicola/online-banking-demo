@@ -1,0 +1,35 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install az CLI + network/HTTP diagnostic tools so we can hit the Foundry
+# project endpoint directly from inside the managed VNet (issue #145).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        ca-certificates \
+        gnupg \
+        lsb-release \
+        jq \
+        dnsutils \
+        iputils-ping \
+        openssl \
+        less \
+        procps \
+    && curl -sLS https://aka.ms/InstallAzureCLIDeb | bash \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY ./app ./app
+COPY ./pyproject.toml ./
+
+RUN pip install --no-cache-dir --root-user-action=ignore .
+
+# Match the runAsUser=1000 in eval-debug.yaml.
+RUN adduser --disabled-password --gecos "" --no-create-home --uid 1000 appuser \
+    && mkdir -p /home/appuser \
+    && chown -R appuser:appuser /home/appuser
+
+ENV HOME=/home/appuser
+
+USER appuser
+
+CMD ["sleep", "infinity"]

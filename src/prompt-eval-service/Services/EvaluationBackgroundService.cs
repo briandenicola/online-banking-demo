@@ -58,11 +58,7 @@ public class EvaluationBackgroundService : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var evaluationService = scope.ServiceProvider.GetRequiredService<IEvaluationService>();
-
-        if (evaluationService is EvaluationService svc)
-        {
-            await svc.ExecuteFoundryEvaluationAsync(workItem.Run, workItem.Template, workItem.Transactions, workItem.BearerToken);
-        }
+        await evaluationService.ExecuteFoundryEvaluationAsync(workItem.Run, workItem.Template, workItem.Transactions, workItem.BearerToken);
     }
 
     private async Task TryMarkRunFailed(EvaluationRun run, Exception ex)

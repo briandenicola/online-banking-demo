@@ -46,6 +46,16 @@ public class RunEvaluationRequest
     public List<string> TransactionIds { get; set; } = new();
 }
 
+public class EvaluationItemReviewRequest
+{
+    [Required]
+    [RegularExpression("^(approved|disputed|escalated)$", ErrorMessage = "Decision must be approved, disputed, or escalated")]
+    public string Decision { get; set; } = string.Empty;
+
+    [StringLength(2000)]
+    public string? Notes { get; set; }
+}
+
 // Response DTOs
 
 public class EvaluationRunSummary
