@@ -1206,3 +1206,25 @@ These are **NOT caused by the OpenApi migration** — they're pre-existing Depen
 **Full Details:** `.squad/orchestration-log/2026-05-19T12-56-turk.md` + `.squad/log/2026-05-19T12-56-openapi-2x-fix.md`
 
 **Decision Archived:** `.squad/decisions.md` (appended 2026-05-19)
+### 2026-05-15 — 017 Loan Origination Workflow: Spec → Tasks Handoff (speckit.tasks)
+
+**Workflow Completed:** spec.md + plan.md → `tasks.md` (75 tasks across 6 phases)
+
+**Agent:** speckit.tasks (Claude Sonnet 4.5, sync mode)  
+**Input:** 6 design artifacts from specs/017-loan-origination-workflow/  
+**Output:** `specs/017-loan-origination-workflow/tasks.md` (ready for implementation planning)
+
+**MVP Scope (US1 — Apply & Underwrite):**
+- User submits loan application → synchronous multi-agent workflow → APPROVE/CONDITIONAL/DECLINE recommendation with confidence
+- Covers FR-1, FR-2, FR-3, FR-5, FR-6, FR-7, FR-8, FR-11, FR-17
+- Test requirements: xUnit (orchestrator, controllers, repositories, event publisher) + Playwright E2E happy-path (per NFR-8)
+
+**Phase Structure:**
+1. Phase 1: .NET 10 service scaffold, project structure
+2. Phase 2: Foundational (Cosmos containers, JWT, models, telemetry, agent registration, prompts)
+3. Phase 3: US1 — Apply & Underwrite
+4. Phase 4: US2 — Decide, Fund & Announce
+5. Phase 5: US3 — Live Workflow & UI
+6. Phase 6: Polish & End-to-End Tests
+
+**Status:** Tasks generated, validated, not yet committed (awaiting Brian review). Ready for issue creation or direct implementation.
