@@ -7,7 +7,7 @@
 
 - The base `online-banking-demo` stack is already running (see `docs/deployment-local.md` or `docs/deployment-azure.md`).
 - For cloud: spec **001-azure-private-endpoints** has been applied — Foundry project, capability host, and BYO connections exist privately.
-- `task` (Taskfile runner), Docker, .NET 9 SDK, Node.js 18+ all installed for local dev.
+- `task` (Taskfile runner), Docker, .NET 10 SDK, Node.js 18+ all installed for local dev.
 
 ## Local Development
 

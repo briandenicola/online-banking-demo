@@ -114,6 +114,8 @@ All six containers are **owned exclusively by loan-origination-service** and sha
 
 ### Decision (`underwriting-decisions`)
 
+> **Naming note:** The C# model class for this entity is `DecisionRecord` (to avoid collision with the `System.Decision` namespace). In data-model and spec docs, it is referred to simply as "Decision". Both names refer to the same Cosmos entity in the `underwriting-decisions` container.
+
 ```jsonc
 {
   "id": "DEC-2026-00045",
@@ -226,8 +228,10 @@ Ten rules (POL-001 through POL-010) ported verbatim from the source repo's `poli
                                           ┌────────────────┐
                                           │    decided     │
                                           └───────┬────────┘
-                                                  │ if decision == approve
-                                                  │ AND account-service + transaction-service succeed
+                                                  │ if decision == approve:
+                                                  │   LoanAccount + LoanDisbursement
+                                                  │   written (in-domain), then
+                                                  │   loan.funded event published
                                                   ▼
                                           ┌────────────────┐
                                           │     funded     │
@@ -242,7 +246,7 @@ Allowed transitions:
 | `submitted` | `recommended` | `POST /run` completes successfully |
 | `recommended` | `recommended` | `POST /recompute` (run again, same status) |
 | `recommended` | `decided` | `POST /decisions` |
-| `decided` | `funded` | Successful `account-service` + `transaction-service` calls in the decision handler |
+| `decided` | `funded` | `LoanFundingService` writes a `LoanAccount` to `loan-accounts` and a `LoanDisbursement` to `loan-disbursements` (both in-domain Cosmos containers), then publishes `loan.approved` + `loan.funded` events to `banking-events` Redis Stream. **No cross-domain service calls.** |
 | `decided` | `decided` | Re-decision (new `Decision` doc; status unchanged) |
 
 `failed` is never a terminal state — runs that fail leave the application's `status` unchanged but record errors on the `LoanRun` document. The UI surfaces the failure and the user can re-trigger via `POST /run`.
@@ -320,7 +324,7 @@ Subscribers are optional. `event-processor` (Go) generically consumes the stream
 
 ## Indexing & Query Patterns
 
-All four containers use the **default Cosmos indexing policy** (index everything). At demo scale we don't need custom exclusions.
+All six containers use the **default Cosmos indexing policy** (index everything). At demo scale we don't need custom exclusions.
 
 Expected queries:
 

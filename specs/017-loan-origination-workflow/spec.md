@@ -23,7 +23,7 @@ The workflow pattern (deterministic code-based coordinator over `Azure.AI.Projec
 2. Use the **workflow / code-based coordinator** orchestration pattern from the source repo — six versioned specialist agents called sequentially, results compiled into a brief, final recommendation produced by an underwriting agent.
 3. Reuse the existing Foundry account, capability host, and BYO connections (Cosmos / Storage / Search) provisioned by spec **001-azure-private-endpoints** — no new Foundry resources.
 4. Persist applications, runs, decisions, **loan accounts, and disbursements** in Cosmos DB containers owned exclusively by loan-origination-service. (Replaces the source repo's CSV layer.)
-5. Publish lifecycle events (`loan.approved`, `loan.funded`) to the existing `banking-events` Redis Stream for any downstream observer. **No synchronous calls into other services for state changes.**
+5. Publish lifecycle events (`loan.application.submitted`, `loan.run.completed`, `loan.approved`, `loan.funded`, `loan.declined`) to the existing `banking-events` Redis Stream for any downstream observer. **No synchronous calls into other services for state changes.**
 6. Add a React UI route `/loans` (intake form, workflow visualization, "my loans" page, admin review dashboard, decision panel) using MUI v9 components. Existing `/accounts` page is untouched.
 7. Emit OpenTelemetry traces for the full agent chain to Application Insights via the existing OTEL Collector.
 
@@ -45,8 +45,8 @@ The workflow pattern (deterministic code-based coordinator over `Azure.AI.Projec
 2. **FR-2 — Application retrieval.** `GET /api/loans/applications/{applicationNo}` returns the application + last run (if any) + last decision (if any).
 3. **FR-3 — Workflow execution.** `POST /api/loans/applications/{applicationNo}/run` triggers the S01–S10 workflow. Synchronous response returns the full `AgentRunResponse` (run_id, prepared payload, workflow log, recommendation).
 4. **FR-4 — Workflow streaming.** `GET /api/loans/applications/{applicationNo}/run-stream` streams Server-Sent Events as steps complete, ending with a final `complete` event carrying the recommendation. Used by the UI workflow visualization.
-5. **FR-5 — Specialist agents.** Six versioned `PromptAgentDefinition` agents are registered in Foundry at service startup (or via init container) using prompts ported from the source repo: `credit-profile-agent`, `income-verification-agent`, `fraud-screening-agent`, `policy-evaluation-agent`, `pricing-agent`, `underwriting-recommendation-agent`. All run on the existing `gpt-5.4-mini` deployment.
-6. **FR-6 — Code-based coordinator.** A `LoanAgentOrchestrator` calls the five specialist agents sequentially with full enriched application context, compiles their responses into a brief, then sends the brief to the underwriting agent for the final `APPROVE` / `CONDITIONAL` / `DECLINE` recommendation with a confidence score in `[0,1]`.
+5. **FR-5 — Specialist agents.** Five specialist `PromptAgentDefinition` agents plus one underwriting-recommendation agent are registered in Foundry at service startup (or via init container) using prompts ported from the source repo: `credit-profile-agent`, `income-verification-agent`, `fraud-screening-agent`, `policy-evaluation-agent`, `pricing-agent` (the five specialists), and `underwriting-recommendation-agent` (the recommendation agent). A seventh agent, `health-check-agent`, is registered for readiness probes (FR-17). All run on the existing `gpt-5.4-mini` deployment. **Total: 7 registered agents.**
+6. **FR-6 — Code-based coordinator.** A `LoanAgentOrchestrator` calls the five specialist agents sequentially with full enriched application context, compiles their responses into a brief, then sends the brief to the underwriting-recommendation agent for the final `APPROVE` / `CONDITIONAL` / `DECLINE` recommendation with a confidence score in `[0,1]`.
 7. **FR-7 — Workflow steps S01–S10.** Steps execute in this order: S01 Application Intake → S02 Data Enrichment → S03 Credit Profile Agent → S04 Income Verification Agent → S05 Fraud Screening Agent → S06 Policy Evaluation Agent → S07 DTI & Affordability → S08 Pricing Agent → S09 Underwriting Recommendation → S10 Human Review Ready. Each step's status (`running` | `completed` | `failed`) and timestamp are recorded in the run log.
 8. **FR-8 — Underwriting policy rules POL-001..POL-010.** Rules are seeded into Cosmos `loan-policy` container at deploy time and read by the policy-evaluation step. Source rules from the original repo are preserved verbatim.
 9. **FR-9 — Decision recording.** `POST /api/loans/applications/{applicationNo}/decisions` records a human reviewer decision (`approve` | `conditional` | `decline`) with optional adjusted amount/term/rate and notes. Persisted to `underwriting-decisions` container.
@@ -70,7 +70,13 @@ The workflow pattern (deterministic code-based coordinator over `Azure.AI.Projec
     - `GET /api/loans/accounts/{loanAccountId}/disbursements` returns the disbursement history.
 
 14. **FR-14 — Event publishing on state changes.**
-    - On approval & funding, publish a `loan.approved` event then a `loan.funded` event to the existing `banking-events` Redis Stream (the same stream `transaction-service`, `transfer-service`, and `ai-service` use). Event payload: `{event_type, application_no, loan_account_id, user_id, amount, apr_pct, term_months, timestamp}`.
+    - loan-origination-service publishes lifecycle events to the existing `banking-events` Redis Stream (the same stream `transaction-service`, `transfer-service`, and `ai-service` use). Events published:
+      - `loan.application.submitted` — after `POST /api/loans/applications`.
+      - `loan.run.completed` — after `POST /run` or `/recompute` finishes successfully.
+      - `loan.approved` — after a decision with `decision == "approve"` is recorded, before funding.
+      - `loan.funded` — after the `LoanAccount` + initial `LoanDisbursement` are written.
+      - `loan.declined` — after a decision with `decision == "decline"`.
+    - Event payload: `{event_type, application_no, loan_account_id (where applicable), user_id, amount, apr_pct, term_months, timestamp}`.
     - This is the **only** mechanism by which other services may react to loan lifecycle changes. No service makes synchronous calls into loan-origination-service except via the public REST API above.
     - `event-processor` (Go) automatically picks up the new events for audit logging — no code change required there because it's a generic stream consumer.
 15. **FR-15 — Frontend route `/loans` (separate from `/accounts`).**
@@ -115,7 +121,7 @@ Reuse demo seed data from `./scripts/seed-data.sh` — these users are created b
 ## Acceptance Criteria
 
 - [ ] `loan-origination-service` deployed to AKS at `/api/loans/*` via the Istio gateway.
-- [ ] All 6 specialist agents + 1 health-check agent registered in the existing Foundry project under versioned names.
+- [ ] All 7 agents (5 specialists + 1 underwriting-recommendation + 1 health-check) registered in the existing Foundry project under versioned names.
 - [ ] Submitting Alice's application and running the workflow returns `APPROVE` with confidence ≥ 0.7.
 - [ ] Approving Alice's recommendation creates a `LoanAccount` for her `userId` in the **new `loan-accounts` container** (not in the existing `accounts` container) and records the initial funding as a `LoanDisbursement` in `loan-disbursements`. A `loan.approved` then `loan.funded` event is published to the `banking-events` Redis Stream.
 - [ ] `account-opening-service`, `account-service`, and `transaction-service` are **bit-for-bit unchanged** — `git diff` against `main` shows zero modifications to their `src/` trees.
@@ -128,7 +134,7 @@ Reuse demo seed data from `./scripts/seed-data.sh` — these users are created b
 ## Dependencies
 
 - **Hard dependency:** Spec **001-azure-private-endpoints** — must be applied so the Foundry project, capability host, and connections exist privately. No new infra is provisioned by this feature.
-- **Soft dependency:** Spec **002-ai-anomaly-detection** — established the pattern for .NET 9 + `Azure.AI.Projects` (prerelease) + Foundry agent registration. We mirror it here.
+- **Soft dependency:** Spec **002-ai-anomaly-detection** — established the pattern for .NET 10 + `Azure.AI.Projects` (prerelease) + Foundry agent registration. We mirror it here.
 - **Reuses:** existing `gpt-5.4-mini` model deployment; existing `accounts` and `transactions` Cosmos containers; existing Istio gateway routing; existing OTEL Collector.
 
 ## Out of Scope (explicit)

@@ -13,7 +13,7 @@ This document resolves all technical unknowns and `NEEDS CLARIFICATION` items fr
 
 **Rationale:**
 - The source repo's workflow implementation uses this SDK — porting over is mechanical.
-- We already use it in `prompt-eval-service` (also .NET 9), so it's a known quantity in this codebase: same auth (`DefaultAzureCredential`), same retry behavior, same telemetry hook surface.
+- We already use it in `prompt-eval-service` (also .NET 10), so it's a known quantity in this codebase: same auth (`DefaultAzureCredential`), same retry behavior, same telemetry hook surface.
 - It produces **versioned agents** in the Foundry portal — exactly what we want for this demo, since the underwriting policies and prompts are auditable artifacts.
 - The classic SDK (`Microsoft.Agents.AI.AzureAI.Persistent` + `PersistentAgentsClient`) is what the source repo's *classic* implementation uses, which is explicitly out of scope for this feature.
 
@@ -113,7 +113,7 @@ This document resolves all technical unknowns and `NEEDS CLARIFICATION` items fr
 
 **Required additions** (Terraform, additive only):
 1. `Cognitive Services User` and `Azure AI User` roles on the existing Foundry project for the existing workload identity. (May already be granted from spec 002 — verify in `infra/cloud/identity.tf`.)
-2. `Cosmos DB Built-in Data Contributor` extended to cover the four new containers (or scope at the database, which is the existing pattern).
+2. `Cosmos DB Built-in Data Contributor` extended to cover the six new containers (or scope at the database, which is the existing pattern).
 
 **Rationale:**
 - Adding a service-specific service account would multiply federated credentials for no benefit — every other .NET service in this repo shares `banking-workload-identity` and that's worked well.

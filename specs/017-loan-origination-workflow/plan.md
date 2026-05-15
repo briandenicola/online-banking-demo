@@ -7,7 +7,7 @@
 
 Add a `loan-origination-service` (.NET 10 / ASP.NET Core) that implements multi-agent loan underwriting using the **workflow / code-based coordinator** pattern from `briandenicola/loan-originations-demo`. Six versioned `PromptAgentDefinition` agents are registered in the existing Foundry project (`gpt-5.4-mini`), called sequentially by an orchestrator that compiles their outputs into a brief and passes it to an underwriting agent for the final `APPROVE` / `CONDITIONAL` / `DECLINE` recommendation.
 
-The applicant is an **existing authenticated user** — account opening, KYC, and identity verification are upstream concerns owned by `account-opening-service` and are not invoked by this feature. On approval, loan-origination-service creates a `LoanAccount` (loan principal owed) and a `LoanDisbursement` (initial funding accounting entry) in its **own** Cosmos containers — no deposit account is created, no transaction is written to the deposit-side ledger, and no existing service receives a single line of code change. Lifecycle changes are announced via `loan.approved` / `loan.funded` events on the existing `banking-events` Redis Stream.
+The applicant is an **existing authenticated user** — account opening, KYC, and identity verification are upstream concerns owned by `account-opening-service` and are not invoked by this feature. On approval, loan-origination-service creates a `LoanAccount` (loan principal owed) and a `LoanDisbursement` (initial funding accounting entry) in its **own** Cosmos containers — no deposit account is created, no transaction is written to the deposit-side ledger, and no existing service receives a single line of code change. Lifecycle changes are announced via five events (`loan.application.submitted`, `loan.run.completed`, `loan.approved`, `loan.funded`, `loan.declined`) on the existing `banking-events` Redis Stream.
 
 This feature is **purely additive** — it does not provision new Azure resources and does not modify any existing service. It reuses the Foundry account, capability host, and BYO connections from spec **001-azure-private-endpoints** and the `gpt-5.4-mini` deployment. The classic / agentic orchestration variant from the source repo is **out of scope**.
 
@@ -55,7 +55,7 @@ This feature is **purely additive** — it does not provision new Azure resource
 
 **Scale/Scope**:
 - Demo workload: ~10s of applications/day, single AKS replica (HPA at 1–3).
-- Cosmos containers sized at 400 RU/s shared throughput across the new four (matches existing demo pattern).
+- Cosmos containers sized at 400 RU/s shared throughput across the new six (matches existing demo pattern).
 
 ## Constitution Check
 
@@ -74,7 +74,7 @@ This feature is **purely additive** — it does not provision new Azure resource
 |---|---|---|
 | No code changes to `account-opening-service`, `account-service`, `transaction-service`, `transfer-service`, `user-service`, `ai-service`, `chatbot-service`, `budget-service`, `event-processor`, or `prompt-eval-service` | ✅ PASS | Verified by acceptance criterion: `git diff main -- src/{above}/` returns empty. |
 | loan-origination-service owns 100% of its data | ✅ PASS | Six dedicated Cosmos containers, all PK'd within the loan domain. No reads/writes to other domains' containers. |
-| Cross-domain communication is read-only or async | ✅ PASS | Read: `GET /api/users/{id}` for FK validation. Async: publish `loan.approved` / `loan.funded` to `banking-events`. No synchronous mutations into other services. |
+| Cross-domain communication is read-only or async | ✅ PASS | Read: `GET /api/users/{id}` for FK validation. Async: publish five lifecycle events (`loan.application.submitted`, `loan.run.completed`, `loan.approved`, `loan.funded`, `loan.declined`) to `banking-events`. No synchronous mutations into other services. |
 | Loan funding is internal accounting | ✅ PASS | `LoanDisbursement` lives in `loan-disbursements` (loan domain). No deposit account credit. No `transactions`-container write. |
 | Foundry agents are namespaced | ✅ PASS | Hyphenated agent names (`credit-profile-agent`, etc.) are unique within the shared project. Other services' agents use distinct names — no collision risk. |
 
@@ -100,7 +100,7 @@ specs/017-loan-origination-workflow/
 
 ```text
 src/
-├── loan-origination-service/                  # NEW — .NET 9 ASP.NET Core
+├── loan-origination-service/                  # NEW — .NET 10 ASP.NET Core
 │   ├── LoanOrigination.csproj
 │   ├── Program.cs
 │   ├── Dockerfile
@@ -236,7 +236,7 @@ See [research.md](./research.md). Topics resolved:
 
 **Prerequisites:** research.md complete (✅).
 
-1. **Data model** — see [data-model.md](./data-model.md). Defines four Cosmos entities (`LoanApplication`, `LoanRun`, `Decision`, `PolicyRule`), the application status state machine (`submitted → enriched → recommended → decided → funded`), and the workflow step lifecycle.
+1. **Data model** — see [data-model.md](./data-model.md). Defines six Cosmos entities (`LoanApplication`, `LoanRun`, `Decision`, `PolicyRule`, `LoanAccount`, `LoanDisbursement`), the application status state machine (`submitted → recommended → decided → funded`), and the workflow step lifecycle.
 
 2. **Interface contracts** — see [contracts/loan-origination-api.json](./contracts/loan-origination-api.json). OpenAPI 3.0 spec covering:
    - `POST /api/loans/applications`
@@ -248,6 +248,8 @@ See [research.md](./research.md). Topics resolved:
    - `POST /api/loans/applications/{applicationNo}/decisions`
    - `GET /api/loans/applications/{applicationNo}/decisions`
    - `GET /healthz`, `GET /readyz`
+
+   > **Note:** `/healthz` and `/readyz` are intentionally omitted from the OpenAPI contract (`loan-origination-api.json`). They are infrastructure-only endpoints consumed by Kubernetes probes, not part of the public API surface.
 
 3. **Quickstart** — see [quickstart.md](./quickstart.md). Operator guide for local-dev, building/deploying to AKS, seeding policy rules and demo applicants, and verifying via the React UI.
 
