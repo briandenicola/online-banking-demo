@@ -12,7 +12,7 @@ uvicorn = ">=0.32,<0.48"
 azure-ai-projects = ">=2.1.0"
 azure-identity = ">=1.17.0"
 openai = ">=1.0.0"
-httpx = "^0.27.0"
+httpx = ">=0.27,<0.29"
 pydantic = {version = "^2.9.0", extras = ["email"]}
 python-dotenv = "^1.0.0"
 opentelemetry-api = "^1.27.0"
