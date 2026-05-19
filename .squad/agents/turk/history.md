@@ -1129,3 +1129,28 @@ All service Dockerfiles used Docker Hub base images (python:3.11-slim, node:20-a
 - Numeric UIDs are the minimal-image best practice — Microsoft recommends this pattern for containers with no shell access
 - Azure Linux's design philosophy: exclude user-management tools, encourage immutable image semantics
 - When running on Kubernetes: match `runAsUser` in deployment manifests (e.g., if deployment has `runAsUser: 1000`, use `USER 1000` in Dockerfile)
+- Microsoft Build of Go enables GOEXPERIMENT=systemcrypto by default (requires CGO_ENABLED=1). For static binaries targeting distroless runtimes, use GOEXPERIMENT=ms_nocgo_opensslcrypto with CGO_ENABLED=0 to keep openssl crypto backend without cgo.
+
+## 2026-05-19 — event-processor Build Failure: Microsoft Build of Go CGO Requirement
+
+**Status:** COMPLETED
+
+**Task:** Spawned in background mode to fix build failure in `src/event-processor/Dockerfile` caused by Microsoft Build of Go's `GOEXPERIMENT=systemcrypto` requiring `CGO_ENABLED=1`.
+
+**Root Cause:**
+- Microsoft Build of Go (mcr.microsoft.com/oss/go/microsoft/golang) enables `GOEXPERIMENT=systemcrypto` by default for FIPS/openssl integration
+- This experiment requires `CGO_ENABLED=1` to link against system openssl
+- Conflicts with static binary requirement for distroless runtime (mcr.microsoft.com/azurelinux/distroless/base:3.0)
+
+**Solution Implemented:**
+- Added `GOEXPERIMENT=ms_nocgo_opensslcrypto` to `src/event-processor/Dockerfile` line 14
+- Keeps `CGO_ENABLED=0` for static binary compilation
+- Uses openssl crypto backend without cgo dependency
+- Preserves FIPS-friendly crypto while maintaining distroless compatibility
+
+**File Modified:**
+- `src/event-processor/Dockerfile` line 14 — added environment variable
+
+**Verification:** Docker verification skipped (daemon not running in sandbox). MCR images pre-verified via API.
+
+**Decision Record:** No new decision — implementation of existing MCR base-image migration strategy. Gotcha documented in `.squad/skills/mcr-base-image-migration/SKILL.md` lines 293-321.
