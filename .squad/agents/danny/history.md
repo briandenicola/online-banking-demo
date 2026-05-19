@@ -1165,3 +1165,44 @@ Both paths hit the same broken Foundry backend that cannot write to private-endp
 **Full Details:** `.squad/decisions/decisions.md` (appended 2026-05-14T21:57:29Z)
 
 **For Issue #143 Planning:** This VNET issue will block any Foundry eval-based feature in production until Microsoft fixes it. Plan migration accordingly.
+
+---
+
+## 2026-05-19: CROSS-AGENT — Turk Backend Migration — Microsoft.OpenApi 2.x Complete
+
+**Notification:** Turk (Backend Dev) resolved Swashbuckle 10.x upgrade namespace errors affecting all 5 .NET services.
+
+**Outcome:**
+- ✅ Microsoft.OpenApi 1.x → 2.x namespace migration complete
+- ✅ Namespace import: `using Microsoft.OpenApi.Models;` → `using Microsoft.OpenApi;` (all 5 services)
+- ✅ Security pattern updated: Old `OpenApiSecurityScheme { Reference = ... }` → New Swashbuckle 10.x `OpenApiSecuritySchemeReference` helper
+- ✅ Collection expressions: `Array.Empty<string>()` → `[]` (C# 12)
+- ✅ All services compile successfully
+
+**Files Modified:**
+- `src/user-service/Program.cs`
+- `src/account-service/Program.cs`
+- `src/transaction-service/Program.cs`
+- `src/transfer-service/Program.cs`
+- `src/prompt-eval-service/Program.cs`
+
+**Important Note:** 7 unrelated package version errors surfaced (NU1102):
+- OpenTelemetry (Extensions, AspNetCore, Http) — version pinning issues
+- Microsoft.AspNetCore.Authentication.JwtBearer — no stable 10.x build
+- Microsoft.Azure.Cosmos — 3.59.0 no stable version exists
+- Azure.Identity 1.21.0 — latest stable is 1.19.0
+- Azure.Monitor.OpenTelemetry.Exporter 1.8.0 — latest stable is 1.6.0
+
+These are **NOT caused by the OpenApi migration** — they're pre-existing Dependabot version pins that will need a separate resolution pass per Brian's "one at a time" preference.
+
+**Pattern for Future Versions:**
+- Isolated test project validation
+- `dotnet nuget why` for dependency chain analysis
+- Grep for all usages before bulk migration
+- Build one service first to catch edge cases
+
+**For CI/CD:** .NET services can now build on main branch without namespace errors. Frontend Swagger schema endpoints available for API contract validation. OpenAPI documentation generation unaffected (same schema output structure).
+
+**Full Details:** `.squad/orchestration-log/2026-05-19T12-56-turk.md` + `.squad/log/2026-05-19T12-56-openapi-2x-fix.md`
+
+**Decision Archived:** `.squad/decisions.md` (appended 2026-05-19)

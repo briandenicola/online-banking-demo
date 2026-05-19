@@ -947,3 +947,66 @@ Both hit the same broken Foundry backend service that cannot access private-endp
 **Next:** Test direct blob write + `azureml://` URI (Option 1, HIGH RISK) OR escalate to Microsoft support.
 
 **Full RCA:** `.squad/decisions/decisions.md` (appended 2026-05-14T21:57:29Z)
+
+### 2026-05-14 — Microsoft.OpenApi 2.x Namespace Migration (Swashbuckle 10.x)
+
+**Issue:** Dependabot upgraded Swashbuckle.AspNetCore → 10.1.7, which pulled Microsoft.OpenApi → 2.4.1. Build failed with CS0234: "The type or namespace name 'Models' does not exist in the namespace 'Microsoft.OpenApi'". All 5 .NET services affected.
+
+**Root Cause:** Microsoft.OpenApi 2.x removed the `.Models` sub-namespace. Types moved from `Microsoft.OpenApi.Models.*` to root `Microsoft.OpenApi.*` namespace.
+
+**Learning — Microsoft.OpenApi 2.x Breaking Changes:**
+1. **Namespace consolidation:** `Microsoft.OpenApi.Models.OpenApiInfo` → `Microsoft.OpenApi.OpenApiInfo` (and all related types)
+2. **New helper type:** Swashbuckle 10.x introduced `OpenApiSecuritySchemeReference(referenceId, document)` to replace manual `OpenApiSecurityScheme { Reference = new OpenApiReference { ... } }` pattern
+3. **Lambda requirement:** `AddSecurityRequirement` now expects `Func<OpenApiDocument, OpenApiSecurityRequirement>` to pass document context for references
+4. **Collection type:** `OpenApiSecurityRequirement` dictionary value changed from `string[]` to `List<string>` (use collection expression `[]` or `new List<string>()`)
+
+**Fix Pattern:**
+```csharp
+// OLD (Microsoft.OpenApi 1.x / Swashbuckle 6.x):
+using Microsoft.OpenApi.Models;
+c.AddSecurityRequirement(new OpenApiSecurityRequirement
+{
+    {
+        new OpenApiSecurityScheme { Reference = new OpenApiReference { Id = "Bearer", Type = ReferenceType.SecurityScheme } },
+        Array.Empty<string>()
+    }
+});
+
+// NEW (Microsoft.OpenApi 2.x / Swashbuckle 10.x):
+using Microsoft.OpenApi;
+c.AddSecurityRequirement(doc => new OpenApiSecurityRequirement
+{
+    {
+        new OpenApiSecuritySchemeReference("Bearer", doc),
+        []
+    }
+});
+```
+
+**Files Updated:**
+- user-service/Program.cs
+- account-service/Program.cs
+- transaction-service/Program.cs
+- transfer-service/Program.cs
+- prompt-eval-service/Program.cs
+
+**Verification Method:**
+1. Created isolated test project in /tmp to validate new API patterns
+2. Used `dotnet nuget why` to trace Microsoft.OpenApi 2.4.1 dependency chain
+3. Examined Swashbuckle 10.1.7 source code examples in GitHub repo
+4. Used `strings` on Microsoft.OpenApi.dll to confirm type availability
+
+**Outcome:** ✅ Microsoft.OpenApi.Models namespace errors eliminated. Build still fails due to **unrelated NuGet package version issues** (deferred per Brian's request):
+- OpenTelemetry packages (1.15.x versions not stable yet)
+- Microsoft.AspNetCore.Authentication.JwtBearer 10.0.8 (doesn't exist)
+- Azure SDK packages (requested versions not published)
+
+**Process Pattern for Future Major-Version Upgrades:**
+1. Isolate the specific error (namespace, type, method signature)
+2. Create throwaway test project to validate new API patterns
+3. Check official migration guides + source code examples
+4. Grep all occurrences before bulk edit
+5. Apply fixes consistently across all affected files
+6. Document both the fix and the verification method
+
+**Decision:** `.squad/decisions/inbox/turk-openapi-2x-namespace-fix.md`

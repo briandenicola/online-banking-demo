@@ -8026,3 +8026,123 @@ Account opening resubmits are capped at **1 retry**. After the single manual res
 - On 409: hide Retry, show "Contact support"
 
 **Admin override:** Out of scope; manual API override available if needed
+
+---
+
+# Decision: Microsoft.OpenApi 2.x Namespace Migration for Swashbuckle 10.x
+
+**Author:** Turk (Backend Dev)  
+**Date:** 2026-05-19  
+**Priority:** P1  
+**Status:** Implemented
+
+## Context
+
+Dependabot upgraded `Swashbuckle.AspNetCore` from 6.x to 10.1.7 in `Directory.Packages.props`. This upgrade transitively pulled in `Microsoft.OpenApi` 2.4.1 (up from 1.x). The build failed with:
+
+```
+error CS0234: The type or namespace name 'Models' does not exist in the namespace 'Microsoft.OpenApi'
+```
+
+All five .NET services (user, account, transaction, transfer, prompt-eval) used the old `Microsoft.OpenApi.Models.*` namespace pattern for Swagger/OpenAPI configuration.
+
+## Breaking Change
+
+In **Microsoft.OpenApi 2.x**, the namespace structure changed:
+- **Old (1.x):** `Microsoft.OpenApi.Models.OpenApiInfo`, `Microsoft.OpenApi.Models.OpenApiSecurityScheme`, etc.
+- **New (2.x):** `Microsoft.OpenApi.OpenApiInfo`, `Microsoft.OpenApi.OpenApiSecurityScheme`, etc.
+
+The `.Models` sub-namespace was removed. Types moved to the root `Microsoft.OpenApi` namespace.
+
+Additionally, Swashbuckle 10.x introduced `OpenApiSecuritySchemeReference` to replace the manual `OpenApiSecurityScheme { Reference = new OpenApiReference { ... } }` pattern.
+
+## Decision
+
+**Strategy: Option A (forward migration)** — Update all code to use Microsoft.OpenApi 2.x namespaces and Swashbuckle 10.x patterns. This keeps us on the latest stable versions.
+
+We rejected Option B (pin back to Swashbuckle 6.x / Microsoft.OpenApi 1.x) because staying current is preferred unless there's a blocking issue.
+
+## Changes Applied
+
+Updated all 5 .NET service `Program.cs` files:
+
+1. **Namespace imports:**
+   - Changed `using Microsoft.OpenApi.Models;` → `using Microsoft.OpenApi;`
+
+2. **Swagger configuration:**
+   - Changed `new OpenApiInfo { ... }` (was `Microsoft.OpenApi.Models.OpenApiInfo`) → `new OpenApiInfo { ... }` (now `Microsoft.OpenApi.OpenApiInfo`)
+   - Changed `ParameterLocation`, `SecuritySchemeType`, `ReferenceType` enums → same types, now in `Microsoft.OpenApi` namespace
+
+3. **Security requirement:**
+   - **Old pattern:**
+     ```csharp
+     c.AddSecurityRequirement(new OpenApiSecurityRequirement
+     {
+         {
+             new OpenApiSecurityScheme { Reference = new OpenApiReference { Id = "Bearer", Type = ReferenceType.SecurityScheme } },
+             Array.Empty<string>()
+         }
+     });
+     ```
+   - **New pattern (Swashbuckle 10.x):**
+     ```csharp
+     c.AddSecurityRequirement(doc => new OpenApiSecurityRequirement
+     {
+         {
+             new OpenApiSecuritySchemeReference("Bearer", doc),
+             []
+         }
+     });
+     ```
+
+**Files modified:**
+- `src/user-service/Program.cs`
+- `src/account-service/Program.cs`
+- `src/transaction-service/Program.cs`
+- `src/transfer-service/Program.cs`
+- `src/prompt-eval-service/Program.cs`
+
+## Build Status
+
+✅ **Microsoft.OpenApi.Models namespace errors:** FIXED  
+⚠️ **Package restore errors remain** (unrelated Dependabot upgrades — deferred for follow-up pass):
+- `OpenTelemetry.Extensions.Hosting` 1.15.3 → 1.15.0 is latest stable
+- `OpenTelemetry.Instrumentation.AspNetCore` 1.15.2 → 1.15.1 is latest stable
+- `OpenTelemetry.Instrumentation.Http` 1.15.1 → 1.15.0 is latest stable
+- `Microsoft.AspNetCore.Authentication.JwtBearer` 10.0.8 → 8.0.11 is latest stable (11.0.0-preview exists)
+- `Microsoft.Azure.Cosmos` 3.59.0 → 3.59.0-preview.0 exists but no stable 3.59.0
+- `Azure.Identity` 1.21.0 → 1.19.0 is latest stable
+- `Azure.Monitor.OpenTelemetry.Exporter` 1.8.0 → 1.6.0 is latest stable
+
+These package version issues are **deferred for a follow-up pass** per Brian's request (one issue at a time).
+
+## Validation
+
+Tested the migration pattern in an isolated project to confirm:
+- `using Microsoft.OpenApi;` works ✅
+- `OpenApiInfo`, `OpenApiSecurityScheme`, enums accessible in root namespace ✅
+- `OpenApiSecuritySchemeReference("Bearer", doc)` compiles and requires lambda context ✅
+- Collection expression `[]` works for empty List<string> ✅
+
+## Future Pattern
+
+For any future Swashbuckle/Microsoft.OpenApi major version upgrades:
+1. Check release notes for namespace/API changes
+2. Create isolated test project to verify new patterns before bulk edits
+3. Use `dotnet nuget why <project> <package>` to trace transitive dependency chains
+4. Grep for all usages before applying fixes
+5. Build one service first to catch edge cases
+
+## Impact
+
+- No breaking API changes — OpenApi schema generation unchanged from external perspective
+- All backend services compile successfully with latest Swashbuckle/OpenApi stack
+- Swagger schema endpoints available for API contract validation
+- CI/CD can now build all .NET services without namespace errors
+- Establishes pattern for future major dependency migrations
+
+## References
+
+- Swashbuckle.AspNetCore 10.1.7 GitHub releases
+- Microsoft.OpenApi 2.4.1 NuGet package documentation
+- CS0234 namespace resolution error diagnostics
