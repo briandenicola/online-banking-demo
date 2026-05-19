@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM mcr.microsoft.com/azurelinux/base/python:3.12
 
 WORKDIR /app
 
@@ -9,8 +9,7 @@ RUN pip install --no-cache-dir --root-user-action=ignore .
 
 EXPOSE 8004
 
-RUN adduser --disabled-password --gecos "" --no-create-home appuser
-USER appuser
+USER 1001
 
 # Worker deployment overrides CMD with: python -m app.worker
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8004"]

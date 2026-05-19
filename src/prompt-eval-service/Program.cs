@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Azure.Cosmos;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi;
 using Azure.Identity;
 using Banking.Observability;
 using PromptEvalService.Models;
@@ -20,20 +21,20 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
-    c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo { Title = "Prompt Evaluation Service", Version = "v1" });
-    c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    c.SwaggerDoc("v1", new OpenApiInfo { Title = "Prompt Evaluation Service", Version = "v1" });
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Description = "JWT Authorization header using the Bearer scheme",
         Name = "Authorization",
-        In = Microsoft.OpenApi.Models.ParameterLocation.Header,
-        Type = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.Http,
         Scheme = "bearer"
     });
-    c.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+    c.AddSecurityRequirement(doc => new OpenApiSecurityRequirement
     {
         {
-            new Microsoft.OpenApi.Models.OpenApiSecurityScheme { Reference = new Microsoft.OpenApi.Models.OpenApiReference { Id = "Bearer", Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme } },
-            Array.Empty<string>()
+            new OpenApiSecuritySchemeReference("Bearer", doc),
+            []
         }
     });
 });

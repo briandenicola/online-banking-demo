@@ -1,5 +1,5 @@
 # Build stage
-FROM node:20-alpine AS builder
+FROM mcr.microsoft.com/azurelinux/base/nodejs:20 AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm install --legacy-peer-deps
@@ -7,7 +7,7 @@ COPY . .
 RUN npm run build
 
 # Production stage
-FROM nginx:alpine
+FROM mcr.microsoft.com/azurelinux/base/nginx:1.28
 COPY --from=builder /app/build /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/nginx.conf
 RUN chown -R nginx:nginx /usr/share/nginx/html /var/cache/nginx /var/log/nginx && \

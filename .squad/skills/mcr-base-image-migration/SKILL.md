@@ -290,6 +290,36 @@ tdnf search <keyword>
 
 ## Common Gotchas
 
+### Microsoft Build of Go: systemcrypto Experiment Requires CGO or ms_nocgo Alternative
+
+**Issue:** Microsoft Build of Go enables `GOEXPERIMENT=systemcrypto` by default for FIPS/openssl integration. This experiment requires `CGO_ENABLED=1`, which conflicts with static binary builds needed for distroless runtimes.
+
+**Error:**
+```
+Using GOEXPERIMENT=systemcrypto on Linux requires CGO_ENABLED=1.
+Consider using our cgo-less experiment by setting GOEXPERIMENT=ms_nocgo_opensslcrypto.
+```
+
+**Solution:** Use Microsoft's cgo-less variant of the experiment:
+
+```dockerfile
+# ❌ Fails with Microsoft Build of Go (systemcrypto requires cgo)
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/server
+
+# ✅ Works with distroless runtime - uses openssl backend without cgo
+RUN GOEXPERIMENT=ms_nocgo_opensslcrypto CGO_ENABLED=0 GOOS=linux go build -o /app/server
+```
+
+**Why this matters:**
+- `GOEXPERIMENT=systemcrypto` (Microsoft default) requires CGO to link against system openssl
+- Static binaries (`CGO_ENABLED=0`) are required for distroless runtimes (no libc)
+- `GOEXPERIMENT=ms_nocgo_opensslcrypto` provides openssl crypto backend without CGO dependency
+- Preserves FIPS-friendly crypto story while keeping binaries static
+
+**When to use:**
+- Always when building with Microsoft Go (`mcr.microsoft.com/oss/go/microsoft/golang:*`) + distroless runtime
+- Any static binary Go build targeting minimal/distroless containers
+
 ### Azure Linux Base Images: No shadow-utils
 
 **Issue:** Azure Linux base images (e.g., `mcr.microsoft.com/azurelinux/base/python:3.12`) **do NOT ship with shadow-utils**. The `useradd` command is not available.

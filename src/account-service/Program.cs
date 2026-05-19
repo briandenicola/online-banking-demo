@@ -5,7 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi.Models;
+using Microsoft.OpenApi;
 using Swashbuckle.AspNetCore;
 using System.Text;
 using Azure.Identity;
@@ -35,11 +35,11 @@ builder.Services.AddSwaggerGen(c =>
         Type = SecuritySchemeType.Http,
         Scheme = "bearer"
     });
-    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    c.AddSecurityRequirement(doc => new OpenApiSecurityRequirement
     {
         {
-            new OpenApiSecurityScheme { Reference = new OpenApiReference { Id = "Bearer", Type = ReferenceType.SecurityScheme } },
-            Array.Empty<string>()
+            new OpenApiSecuritySchemeReference("Bearer", doc),
+            []
         }
     });
 });
