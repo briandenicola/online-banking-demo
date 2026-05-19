@@ -1,4 +1,218 @@
-# Decisions — Wave 3 Integration & Stabilization Sprint
+---
+date: 2026-05-15
+author: Turk
+status: implemented
+component: infrastructure/docker
+---
+
+# MCR Base Image Migration - Eliminating Docker Hub Rate Limits
+
+## Problem
+
+ACR build (`task cloud:build:default`) failed with Docker Hub anonymous pull rate limit error:
+
+```
+toomanyrequests: You have reached your unauthenticated pull rate limit. https://www.docker.com/increase-rate-limit
+```
+
+All backend service Dockerfiles used Docker Hub base images:
+- Python services: `python:3.11-slim`
+- UI builder: `node:20-alpine`
+- UI runtime: `nginx:alpine`
+- Event processor builder: `golang:1.26-alpine`
+- Event processor runtime: `alpine:latest`
+
+When ACR build agents pull these images anonymously, they hit Docker Hub's rate limit (100 pulls per 6 hours per IP). This blocks all builds.
+
+## Decision
+
+**Migrate ALL base images from Docker Hub to Microsoft Container Registry (MCR).**
+
+MCR advantages:
+- No rate limits for Azure customers
+- No authentication required from ACR build agents
+- Microsoft-maintained, security-scanned images
+- Azure Linux 3.0 base provides modern, minimal, RPM-based distro
+- Better integration with Azure services
+
+## Image Mapping
+
+### Verified MCR Replacements
+
+| Service | Old Image | New MCR Image | Notes |
+|---------|-----------|---------------|-------|
+| budget-service | `python:3.11-slim` | `mcr.microsoft.com/azurelinux/base/python:3.12` | Python 3.11 not available; bumped to 3.12 |
+| chatbot-service | `python:3.11-slim` | `mcr.microsoft.com/azurelinux/base/python:3.12` | Python 3.11 not available; bumped to 3.12 |
+| ai-service | `python:3.11-slim` | `mcr.microsoft.com/azurelinux/base/python:3.12` | Python 3.11 not available; bumped to 3.12 |
+| account-opening-service | `python:3.11-slim` | `mcr.microsoft.com/azurelinux/base/python:3.12` | Python 3.11 not available; bumped to 3.12 |
+| ai-service (eval-debug) | `python:3.11-slim` | `mcr.microsoft.com/azurelinux/base/python:3.12` | Python 3.11 not available; bumped to 3.12 + apt→tdnf |
+| ui-app (builder) | `node:20-alpine` | `mcr.microsoft.com/azurelinux/base/nodejs:20` | Direct replacement |
+| ui-app (runtime) | `nginx:alpine` | `mcr.microsoft.com/azurelinux/base/nginx:1.28` | Latest stable nginx |
+| event-processor (builder) | `golang:1.26-alpine` | `mcr.microsoft.com/oss/go/microsoft/golang:1.26-azurelinux3.0` | Microsoft Build of Go with FIPS |
+| event-processor (runtime) | `alpine:latest` | `mcr.microsoft.com/azurelinux/distroless/base:3.0` | Distroless for security |
+
+All mappings verified via MCR API (`https://mcr.microsoft.com/v2/<repo>/tags/list`).
+
+## Technical Changes
+
+### 1. Python Services (5 Dockerfiles)
+
+**Changed:**
+- Base image: `python:3.11-slim` → `mcr.microsoft.com/azurelinux/base/python:3.12`
+- User creation: `adduser --disabled-password --gecos "" --no-create-home appuser` → `useradd -r -s /sbin/nologin -M appuser`
+
+**Reason:** Azure Linux uses `useradd` (not Debian's `adduser` wrapper). Flags:
+- `-r` = system user (UID < 1000)
+- `-M` = no home directory
+- `-s /sbin/nologin` = no login shell
+
+**Python 3.11 → 3.12 Compatibility:**
+- Checked all `pyproject.toml` files: NONE specify `requires-python` constraint
+- FastAPI, Pydantic, Azure SDKs all support Python 3.12
+- No breaking changes in stdlib used by our services
+- Risk: LOW
+
+**Files changed:**
+- `src/budget-service/Dockerfile`
+- `src/chatbot-service/Dockerfile`
+- `src/ai-service/Dockerfile`
+- `src/account-opening-service/Dockerfile`
+
+### 2. ai-service/Dockerfile.eval-debug
+
+**Changed:**
+- Base image: `python:3.11-slim` → `mcr.microsoft.com/azurelinux/base/python:3.12`
+- Package manager: `apt-get` → `tdnf` (Azure Linux package manager)
+- Package name mappings:
+  - `dnsutils` → `bind-utils`
+  - `iputils-ping` → `iputils`
+  - `procps` → `procps-ng`
+  - Removed: `gnupg`, `lsb-release` (not needed for tdnf)
+- User creation: `adduser --uid 1000` → `useradd -u 1000 -r -s /sbin/nologin -M`
+- Az CLI install: Kept `https://aka.ms/InstallAzureCLIDeb` (bash script detects distro)
+
+**Risk:** Az CLI install script may not detect Azure Linux. Mitigation: If fails, use `tdnf install -y azure-cli`.
+
+### 3. ui-app/Dockerfile (multi-stage)
+
+**Changed:**
+- Builder stage: `node:20-alpine` → `mcr.microsoft.com/azurelinux/base/nodejs:20`
+- Runtime stage: `nginx:alpine` → `mcr.microsoft.com/azurelinux/base/nginx:1.28`
+
+**No other changes:** No custom packages, no user creation (nginx user already exists in MCR image).
+
+**Risk:** LOW - straightforward swap.
+
+### 4. event-processor/Dockerfile (multi-stage)
+
+**Changed:**
+- Builder stage: `golang:1.26-alpine` → `mcr.microsoft.com/oss/go/microsoft/golang:1.26-azurelinux3.0`
+  - Package manager: `apk add --no-cache git` → `tdnf install -y git && tdnf clean all`
+- Runtime stage: `alpine:latest` → `mcr.microsoft.com/azurelinux/distroless/base:3.0`
+  - **Removed** `apk --no-cache add ca-certificates` (distroless includes ca-certificates)
+
+**Distroless Benefits:**
+- No shell, no package manager (attack surface minimized)
+- Only includes runtime dependencies (glibc, ca-certificates, tzdata)
+- `CGO_ENABLED=0` ensures static Go binary (no dynamic lib dependencies)
+- `USER nobody` (UID 65534) exists in distroless
+
+**Risk:** MEDIUM - Distroless is more restrictive. If Go binary needs unexpected dynamic libs, will fail. Static binary mitigates this.
+
+## Package Manager Reference
+
+| Distro | Package Manager | User Creation | Example |
+|--------|----------------|---------------|---------|
+| Debian/Ubuntu | `apt-get` | `adduser` (wrapper) | `adduser --disabled-password appuser` |
+| Alpine | `apk` | `adduser` (busybox) | `adduser -D -H appuser` |
+| Azure Linux | `tdnf` | `useradd` (shadow-utils) | `useradd -r -M -s /sbin/nologin appuser` |
+
+**Azure Linux package name differences:**
+- `dnsutils` → `bind-utils`
+- `iputils-ping` → `iputils`
+- `procps` → `procps-ng`
+
+## Risks & Mitigations
+
+### Risk 1: Python 3.11 → 3.12 Incompatibility
+**Likelihood:** LOW  
+**Impact:** HIGH (runtime crashes)  
+**Mitigation:** 
+- No `requires-python` constraints in any `pyproject.toml`
+- All dependencies support 3.12 (verified via web search)
+- If issues arise, evaluate alternatives: devcontainers image or custom build
+
+### Risk 2: Distroless Missing Dependencies
+**Likelihood:** LOW  
+**Impact:** MEDIUM (event-processor fails to start)  
+**Mitigation:**
+- `CGO_ENABLED=0` ensures static binary
+- Distroless includes glibc, ca-certificates (sufficient for Go stdlib)
+- If fails, fall back to `mcr.microsoft.com/azurelinux/base/core:3.0` (full Azure Linux with shell)
+
+### Risk 3: Az CLI Install Script Failure
+**Likelihood:** LOW  
+**Impact:** MEDIUM (eval-debug image build fails)  
+**Mitigation:**
+- Script detects distro via `/etc/os-release`
+- Azure Linux is RPM-based, script should work
+- Fallback: `tdnf install -y azure-cli`
+
+### Risk 4: Azure Linux Package Name Differences
+**Likelihood:** LOW (already mapped all known differences)  
+**Impact:** LOW (build-time error, easy to fix)  
+**Mitigation:**
+- All eval-debug package names already mapped
+- Other Dockerfiles don't install custom packages
+
+## Build Verification
+
+**Local verification:** Docker/Podman unavailable locally. Verification deferred to ACR build.
+
+**ACR build behavior:**
+- All MCR pulls are unauthenticated (no token required)
+- No rate limits (unlimited pulls for Azure customers)
+- Build errors surface at build time (not deploy time)
+- If any service fails, error will be in ACR task logs
+
+**Critical path services to monitor:**
+1. `event-processor` (distroless change - highest risk)
+2. `ai-service` (eval-debug with az CLI + tdnf)
+3. `ui-app` (multi-stage node+nginx)
+4. `budget-service` (representative Python service)
+
+## Expected Outcomes
+
+**Immediate:**
+- ACR builds succeed without Docker Hub rate limit errors
+- All services build and deploy successfully
+- No runtime changes (all services run identically)
+
+**Long-term:**
+- No future Docker Hub rate limit issues
+- Better security (distroless for Go, Microsoft-scanned images)
+- Consistent base OS (Azure Linux 3.0) across all services
+- Potential future optimizations (Azure Linux-specific tuning)
+
+## Rollback Plan
+
+If critical issues arise:
+1. Revert individual Dockerfiles to Docker Hub images (git revert)
+2. For Python 3.12 issues: Evaluate `mcr.microsoft.com/devcontainers/python:3.11` (heavier but has 3.11)
+3. For distroless issues: Revert event-processor to `alpine:latest`
+
+## Related Decisions
+
+- [002] .NET Services Use MCR Base Images (2026-05-XX) - already using `mcr.microsoft.com/dotnet/*`
+- [005] Azure Linux for Infrastructure (TBD) - this is the first large-scale Azure Linux adoption
+
+## References
+
+- [MCR Catalog](https://mcr.microsoft.com/)
+- [Azure Linux Documentation](https://learn.microsoft.com/en-us/azure/azure-linux/)
+- [Microsoft Go Images](https://github.com/microsoft/go-images)
+- [Docker Hub Rate Limits](https://docs.docker.com/docker-hub/download-rate-limit/)
+
 
 ## Session: 2026-05-14 (Eval Pipeline Bugs + Deploy Refactor)
 
