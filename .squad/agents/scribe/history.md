@@ -65,3 +65,9 @@ Initial setup complete. Scribe hygiene discipline established 2026-05-14.
 **All T030-T035 and T040-T049 tasks confirmed [x] in specs/017-loan-origination-workflow/tasks.md** — no gaps.
 
 ---
+
+### 2026-05-20 — Phase 3 Build Cleanup + Deploy Wiring
+
+**Commit**: 2960fe2 (fix(017): green build + Taskfile/kustomize/configmap wiring)
+
+**Outcome**: Merged inbox decisions (Turk build fix + Livingston test fix) into `.squad/decisions.md` under dated Phase 3 section. Inbox files deleted. Staged and committed all changes including model field extensions, telemetry renames, Azure.AI.Projects SDK stubs, 45 test constructor fixes, Taskfile.build.yml task registration, loan-origination-service Kustomize manifest + kustomization/configmap wiring. Build now 0 errors (service + tests). Ready for Brian's manual push.
