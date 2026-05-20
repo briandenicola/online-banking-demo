@@ -1,6 +1,7 @@
 using FluentAssertions;
 using LoanOrigination.Models;
 using LoanOrigination.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
 
@@ -16,7 +17,7 @@ public class PolicyEvaluationTests
     public async Task EvaluatePolicy_POL001_BureauScoreFloor_Below620_ReturnsHardFail()
     {
         // Arrange
-        var mockRepo = new Mock<Repositories.ICosmosPolicyRepository>();
+        var mockRepo = new Mock<Repositories.CosmosPolicyRepository>(null, null);
         mockRepo.Setup(r => r.GetAllAsync())
             .ReturnsAsync(new List<PolicyRule>
             {
@@ -32,7 +33,7 @@ public class PolicyEvaluationTests
                 }
             });
 
-        var service = new PolicyEvaluationService(mockRepo.Object);
+        var service = new PolicyEvaluationService(mockRepo.Object, NullLogger<PolicyEvaluationService>.Instance);
 
         var enrichedData = new
         {
@@ -53,7 +54,7 @@ public class PolicyEvaluationTests
     public async Task EvaluatePolicy_POL001_BureauScoreFloor_Above620_Passes()
     {
         // Arrange
-        var mockRepo = new Mock<Repositories.ICosmosPolicyRepository>();
+        var mockRepo = new Mock<Repositories.CosmosPolicyRepository>(null, null);
         mockRepo.Setup(r => r.GetAllAsync())
             .ReturnsAsync(new List<PolicyRule>
             {
@@ -69,7 +70,7 @@ public class PolicyEvaluationTests
                 }
             });
 
-        var service = new PolicyEvaluationService(mockRepo.Object);
+        var service = new PolicyEvaluationService(mockRepo.Object, NullLogger<PolicyEvaluationService>.Instance);
 
         var enrichedData = new
         {
@@ -93,7 +94,7 @@ public class PolicyEvaluationTests
     public async Task EvaluatePolicy_POL004_DTICeiling_50Pct(decimal dtiPct, bool shouldFail)
     {
         // Arrange
-        var mockRepo = new Mock<Repositories.ICosmosPolicyRepository>();
+        var mockRepo = new Mock<Repositories.CosmosPolicyRepository>(null, null);
         mockRepo.Setup(r => r.GetAllAsync())
             .ReturnsAsync(new List<PolicyRule>
             {
@@ -109,7 +110,7 @@ public class PolicyEvaluationTests
                 }
             });
 
-        var service = new PolicyEvaluationService(mockRepo.Object);
+        var service = new PolicyEvaluationService(mockRepo.Object, NullLogger<PolicyEvaluationService>.Instance);
 
         var enrichedData = new
         {
@@ -133,7 +134,7 @@ public class PolicyEvaluationTests
     public async Task EvaluatePolicy_POL007_MinIncome_Below24k_ReturnsHardFail()
     {
         // Arrange
-        var mockRepo = new Mock<Repositories.ICosmosPolicyRepository>();
+        var mockRepo = new Mock<Repositories.CosmosPolicyRepository>(null, null);
         mockRepo.Setup(r => r.GetAllAsync())
             .ReturnsAsync(new List<PolicyRule>
             {
@@ -149,7 +150,7 @@ public class PolicyEvaluationTests
                 }
             });
 
-        var service = new PolicyEvaluationService(mockRepo.Object);
+        var service = new PolicyEvaluationService(mockRepo.Object, NullLogger<PolicyEvaluationService>.Instance);
 
         var enrichedData = new
         {
@@ -170,7 +171,7 @@ public class PolicyEvaluationTests
     public async Task EvaluatePolicy_POL002_CreditUtilization_Above80_ReturnsSoftWarn()
     {
         // Arrange
-        var mockRepo = new Mock<Repositories.ICosmosPolicyRepository>();
+        var mockRepo = new Mock<Repositories.CosmosPolicyRepository>(null, null);
         mockRepo.Setup(r => r.GetAllAsync())
             .ReturnsAsync(new List<PolicyRule>
             {
@@ -186,7 +187,7 @@ public class PolicyEvaluationTests
                 }
             });
 
-        var service = new PolicyEvaluationService(mockRepo.Object);
+        var service = new PolicyEvaluationService(mockRepo.Object, NullLogger<PolicyEvaluationService>.Instance);
 
         var enrichedData = new
         {
@@ -207,7 +208,7 @@ public class PolicyEvaluationTests
     public async Task EvaluatePolicy_POL003_Delinquencies_GreaterThan2_ReturnsHardFail()
     {
         // Arrange
-        var mockRepo = new Mock<Repositories.ICosmosPolicyRepository>();
+        var mockRepo = new Mock<Repositories.CosmosPolicyRepository>(null, null);
         mockRepo.Setup(r => r.GetAllAsync())
             .ReturnsAsync(new List<PolicyRule>
             {
@@ -223,7 +224,7 @@ public class PolicyEvaluationTests
                 }
             });
 
-        var service = new PolicyEvaluationService(mockRepo.Object);
+        var service = new PolicyEvaluationService(mockRepo.Object, NullLogger<PolicyEvaluationService>.Instance);
 
         var enrichedData = new
         {
@@ -244,7 +245,7 @@ public class PolicyEvaluationTests
     public async Task EvaluatePolicy_POL005_LoanToIncome_Personal_Above40Pct_ReturnsSoftWarn()
     {
         // Arrange
-        var mockRepo = new Mock<Repositories.ICosmosPolicyRepository>();
+        var mockRepo = new Mock<Repositories.CosmosPolicyRepository>(null, null);
         mockRepo.Setup(r => r.GetAllAsync())
             .ReturnsAsync(new List<PolicyRule>
             {
@@ -260,7 +261,7 @@ public class PolicyEvaluationTests
                 }
             });
 
-        var service = new PolicyEvaluationService(mockRepo.Object);
+        var service = new PolicyEvaluationService(mockRepo.Object, NullLogger<PolicyEvaluationService>.Instance);
 
         var enrichedData = new
         {
@@ -281,7 +282,7 @@ public class PolicyEvaluationTests
     public async Task EvaluatePolicy_POL006_InquiriesRecent_Above4_ReturnsSoftWarn()
     {
         // Arrange
-        var mockRepo = new Mock<Repositories.ICosmosPolicyRepository>();
+        var mockRepo = new Mock<Repositories.CosmosPolicyRepository>(null, null);
         mockRepo.Setup(r => r.GetAllAsync())
             .ReturnsAsync(new List<PolicyRule>
             {
@@ -297,7 +298,7 @@ public class PolicyEvaluationTests
                 }
             });
 
-        var service = new PolicyEvaluationService(mockRepo.Object);
+        var service = new PolicyEvaluationService(mockRepo.Object, NullLogger<PolicyEvaluationService>.Instance);
 
         var enrichedData = new
         {
@@ -318,7 +319,7 @@ public class PolicyEvaluationTests
     public async Task EvaluatePolicy_POL008_MaxLoanAmount_Personal_Above100k_ReturnsHardFail()
     {
         // Arrange
-        var mockRepo = new Mock<Repositories.ICosmosPolicyRepository>();
+        var mockRepo = new Mock<Repositories.CosmosPolicyRepository>(null, null);
         mockRepo.Setup(r => r.GetAllAsync())
             .ReturnsAsync(new List<PolicyRule>
             {
@@ -334,7 +335,7 @@ public class PolicyEvaluationTests
                 }
             });
 
-        var service = new PolicyEvaluationService(mockRepo.Object);
+        var service = new PolicyEvaluationService(mockRepo.Object, NullLogger<PolicyEvaluationService>.Instance);
 
         var enrichedData = new
         {
@@ -355,7 +356,7 @@ public class PolicyEvaluationTests
     public async Task EvaluatePolicy_POL009_MinCreditHistory_LessThan12Months_ReturnsSoftWarn()
     {
         // Arrange
-        var mockRepo = new Mock<Repositories.ICosmosPolicyRepository>();
+        var mockRepo = new Mock<Repositories.CosmosPolicyRepository>(null, null);
         mockRepo.Setup(r => r.GetAllAsync())
             .ReturnsAsync(new List<PolicyRule>
             {
@@ -371,7 +372,7 @@ public class PolicyEvaluationTests
                 }
             });
 
-        var service = new PolicyEvaluationService(mockRepo.Object);
+        var service = new PolicyEvaluationService(mockRepo.Object, NullLogger<PolicyEvaluationService>.Instance);
 
         var enrichedData = new
         {
@@ -392,7 +393,7 @@ public class PolicyEvaluationTests
     public async Task EvaluatePolicy_POL010_BankruptcyRecent_ReturnsHardFail()
     {
         // Arrange
-        var mockRepo = new Mock<Repositories.ICosmosPolicyRepository>();
+        var mockRepo = new Mock<Repositories.CosmosPolicyRepository>(null, null);
         mockRepo.Setup(r => r.GetAllAsync())
             .ReturnsAsync(new List<PolicyRule>
             {
@@ -408,7 +409,7 @@ public class PolicyEvaluationTests
                 }
             });
 
-        var service = new PolicyEvaluationService(mockRepo.Object);
+        var service = new PolicyEvaluationService(mockRepo.Object, NullLogger<PolicyEvaluationService>.Instance);
 
         var enrichedData = new
         {

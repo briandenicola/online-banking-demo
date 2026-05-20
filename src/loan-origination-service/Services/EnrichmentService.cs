@@ -114,9 +114,9 @@ public class EnrichmentService
             ApplicationNo = applicationNo,
             VerifiedMonthlyIncome = verifiedIncome,
             VerificationStatus = verificationStatus,
-            EmployerMatchPct = employerMatchPct,
+            EmployerMatchPct = (decimal)employerMatchPct,
             PayrollRecordsMonths = payrollMonths,
-            IncomeVariancePct = Math.Abs(variancePct)
+            IncomeVariancePct = (decimal)Math.Abs(variancePct)
         };
 
         _logger.LogDebug("Generated income verification for {ApplicationNo}: verified=${Income}, status={Status}",
@@ -169,8 +169,8 @@ public class EnrichmentService
         var signals = new FraudSignals
         {
             ApplicationNo = applicationNo,
-            IdentityRiskScore = identityRisk,
-            DeviceRiskScore = deviceRisk,
+            IdentityRiskScore = (decimal)identityRisk,
+            DeviceRiskScore = (decimal)deviceRisk,
             AddressMismatchFlag = addressMismatch,
             SyntheticIdFlag = syntheticId,
             WatchlistHitFlag = watchlistHit,

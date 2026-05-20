@@ -13,6 +13,7 @@ tasks:
       - task: transaction-service
       - task: transfer-service
       - task: prompt-eval-service
+      - task: loan-origination-service
       - task: chatbot-service
       - task: budget-service
       - task: ai-service
@@ -54,6 +55,12 @@ tasks:
     dir: '{{.ROOT_DIR}}'
     cmds:
       - az acr build --registry {{.ACR_NAME}} --image prompt-eval-service:{{.DOCKER_TAG}} -f ./src/prompt-eval-service/Dockerfile .
+
+  loan-origination-service:
+    desc: Build loan-origination-service container image
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - az acr build --registry {{.ACR_NAME}} --image loan-origination-service:{{.DOCKER_TAG}} -f ./src/loan-origination-service/Dockerfile .
 
   chatbot-service:
     desc: Build chatbot-service container image

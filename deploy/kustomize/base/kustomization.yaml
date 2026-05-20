@@ -21,6 +21,7 @@ resources:
 - event-processor.yaml
 - ui-app.yaml
 - prompt-eval-service.yaml
+- loan-origination-service.yaml
 images:
 - name: ghcr.io/banking-demo/account-opening-service
   newName: REPLACE_WITH_ACR_LOGIN_SERVER/account-opening-service
@@ -42,6 +43,9 @@ images:
   newTag: REPLACE_WITH_TAG
 - name: ghcr.io/banking-demo/event-processor
   newName: REPLACE_WITH_ACR_LOGIN_SERVER/event-processor
+  newTag: REPLACE_WITH_TAG
+- name: ghcr.io/banking-demo/loan-origination-service
+  newName: REPLACE_WITH_ACR_LOGIN_SERVER/loan-origination-service
   newTag: REPLACE_WITH_TAG
 - name: ghcr.io/banking-demo/prompt-eval-service
   newName: REPLACE_WITH_ACR_LOGIN_SERVER/prompt-eval-service

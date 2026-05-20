@@ -1471,3 +1471,99 @@ curl -X POST -H "Authorization: Bearer $ALICE_TOKEN" \
 
 # Expected: { "recommendation": { "recommendation": "APPROVE", "confidence": 0.83, ... }, ... }
 ```
+
+---
+
+## 2026-05-15 — loan-origination-service Build Fix + Deployment Wiring
+
+**Context:** Brian requested the "deferred" build from Phases 1-3 be resolved and integrated into CI/CD pipeline. The service had **91 compile errors**: model field gaps, WorkflowTelemetry method mismatches, Azure.AI.Projects 2.0.0-beta.2 SDK API issues, and type conversions.
+
+**Resolution:**
+
+**Part 1: Build Fixes (91 → 0 errors)**
+
+1. **Model field extensions (50 errors → 0):** Extended 5 model classes to match consumer code expectations:
+   - `ProductPricing.cs` — added 8 fields (PricingRuleId, LoanType, TermMonths, MinAmount, MaxAmount, MinCreditScore, MaxDtiPct, etc.)
+   - `FraudSignals.cs` — added 6 fields (ApplicationNo, DeviceRiskScore, flags for address/synthetic/watchlist/manual review)
+   - `IncomeVerification.cs` — added 5 fields (ApplicationNo, VerificationStatus, PayrollRecordsMonths, IncomeVariancePct, EmployerMatchPct)
+   - `CreditProfile.cs` — added 8 fields (ApplicationNo, ScoreBand, Delinquencies24m, UtilizationPct, HardInquiries6m, BankruptcyFlag, OldestTradeLineMonths, TotalOpenTradelines)
+   - `UserInfo.cs` — added 2 fields (Phone, DateOfBirth, both nullable)
+   
+   **Source of truth:** Reconciled against `specs/017-loan-origination-workflow/data-model.md` (canonical) and consumer code in Services/. Where they differed, data-model.md won.
+
+2. **WorkflowTelemetry method names (16 errors → 0):** Orchestrators called `StartWorkflowActivity(...)` and `StartStepActivity(...)` but class defined only `StartStepSpan(...)`. Renamed methods to match OTEL conventions:
+   - `StartWorkflowActivity(workflowName, applicationNo, runId)` — new method
+   - `StartStepActivity(stepId, applicationNo, runId, stepName?)` — new method
+   - `StartStepSpan(...)` — kept as legacy alias
+   
+   Updated both `OfflineLoanAgentOrchestrator.cs` and `LoanAgentOrchestrator.cs` call sites.
+
+3. **Azure.AI.Projects 2.0.0-beta.2 SDK API (6 errors → stubbed):** SDK doesn't support `GetAIAgentAsync(agentName)` or named params for `CreateAgentAsync(model: ..., name: ...)`. **Stubbed the online orchestrator path** with `NotImplementedException`:
+   - `AgentRegistration.RegisterAgentAsync()` — throws with message: "Agent registration pending Azure.AI.Projects 2.0.0-beta.2 API resolution. Use Foundry__Mode=offline for MVP."
+   - `LoanAgentOrchestrator` (online path) — both specialist and underwriting agent calls throw same exception
+   - **Offline orchestrator unaffected** — MVP runs in offline mode via `Foundry__Mode=offline` env var
+   
+   **Rationale:** MVP uses offline mode; online is P3. Stubbing unblocks build while preserving code structure for future SDK completion.
+
+4. **Type conversion (2 errors → 0):** Added explicit `(decimal)` casts in `EnrichmentService.cs` for 4 fields: `EmployerMatchPct`, `IncomeVariancePct`, `IdentityRiskScore`, `DeviceRiskScore`.
+
+**Part 2: Taskfile.build.yml**
+
+Added new task `loan-origination-service` mirroring existing .NET services, and added to `default` task's `cmds:` list between `prompt-eval-service` and `chatbot-service`.
+
+**Part 3: Kustomize Manifests**
+
+1. Created `deploy/kustomize/base/loan-origination-service.yaml` (Deployment + Service) based on `account-service.yaml` template:
+   - Image: `ghcr.io/banking-demo/loan-origination-service:1.0.0`
+   - Workload identity: `banking-workload-identity`
+   - Health probes: `/healthz`, `/readyz` on port 8080
+   - Resource limits: 128Mi/100m → 256Mi/500m
+
+2. Updated `deploy/kustomize/base/kustomization.yaml`:
+   - Added resource: `- loan-origination-service.yaml`
+   - Added image entry for kustomize image transformation
+
+3. **Istio VirtualService NOT created** — `deploy/kustomize/base/istio/` directory doesn't exist. Noted in tasks.md T131 as SKIPPED.
+
+**Part 4: ConfigMap**
+
+Added to `deploy/kustomize/base/configmap.yaml`:
+- `LOAN_ORIGINATION_SERVICE_URL: "http://loan-origination-service.banking-demo.svc.cluster.local"` — for ui-app
+- `Foundry__Mode: "offline"` — keeps orchestrator in offline mode in cluster
+
+**Part 5: Verification**
+
+- Main service: `dotnet build src/loan-origination-service/LoanOrigination.csproj --no-restore` → **✅ 0 errors** (2 warnings acceptable)
+- Test project: `dotnet build src/loan-origination-service.Tests/LoanOrigination.Tests.csproj --no-restore` → ❌ 77 errors (Livingston's tests reference incomplete service constructor signatures; NOT fixed per guidance — test ownership is Livingston's)
+- YAML validation: ✅ both manifests valid
+- tasks.md: T130, T132, T133, T134 marked complete; T131 marked SKIPPED
+
+**Decision Logged:** `.squad/decisions/inbox/turk-build-fix-20260515.md` with full rationale for:
+1. Model field reconciliation (data-model.md as source of truth)
+2. WorkflowTelemetry rename direction (Activity vs Span naming)
+3. Azure.AI.Projects SDK stub (online mode not needed for MVP)
+4. Livingston's test errors (out of scope — her responsibility)
+5. Istio VirtualService skip (directory doesn't exist)
+
+**Learnings:**
+
+1. **Azure.AI.Projects 2.0.0-beta.2 is pre-release:** Agent retrieval APIs (`GetAIAgentAsync`) and named parameters for `CreateAgentAsync` not yet stable. For future agent services, plan for SDK API changes or use REST API fallback.
+
+2. **Model/service sync lesson:** Phase 2 models were written before Phase 3 services. Always cross-check consumer code expectations when writing shared models. Field mismatches cause cascading compile errors (50 in this case). Best practice: define canonical model in spec (data-model.md), then implement models first, then services against models.
+
+3. **NuGet cache gotcha:** `dotnet restore` failures with "package not found" despite correct `Directory.Packages.props` versions → clear local cache first with `dotnet nuget locals all --clear`. Brian had already cleared it before this session, so restore worked immediately.
+
+4. **Test ownership boundaries:** Backend dev fixes service code; test author (Livingston) fixes test code. Don't cross-contaminate. Her tests compile against models (those are fixed), but fail on constructor signatures (her responsibility to update mock/DI setup).
+
+5. **Kustomize image transformation pattern:** The `images:` section in `kustomization.yaml` uses placeholder image names (`ghcr.io/banking-demo/...`) that get rewritten to `REPLACE_WITH_ACR_LOGIN_SERVER/...` during deploy-time substitution. This allows the same base manifests to work across dev/staging/prod ACRs.
+
+6. **Configmap key naming conventions:** .NET services use both PascalCase (`Services__AccountService`) and camelCase (`CosmosDb__Endpoint`) — inconsistent but preserved per existing patterns. New keys added follow the majority pattern (`Foundry__Mode` is PascalCase section + PascalCase key, matching `CosmosDb__Endpoint` pattern).
+
+7. **YAML multi-doc validation:** Kubernetes manifests often use `---` separator for multiple resources in one file (Deployment + Service). Standard `yaml.safe_load()` fails on multi-doc; use `yaml.safe_load_all()` instead.
+
+8. **Offline-first orchestrator design:** By stubbing the online path (not removing it), we preserve the architectural intent (Foundry online integration) while delivering MVP functionality (offline personas). This is better than a hard fork or feature flag — the code documents the intended final state.
+
+**Build Status:** ✅ **Resolved** — 0 errors in main service. Test errors are Livingston's scope. Service now integrates into CI/CD pipeline via Taskfile.build.yml and deploys via kustomize manifests.
+
+**Next Phase:** Livingston fixes her test constructor calls (separate task). When online orchestrator is prioritized (P3), revisit Azure.AI.Projects SDK API stub — likely needs SDK update or alternative agent retrieval pattern.
+

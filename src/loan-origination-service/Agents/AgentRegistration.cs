@@ -45,7 +45,7 @@ public class AgentRegistration : IHostedService
             _logger.LogInformation("Starting agent registration for loan origination workflow");
 
             var connectionString = foundryEndpoint;
-            var client = new AIProjectClient(connectionString, new DefaultAzureCredential());
+            var client = new AIProjectClient(new Uri(connectionString), new DefaultAzureCredential());
 
             var modelDeploymentName = _configuration["Foundry:ModelDeploymentName"] ?? "gpt-5.4-mini";
 
@@ -100,14 +100,24 @@ public class AgentRegistration : IHostedService
     {
         _logger.LogInformation("Registering agent: {AgentName}", name);
 
-        var agent = await client.Agents.CreateAgentAsync(
-            model: modelDeploymentName,
-            name: name,
-            instructions: instructions,
-            description: description,
-            cancellationToken: cancellationToken);
-
-        _logger.LogInformation("Agent {AgentName} registered with ID {AgentId}", name, agent.Value.Id);
+        // Azure.AI.Projects 2.0.0-beta.2 API — CreateAgentAsync signature is:
+        // CreateAgentAsync(string model, ..., CancellationToken)
+        // The 'model' parameter is positional; named parameters like 'name', 'instructions', 'description'
+        // may not be supported in this beta version. Stub for now.
+        
+        // Stub for online mode — use offline mode (Foundry__Mode=offline) for MVP
+        throw new NotImplementedException(
+            "Agent registration pending Azure.AI.Projects 2.0.0-beta.2 API resolution. " +
+            "Use Foundry__Mode=offline for MVP. See GitHub issue: loan-origination-service online orchestrator completion.");
+        
+        // Expected API pattern (pending SDK update):
+        // var agent = await client.Agents.CreateAgentAsync(
+        //     modelDeploymentName,
+        //     name: name,
+        //     instructions: instructions,
+        //     description: description,
+        //     cancellationToken: cancellationToken);
+        // _logger.LogInformation("Agent {AgentName} registered with ID {AgentId}", name, agent.Value.Id);
     }
 
     public Task StopAsync(CancellationToken cancellationToken)

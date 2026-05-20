@@ -4,8 +4,26 @@ namespace LoanOrigination.Models;
 
 public class FraudSignals
 {
+    [JsonProperty("applicationNo")]
+    public string ApplicationNo { get; set; } = string.Empty;
+
     [JsonProperty("identityRiskScore")]
     public decimal IdentityRiskScore { get; set; }
+
+    [JsonProperty("deviceRiskScore")]
+    public decimal DeviceRiskScore { get; set; }
+
+    [JsonProperty("addressMismatchFlag")]
+    public string AddressMismatchFlag { get; set; } = string.Empty;
+
+    [JsonProperty("syntheticIdFlag")]
+    public string SyntheticIdFlag { get; set; } = string.Empty;
+
+    [JsonProperty("watchlistHitFlag")]
+    public string WatchlistHitFlag { get; set; } = string.Empty;
+
+    [JsonProperty("recommendedManualReview")]
+    public string RecommendedManualReview { get; set; } = string.Empty;
 
     [JsonProperty("addressVerified")]
     public bool AddressVerified { get; set; }

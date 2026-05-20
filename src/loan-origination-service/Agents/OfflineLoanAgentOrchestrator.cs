@@ -50,7 +50,7 @@ public class OfflineLoanAgentOrchestrator : ILoanAgentOrchestrator
         var runId = $"RUN-{DateTime.UtcNow:yyyy}-{Guid.NewGuid().ToString("N")[..7].ToUpper()}";
         var applicationNo = application.ApplicationNo;
 
-        using var activity = WorkflowTelemetry.StartWorkflowActivity(applicationNo, runId);
+        using var activity = WorkflowTelemetry.StartWorkflowActivity("LoanOrigination", applicationNo, runId);
         activity?.SetTag("loan.execution_mode", "offline");
 
         _logger.LogInformation("=== Starting OFFLINE workflow {RunId} for application {ApplicationNo} ===",

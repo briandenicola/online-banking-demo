@@ -1,5 +1,6 @@
 using FluentAssertions;
 using LoanOrigination.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace LoanOrigination.Tests;
@@ -16,7 +17,7 @@ public class EnrichmentTests
     public void Generate_SameApplicationNo_ReturnsDeterministicIdenticalSignals()
     {
         // Arrange
-        var service = new EnrichmentService();
+        var service = new EnrichmentService(NullLogger<EnrichmentService>.Instance);
         var applicationNo = "APP-2026-000001";
 
         // Act
@@ -32,7 +33,7 @@ public class EnrichmentTests
     public void Generate_DifferentApplicationNos_ReturnsDifferentSignals()
     {
         // Arrange
-        var service = new EnrichmentService();
+        var service = new EnrichmentService(NullLogger<EnrichmentService>.Instance);
         var applicationNo1 = "APP-2026-000001";
         var applicationNo2 = "APP-2026-000002";
 
@@ -49,7 +50,7 @@ public class EnrichmentTests
     public void GenerateCreditProfile_SameApplicationNo_IdenticalBureauScore()
     {
         // Arrange
-        var service = new EnrichmentService();
+        var service = new EnrichmentService(NullLogger<EnrichmentService>.Instance);
         var applicationNo = "APP-2026-123456";
 
         // Act
@@ -70,7 +71,7 @@ public class EnrichmentTests
     public void GenerateIncomeVerification_SameApplicationNo_IdenticalIncome()
     {
         // Arrange
-        var service = new EnrichmentService();
+        var service = new EnrichmentService(NullLogger<EnrichmentService>.Instance);
         var applicationNo = "APP-2026-789012";
 
         // Act
@@ -88,7 +89,7 @@ public class EnrichmentTests
     public void GenerateFraudSignals_SameApplicationNo_IdenticalFraudScores()
     {
         // Arrange
-        var service = new EnrichmentService();
+        var service = new EnrichmentService(NullLogger<EnrichmentService>.Instance);
         var applicationNo = "APP-2026-345678";
 
         // Act
@@ -107,7 +108,7 @@ public class EnrichmentTests
     public void Generate_AliceGoodmanApplicationNo_ProducesAPPROVESignals()
     {
         // Arrange
-        var service = new EnrichmentService();
+        var service = new EnrichmentService(NullLogger<EnrichmentService>.Instance);
         var aliceApplicationNo = "APP-2026-000001"; // Assuming Alice is first
 
         // Act
@@ -123,7 +124,7 @@ public class EnrichmentTests
     public void Generate_BobMarginalApplicationNo_ProducesCONDITIONALSignals()
     {
         // Arrange
-        var service = new EnrichmentService();
+        var service = new EnrichmentService(NullLogger<EnrichmentService>.Instance);
         var bobApplicationNo = "APP-2026-000002"; // Assuming Bob is second
 
         // Act
@@ -139,7 +140,7 @@ public class EnrichmentTests
     public void Generate_CharlieRiskyApplicationNo_ProducesDECLINESignals()
     {
         // Arrange
-        var service = new EnrichmentService();
+        var service = new EnrichmentService(NullLogger<EnrichmentService>.Instance);
         var charlieApplicationNo = "APP-2026-000003"; // Assuming Charlie is third
 
         // Act
@@ -155,7 +156,7 @@ public class EnrichmentTests
     public void Generate_ApplicationNoWithHash_ReturnsDeterministicValues()
     {
         // Arrange
-        var service = new EnrichmentService();
+        var service = new EnrichmentService(NullLogger<EnrichmentService>.Instance);
         var testApplicationNo = "APP-2026-999999";
 
         // Act: Call 5 times to ensure determinism over multiple invocations
@@ -177,7 +178,7 @@ public class EnrichmentTests
     public void Generate_ValidApplicationNo_ReturnsAllRequiredSignalFields()
     {
         // Arrange
-        var service = new EnrichmentService();
+        var service = new EnrichmentService(NullLogger<EnrichmentService>.Instance);
         var applicationNo = "APP-2026-111111";
 
         // Act
@@ -204,7 +205,7 @@ public class EnrichmentTests
     public void Generate_VariousApplicationNos_AllDeterministic(string applicationNo)
     {
         // Arrange
-        var service = new EnrichmentService();
+        var service = new EnrichmentService(NullLogger<EnrichmentService>.Instance);
 
         // Act
         // var signals1 = service.Generate(applicationNo);

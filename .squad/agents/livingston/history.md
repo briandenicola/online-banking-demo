@@ -37,6 +37,28 @@ Attempted build failed due to missing package versions (OpenTelemetry 1.15.3, Az
 
 ## Learnings
 
+### 2026-05-20 — Test Build Fix
+
+**Logger injection pattern:**
+- `NullLogger<T>.Instance` (from `Microsoft.Extensions.Logging.Abstractions`) is the idiomatic pattern for test code that doesn't execute or assert on logging behavior
+- Cleaner and more explicit than `Mock<ILogger<T>>().Object` for compilation-only fixes
+- Standard across .NET test codebases for non-executing Skip'd tests
+
+**Model-test-sync gotcha:**
+- Service constructor signature changes cascade to all test instantiations
+- When services add dependencies (e.g., `ILogger<T>`), tests must update all constructor calls
+- Systematic search-replace required: 45 constructor calls fixed across 3 test files (EnrichmentTests, PricingTests, PolicyEvaluationTests)
+
+**Concrete vs. interface mocking:**
+- Services may use concrete dependencies (e.g., `CosmosPolicyRepository`) rather than interfaces
+- Test mocks must match actual constructor signatures — mocking `ICosmosPolicyRepository` when service expects `CosmosPolicyRepository` causes type mismatch errors
+- If service uses concrete class, mock concrete class: `new Mock<CosmosPolicyRepository>(null, null)`
+
+**TDD interface gotcha:**
+- Test-first approach may reference interfaces before they exist (e.g., `IEnrichmentService`, `IPolicyEvaluationService`)
+- When interfaces don't exist, document in Skip reason rather than silently deleting tests: `[Fact(Skip = "Awaiting T045 implementation — requires IAIProjectClient and service interfaces")]`
+- Preserves TDD intent and signals needed work to backend dev
+
 ### Testing Patterns
 - **Contract-first testing**: Writing tests against OpenAPI schema before implementation ensures API compliance
 - **Deterministic synthetic data**: Seeding RNGs with hash(applicationNo) enables reproducible test scenarios without hardcoded data

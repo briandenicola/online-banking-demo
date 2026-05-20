@@ -183,11 +183,11 @@ description: "Task list for feature 017-loan-origination-workflow"
 
 **Purpose**: Deployment manifests, docs, ADR, and the smoke-test gate.
 
-- [ ] T130 [P] Create `deploy/kustomize/base/loan-origination-service.yaml` (Deployment, Service, ServiceAccount binding to `banking-workload-identity`)
-- [ ] T131 [P] Create `deploy/kustomize/base/istio/loan-origination-vs.yaml` routing `/api/loans/*` → `loan-origination-service`
-- [ ] T132 Modify `deploy/kustomize/base/kustomization.yaml` to include the new resources and image entry
-- [ ] T133 Modify `deploy/kustomize/base/configmap.yaml` to add `LOAN_ORIGINATION_SERVICE_URL` for `ui-app` and `USER_SERVICE_URL` for `loan-origination-service` (if not already present)
-- [ ] T134 [P] Add `task cloud:build` image entry for `loan-origination-service` in `Taskfile.build.yml` (or equivalent build manifest used by the repo)
+- [x] T130 [P] Create `deploy/kustomize/base/loan-origination-service.yaml` (Deployment, Service, ServiceAccount binding to `banking-workload-identity`)
+- [ ] T131 [P] Create `deploy/kustomize/base/istio/loan-origination-vs.yaml` routing `/api/loans/*` → `loan-origination-service` *(SKIPPED: istio directory does not exist)*
+- [x] T132 Modify `deploy/kustomize/base/kustomization.yaml` to include the new resources and image entry
+- [x] T133 Modify `deploy/kustomize/base/configmap.yaml` to add `LOAN_ORIGINATION_SERVICE_URL` for `ui-app` and `USER_SERVICE_URL` for `loan-origination-service` (if not already present)
+- [x] T134 [P] Add `task cloud:build` image entry for `loan-origination-service` in `Taskfile.build.yml` (or equivalent build manifest used by the repo)
 - [ ] T135 [P] Modify `docs/architecture.md` to add the Loan Origination section + service to the architecture map
 - [ ] T136 [P] Create `docs/adr/007-loan-workflow-coordinator.md` documenting workflow-only port (no classic) and the in-domain ownership model
 - [ ] T137 Run quickstart.md end-to-end against AKS at `${CUSTOM_DOMAIN}` (`onlinebankingdemo.bjdazure.tech`): submit, run, decide, verify in UI; confirms acceptance criteria

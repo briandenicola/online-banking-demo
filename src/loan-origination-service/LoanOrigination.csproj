@@ -30,10 +30,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="prompts\**\*.txt">
+    <Content Update="prompts\**\*.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="seed\**\*.json">
+    <Content Update="seed\**\*.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

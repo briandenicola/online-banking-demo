@@ -76,7 +76,7 @@ public class LoanAgentOrchestrator : ILoanAgentOrchestrator
         var runId = $"RUN-{DateTime.UtcNow:yyyy}-{Guid.NewGuid().ToString("N")[..7].ToUpper()}";
         var applicationNo = application.ApplicationNo;
 
-        using var activity = WorkflowTelemetry.StartWorkflowActivity(applicationNo, runId);
+        using var activity = WorkflowTelemetry.StartWorkflowActivity("LoanOrigination", applicationNo, runId);
         activity?.SetTag("loan.execution_mode", "code_coordinator");
 
         _logger.LogInformation("=== Starting workflow {RunId} for application {ApplicationNo} ===",
@@ -226,13 +226,30 @@ public class LoanAgentOrchestrator : ILoanAgentOrchestrator
                     continue;
                 }
 
+                // Azure.AI.Projects 2.0.0-beta.2: GetAIAgentAsync API not yet available
+                // Stub for online mode — use offline mode (Foundry__Mode=offline) for MVP
+                throw new NotImplementedException(
+                    "Foundry online mode pending Azure.AI.Projects 2.0.0-beta.2 API resolution. " +
+                    "Use Foundry__Mode=offline for MVP. See GitHub issue: loan-origination-service online orchestrator completion.");
+                
+                // Expected API pattern (pending SDK update):
+                // var agent = await _projectClient.GetAIAgentAsync(agentId);
+                // var response = await agent.RunAsync(prompt);
+                // var responseText = response.Text ?? "(empty response)";
+                // agentSw.Stop();
+                // specialistResults[stepId] = responseText;
+                // workflowLog.Add(new WorkflowStep { ..., Detail = $"{agentName} completed ({agentSw.ElapsedMilliseconds}ms, {responseText.Length} chars)" });
+                
+                #pragma warning disable CS0162 // Unreachable code detected
+                /*
                 var agent = await _projectClient.GetAIAgentAsync(agentId);
                 var response = await agent.RunAsync(prompt);
                 var responseText = response.Text ?? "(empty response)";
                 
                 agentSw.Stop();
                 specialistResults[stepId] = responseText;
-                
+                */
+
                 workflowLog.Add(new WorkflowStep
                 {
                     StepId = stepId,
@@ -240,11 +257,12 @@ public class LoanAgentOrchestrator : ILoanAgentOrchestrator
                     Status = "completed",
                     Timestamp = DateTime.UtcNow,
                     AgentName = agentName,
-                    Detail = $"{agentName} completed ({agentSw.ElapsedMilliseconds}ms, {responseText.Length} chars)"
+                    Detail = $"Stubbed (online mode not implemented)"
                 });
                 
-                _logger.LogInformation("[{RunId}] {StepId}: {AgentName} completed in {Duration}ms ({Chars} chars)",
-                    runId, stepId, agentName, agentSw.ElapsedMilliseconds, responseText.Length);
+                _logger.LogInformation("[{RunId}] {StepId}: {AgentName} stubbed (online mode not implemented)",
+                    runId, stepId, agentName);
+                #pragma warning restore CS0162
                 
                 onStepUpdate?.Invoke(stepId, "completed", $"{agentName} done");
             }
@@ -347,11 +365,28 @@ public class LoanAgentOrchestrator : ILoanAgentOrchestrator
                     throw new InvalidOperationException("underwriting-recommendation-agent not found in Foundry");
                 }
 
+                // Azure.AI.Projects 2.0.0-beta.2: GetAIAgentAsync API not yet available
+                // Stub for online mode — use offline mode (Foundry__Mode=offline) for MVP
+                throw new NotImplementedException(
+                    "Foundry online mode pending Azure.AI.Projects 2.0.0-beta.2 API resolution. " +
+                    "Use Foundry__Mode=offline for MVP. See GitHub issue: loan-origination-service online orchestrator completion.");
+                
+                // Expected API pattern (pending SDK update):
+                // var agent = await _projectClient.GetAIAgentAsync(agentId);
+                // var response = await agent.RunAsync(comprehensiveBrief);
+                // underwritingResponse = response.Text ?? "(empty response)";
+                
+                #pragma warning disable CS0162 // Unreachable code detected
+                /*
                 var agent = await _projectClient.GetAIAgentAsync(agentId);
                 var response = await agent.RunAsync(comprehensiveBrief);
                 underwritingResponse = response.Text ?? "(empty response)";
                 
                 agentSw.Stop();
+                */
+                
+                underwritingResponse = "Stubbed underwriting response (online mode not implemented)";
+                #pragma warning restore CS0162
                 
                 workflowLog.Add(new WorkflowStep
                 {

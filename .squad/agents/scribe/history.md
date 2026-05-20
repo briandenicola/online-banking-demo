@@ -51,3 +51,17 @@ Agent Scribe initialized and ready for work.
 ## Learnings
 
 Initial setup complete. Scribe hygiene discipline established 2026-05-14.
+
+## Learnings
+
+### Phase 3 (US1 MVP) Merge — 2026-05-20
+
+**Commit**: c9e1e0a (feat(017): US1 MVP — apply & underwrite workflow)
+
+**Outcome**: Merged inbox decisions from Turk (T040-T049 implementation) and Livingston (T030-T035 test suite) into `.squad/decisions.md` under dated Phase 3 section. Inbox files deleted. Tasks.md confirmed: T030-T035 and T040-T049 marked [x]. Turk/Livingston histories showed recent learnings but did not include Phase 3-specific entries at end of files (NOTE: Turk history ends at Azure Linux learnings, Livingston at account-opening E2E patterns).
+
+**Gap noted**: Neither .squad/agents/turk/history.md nor .squad/agents/livingston/history.md have appended "## Learnings" sections specifically documenting Phase 3 work. Their decision.md entries (now merged) contain detailed learnings, but per charter, learnings should also appear in agent-specific history files.
+
+**All T030-T035 and T040-T049 tasks confirmed [x] in specs/017-loan-origination-workflow/tasks.md** — no gaps.
+
+---

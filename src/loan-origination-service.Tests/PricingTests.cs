@@ -1,5 +1,8 @@
 using FluentAssertions;
+using LoanOrigination.Repositories;
 using LoanOrigination.Services;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Xunit;
 
 namespace LoanOrigination.Tests;
@@ -16,7 +19,8 @@ public class PricingTests
     public void GetAprForRiskTier_TierA_Returns7Point5Pct()
     {
         // Arrange
-        var service = new PricingService();
+        var mockRepo = new Mock<CosmosPolicyRepository>(null, null);
+        var service = new PricingService(mockRepo.Object, NullLogger<PricingService>.Instance);
 
         // Act
         // var apr = service.GetAprForRiskTier("A");
@@ -29,7 +33,8 @@ public class PricingTests
     public void GetAprForRiskTier_TierB_Returns10Point5Pct()
     {
         // Arrange
-        var service = new PricingService();
+        var mockRepo = new Mock<CosmosPolicyRepository>(null, null);
+        var service = new PricingService(mockRepo.Object, NullLogger<PricingService>.Instance);
 
         // Act
         // var apr = service.GetAprForRiskTier("B");
@@ -42,7 +47,8 @@ public class PricingTests
     public void GetAprForRiskTier_TierC_Returns15Point0Pct()
     {
         // Arrange
-        var service = new PricingService();
+        var mockRepo = new Mock<CosmosPolicyRepository>(null, null);
+        var service = new PricingService(mockRepo.Object, NullLogger<PricingService>.Instance);
 
         // Act
         // var apr = service.GetAprForRiskTier("C");
@@ -55,7 +61,8 @@ public class PricingTests
     public void GetAprForRiskTier_TierD_Returns22Point0Pct()
     {
         // Arrange
-        var service = new PricingService();
+        var mockRepo = new Mock<CosmosPolicyRepository>(null, null);
+        var service = new PricingService(mockRepo.Object, NullLogger<PricingService>.Instance);
 
         // Act
         // var apr = service.GetAprForRiskTier("D");
@@ -73,7 +80,8 @@ public class PricingTests
         decimal principal, decimal aprPct, int termMonths, decimal expectedMonthlyPayment)
     {
         // Arrange
-        var service = new PricingService();
+        var mockRepo = new Mock<CosmosPolicyRepository>(null, null);
+        var service = new PricingService(mockRepo.Object, NullLogger<PricingService>.Instance);
 
         // Act
         // var monthlyPayment = service.CalculateMonthlyPayment(principal, aprPct, termMonths);
@@ -87,7 +95,8 @@ public class PricingTests
     public void CalculateMonthlyPayment_RoundingPrecision_RoundsToTwoDecimals()
     {
         // Arrange
-        var service = new PricingService();
+        var mockRepo = new Mock<CosmosPolicyRepository>(null, null);
+        var service = new PricingService(mockRepo.Object, NullLogger<PricingService>.Instance);
 
         // Act
         // var monthlyPayment = service.CalculateMonthlyPayment(10000.00m, 7.5m, 36);
@@ -104,7 +113,8 @@ public class PricingTests
         decimal principal, decimal aprPct, int termMonths, decimal expectedTotal)
     {
         // Arrange
-        var service = new PricingService();
+        var mockRepo = new Mock<CosmosPolicyRepository>(null, null);
+        var service = new PricingService(mockRepo.Object, NullLogger<PricingService>.Instance);
 
         // Act
         // var total = service.CalculateTotalRepayableAmount(principal, aprPct, termMonths);
@@ -118,7 +128,8 @@ public class PricingTests
     public void CalculatePayoffDate_36MonthsFromToday_ReturnsDatePlus3Years()
     {
         // Arrange
-        var service = new PricingService();
+        var mockRepo = new Mock<CosmosPolicyRepository>(null, null);
+        var service = new PricingService(mockRepo.Object, NullLogger<PricingService>.Instance);
         var originationDate = DateTime.UtcNow;
 
         // Act
@@ -133,7 +144,8 @@ public class PricingTests
     public void CalculatePayoffDate_60MonthsFromToday_ReturnsDatePlus5Years()
     {
         // Arrange
-        var service = new PricingService();
+        var mockRepo = new Mock<CosmosPolicyRepository>(null, null);
+        var service = new PricingService(mockRepo.Object, NullLogger<PricingService>.Instance);
         var originationDate = new DateTime(2026, 5, 15);
 
         // Act
@@ -146,10 +158,11 @@ public class PricingTests
     }
 
     [Fact(Skip = "Awaiting T043 implementation")]
-    public void CalculateFirstPaymentDate_OriginationMid Month_ReturnsFirstOfNextMonth()
+    public void CalculateFirstPaymentDate_OriginationMidMonth_ReturnsFirstOfNextMonth()
     {
         // Arrange
-        var service = new PricingService();
+        var mockRepo = new Mock<CosmosPolicyRepository>(null, null);
+        var service = new PricingService(mockRepo.Object, NullLogger<PricingService>.Instance);
         var originationDate = new DateTime(2026, 5, 15); // Mid-May
 
         // Act
@@ -166,7 +179,8 @@ public class PricingTests
     public void CalculateMonthlyPayment_InvalidApr_ThrowsArgumentException(decimal invalidApr)
     {
         // Arrange
-        var service = new PricingService();
+        var mockRepo = new Mock<CosmosPolicyRepository>(null, null);
+        var service = new PricingService(mockRepo.Object, NullLogger<PricingService>.Instance);
 
         // Act & Assert
         // Assert.Throws<ArgumentException>(() =>
@@ -179,7 +193,8 @@ public class PricingTests
     public void CalculateMonthlyPayment_InvalidTerm_ThrowsArgumentException(int invalidTerm)
     {
         // Arrange
-        var service = new PricingService();
+        var mockRepo = new Mock<CosmosPolicyRepository>(null, null);
+        var service = new PricingService(mockRepo.Object, NullLogger<PricingService>.Instance);
 
         // Act & Assert
         // Assert.Throws<ArgumentException>(() =>

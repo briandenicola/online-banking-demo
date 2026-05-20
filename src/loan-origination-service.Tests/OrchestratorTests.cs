@@ -13,17 +13,18 @@ namespace LoanOrigination.Tests;
 /// </summary>
 public class OrchestratorTests
 {
-    [Fact(Skip = "Awaiting T045 implementation")]
+    [Fact(Skip = "Awaiting T045 implementation — requires IAIProjectClient and service interfaces")]
     public async Task ExecuteWorkflow_AliceAPPROVEPath_Returns10StepsAndAPPROVERecommendation()
     {
         // Arrange
-        var mockAIClient = new Mock<IAIProjectClient>(); // Placeholder — actual interface TBD
-        var mockLogger = new Mock<ILogger<LoanAgentOrchestrator>>();
-        var mockAppRepo = new Mock<Repositories.ICosmosLoanApplicationRepository>();
-        var mockRunRepo = new Mock<Repositories.ICosmosLoanRunRepository>();
-        var mockEnrichmentService = new Mock<Services.IEnrichmentService>();
-        var mockPolicyService = new Mock<Services.IPolicyEvaluationService>();
-        var mockPricingService = new Mock<Services.IPricingService>();
+        // NOTE: These interfaces don't exist yet - service uses concrete classes
+        // var mockAIClient = new Mock<IAIProjectClient>(); // Placeholder — actual interface TBD
+        // var mockLogger = new Mock<ILogger<LoanAgentOrchestrator>>();
+        // var mockAppRepo = new Mock<Repositories.ICosmosLoanApplicationRepository>();
+        // var mockRunRepo = new Mock<Repositories.ICosmosLoanRunRepository>();
+        // var mockEnrichmentService = new Mock<Services.IEnrichmentService>();
+        // var mockPolicyService = new Mock<Services.IPolicyEvaluationService>();
+        // var mockPricingService = new Mock<Services.IPricingService>();
 
         // Mock enrichment to return Alice's strong profile
         // mockEnrichmentService.Setup(e => e.Generate(It.IsAny<string>()))
@@ -88,17 +89,18 @@ public class OrchestratorTests
         //     "Alice's profile should yield APPROVE with confidence ≥ 0.7 per spec personas");
     }
 
-    [Fact(Skip = "Awaiting T045 implementation")]
+    [Fact(Skip = "Awaiting T045 implementation — requires IAIProjectClient and service interfaces")]
     public async Task ExecuteWorkflow_EachStep_PersistsWorkflowStepToLoanRun()
     {
         // Arrange
-        var mockAIClient = new Mock<IAIProjectClient>();
-        var mockLogger = new Mock<ILogger<LoanAgentOrchestrator>>();
-        var mockAppRepo = new Mock<Repositories.ICosmosLoanApplicationRepository>();
-        var mockRunRepo = new Mock<Repositories.ICosmosLoanRunRepository>();
-        var mockEnrichmentService = new Mock<Services.IEnrichmentService>();
-        var mockPolicyService = new Mock<Services.IPolicyEvaluationService>();
-        var mockPricingService = new Mock<Services.IPricingService>();
+        // NOTE: These interfaces don't exist yet - service uses concrete classes
+        // var mockAIClient = new Mock<IAIProjectClient>();
+        // var mockLogger = new Mock<ILogger<LoanAgentOrchestrator>>();
+        // var mockAppRepo = new Mock<Repositories.ICosmosLoanApplicationRepository>();
+        // var mockRunRepo = new Mock<Repositories.ICosmosLoanRunRepository>();
+        // var mockEnrichmentService = new Mock<Services.IEnrichmentService>();
+        // var mockPolicyService = new Mock<Services.IPolicyEvaluationService>();
+        // var mockPricingService = new Mock<Services.IPricingService>();
 
         // var orchestrator = new LoanAgentOrchestrator(
         //     mockAIClient.Object,
@@ -132,18 +134,19 @@ public class OrchestratorTests
         //     "S10 step should be persisted");
     }
 
-    [Fact(Skip = "Awaiting T045 + T013 implementation")]
+    [Fact(Skip = "Awaiting T045 + T013 implementation — requires IAIProjectClient and service interfaces")]
     public async Task ExecuteWorkflow_EachStep_EmitsOTELSpan()
     {
         // Arrange
-        var mockAIClient = new Mock<IAIProjectClient>();
-        var mockLogger = new Mock<ILogger<LoanAgentOrchestrator>>();
-        var mockAppRepo = new Mock<Repositories.ICosmosLoanApplicationRepository>();
-        var mockRunRepo = new Mock<Repositories.ICosmosLoanRunRepository>();
-        var mockEnrichmentService = new Mock<Services.IEnrichmentService>();
-        var mockPolicyService = new Mock<Services.IPolicyEvaluationService>();
-        var mockPricingService = new Mock<Services.IPricingService>();
-        var mockTelemetry = new Mock<Telemetry.IWorkflowTelemetry>();
+        // NOTE: These interfaces don't exist yet - service uses concrete classes
+        // var mockAIClient = new Mock<IAIProjectClient>();
+        // var mockLogger = new Mock<ILogger<LoanAgentOrchestrator>>();
+        // var mockAppRepo = new Mock<Repositories.ICosmosLoanApplicationRepository>();
+        // var mockRunRepo = new Mock<Repositories.ICosmosLoanRunRepository>();
+        // var mockEnrichmentService = new Mock<Services.IEnrichmentService>();
+        // var mockPolicyService = new Mock<Services.IPolicyEvaluationService>();
+        // var mockPricingService = new Mock<Services.IPricingService>();
+        // var mockTelemetry = new Mock<Telemetry.IWorkflowTelemetry>();
 
         // mockTelemetry.Setup(t => t.StartStepSpan(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
         //     .Returns(new System.Diagnostics.Activity("test-span"));
@@ -170,17 +173,18 @@ public class OrchestratorTests
         //     Times.Once, "S10 should emit OTEL span");
     }
 
-    [Fact(Skip = "Awaiting T045 implementation")]
+    [Fact(Skip = "Awaiting T045 implementation — requires IAIProjectClient and service interfaces")]
     public async Task ExecuteWorkflow_AgentStepAttributes_IncludeAgentNameAndDuration()
     {
         // Arrange
-        var mockAIClient = new Mock<IAIProjectClient>();
-        var mockLogger = new Mock<ILogger<LoanAgentOrchestrator>>();
-        var mockAppRepo = new Mock<Repositories.ICosmosLoanApplicationRepository>();
-        var mockRunRepo = new Mock<Repositories.ICosmosLoanRunRepository>();
-        var mockEnrichmentService = new Mock<Services.IEnrichmentService>();
-        var mockPolicyService = new Mock<Services.IPolicyEvaluationService>();
-        var mockPricingService = new Mock<Services.IPricingService>();
+        // NOTE: These interfaces don't exist yet - service uses concrete classes
+        // var mockAIClient = new Mock<IAIProjectClient>();
+        // var mockLogger = new Mock<ILogger<LoanAgentOrchestrator>>();
+        // var mockAppRepo = new Mock<Repositories.ICosmosLoanApplicationRepository>();
+        // var mockRunRepo = new Mock<Repositories.ICosmosLoanRunRepository>();
+        // var mockEnrichmentService = new Mock<Services.IEnrichmentService>();
+        // var mockPolicyService = new Mock<Services.IPolicyEvaluationService>();
+        // var mockPricingService = new Mock<Services.IPricingService>();
 
         // var orchestrator = new LoanAgentOrchestrator(...);
 
@@ -196,17 +200,18 @@ public class OrchestratorTests
         // creditStep.Detail.Should().NotBeNullOrEmpty();
     }
 
-    [Fact(Skip = "Awaiting T045 implementation")]
+    [Fact(Skip = "Awaiting T045 implementation — requires IAIProjectClient and service interfaces")]
     public async Task ExecuteWorkflow_HappyPath_RecordsStartAndCompletedTimestamps()
     {
         // Arrange
-        var mockAIClient = new Mock<IAIProjectClient>();
-        var mockLogger = new Mock<ILogger<LoanAgentOrchestrator>>();
-        var mockAppRepo = new Mock<Repositories.ICosmosLoanApplicationRepository>();
-        var mockRunRepo = new Mock<Repositories.ICosmosLoanRunRepository>();
-        var mockEnrichmentService = new Mock<Services.IEnrichmentService>();
-        var mockPolicyService = new Mock<Services.IPolicyEvaluationService>();
-        var mockPricingService = new Mock<Services.IPricingService>();
+        // NOTE: These interfaces don't exist yet - service uses concrete classes
+        // var mockAIClient = new Mock<IAIProjectClient>();
+        // var mockLogger = new Mock<ILogger<LoanAgentOrchestrator>>();
+        // var mockAppRepo = new Mock<Repositories.ICosmosLoanApplicationRepository>();
+        // var mockRunRepo = new Mock<Repositories.ICosmosLoanRunRepository>();
+        // var mockEnrichmentService = new Mock<Services.IEnrichmentService>();
+        // var mockPolicyService = new Mock<Services.IPolicyEvaluationService>();
+        // var mockPricingService = new Mock<Services.IPricingService>();
 
         // var orchestrator = new LoanAgentOrchestrator(...);
 
@@ -221,17 +226,18 @@ public class OrchestratorTests
         // result.DurationMs.Should().BeGreaterThan(0);
     }
 
-    [Fact(Skip = "Awaiting T045 implementation")]
+    [Fact(Skip = "Awaiting T045 implementation — requires IAIProjectClient and service interfaces")]
     public async Task ExecuteWorkflow_SequentialExecution_S03AfterS02()
     {
         // Arrange
-        var mockAIClient = new Mock<IAIProjectClient>();
-        var mockLogger = new Mock<ILogger<LoanAgentOrchestrator>>();
-        var mockAppRepo = new Mock<Repositories.ICosmosLoanApplicationRepository>();
-        var mockRunRepo = new Mock<Repositories.ICosmosLoanRunRepository>();
-        var mockEnrichmentService = new Mock<Services.IEnrichmentService>();
-        var mockPolicyService = new Mock<Services.IPolicyEvaluationService>();
-        var mockPricingService = new Mock<Services.IPricingService>();
+        // NOTE: These interfaces don't exist yet - service uses concrete classes
+        // var mockAIClient = new Mock<IAIProjectClient>();
+        // var mockLogger = new Mock<ILogger<LoanAgentOrchestrator>>();
+        // var mockAppRepo = new Mock<Repositories.ICosmosLoanApplicationRepository>();
+        // var mockRunRepo = new Mock<Repositories.ICosmosLoanRunRepository>();
+        // var mockEnrichmentService = new Mock<Services.IEnrichmentService>();
+        // var mockPolicyService = new Mock<Services.IPolicyEvaluationService>();
+        // var mockPricingService = new Mock<Services.IPricingService>();
 
         // var orchestrator = new LoanAgentOrchestrator(...);
 
@@ -247,23 +253,24 @@ public class OrchestratorTests
         //     "S03 must execute after S02 completes (sequential execution)");
     }
 
-    [Fact(Skip = "Awaiting T045 implementation")]
+    [Fact(Skip = "Awaiting T045 implementation — requires IAIProjectClient and service interfaces")]
     public async Task ExecuteWorkflow_S09UnderwritingAgent_ReceivesCompiledBrief()
     {
         // Arrange
-        var mockAIClient = new Mock<IAIProjectClient>();
-        string? capturedBrief = null;
+        // NOTE: These interfaces don't exist yet - service uses concrete classes
+        // var mockAIClient = new Mock<IAIProjectClient>();
+        // string? capturedBrief = null;
 
         // mockAIClient.Setup(c => c.CallAgentAsync("underwriting-recommendation-agent", It.IsAny<string>()))
         //     .Callback<string, string>((agent, brief) => capturedBrief = brief)
         //     .ReturnsAsync("APPROVE with confidence 0.80");
 
-        var mockLogger = new Mock<ILogger<LoanAgentOrchestrator>>();
-        var mockAppRepo = new Mock<Repositories.ICosmosLoanApplicationRepository>();
-        var mockRunRepo = new Mock<Repositories.ICosmosLoanRunRepository>();
-        var mockEnrichmentService = new Mock<Services.IEnrichmentService>();
-        var mockPolicyService = new Mock<Services.IPolicyEvaluationService>();
-        var mockPricingService = new Mock<Services.IPricingService>();
+        // var mockLogger = new Mock<ILogger<LoanAgentOrchestrator>>();
+        // var mockAppRepo = new Mock<Repositories.ICosmosLoanApplicationRepository>();
+        // var mockRunRepo = new Mock<Repositories.ICosmosLoanRunRepository>();
+        // var mockEnrichmentService = new Mock<Services.IEnrichmentService>();
+        // var mockPolicyService = new Mock<Services.IPolicyEvaluationService>();
+        // var mockPricingService = new Mock<Services.IPricingService>();
 
         // var orchestrator = new LoanAgentOrchestrator(...);
 
