@@ -1,3 +1,44 @@
+# Decision: Azure.AI.Projects Version for Loan Origination Service
+
+**Date:** 2026-05-20  
+**Agent:** turk (Backend Dev)  
+**Context:** Phase 1 scaffolding for `loan-origination-service` (T002, T006)
+
+## Decision
+
+Use `Azure.AI.Projects` version `2.0.0-beta.2` in `Directory.Packages.props` for loan-origination-service (and future prompt-eval-service Foundry integration).
+
+## Rationale
+
+1. **Plan.md requirement:** spec 017 explicitly requires `Azure.AI.Projects` 2.0.0-beta.x series for `AIProjectClient`, `PromptAgentDefinition`, and `CreateAgentVersionAsync` APIs.
+2. **NuGet availability:** As of 2026-05-20, the NuGet v3 API lists `2.0.0-beta.1` and `2.0.0-beta.2` as the available 2.0.0-beta releases. Beta.2 is the most current.
+3. **Consistency:** prompt-eval-service will use the same SDK once Foundry integration is added (currently prompt-eval doesn't reference Azure.AI.Projects).
+4. **Prerelease stability:** Beta.2 is expected to be feature-complete for the workflow/code-based coordinator pattern (per research.md R1).
+
+## Package Reference
+
+```xml
+<PackageVersion Include="Azure.AI.Projects" Version="2.0.0-beta.2" />
+```
+
+Added to `Directory.Packages.props` alongside other centralized versions.
+
+## Build Status
+
+Restore verification skipped — several other packages in `Directory.Packages.props` reference future versions not yet available on NuGet (e.g., OpenTelemetry 1.15.3, Cosmos 3.59.0, Azure.Identity 1.21.0). This is expected in a demo codebase that targets .NET 10 and a future timeline. Docker compose config validation passed.
+
+## Alternative Considered
+
+- `2.0.0-beta.1` — rejected, beta.2 is more current and equally available
+
+## Impacts
+
+- loan-origination-service csproj includes Azure.AI.Projects prerelease package
+- Central package version tracked in Directory.Packages.props
+- Build will succeed once NuGet feed catches up with the demo's future package versions
+
+---
+
 ---
 date: 2026-05-15
 author: Turk

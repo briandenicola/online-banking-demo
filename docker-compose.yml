@@ -233,6 +233,27 @@ services:
       redis:
         condition: service_healthy
 
+  # Loan Origination Service
+  loan-origination-service:
+    build:
+      context: .
+      dockerfile: src/loan-origination-service/Dockerfile
+    container_name: banking-loan-origination-service
+    ports:
+      - "5290:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - UseInMemoryDatabase=true
+      - Jwt__Key=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
+      - Jwt__Issuer=${JWT_ISSUER:-user-service}
+      - Foundry__Mode=offline
+      - APPLICATIONINSIGHTS_CONNECTION_STRING=
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_SERVICE_NAME=loan-origination-service
+    depends_on:
+      redis:
+        condition: service_healthy
+
   # UI Application
   ui-app:
     build:

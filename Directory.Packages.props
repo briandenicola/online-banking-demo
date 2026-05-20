@@ -8,6 +8,7 @@
     <!-- Core Azure SDKs -->
     <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.59.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
+    <PackageVersion Include="Azure.AI.Projects" Version="2.0.0-beta.2" />
 
     <!-- Authentication -->
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.8" />

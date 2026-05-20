@@ -1250,3 +1250,17 @@ These are **NOT caused by the OpenApi migration** — they're pre-existing Depen
 - Agent count wording (5 specialists + 1 underwriting + 1 health-check = 7) needs explicit enumeration in specs — "six agents" is ambiguous when there are multiple agent categories.
 
 **Deliverables:** REMEDIATION.md, 3 decision drops, updated spec/plan/data-model/research/quickstart docs.
+
+---
+
+## Team Update: Loan Origination Phase 1 Scaffold Complete (2026-05-20)
+
+**Turk (Backend Dev) completed Phase 1 scaffold** of `loan-origination-service` (T001-T006, issue #140):
+- Scaffolded .NET 10 service with Controllers, Models, Repositories, Services, Agents, Telemetry dirs
+- Added LoanOrigination.csproj + test project (LoanOrigination.Tests.csproj)
+- Dockerfile (alpine) + docker-compose entry (port 5290)
+- appsettings.json + appsettings.Development.json
+- Directory.Packages.props updated with Azure.AI.Projects 2.0.0-beta.2
+- Minimal Program.cs stub ready for Phase 2 implementation
+
+**Phase 2 (T010-T023) is next** — covers agent orchestration, API endpoints, Foundry integration.

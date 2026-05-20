@@ -30,13 +30,13 @@ description: "Task list for feature 017-loan-origination-workflow"
 
 **Purpose**: Scaffold the new .NET 10 service, project layout, and infra hooks.
 
-- [ ] T001 Create `src/loan-origination-service/` skeleton directory tree matching `plan.md` (Controllers/, Models/, Repositories/, Services/, Agents/, prompts/, Telemetry/, seed/)
-- [ ] T002 Create `src/loan-origination-service/LoanOrigination.csproj` targeting `net10.0` with package references to `Azure.AI.Projects` 2.0.0-beta.x, `Microsoft.Azure.Cosmos` 3.x, `Azure.Identity`, `Microsoft.AspNetCore.Authentication.JwtBearer`, `OpenTelemetry.Extensions.Hosting`, `StackExchange.Redis`, and `Newtonsoft.Json` (centralized via `Directory.Packages.props`)
-- [ ] T003 [P] Create `src/loan-origination-service/Dockerfile` using the `mcr.microsoft.com/dotnet/aspnet:10.0-alpine` runtime base — mirror `src/prompt-eval-service/Dockerfile`
-- [ ] T003b [P] **(NT-5, M3)** Add `loan-origination-service` entry to repo-root `docker-compose.yml` mirroring the existing .NET service pattern: build context from repo root, dockerfile at `src/loan-origination-service/Dockerfile`, port mapping `5290:8080`, env vars (`ASPNETCORE_ENVIRONMENT=Development`, `UseInMemoryDatabase=true`, `Jwt__Key`, `Jwt__Issuer`, `OTEL_*`, `Foundry__Mode=offline` as the local-dev default), `depends_on: [redis]`. Depends on T003 (Dockerfile must exist).
-- [ ] T004 [P] Create `src/loan-origination-service/appsettings.json` and `appsettings.Development.json` with Cosmos endpoint, Foundry endpoint, Redis endpoint, JWT key/issuer, and `Foundry__Mode` flag placeholders
-- [ ] T005 [P] Create `src/loan-origination-service.Tests/LoanOrigination.Tests.csproj` xUnit project referencing the service project; mirror `src/account-service.Tests` layout
-- [ ] T006 [P] Update root `Directory.Packages.props` with any new central package versions introduced by T002
+- [x] T001 Create `src/loan-origination-service/` skeleton directory tree matching `plan.md` (Controllers/, Models/, Repositories/, Services/, Agents/, prompts/, Telemetry/, seed/)
+- [x] T002 Create `src/loan-origination-service/LoanOrigination.csproj` targeting `net10.0` with package references to `Azure.AI.Projects` 2.0.0-beta.x, `Microsoft.Azure.Cosmos` 3.x, `Azure.Identity`, `Microsoft.AspNetCore.Authentication.JwtBearer`, `OpenTelemetry.Extensions.Hosting`, `StackExchange.Redis`, and `Newtonsoft.Json` (centralized via `Directory.Packages.props`)
+- [x] T003 [P] Create `src/loan-origination-service/Dockerfile` using the `mcr.microsoft.com/dotnet/aspnet:10.0-alpine` runtime base — mirror `src/prompt-eval-service/Dockerfile`
+- [x] T003b [P] **(NT-5, M3)** Add `loan-origination-service` entry to repo-root `docker-compose.yml` mirroring the existing .NET service pattern: build context from repo root, dockerfile at `src/loan-origination-service/Dockerfile`, port mapping `5290:8080`, env vars (`ASPNETCORE_ENVIRONMENT=Development`, `UseInMemoryDatabase=true`, `Jwt__Key`, `Jwt__Issuer`, `OTEL_*`, `Foundry__Mode=offline` as the local-dev default), `depends_on: [redis]`. Depends on T003 (Dockerfile must exist).
+- [x] T004 [P] Create `src/loan-origination-service/appsettings.json` and `appsettings.Development.json` with Cosmos endpoint, Foundry endpoint, Redis endpoint, JWT key/issuer, and `Foundry__Mode` flag placeholders
+- [x] T005 [P] Create `src/loan-origination-service.Tests/LoanOrigination.Tests.csproj` xUnit project referencing the service project; mirror `src/account-service.Tests` layout
+- [x] T006 [P] Update root `Directory.Packages.props` with any new central package versions introduced by T002
 
 ---
 

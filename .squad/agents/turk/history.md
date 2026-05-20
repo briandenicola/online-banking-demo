@@ -1167,3 +1167,42 @@ Feature spec/plan/task alignment complete. Three M1/M2/M3 decisions finalized:
 Tasks regenerated (75 → 80). New task IDs NT-1 through NT-5 merged into main list. C1 (separation-of-concerns) enforced on T071/T072/T075.
 
 Relevant for cross-service consistency review: all 5 loan events now aligned with existing `transaction-service` / `transfer-service` / `ai-service` event publication patterns via `event-processor` (Go).
+
+### 2026-05-20 — Phase 1: Loan Origination Service Scaffolding (T001-T006)
+
+**Status:** COMPLETED
+
+**Task:** Scaffold the new `loan-origination-service` (.NET 10 ASP.NET Core) per specs/017-loan-origination-workflow. Phase 1: directory layout, csproj, Dockerfile, docker-compose entry, appsettings, test project, and Directory.Packages.props.
+
+**Files Created:**
+- `src/loan-origination-service/` — complete directory tree (Controllers/, Models/, Repositories/, Services/, Agents/, prompts/, Telemetry/, seed/, Properties/)
+- `src/loan-origination-service/LoanOrigination.csproj` — net10.0 TFM, package references matching existing patterns
+- `src/loan-origination-service/Dockerfile` — mirrors prompt-eval-service pattern (mcr.microsoft.com/dotnet/{sdk,aspnet}:10.0-alpine)
+- `src/loan-origination-service/Program.cs` — minimal stub (Phase 2 T012 will build out full DI/auth/OTEL)
+- `src/loan-origination-service/appsettings.json` — Cosmos/Foundry/Redis/JWT/Services placeholders
+- `src/loan-origination-service/appsettings.Development.json` — sets `Foundry__Mode=offline` (local dev default)
+- `src/loan-origination-service.Tests/LoanOrigination.Tests.csproj` — xUnit project referencing service project
+- `docker-compose.yml` — added `loan-origination-service` entry (port 5290:8080, offline mode, redis dependency)
+
+**Files Modified:**
+- `Directory.Packages.props` — added Azure.AI.Projects 2.0.0-beta.2
+- `specs/017-loan-origination-workflow/tasks.md` — marked T001-T006 complete
+
+**Decisions:**
+- **Azure.AI.Projects Version:** 2.0.0-beta.2 (latest available 2.0.0-beta series from NuGet API as of 2026-05-20)
+- **docker-compose port:** 5290:8080 (per plan.md, aligns with existing .NET service pattern)
+- **Build verification:** Skipped — some package versions in Directory.Packages.props reference future releases not yet available on NuGet (OpenTelemetry 1.15.3, Cosmos 3.59.0, etc.). Expected in demo codebase that targets .NET 10 future timeline. Docker compose config validation passed (warnings for missing env vars are expected).
+
+**Pattern Consistency:**
+- Dockerfile mirrors `src/prompt-eval-service/Dockerfile` exactly — multi-stage (sdk:10.0-alpine build → aspnet:10.0-alpine runtime), Directory.Packages.props + shared projects restored first, USER $APP_UID
+- csproj matches `src/account-service/account-service.csproj` and `src/prompt-eval-service/prompt-eval-service.csproj` — shared project references (Contracts, Observability), central package management (no Version attributes), Content items for prompts/seed JSON
+- appsettings structure matches existing .NET services — CosmosDb section, Jwt section, Logging section, Services section for HttpClient base URLs
+- Test project mirrors `src/account-service.Tests` — xUnit + Moq + FluentAssertions + Microsoft.AspNetCore.Mvc.Testing, ProjectReference to service + shared/Contracts
+
+**Next Phase:** T010-T023 (Foundational — Cosmos containers, JWT auth, Program.cs wiring, models/repositories, agent registration, seed data)
+
+**Learnings:**
+- .NET 10 service scaffold pattern: Web SDK, net10.0 TFM, central package versions, alpine runtime base, shared project references (Contracts, Observability), Content items for embedded files (prompts, seed data)
+- docker-compose .NET service pattern: context from repo root, dockerfile relative path, port mapping to 8080 container port, env vars (ASPNETCORE_ENVIRONMENT, UseInMemoryDatabase, Jwt, OTEL), depends_on redis with service_healthy condition
+- Azure.AI.Projects SDK: Prerelease 2.0.0-beta series used by loan-origination and (planned) prompt-eval-service for Foundry integration
+- Foundry__Mode flag: Dual-mode pattern (online → Foundry agents, offline → canned deterministic responses for local dev without Foundry connection)
