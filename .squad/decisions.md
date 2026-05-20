@@ -1,3 +1,6 @@
+
+---
+
 # Decision: Azure.AI.Projects Version for Loan Origination Service
 
 **Date:** 2026-05-20  

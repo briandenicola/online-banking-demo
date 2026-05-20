@@ -1,0 +1,102 @@
+[
+  {
+    "id": "POL-001",
+    "ruleId": "POL-001",
+    "metric": "bureau_score",
+    "operator": ">=",
+    "threshold": "620",
+    "severity": "hard",
+    "decisionEffect": "DECLINE_IF_FAIL",
+    "description": "Minimum FICO floor — applications below 620 are auto-declined."
+  },
+  {
+    "id": "POL-002",
+    "ruleId": "POL-002",
+    "metric": "dti_pct",
+    "operator": "<=",
+    "threshold": "43",
+    "severity": "hard",
+    "decisionEffect": "DECLINE_IF_FAIL",
+    "description": "Maximum debt-to-income ratio — DTI above 43% triggers auto-decline per regulatory limits."
+  },
+  {
+    "id": "POL-003",
+    "ruleId": "POL-003",
+    "metric": "identity_risk_score",
+    "operator": "<=",
+    "threshold": "0.3",
+    "severity": "hard",
+    "decisionEffect": "DECLINE_IF_FAIL",
+    "description": "Identity fraud threshold — identity risk score above 0.3 indicates high fraud risk."
+  },
+  {
+    "id": "POL-004",
+    "ruleId": "POL-004",
+    "metric": "delinquencies",
+    "operator": "<=",
+    "threshold": "2",
+    "severity": "soft",
+    "decisionEffect": "FLAG_FOR_REVIEW",
+    "description": "Credit delinquency limit — more than 2 delinquencies requires manual review."
+  },
+  {
+    "id": "POL-005",
+    "ruleId": "POL-005",
+    "metric": "income_verified",
+    "operator": "==",
+    "threshold": "true",
+    "severity": "soft",
+    "decisionEffect": "FLAG_FOR_REVIEW",
+    "description": "Income verification requirement — unverified income requires manual review."
+  },
+  {
+    "id": "POL-006",
+    "ruleId": "POL-006",
+    "metric": "employment_tenure_months",
+    "operator": ">=",
+    "threshold": "6",
+    "severity": "soft",
+    "decisionEffect": "FLAG_FOR_REVIEW",
+    "description": "Employment stability — less than 6 months tenure requires review."
+  },
+  {
+    "id": "POL-007",
+    "ruleId": "POL-007",
+    "metric": "credit_utilization",
+    "operator": "<=",
+    "threshold": "0.75",
+    "severity": "soft",
+    "decisionEffect": "FLAG_FOR_REVIEW",
+    "description": "Credit utilization threshold — utilization above 75% indicates financial stress."
+  },
+  {
+    "id": "POL-008",
+    "ruleId": "POL-008",
+    "metric": "inquiries_last_6mo",
+    "operator": "<=",
+    "threshold": "4",
+    "severity": "soft",
+    "decisionEffect": "FLAG_FOR_REVIEW",
+    "description": "Credit inquiry limit — more than 4 inquiries suggests credit shopping or distress."
+  },
+  {
+    "id": "POL-009",
+    "ruleId": "POL-009",
+    "metric": "loan_to_income_ratio",
+    "operator": "<=",
+    "threshold": "0.4",
+    "severity": "soft",
+    "decisionEffect": "FLAG_FOR_REVIEW",
+    "description": "Loan-to-income ratio — loan amount exceeding 40% of annual income requires review."
+  },
+  {
+    "id": "POL-010",
+    "ruleId": "POL-010",
+    "metric": "address_verified",
+    "operator": "==",
+    "threshold": "true",
+    "severity": "soft",
+    "decisionEffect": "FLAG_FOR_REVIEW",
+    "description": "Address verification — unverified addresses require manual review for fraud prevention."
+  }
+]

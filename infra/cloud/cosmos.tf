@@ -91,3 +91,52 @@ resource "azurerm_cosmosdb_sql_container" "account_applications" {
   database_name       = azurerm_cosmosdb_sql_database.banking.name
   partition_key_paths = ["/id"]
 }
+
+# Loan Origination Workflow Containers (Feature 017)
+resource "azurerm_cosmosdb_sql_container" "loan_applications" {
+  name                = "loan-applications"
+  resource_group_name = azurerm_resource_group.this.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  database_name       = azurerm_cosmosdb_sql_database.banking.name
+  partition_key_paths = ["/id"]
+}
+
+resource "azurerm_cosmosdb_sql_container" "loan_runs" {
+  name                = "loan-runs"
+  resource_group_name = azurerm_resource_group.this.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  database_name       = azurerm_cosmosdb_sql_database.banking.name
+  partition_key_paths = ["/applicationNo"]
+}
+
+resource "azurerm_cosmosdb_sql_container" "underwriting_decisions" {
+  name                = "underwriting-decisions"
+  resource_group_name = azurerm_resource_group.this.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  database_name       = azurerm_cosmosdb_sql_database.banking.name
+  partition_key_paths = ["/applicationNo"]
+}
+
+resource "azurerm_cosmosdb_sql_container" "loan_policy" {
+  name                = "loan-policy"
+  resource_group_name = azurerm_resource_group.this.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  database_name       = azurerm_cosmosdb_sql_database.banking.name
+  partition_key_paths = ["/id"]
+}
+
+resource "azurerm_cosmosdb_sql_container" "loan_accounts" {
+  name                = "loan-accounts"
+  resource_group_name = azurerm_resource_group.this.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  database_name       = azurerm_cosmosdb_sql_database.banking.name
+  partition_key_paths = ["/userId"]
+}
+
+resource "azurerm_cosmosdb_sql_container" "loan_disbursements" {
+  name                = "loan-disbursements"
+  resource_group_name = azurerm_resource_group.this.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  database_name       = azurerm_cosmosdb_sql_database.banking.name
+  partition_key_paths = ["/loanAccountId"]
+}

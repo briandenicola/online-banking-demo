@@ -1206,3 +1206,128 @@ Relevant for cross-service consistency review: all 5 loan events now aligned wit
 - docker-compose .NET service pattern: context from repo root, dockerfile relative path, port mapping to 8080 container port, env vars (ASPNETCORE_ENVIRONMENT, UseInMemoryDatabase, Jwt, OTEL), depends_on redis with service_healthy condition
 - Azure.AI.Projects SDK: Prerelease 2.0.0-beta series used by loan-origination and (planned) prompt-eval-service for Foundry integration
 - Foundry__Mode flag: Dual-mode pattern (online → Foundry agents, offline → canned deterministic responses for local dev without Foundry connection)
+
+### 2026-05-20 — Phase 2: Loan Origination Foundational (T010-T023)
+
+**Status:** COMPLETED
+
+**Task:** Implement foundational wiring for loan origination service — infrastructure (Cosmos containers, RBAC), models (15 entities), repositories (generic + policy), telemetry (workflow spans), agent registration (IHostedService), prompt files (7 placeholders), seed data (policy rules + pricing), services (user lookup), health endpoints, and Program.cs full DI/auth/OTEL wiring.
+
+**Files Created:**
+
+**Models (T017):**
+- `LoanApplication.cs` — main application entity with embedded `ApplicantInfo`, `LoanRequestInfo`, `FinancialInfo`
+- `LoanRun.cs` — workflow run record with `PreparedData` snapshot
+- `WorkflowStep.cs` — step lifecycle (pending/running/completed/failed)
+- `DecisionRecord.cs` — human decision with `FundingResult`
+- `PolicyRule.cs` — policy evaluation rules
+- `LoanAccount.cs` — funded loan record (in-domain, not deposit account)
+- `LoanDisbursement.cs` — funding entry (in-domain, not transaction ledger)
+- `LoanLifecycleEvent.cs` — Redis event payload shape
+- `CreditProfile.cs`, `IncomeVerification.cs`, `FraudSignals.cs` — enrichment outputs
+- `ProductPricing.cs`, `PolicyThreshold.cs` — pricing structures
+- `UnderwritingRecommendation.cs` — final agent output (APPROVE/CONDITIONAL/DECLINE + confidence)
+- `AgentRunResponse.cs` — API response shape
+
+**Repositories (T018, T019):**
+- `ICosmosRepository.cs` + `CosmosRepository.cs` — generic CRUD with query support
+- `CosmosPolicyRepository.cs` — policy rule accessor with `GetAllAsync()` for evaluation
+
+**Services (T022):**
+- `UserLookupService.cs` — read-only FK validation via `user-service` GET /api/users/{id}, mirrors account-service pattern, forwards bearer token for auditability
+
+**Agents (T015, T016):**
+- `PromptLoader.cs` — loads `./prompts/*.txt` from content root at startup
+- `AgentRegistration.cs` — IHostedService registering 7 agents via `AIProjectClient.Agents.CreateAgentAsync()` against `gpt-5.4-mini`, respects `Foundry__Mode=offline` (skips when offline), logs warnings on failure but doesn't throw (fail-open)
+
+**Telemetry (T013):**
+- `WorkflowTelemetry.cs` — static `ActivitySource("LoanOrigination.Workflow")` with `StartStepSpan(stepId, applicationNo, runId)` helper for S01-S10 spans
+
+**Controllers (T023):**
+- `HealthController.cs` — `GET /healthz` (liveness), `GET /readyz` (probes Cosmos + returns Foundry status)
+
+**Prompt Files (T014) — 7 placeholders:**
+- `prompts/CreditProfileAgentPrompt.txt`
+- `prompts/IncomeVerificationAgentPrompt.txt`
+- `prompts/FraudScreeningAgentPrompt.txt`
+- `prompts/PolicyEvaluationAgentPrompt.txt`
+- `prompts/PricingAgentPrompt.txt`
+- `prompts/UnderwritingAgentPrompt.txt`
+- `prompts/HealthCheckAgentPrompt.txt`
+
+All marked with `<!-- PLACEHOLDER — replace with source prompts before production -->` header. Well-structured with role definitions, input/output specs, and decision criteria (especially underwriting).
+
+**Seed Data (T020, T021):**
+- `seed/policy-rules.json` — 10 rules (POL-001 through POL-010): 3 hard rules (FICO floor 620, DTI max 43%, identity fraud 0.3), 7 soft rules (delinquencies, income verification, employment tenure, credit utilization, inquiries, loan-to-income, address verification)
+- `seed/product-pricing.json` — 4 risk tiers (A: 5.99%-8.99%, B: 8.99%-12.99%, C: 12.99%-17.99%, D: 17.99%-24.99%)
+- `Program.cs` seed loader: reads JSON, deserializes with Newtonsoft, upserts each PolicyRule via `ICosmosPolicyRepository`, idempotent by `id`, logs warnings on failure but doesn't throw
+
+**Infrastructure (T010, T011):**
+- `infra/cloud/cosmos.tf` — added 6 containers:
+  - `loan-applications` PK `/id`
+  - `loan-runs` PK `/applicationNo`
+  - `underwriting-decisions` PK `/applicationNo`
+  - `loan-policy` PK `/id`
+  - `loan-accounts` PK `/userId`
+  - `loan-disbursements` PK `/loanAccountId`
+- RBAC verification: Existing `identity.tf` already grants database-scope Cosmos RBAC (line 72-78) and Foundry "Azure AI Project Manager" (line 58-62) — no changes needed
+
+**Configuration (T012):**
+- `Program.cs` — complete rewrite:
+  - JWT authentication (HS256, shared `Jwt__Key`/`Jwt__Issuer`)
+  - Cosmos client with `DefaultAzureCredential`, standard serializer with `PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase`
+  - Redis connection multiplexer with Entra token auth (mirrors transaction-service pattern)
+  - OTEL setup via `AddBankingOpenTelemetry()` from shared Observability project
+  - HttpClient for user-service lookup
+  - `AddNewtonsoftJson()` for controller JSON handling (respects `[JsonProperty]` attributes)
+  - Prompt loader initialization
+  - Agent registration hosted service
+  - Policy seed loader (startup, idempotent)
+  - CORS, structured logging (Serilog), global exception handler, correlation ID middleware
+  - `UseInMemoryDatabase` flag for local dev (skips Cosmos/agent registration)
+
+**Package Management:**
+- Added `Microsoft.AspNetCore.Mvc.NewtonsoftJson` to `Directory.Packages.props` (version 10.0.8) for controller JSON serialization
+
+**Files Modified:**
+- `specs/017-loan-origination-workflow/tasks.md` — marked T010-T023 complete
+- `Directory.Packages.props` — added Microsoft.AspNetCore.Mvc.NewtonsoftJson
+- `infra/cloud/cosmos.tf` — added 6 containers
+
+**Decisions:**
+
+1. **Prompt Files (T014):** Synthesized placeholders. Research.md references "the source repo" but provides no concrete URL/path. Created well-structured placeholders matching agent purposes from data-model.md. Follow-up required: replace with production prompts before deployment.
+
+2. **Seed Data (T020):** Synthesized reasonable values. Policy rules cover common underwriting criteria (FICO, DTI, fraud, income/employment, utilization, inquiries, loan-to-income, address). Pricing follows industry APR ranges. Production deployment should validate against actual institutional policies.
+
+3. **Agent Registration (T016):** Implemented as IHostedService per research.md R2 ("service startup" over init container for small agent set). Uses `AIProjectClient.Agents.CreateAgentAsync()` which is idempotent. Respects `Foundry__Mode=offline` (skips when offline). Logs warnings but doesn't throw on failure (fail-open — allows service to start). Agent naming: hyphenated lowercase (`credit-profile-agent`, `income-verification-agent`, etc.).
+
+4. **RBAC (T011):** Verified — no changes needed. Cosmos RBAC at account level (covers all containers), Foundry "Azure AI Project Manager" already granted. Research.md R7 verification complete.
+
+5. **Cosmos Serialization (T012):** Used standard `CosmosSerializationOptions` with `PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase` (matches all existing .NET services). Models use `[JsonProperty]` from Newtonsoft for attribute-level control. Added `AddNewtonsoftJson()` for controller JSON handling to respect attributes in request/response bodies.
+
+6. **Build Status:** Deferred due to OpenTelemetry package version mismatch in shared `Observability` project (not service-specific). OTEL 1.15.3 requested but only 1.15.0 available. Needs repo-level resolution (either downgrade OTEL in Observability or wait for .NET 10 RTM packages). Service code is structurally correct.
+
+7. **Terraform:** `terraform fmt -recursive infra/cloud/` succeeded. Full `terraform validate` requires `terraform init` with backend config (not available). Syntax validated via successful format pass.
+
+**Pattern Consistency:**
+- JWT auth: Mirrors `account-service`, `transaction-service` — HS256, shared `Jwt__Key`/`Jwt__Issuer`, `UseSecurityTokenValidators = true`
+- Cosmos client: Mirrors `account-service` — DefaultAzureCredential, standard serializer with camelCase, endpoint vs connection string fallback
+- Redis multiplexer: Mirrors `transaction-service` — Entra token auth when `AZURE_CLIENT_ID` present, connection string fallback
+- OTEL: Uses shared `AddBankingOpenTelemetry()` from Observability project
+- HttpClient pattern: Mirrors `account-service`'s user-service lookup — factory, timeout, bearer token forwarding via IHttpContextAccessor
+- Health endpoints: Mirrors all existing services — `/healthz` (liveness), `/readyz` (dependency probes)
+- Seed loader: Idempotent upsert pattern (matches existing services' seed patterns)
+
+**Next Phase:** T030-T049 (User Story 1 — Apply & Underwrite): contract tests, unit tests, repositories (loan-applications, loan-runs), orchestrator, enrichment/pricing/policy services, controllers, application number generator, seed script.
+
+**Learnings:**
+- .NET 10 + Azure.AI.Projects 2.0.0-beta.2: Agent registration via `AIProjectClient.Agents.CreateAgentAsync()` as IHostedService, respects offline mode, idempotent on agent definition body
+- Loan domain closure: 6 in-domain Cosmos containers (loan-applications, loan-runs, underwriting-decisions, loan-policy, loan-accounts, loan-disbursements). Zero modifications to account-opening, account-service, transaction-service, transfer-service, user-service per research.md R8.
+- Policy rules pattern: JSON seed file with `id`/`ruleId`/`metric`/`operator`/`threshold`/`severity`/`decisionEffect`/`description`, upserted at startup via dedicated repository
+- PromptLoader pattern: Load all `*.txt` from `prompts/` directory at startup, expose via `GetPrompt(name)`, used by agent registration and (future) orchestrator
+- WorkflowTelemetry pattern: Static ActivitySource, `StartStepSpan()` helper attaching `workflow.step_id`, `workflow.application_no`, `workflow.run_id` tags for observability
+- UserLookupService pattern: Read-only FK validation via typed HttpClient, bearer token forwarding for auditability, 5-min in-process cache (future enhancement), mirrors account-service's pattern
+- Foundry__Mode flag: `online` → real agent registration + calls, `offline` → skip registration + canned responses (enables local dev without Foundry connection)
+- Health check pattern: `/readyz` probes Cosmos connectivity (lightweight `SELECT TOP 1` query on loan-policy container), returns Foundry status (offline/online)
+

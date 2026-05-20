@@ -1,0 +1,30 @@
+[
+  {
+    "riskTier": "A",
+    "minAprPct": 5.99,
+    "maxAprPct": 8.99,
+    "baseAprPct": 6.99,
+    "description": "Prime tier: Excellent credit (720+), low DTI, verified income, no delinquencies"
+  },
+  {
+    "riskTier": "B",
+    "minAprPct": 8.99,
+    "maxAprPct": 12.99,
+    "baseAprPct": 10.49,
+    "description": "Near-prime tier: Good credit (660-719), acceptable DTI, stable income"
+  },
+  {
+    "riskTier": "C",
+    "minAprPct": 12.99,
+    "maxAprPct": 17.99,
+    "baseAprPct": 14.99,
+    "description": "Subprime tier: Fair credit (620-659), elevated DTI, some credit concerns"
+  },
+  {
+    "riskTier": "D",
+    "minAprPct": 17.99,
+    "maxAprPct": 24.99,
+    "baseAprPct": 21.49,
+    "description": "High-risk tier: Marginal credit (620-640), high DTI, significant credit issues"
+  }
+]

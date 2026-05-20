@@ -46,20 +46,20 @@ description: "Task list for feature 017-loan-origination-workflow"
 
 **⚠️ CRITICAL**: All US1/US2/US3 work depends on this phase.
 
-- [ ] T010 Add six new Cosmos containers (`loan-applications` PK `/id`, `loan-runs` PK `/applicationNo`, `underwriting-decisions` PK `/applicationNo`, `loan-policy` PK `/id`, `loan-accounts` PK `/userId`, `loan-disbursements` PK `/loanAccountId`) to `infra/cloud/cosmos.tf`
-- [ ] T011 [P] Verify and (if needed) extend database-scope Cosmos RBAC and Foundry RBAC for `banking-workload-identity` in `infra/cloud/identity.tf` (per research R7)
-- [ ] T012 Implement `src/loan-origination-service/Program.cs`: JWT bearer auth (HS256, shared `Jwt__Key`/`Jwt__Issuer`), Cosmos client (Newtonsoft serializer, `DefaultAzureCredential`), Redis multiplexer with Entra token auth, OTEL ASP.NET + HttpClient + Cosmos auto-instrumentation, structured JSON logging, controller routing, health checks
-- [ ] T013 [P] Implement `src/loan-origination-service/Telemetry/WorkflowTelemetry.cs` with an `ActivitySource("LoanOrigination.Workflow")` and `StartStepSpan(stepId, applicationNo, runId)` helper used by all S01–S10 spans
-- [ ] T014 [P] Port the six specialist prompt files from the source repo verbatim into `src/loan-origination-service/prompts/` (`CreditProfileAgentPrompt.txt`, `IncomeVerificationAgentPrompt.txt`, `FraudScreeningAgentPrompt.txt`, `PolicyEvaluationAgentPrompt.txt`, `PricingAgentPrompt.txt`, `UnderwritingAgentPrompt.txt`) plus `HealthCheckAgentPrompt.txt`
-- [ ] T015 [P] Implement `src/loan-origination-service/Agents/PromptLoader.cs` to load `./prompts/*.txt` from the content root
-- [ ] T016 Implement `src/loan-origination-service/Agents/AgentRegistration.cs` as an `IHostedService` that calls `AIProjectClient.CreateAgentVersionAsync` idempotently for all 7 agents (5 specialists: credit, income, fraud, policy, pricing + 1 underwriting-recommendation + 1 health-check) against `gpt-5.4-mini` at startup
-- [ ] T017 [P] Create all DTO/model classes in `src/loan-origination-service/Models/` per data-model.md: `LoanApplication.cs`, `LoanRun.cs`, `WorkflowStep.cs`, `DecisionRecord.cs`, `PolicyRule.cs`, `LoanAccount.cs`, `LoanDisbursement.cs`, `LoanLifecycleEvent.cs`, `CreditProfile.cs`, `IncomeVerification.cs`, `FraudSignals.cs`, `PolicyThreshold.cs`, `ProductPricing.cs`, `UnderwritingRecommendation.cs`, `AgentRunResponse.cs`
-- [ ] T018 [P] Implement `src/loan-origination-service/Repositories/ICosmosRepository.cs` generic interface + base implementation
-- [ ] T019 [P] Implement `src/loan-origination-service/Repositories/CosmosPolicyRepository.cs` (PK `/id`) with `GetAllAsync()` for policy evaluation
-- [ ] T020 [P] Create `src/loan-origination-service/seed/policy-rules.json` (POL-001..POL-010 verbatim from source repo) and `src/loan-origination-service/seed/product-pricing.json` (risk-tier APR matrix)
-- [ ] T021 Implement policy + pricing seed loader in `Program.cs` that upserts `policy-rules.json` rows into the `loan-policy` container on startup (idempotent by `id`)
-- [ ] T022 [P] Implement `src/loan-origination-service/Services/UserLookupService.cs` — typed `HttpClient` against `user-service` `GET /api/users/{id}` for read-only FK validation (mirror `account-service` pattern)
-- [ ] T023 Implement `Controllers/HealthController.cs` with `GET /healthz` (liveness) and `GET /readyz` (probes Cosmos + Foundry health-check agent)
+- [x] T010 Add six new Cosmos containers (`loan-applications` PK `/id`, `loan-runs` PK `/applicationNo`, `underwriting-decisions` PK `/applicationNo`, `loan-policy` PK `/id`, `loan-accounts` PK `/userId`, `loan-disbursements` PK `/loanAccountId`) to `infra/cloud/cosmos.tf`
+- [x] T011 [P] Verify and (if needed) extend database-scope Cosmos RBAC and Foundry RBAC for `banking-workload-identity` in `infra/cloud/identity.tf` (per research R7)
+- [x] T012 Implement `src/loan-origination-service/Program.cs`: JWT bearer auth (HS256, shared `Jwt__Key`/`Jwt__Issuer`), Cosmos client (Newtonsoft serializer, `DefaultAzureCredential`), Redis multiplexer with Entra token auth, OTEL ASP.NET + HttpClient + Cosmos auto-instrumentation, structured JSON logging, controller routing, health checks
+- [x] T013 [P] Implement `src/loan-origination-service/Telemetry/WorkflowTelemetry.cs` with an `ActivitySource("LoanOrigination.Workflow")` and `StartStepSpan(stepId, applicationNo, runId)` helper used by all S01–S10 spans
+- [x] T014 [P] Port the six specialist prompt files from the source repo verbatim into `src/loan-origination-service/prompts/` (`CreditProfileAgentPrompt.txt`, `IncomeVerificationAgentPrompt.txt`, `FraudScreeningAgentPrompt.txt`, `PolicyEvaluationAgentPrompt.txt`, `PricingAgentPrompt.txt`, `UnderwritingAgentPrompt.txt`) plus `HealthCheckAgentPrompt.txt`
+- [x] T015 [P] Implement `src/loan-origination-service/Agents/PromptLoader.cs` to load `./prompts/*.txt` from the content root
+- [x] T016 Implement `src/loan-origination-service/Agents/AgentRegistration.cs` as an `IHostedService` that calls `AIProjectClient.CreateAgentVersionAsync` idempotently for all 7 agents (5 specialists: credit, income, fraud, policy, pricing + 1 underwriting-recommendation + 1 health-check) against `gpt-5.4-mini` at startup
+- [x] T017 [P] Create all DTO/model classes in `src/loan-origination-service/Models/` per data-model.md: `LoanApplication.cs`, `LoanRun.cs`, `WorkflowStep.cs`, `DecisionRecord.cs`, `PolicyRule.cs`, `LoanAccount.cs`, `LoanDisbursement.cs`, `LoanLifecycleEvent.cs`, `CreditProfile.cs`, `IncomeVerification.cs`, `FraudSignals.cs`, `PolicyThreshold.cs`, `ProductPricing.cs`, `UnderwritingRecommendation.cs`, `AgentRunResponse.cs`
+- [x] T018 [P] Implement `src/loan-origination-service/Repositories/ICosmosRepository.cs` generic interface + base implementation
+- [x] T019 [P] Implement `src/loan-origination-service/Repositories/CosmosPolicyRepository.cs` (PK `/id`) with `GetAllAsync()` for policy evaluation
+- [x] T020 [P] Create `src/loan-origination-service/seed/policy-rules.json` (POL-001..POL-010 verbatim from source repo) and `src/loan-origination-service/seed/product-pricing.json` (risk-tier APR matrix)
+- [x] T021 Implement policy + pricing seed loader in `Program.cs` that upserts `policy-rules.json` rows into the `loan-policy` container on startup (idempotent by `id`)
+- [x] T022 [P] Implement `src/loan-origination-service/Services/UserLookupService.cs` — typed `HttpClient` against `user-service` `GET /api/users/{id}` for read-only FK validation (mirror `account-service` pattern)
+- [x] T023 Implement `Controllers/HealthController.cs` with `GET /healthz` (liveness) and `GET /readyz` (probes Cosmos + Foundry health-check agent)
 
 **Checkpoint**: Service starts, agents registered in Foundry, Cosmos containers exist with seed policy rules, health checks pass. User-story phases can now begin in parallel.
 

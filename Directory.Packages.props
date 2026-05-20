@@ -12,6 +12,7 @@
 
     <!-- Authentication -->
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.8" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.NewtonsoftJson" Version="10.0.8" />
     <PackageVersion Include="Microsoft.IdentityModel.Tokens" Version="8.18.0" />
 
     <!-- Redis -->

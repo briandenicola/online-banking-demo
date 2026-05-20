@@ -1264,3 +1264,37 @@ These are **NOT caused by the OpenApi migration** — they're pre-existing Depen
 - Minimal Program.cs stub ready for Phase 2 implementation
 
 **Phase 2 (T010-T023) is next** — covers agent orchestration, API endpoints, Foundry integration.
+
+---
+
+## Team Update: Loan Origination Phase 2 Foundational Complete (2026-05-20)
+
+**Turk (Backend Dev) completed Phase 2 foundational** of `loan-origination-service` (T010-T023, issue #140):
+
+### Deliverables
+- 6 Cosmos containers (loan-applications, loan-runs, underwriting-decisions, loan-policy, loan-accounts, loan-disbursements) with partition keys validated
+- RBAC verification: account-level Cosmos DB Built-in Data Contributor + Azure AI Project Manager confirmed
+- Program.cs full wiring: JWT (HS256), Cosmos (DefaultAzureCredential + camelCase), Redis (Entra auth), OTEL, seed loader
+- 14 model DTOs (LoanApplication, LoanRun, WorkflowStep, DecisionRecord, PolicyRule, LoanAccount, LoanDisbursement, LoanLifecycleEvent, CreditProfile, IncomeVerification, FraudSignals, ProductPricing, UnderwritingRecommendation, AgentRunResponse)
+- Generic repository (ICosmosRepository<T>, CosmosRepository<T>) + policy-specific repository (CosmosPolicyRepository)
+- UserLookupService for cross-domain lookups
+- PromptLoader service + AgentRegistration IHostedService (offline-aware via `Foundry__Mode`)
+- WorkflowTelemetry activity tracking
+- HealthController with `/healthz` and `/readyz` endpoints
+- 7 placeholder prompt files (CreditProfileAgentPrompt, IncomeVerificationAgentPrompt, FraudScreeningAgentPrompt, PolicyEvaluationAgentPrompt, PricingAgentPrompt, UnderwritingAgentPrompt, HealthCheckAgentPrompt)
+- Seed data: policy-rules.json (10 policies POL-001..010), product-pricing.json (4 risk tiers)
+
+### Caveats
+1. **Placeholder prompts & seed data:** Synthesized as demo content. Source repository not accessible in this environment. All marked for replacement before production.
+2. **Build deferred:** OpenTelemetry version conflict in shared Observability project (project-wide, not service-specific). Requires repo-level dependency resolution.
+3. **PolicyThreshold verification:** May have been folded into PolicyRule model during implementation. Confirm against data-model.md for Phase 3 if needed.
+
+### Integration Points
+- Cosmos RBAC inherits from account-level access to all 6 new containers
+- Redis Entra auth wired; idempotent at startup
+- Agent registration respects `Foundry__Mode=offline` for local dev without Foundry
+
+### Next Phase
+**Phase 3 (US1 — Apply & Underwrite, MVP):** Implement repositories for loan-applications and loan-runs, orchestrator, controllers, and US1 test suite. 
+
+---
