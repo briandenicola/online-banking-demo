@@ -75,30 +75,30 @@ description: "Task list for feature 017-loan-origination-workflow"
 
 > Write tests FIRST, ensure they FAIL before implementation.
 
-- [ ] T030 [P] [US1] Contract test for `POST /api/loans/applications` against `contracts/loan-origination-api.json` in `src/loan-origination-service.Tests/Contracts/ApplicationsContractTests.cs`
-- [ ] T031 [P] [US1] Contract test for `GET /api/loans/applications/{applicationNo}` and `POST /api/loans/applications/{applicationNo}/run` in `src/loan-origination-service.Tests/Contracts/RunContractTests.cs`
-- [ ] T032 [P] [US1] Unit tests for `PolicyEvaluationService` covering POL-001..POL-010 in `src/loan-origination-service.Tests/PolicyEvaluationTests.cs`
-- [ ] T033 [P] [US1] Unit tests for `PricingService` (risk-tier → APR mapping, monthly-payment formula) in `src/loan-origination-service.Tests/PricingTests.cs`
-- [ ] T034 [P] [US1] Unit tests for `EnrichmentService` deterministic synthetic generation (same `applicationNo` → same signals) in `src/loan-origination-service.Tests/EnrichmentTests.cs`
-- [ ] T035 [P] [US1] Unit tests for `LoanAgentOrchestrator` happy path with mocked `IAIProjectClient` returning Alice's `APPROVE` recommendation in `src/loan-origination-service.Tests/OrchestratorTests.cs`
+- [x] T030 [P] [US1] Contract test for `POST /api/loans/applications` against `contracts/loan-origination-api.json` in `src/loan-origination-service.Tests/Contracts/ApplicationsContractTests.cs`
+- [x] T031 [P] [US1] Contract test for `GET /api/loans/applications/{applicationNo}` and `POST /api/loans/applications/{applicationNo}/run` in `src/loan-origination-service.Tests/Contracts/RunContractTests.cs`
+- [x] T032 [P] [US1] Unit tests for `PolicyEvaluationService` covering POL-001..POL-010 in `src/loan-origination-service.Tests/PolicyEvaluationTests.cs`
+- [x] T033 [P] [US1] Unit tests for `PricingService` (risk-tier → APR mapping, monthly-payment formula) in `src/loan-origination-service.Tests/PricingTests.cs`
+- [x] T034 [P] [US1] Unit tests for `EnrichmentService` deterministic synthetic generation (same `applicationNo` → same signals) in `src/loan-origination-service.Tests/EnrichmentTests.cs`
+- [x] T035 [P] [US1] Unit tests for `LoanAgentOrchestrator` happy path with mocked `IAIProjectClient` returning Alice's `APPROVE` recommendation in `src/loan-origination-service.Tests/OrchestratorTests.cs`
 
 ### Implementation for User Story 1
 
-- [ ] T040 [P] [US1] Implement `src/loan-origination-service/Repositories/CosmosLoanApplicationRepository.cs` (PK `/id` == `applicationNo`) with create/get/list-by-user
-- [ ] T041 [P] [US1] Implement `src/loan-origination-service/Repositories/CosmosLoanRunRepository.cs` (PK `/applicationNo`) with append/get-latest/list-by-application
-- [ ] T042 [P] [US1] Implement `src/loan-origination-service/Services/EnrichmentService.cs` — deterministic synthetic credit/income/fraud generators keyed on `applicationNo` (per research R6)
-- [ ] T043 [P] [US1] Implement `src/loan-origination-service/Services/PricingService.cs` — risk-tier APR table + monthly-payment / payoff-date computation
-- [ ] T044 [P] [US1] Implement `src/loan-origination-service/Services/PolicyEvaluationService.cs` — evaluates POL-001..POL-010 against enriched application data
-- [ ] T045 [US1] Implement `src/loan-origination-service/Agents/ILoanAgentOrchestrator.cs` + `src/loan-origination-service/Agents/LoanAgentOrchestrator.cs` — the code-based coordinator running S01–S10 sequentially, compiling the underwriting brief, calling the underwriting agent, persisting `LoanRun` after each step, and emitting per-step OTEL spans via `WorkflowTelemetry` (depends on T013, T015, T016, T040–T044)
-- [ ] T045b [US1] **(NT-4, M2)** Implement `src/loan-origination-service/Agents/OfflineLoanAgentOrchestrator.cs` — an alternate `ILoanAgentOrchestrator` registered in DI when `Foundry__Mode=offline`. Skips all Foundry agent calls and returns deterministic canned recommendations keyed on `applicationNo` hash (same synthetic strategy as research R6). Reuses `EnrichmentService` (T042) for signal generation. Enables local UI/dev iteration without a Foundry connection. Depends on T045 (interface) and T042.
-- [ ] T046 [US1] Implement application-number generator (`APP-YYYY-NNNNNN`) in `src/loan-origination-service/Services/ApplicationNumberGenerator.cs`
-- [ ] T047 [US1] Implement `src/loan-origination-service/Controllers/LoansController.cs` with:
+- [x] T040 [P] [US1] Implement `src/loan-origination-service/Repositories/CosmosLoanApplicationRepository.cs` (PK `/id` == `applicationNo`) with create/get/list-by-user
+- [x] T041 [P] [US1] Implement `src/loan-origination-service/Repositories/CosmosLoanRunRepository.cs` (PK `/applicationNo`) with append/get-latest/list-by-application
+- [x] T042 [P] [US1] Implement `src/loan-origination-service/Services/EnrichmentService.cs` — deterministic synthetic credit/income/fraud generators keyed on `applicationNo` (per research R6)
+- [x] T043 [P] [US1] Implement `src/loan-origination-service/Services/PricingService.cs` — risk-tier APR table + monthly-payment / payoff-date computation
+- [x] T044 [P] [US1] Implement `src/loan-origination-service/Services/PolicyEvaluationService.cs` — evaluates POL-001..POL-010 against enriched application data
+- [x] T045 [US1] Implement `src/loan-origination-service/Agents/ILoanAgentOrchestrator.cs` + `src/loan-origination-service/Agents/LoanAgentOrchestrator.cs` — the code-based coordinator running S01–S10 sequentially, compiling the underwriting brief, calling the underwriting agent, persisting `LoanRun` after each step, and emitting per-step OTEL spans via `WorkflowTelemetry` (depends on T013, T015, T016, T040–T044)
+- [x] T045b [US1] **(NT-4, M2)** Implement `src/loan-origination-service/Agents/OfflineLoanAgentOrchestrator.cs` — an alternate `ILoanAgentOrchestrator` registered in DI when `Foundry__Mode=offline`. Skips all Foundry agent calls and returns deterministic canned recommendations keyed on `applicationNo` hash (same synthetic strategy as research R6). Reuses `EnrichmentService` (T042) for signal generation. Enables local UI/dev iteration without a Foundry connection. Depends on T045 (interface) and T042.
+- [x] T046 [US1] Implement application-number generator (`APP-YYYY-NNNNNN`) in `src/loan-origination-service/Services/ApplicationNumberGenerator.cs`
+- [x] T047 [US1] Implement `src/loan-origination-service/Controllers/LoansController.cs` with:
   - `POST /api/loans/applications` — JWT `User` role, `userId` from claim (never body), defaults identity from `UserLookupService`, persists status `submitted`
   - `GET /api/loans/applications/{applicationNo}` — returns application + last run + last decision (decision optional in US1)
   - `GET /api/loans/applications` — admin-only list-all
   - `POST /api/loans/applications/{applicationNo}/run` — synchronous orchestrator invocation returning `AgentRunResponse`
-- [ ] T048 [US1] Add DataAnnotations + manual validation (loan amount range, term range, type whitelist) and structured error responses to `LoansController`
-- [ ] T049 [US1] Add `seed-data.sh` snippet under `scripts/` that creates Alice Goodman's application via the new API (extending the existing seed flow — does NOT call `account-opening-service`)
+- [x] T048 [US1] Add DataAnnotations + manual validation (loan amount range, term range, type whitelist) and structured error responses to `LoansController`
+- [x] T049 [US1] Add `seed-data.sh` snippet under `scripts/` that creates Alice Goodman's application via the new API (extending the existing seed flow — does NOT call `account-opening-service`)
 
 **Checkpoint**: User Story 1 is fully functional. Curl-only happy path for Alice produces `APPROVE` with confidence ≥ 0.7 and a 10-step run log.
 

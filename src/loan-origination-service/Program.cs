@@ -140,10 +140,45 @@ if (!useInMemory)
     });
 
     // Repositories
-    builder.Services.AddScoped<ICosmosPolicyRepository, CosmosPolicyRepository>();
+    builder.Services.AddScoped<CosmosPolicyRepository>();
+    builder.Services.AddScoped<ILoanApplicationRepository, CosmosLoanApplicationRepository>();
+    builder.Services.AddScoped<ILoanRunRepository, CosmosLoanRunRepository>();
 
     // Services
-    builder.Services.AddScoped<IUserLookupService, UserLookupService>();
+    builder.Services.AddScoped<UserLookupService>();
+    builder.Services.AddScoped<EnrichmentService>();
+    builder.Services.AddScoped<PricingService>();
+    builder.Services.AddScoped<PolicyEvaluationService>();
+    builder.Services.AddSingleton<ApplicationNumberGenerator>();
+}
+
+// Foundry AI Project Client
+var foundryMode = builder.Configuration["Foundry:Mode"] ?? "online";
+if (foundryMode == "offline")
+{
+    builder.Services.AddSingleton<ILoanAgentOrchestrator, OfflineLoanAgentOrchestrator>();
+    builder.Logging.AddConsole().SetMinimumLevel(LogLevel.Information);
+    Console.WriteLine("✅ Foundry mode: offline (deterministic canned recommendations)");
+}
+else
+{
+    var foundryEndpoint = builder.Configuration["Foundry:Endpoint"];
+    if (!string.IsNullOrEmpty(foundryEndpoint))
+    {
+        builder.Services.AddSingleton(sp =>
+        {
+            var credential = new DefaultAzureCredential();
+            return new Azure.AI.Projects.AIProjectClient(new Uri(foundryEndpoint), credential);
+        });
+        builder.Services.AddSingleton<ILoanAgentOrchestrator, LoanAgentOrchestrator>();
+        Console.WriteLine($"✅ Foundry mode: online (endpoint: {foundryEndpoint})");
+    }
+    else
+    {
+        // Fallback to offline if no endpoint configured
+        builder.Services.AddSingleton<ILoanAgentOrchestrator, OfflineLoanAgentOrchestrator>();
+        Console.WriteLine("⚠️  Foundry:Endpoint not configured — falling back to offline mode");
+    }
 }
 
 // Prompt loader

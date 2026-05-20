@@ -208,12 +208,70 @@ else
   warn "Could not extract account numbers — skipping transfer"
 fi
 
+# --- Step 6: Create Alice's loan application (loan-origination-service) ---
+header "Step 6: Creating Alice's loan application"
+
+LOAN_SERVICE="http://localhost:5290"
+
+if [[ -n "$ALICE_TOKEN" ]]; then
+  info "Creating loan application for Alice Goodman..."
+  
+  local loan_response
+  loan_response=$(curl -s -w "\n%{http_code}" -X POST "${LOAN_SERVICE}/api/loans/applications" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${ALICE_TOKEN}" \
+    -d '{
+      "applicant": {
+        "name": "Alice Goodman",
+        "dob": "1985-03-14",
+        "ssnLast4": "4321",
+        "phone": "+1-555-0100",
+        "email": "alice@example.com",
+        "currentAddress": "123 Pine St",
+        "cityStateZip": "Austin, TX 78701"
+      },
+      "loanRequest": {
+        "amount": 25000.00,
+        "purpose": "home_improvement",
+        "termMonths": 36,
+        "loanType": "personal",
+        "paymentMethod": "AUTO_DEBIT"
+      },
+      "financials": {
+        "grossAnnualIncome": 120000.00,
+        "monthlyNetIncome": 7500.00,
+        "otherIncomeMonthly": 0.00,
+        "totalMonthlyDebtPayments": 400.00,
+        "housingStatus": "rent",
+        "housingPaymentMonthly": 1800.00,
+        "declaredDtiPct": 5.3,
+        "estimatedSavings": 25000.00,
+        "retirementInvestments": 80000.00
+      }
+    }')
+
+  local http_code body
+  http_code=$(echo "$loan_response" | tail -1)
+  body=$(echo "$loan_response" | sed '$d')
+
+  if [[ "$http_code" == "201" ]]; then
+    local application_no
+    application_no=$(echo "$body" | jq -r '.applicationNo // empty')
+    success "Created loan application: ${application_no}"
+    echo "    Run workflow with: curl -X POST -H 'Authorization: Bearer \$ALICE_TOKEN' ${LOAN_SERVICE}/api/loans/applications/${application_no}/run"
+  else
+    warn "Failed to create loan application (HTTP ${http_code}): ${body}"
+  fi
+else
+  warn "Alice token not available — skipping loan application"
+fi
+
 # --- Done ---
 header "Seed Complete"
 echo -e "${GREEN}🎉 Demo data seeded successfully!${NC}"
 echo ""
 echo "  Demo credentials:"
-echo "    alice / Password123!  (checking + savings)"
+echo "    alice / Password123!  (checking + savings + loan application)"
 echo "    bob   / Password123!  (checking + savings)"
 echo "    admin / Password123!  (checking)"
 echo ""
