@@ -1,5 +1,5 @@
 # Build stage
-FROM mcr.microsoft.com/azurelinux/base/nodejs:20 AS builder
+FROM mcr.microsoft.com/azurelinux/base/nodejs:24 AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm install --legacy-peer-deps
