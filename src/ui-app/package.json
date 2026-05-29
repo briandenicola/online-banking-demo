@@ -23,6 +23,14 @@
     "typescript": "^6.0.3",
     "web-vitals": "^5.2.0"
   },
+  "overrides": {
+    "@tootallnate/once": "2.0.1",
+    "qs": "6.15.2",
+    "serialize-javascript": "7.0.5",
+    "uuid": "11.1.1",
+    "webpack-dev-server": "5.2.4",
+    "ws": "8.20.1"
+  },
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
