@@ -6,19 +6,19 @@
 
   <ItemGroup>
     <!-- Core Azure SDKs -->
-    <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.59.0" />
+    <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.60.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
 
     <!-- Authentication -->
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.8" />
-    <PackageVersion Include="Microsoft.IdentityModel.Tokens" Version="8.18.0" />
+    <PackageVersion Include="Microsoft.IdentityModel.Tokens" Version="8.19.0" />
 
     <!-- Redis -->
     <PackageVersion Include="StackExchange.Redis" Version="2.8.24" />
     <PackageVersion Include="Microsoft.Azure.StackExchangeRedis" Version="3.2.1" />
 
     <!-- Observability -->
-    <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.8.0" />
+    <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.8.1" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
@@ -27,7 +27,7 @@
     <PackageVersion Include="Newtonsoft.Json" Version="13.0.4" />
 
     <!-- API -->
-    <PackageVersion Include="Swashbuckle.AspNetCore" Version="10.1.7" />
+    <PackageVersion Include="Swashbuckle.AspNetCore" Version="10.2.1" />
 
     <!-- Validation -->
     <PackageVersion Include="FluentValidation.AspNetCore" Version="11.3.1" />
