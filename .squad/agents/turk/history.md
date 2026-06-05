@@ -1232,3 +1232,14 @@ All service Dockerfiles used Docker Hub base images (python:3.11-slim, node:20-a
 
 **Key Learning:** The public API for camelCase serialization pinning is `CosmosClientOptions.SerializerOptions = new CosmosSerializationOptions { PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase, IgnoreNullValues = true }`. Never use internal types. Decision documented in `.squad/decisions/turk-serializer-public-api.md` and skill updated with DO NOT USE warning.
 
+
+## 2026-06-05 — Local API Gateway DNS Search Leak Fix
+
+**Problem:** Local same-origin `/api/*` calls through docker-compose returned 404/502 even though direct container-to-container backend calls worked.
+
+**Solution:** Kept Azure/AKS untouched, restored the image-baked `src/ui-app/nginx.conf`, mounted a local-only UI nginx override in docker-compose, and set `dns_search: ["."]` on both `gateway` and `ui-app` so Docker containers do not inherit host search domains.
+
+## Learnings
+- Docker Compose containers can inherit host DNS search domains; host `search denicolafamily.com` plus Docker `options ndots:0` can make nginx `resolver` + variable `proxy_pass` resolve a short service name like `user-service` as an external wildcard host, causing misleading backend 404s.
+- Fix the leak locally with `dns_search: ["."]`; if nginx still cannot safely resolve dynamic upstreams, use startup-resolved static upstreams only for services guaranteed to be running.
+- AKS-safe local proxy pattern: never edit image-baked `src/ui-app/nginx.conf` for local `/api/*` proxying; mount a local-only override such as `infrastructure/local/ui-app.nginx.conf` from docker-compose while Azure/AKS continues using Istio ingress routing.

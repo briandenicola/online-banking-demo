@@ -8546,3 +8546,39 @@ component: infrastructure/docker
 - `src/ui-app/nginx.conf` — changed logging to stderr/off
 - `tasks/Taskfile.local.yml` — added `--build` to `run:` task
 
+---
+date: 2026-06-05
+author: Turk
+status: implemented
+component: local-dev/gateway
+---
+
+# Local API Gateway vs Azure Istio Gateway
+
+## Context
+
+The project intentionally uses two separate gateway setups:
+
+- **Azure/AKS:** Istio owns ingress routing for `/api/*`.
+- **Local docker-compose:** a dedicated local-only nginx `gateway` service routes `/api/*` to backend containers, while `ui-app` serves React on port 3000 and proxies same-origin `/api/*` to `gateway` through a local-only nginx override.
+
+## Decision
+
+Keep AKS and local routing independent. Do not add local `/api/*` proxy rules to the image-baked `src/ui-app/nginx.conf`, because that file is copied into the UI image and can ship to AKS. For local development, mount `infrastructure/local/ui-app.nginx.conf` over `/etc/nginx/nginx.conf` in the `ui-app` compose service and keep the local gateway config under `infrastructure/local/`.
+
+## Rationale
+
+This preserves production architecture: AKS remains Istio-routed, and local docker-compose gets browser-compatible same-origin API calls without affecting cloud manifests or images. `dns_search: ["."]` is set on the local gateway and UI containers to prevent host DNS search domains from leaking into Docker name resolution and sending nginx upstream lookups to external wildcard hosts.
+
+## Consequences
+
+Local developers can call the UI at `http://localhost:3000` and use `/api/*` normally. AKS builds continue using the clean UI nginx config with no local gateway dependency. Future local gateway changes must stay in docker-compose and `infrastructure/local/` only.
+
+## User Directive (2026-06-05)
+
+**Captured by:** Brian (via Copilot)
+
+Any fix for local /api routing / login must be LOCAL-ONLY and must NOT impact the Azure (AKS/Istio) deployment. Dedicated local changes or local-only infra (e.g. a docker-compose gateway/proxy or a local-only nginx config) are explicitly acceptable.
+
+**Rationale:** User requirement to isolate local development fixes from production Azure infrastructure.
+

@@ -1228,3 +1228,5 @@ These are **NOT caused by the OpenApi migration** — they're pre-existing Depen
 
 **Relevant if:** Danny works on Python service Docker orchestration or base image migrations. See decision: "Add Python Symlink to MCR Azure Linux Python Dockerfiles".
 
+
+**[2026-06-05 Scribe Note]** Two-setup gateway design: Local docker-compose uses dedicated gateway service + local nginx override (infrastructure/local/); Azure/AKS uses Istio. Do NOT add local gateway logic to image-baked src/ui-app/nginx.conf (it ships to cloud). See decision: Local API Gateway vs Azure Istio Gateway.
