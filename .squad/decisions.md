@@ -8462,3 +8462,38 @@ If issues arise:
 - Issue: Post-MCR migration runtime error
 - Skill: `.squad/skills/mcr-base-image-migration/SKILL.md` (updated with Python symlink gotcha)
 - Prior decision: MCR base image migration (commit 59b4342)
+
+---
+date: 2026-06-05
+author: Turk
+status: implemented
+component: scripts
+---
+
+# Seed Script URL Output
+
+## Problem
+
+When developers run `task local:seed` to populate demo data, the script displays demo credentials but did not show where to actually test the application. This required developers to remember or look up the UI port mapping.
+
+## Decision
+
+Added application URL output to the end of `scripts/seed-data.sh` completion message: `🌐 View the app at: http://localhost:3000`
+
+## Implementation
+
+- Added line to seed script completion block after demo credentials
+- Used existing color scheme (`${BLUE}` icon/label, `${NC}` for URL) matching script's style conventions
+- URL matches docker-compose.yml port mapping: `banking-ui-app` publishes `"3000:8080"`
+- Syntax validated with `bash -n scripts/seed-data.sh` — passed
+
+## Alternatives Considered
+
+- **Dynamic port lookup**: Could parse docker-compose.yml or query Docker API, but adds complexity for a value that rarely changes
+- **Hardcoded elsewhere**: Considered adding to Taskfile output, but seed script is the natural completion point where user expects next steps
+
+## Impact
+
+- Improved developer experience: clear call-to-action after seeding completes
+- No runtime overhead: static string echo
+- Maintains script simplicity: no dynamic lookups or external dependencies

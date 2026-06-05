@@ -48,6 +48,19 @@ Agent Scribe initialized and ready for work.
 - ✅ Deleted inbox files post-merge
 - ✅ Decisions.md (355KB) retained; all Foundry entries kept discoverable
 
+### 2026-06-05 — Turk Seed URL Output (Orchestration & Documentation)
+
+**Context:** Turk (Backend Dev) implemented seed script URL output. Scribe processed orchestration logs and decision documentation.
+
+**Work Completed:**
+- ✅ Created `.squad/orchestration-log/2026-06-05T19:26:26Z-turk.md` (workflow tracking)
+- ✅ Created `.squad/log/2026-06-05T19:26:26Z-seed-url-output.md` (brief session log)
+- ✅ Merged `.squad/decisions/inbox/turk-seed-url-output.md` → `.squad/decisions.md`
+- ✅ Deleted inbox file post-merge
+- ✅ Verified decisions.md: 400KB, 4 entries; no entries >30 days old (archival not required)
+- ✅ Verified cross-agent notes: none applicable
+
 ## Learnings
 
 Initial setup complete. Scribe hygiene discipline established 2026-05-14.
+Turk orchestration processed 2026-06-05.
