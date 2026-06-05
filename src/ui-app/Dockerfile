@@ -10,7 +10,7 @@ RUN npm run build
 FROM mcr.microsoft.com/azurelinux/base/nginx:1.28
 COPY --from=builder /app/build /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/nginx.conf
-RUN chown -R nginx:nginx /usr/share/nginx/html /var/cache/nginx /var/log/nginx && \
+RUN chown -R nginx:nginx /usr/share/nginx/html && \
     mkdir -p /tmp/client_temp /tmp/proxy_temp /tmp/fastcgi_temp /tmp/uwsgi_temp /tmp/scgi_temp && \
     chown -R nginx:nginx /tmp/client_temp /tmp/proxy_temp /tmp/fastcgi_temp /tmp/uwsgi_temp /tmp/scgi_temp
 EXPOSE 8080

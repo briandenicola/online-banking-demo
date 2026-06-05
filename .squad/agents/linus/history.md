@@ -24,6 +24,8 @@
 
 **2026-05-15 Linus note (Account Opening State Machine):** Customer status page now uses shared ApplicationStages component. Retry cap enforced at 1 (stageAttempts < 2). ErrorOutlineRounded used instead of ErrorOutline (MUI v9). Polling stops on terminal status.
 
+**2026-06-05 Scribe note (Turk's UI App Port Fix):** nginx port mismatch resolved. Rebuilt ui-app image from MCR-based Dockerfile (Azure Linux nginx:1.28 on 8080). Added CSS module type declarations (custom.d.ts). Fixed Dockerfile/nginx.conf for Azure Linux permissions (no /var/cache/nginx, error_log stderr). Updated tasks/Taskfile.local.yml with `--build` flag to prevent stale images during dev. UI now reachable on localhost:3000. See decisions.md "UI App Port Mismatch from Stale Docker Image".
+
 **Critical Bugs (Pre-Wave 1):**
 - Transfer API client had wrong shape (wrapped formData, FastAPI expects flat)
 - Duplicate test files: 7 pairs, __tests__/ vs. colocated versions out of sync

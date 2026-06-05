@@ -9,30 +9,25 @@
 
 ## Session Log
 
-### 2026-05-12 — Build Break Fix: Internal Serializer Type
+### 2026-06-05 — UI App Port Mismatch from Stale Docker Image
 
-**Issue:** Commit 243457f (#125) used `CosmosSystemTextJsonSerializer`, which is **internal** in Microsoft.Azure.Cosmos. Build failed with CS0122 protection level error across all 5 .NET services.
+**Issue:** `curl http://localhost:3000` → "Connection reset by peer" after MCR base image migration. UI container running but not serving.
 
-**Learning:** `CosmosSystemTextJsonSerializer` is internal. The **public API** for camelCase pinning is:
+**Root Cause:** `task local:run` used `docker compose up -d` without `--build`, reusing 4-week-old cached ui-app image (Alpine nginx:1.29 on port 80) instead of current MCR-based Dockerfile (Azure Linux nginx:1.28 on port 8080). Port mismatch: compose maps 3000→8080, stale container listening on 80.
 
-```csharp
-CosmosClientOptions.SerializerOptions = new CosmosSerializationOptions
-{
-    PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase,
-    IgnoreNullValues = true
-}
-```
+**Secondary Issues:** React build failed (TS2882: CSS type declarations missing). Azure Linux nginx has different permissions than Alpine (no `/var/cache/nginx`, different log paths).
 
-**Fix:** Replaced internal type usage in:
-- user-service/Program.cs
-- account-service/Program.cs
-- transaction-service/Program.cs
-- transfer-service/Program.cs
-- prompt-eval-service/Program.cs
+**Fixes:**
+1. Added `src/ui-app/src/custom.d.ts` — CSS module type declarations
+2. Updated `src/ui-app/Dockerfile` — removed chown of non-existent directories
+3. Updated `src/ui-app/nginx.conf` — `error_log stderr; access_log off;`
+4. Updated `tasks/Taskfile.local.yml` — added `--build` to `local:run` task
 
-Updated skill document with DO NOT USE warning. Decision logged in `.squad/decisions/turk-serializer-public-api.md`.
+**Verification:** `curl http://localhost:3000` → HTTP 200, responds with `<title>Online Banking Demo</title>`.
 
-**Verification:** `dotnet build` on user-service succeeded with 0 errors (5 warnings unrelated to serializer).
+**Durable Fix:** `task local:run` now always rebuilds images with `--build`, preventing stale image issues during active development.
+
+**Key Learning:** Always rebuild after base image migrations. Stale cached images silently break stacks even when Dockerfiles are correct. Add `--build` to dev run commands.
 
 ## Core Context
 
@@ -1195,3 +1190,45 @@ All service Dockerfiles used Docker Hub base images (python:3.11-slim, node:20-a
 **Decision Record:** `.squad/decisions/inbox/turk-python-symlink-fix.md`
 
 **Skill Extraction:** Updated `.squad/skills/mcr-base-image-migration/SKILL.md` with "Python Symlink" gotcha section.
+
+## 2026-06-05: Fixed UI App Port Mismatch from Stale Docker Image
+
+**Problem:** `curl http://localhost:3000` → connection reset. The banking-ui-app container was "Up" but not serving HTTP requests.
+
+**Root Cause:** 
+1. `task local:run` ran `docker compose up -d` WITHOUT `--build`, reusing a 4-week-old cached Alpine nginx image (listening on port 80) instead of the current MCR Azure Linux nginx Dockerfile (listening on port 8080).
+2. docker-compose.yml maps host 3000 → container 8080, but stale container listened on 80 → connection reset.
+3. React build failed with missing CSS module type declarations (`TS2882`).
+4. Azure Linux nginx has different directory structure - no `/var/cache/nginx`, and `/var/log/nginx/` not writable by nginx user.
+
+**Solution:**
+1. Added `src/ui-app/src/custom.d.ts` with CSS module type declarations to fix TypeScript build.
+2. Fixed `src/ui-app/Dockerfile` - removed chown of non-existent directories (`/var/cache/nginx`, `/var/log/nginx`).
+3. Fixed `src/ui-app/nginx.conf` - changed `error_log stderr;` and `access_log off;` to avoid permission errors.
+4. Rebuilt and redeployed: `docker compose build ui-app && docker compose up -d ui-app` → HTTP 200 ✅
+5. **Durable fix:** Updated `tasks/Taskfile.local.yml` `run:` task to use `--build` flag so stale images never silently break the stack again.
+
+**Learnings:**
+- **Always rebuild after base image migration** - stale cached images can silently serve wrong configs even when Dockerfiles are correct.
+- **Azure Linux nginx log paths** - use `error_log stderr;` and `access_log off;` when running as USER nginx.
+- **Azure Linux nginx directories** - no `/var/cache/nginx`, only `/var/cache/ldconfig`.
+- **Add `--build` to dev tasks** - prevents stale image issues during active development or migrations.
+
+**Files Changed:**
+- `src/ui-app/src/custom.d.ts` (new)
+- `src/ui-app/Dockerfile`
+- `src/ui-app/nginx.conf`
+- `tasks/Taskfile.local.yml`
+
+**Documentation:**
+- Created `.squad/decisions/inbox/turk-uiapp-port-rebuild.md`
+- Updated `.squad/skills/mcr-base-image-migration/SKILL.md` with nginx log permissions and stale image prevention
+
+
+
+## Previous Session: 2026-05-12 — Build Break Fix
+
+**Summary:** Commit 243457f (#125) used internal `CosmosSystemTextJsonSerializer` type, causing CS0122 build failures across all 5 .NET services (user-service, account-service, transaction-service, transfer-service, prompt-eval-service).
+
+**Key Learning:** The public API for camelCase serialization pinning is `CosmosClientOptions.SerializerOptions = new CosmosSerializationOptions { PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase, IgnoreNullValues = true }`. Never use internal types. Decision documented in `.squad/decisions/turk-serializer-public-api.md` and skill updated with DO NOT USE warning.
+

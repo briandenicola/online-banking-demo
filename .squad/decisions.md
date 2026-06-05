@@ -8497,3 +8497,52 @@ Added application URL output to the end of `scripts/seed-data.sh` completion mes
 - Improved developer experience: clear call-to-action after seeding completes
 - No runtime overhead: static string echo
 - Maintains script simplicity: no dynamic lookups or external dependencies
+
+---
+date: 2026-06-05
+author: Turk
+status: implemented
+component: infrastructure/docker
+---
+
+# UI App Port Mismatch from Stale Docker Image
+
+**Date:** 2026-06-05  
+**Context:** MCR base image migration fallout  
+
+## Problem
+`curl http://localhost:3000` → connection reset. The banking-ui-app container was "Up" but not serving HTTP requests on the mapped port.
+
+## Root Cause
+1. **Stale Docker image:** `task local:run` used `docker compose up -d` WITHOUT `--build`, reusing a 4-week-old cached ui-app image (official Alpine nginx:1.29 listening on port 80) instead of rebuilding from the current MCR-based Dockerfile (Azure Linux nginx:1.28 listening on port 8080).
+2. **Port mismatch:** docker-compose.yml maps host 3000 → container 8080, but the stale container was listening on 80 → connection reset.
+3. **Missing type declarations:** React build failed with `TS2882: Cannot find module or type declarations for side-effect import of './index.css'` because CSS module type declarations were missing.
+4. **Azure Linux nginx permission issues:** The MCR nginx base image has different directory structures and permissions than the Alpine image. The original Dockerfile tried to `chown` non-existent `/var/cache/nginx` and the nginx.conf defaulted to `/var/log/nginx/access.log`, which USER nginx can't write to.
+
+## Solution
+
+### Immediate fixes:
+1. **Added CSS type declarations:** Created `src/ui-app/src/custom.d.ts` with type declaration for `*.css` modules to fix TypeScript build.
+2. **Fixed Dockerfile permissions:** Removed chown of non-existent `/var/cache/nginx` and `/var/log/nginx` directories.
+3. **Fixed nginx.conf logging:** Changed `error_log` to `stderr` and added `access_log off` to avoid permission errors on log files.
+4. **Rebuilt and redeployed:** `docker compose build ui-app && docker compose up -d ui-app` → HTTP 200, app serving correctly.
+
+### Durable fix to prevent recurrence:
+5. **Updated Taskfile:** Changed `task local:run` to use `docker compose --env-file .env up -d --build` so images are always rebuilt from current Dockerfiles.
+
+## Impact
+- **Before:** Stale images silently served wrong configs, broke the stack.
+- **After:** `task local:run` always rebuilds images, ensuring Dockerfile changes take effect immediately.
+
+## Learnings for MCR Migration
+- **Always rebuild after base image migration:** Stale cached images can silently break the stack even when Dockerfiles are correct.
+- **Azure Linux nginx has no `/var/cache/nginx`:** Only `/var/cache/ldconfig` exists. Don't chown nginx-specific cache directories.
+- **Azure Linux nginx logs need writable paths:** Use `error_log stderr;` and `access_log off;` when running as USER nginx to avoid permission errors.
+- **Add `--build` to dev run commands:** Prevents stale image issues during active development or migrations.
+
+## Files Changed
+- `src/ui-app/src/custom.d.ts` — new CSS module type declarations
+- `src/ui-app/Dockerfile` — removed chown of non-existent directories
+- `src/ui-app/nginx.conf` — changed logging to stderr/off
+- `tasks/Taskfile.local.yml` — added `--build` to `run:` task
+

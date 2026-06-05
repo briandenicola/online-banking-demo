@@ -510,6 +510,110 @@ RUN useradd -r -s /sbin/nologin -M appuser
 - Update dependencies: `pip install --upgrade <package>`
 - If unfixable, use heavier devcontainers image: `mcr.microsoft.com/devcontainers/python:3.11`
 
+### Issue: Azure Linux nginx Log Permission Denied
+
+**Issue:** When running nginx as USER nginx with Azure Linux base image, nginx crashes with:
+```
+nginx: [emerg] open() "/var/log/nginx/access.log" failed (13: Permission denied)
+```
+
+**Root Cause:** Azure Linux nginx base image has different directory structure and permissions than Alpine nginx. The `/var/log/nginx/` directory is not writable by the nginx user.
+
+**Solution:** Configure nginx to use writable log paths:
+
+```nginx
+worker_processes auto;
+pid /tmp/nginx.pid;
+error_log stderr;  # ✅ Write errors to stderr instead of file
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    # ... other config ...
+    
+    access_log off;  # ✅ Disable access log or write to /tmp
+    
+    # Use /tmp for temp paths (required for USER nginx)
+    client_body_temp_path /tmp/client_temp;
+    proxy_temp_path /tmp/proxy_temp;
+    fastcgi_temp_path /tmp/fastcgi_temp;
+    uwsgi_temp_path /tmp/uwsgi_temp;
+    scgi_temp_path /tmp/scgi_temp;
+    
+    server {
+        listen 8080;
+        # ... rest of config ...
+    }
+}
+```
+
+**Dockerfile changes:**
+```dockerfile
+FROM mcr.microsoft.com/azurelinux/base/nginx:1.28
+COPY --from=builder /app/build /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/nginx.conf
+
+# ❌ Don't chown /var/cache/nginx or /var/log/nginx (different structure on Azure Linux)
+# ✅ Only chown what nginx user needs to write
+RUN chown -R nginx:nginx /usr/share/nginx/html && \
+    mkdir -p /tmp/client_temp /tmp/proxy_temp /tmp/fastcgi_temp /tmp/uwsgi_temp /tmp/scgi_temp && \
+    chown -R nginx:nginx /tmp/client_temp /tmp/proxy_temp /tmp/fastcgi_temp /tmp/uwsgi_temp /tmp/scgi_temp
+
+EXPOSE 8080
+USER nginx
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+**Key differences from Alpine nginx:**
+- Alpine nginx: `/var/cache/nginx/` exists, `/var/log/nginx/` is writable by nginx user
+- Azure Linux nginx: Only `/var/cache/ldconfig/` exists, `/var/log/nginx/` is a symlink to `/var/opt/nginx/log` (not writable by nginx user)
+
+### Issue: Stale Docker Images After MCR Migration
+
+**Issue:** After updating Dockerfiles to use MCR base images, running `docker compose up -d` without `--build` continues to use old cached images with Alpine base images, causing port mismatches, configuration errors, or crashes.
+
+**Root Cause:** Docker Compose reuses cached images by default. If Dockerfiles change (e.g., base image migration), the old image is used unless explicitly rebuilt.
+
+**Solution:** Always add `--build` to docker-compose commands during development and after migrations:
+
+```bash
+# ❌ Reuses stale cached images
+docker compose up -d
+
+# ✅ Rebuilds images from current Dockerfiles
+docker compose up -d --build
+```
+
+**Taskfile best practice:**
+```yaml
+run:
+  desc: Run Docker Compose locally
+  cmds:
+    - docker compose --env-file .env up -d --build  # ✅ Always rebuild
+```
+
+**When to use `--build`:**
+- After base image migration (MCR, Alpine → Azure Linux)
+- During active Dockerfile development
+- In dev/run tasks (so developers always get fresh images)
+- After pulling changes that modify Dockerfiles
+
+**When NOT to use `--build`:**
+- Production deployments (images pre-built in CI/CD)
+- Performance-critical scenarios where you know images are up-to-date
+
+**Verification after rebuild:**
+```bash
+# Check image age and ID
+docker images <service>
+
+# Verify running container is using new image
+docker inspect <container> --format '{{.Config.Image}}'
+docker inspect <container> --format '{{.Image}}'
+```
+
 ## References
 
 - [MCR Catalog](https://mcr.microsoft.com/)
