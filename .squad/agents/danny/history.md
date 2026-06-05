@@ -1206,3 +1206,25 @@ These are **NOT caused by the OpenApi migration** — they're pre-existing Depen
 **Full Details:** `.squad/orchestration-log/2026-05-19T12-56-turk.md` + `.squad/log/2026-05-19T12-56-openapi-2x-fix.md`
 
 **Decision Archived:** `.squad/decisions.md` (appended 2026-05-19)
+
+## 2026-06-05: CROSS-AGENT — Turk Python Symlink Fix
+
+**Notification:** Turk (Backend Dev) fixed `exec: "python": not found` runtime error in MCR Azure Linux containers.
+
+**Root Cause:**
+- MCR azurelinux base images (`mcr.microsoft.com/azurelinux/base/python:3.12`) ship with `/usr/bin/python3` but no bare `/usr/bin/python` symlink
+- This breaks pip-installed console scripts (uvicorn shebangs: `#!/usr/bin/python`) and explicit `python` invocations in docker-compose
+
+**Solution:**
+- Added `RUN ln -sf /usr/bin/python3 /usr/bin/python` to all 4 Python service Dockerfiles before `USER 1001`
+
+**Files Modified:**
+- `src/ai-service/Dockerfile`
+- `src/account-opening-service/Dockerfile`
+- `src/budget-service/Dockerfile`
+- `src/chatbot-service/Dockerfile`
+
+**Verification:** All containers start cleanly. No "exec: python: not found" errors in logs.
+
+**Relevant if:** Danny works on Python service Docker orchestration or base image migrations. See decision: "Add Python Symlink to MCR Azure Linux Python Dockerfiles".
+

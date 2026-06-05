@@ -354,6 +354,47 @@ USER 1001
 
 **File ownership:** Most Python/Node.js apps only READ installed packages, so no ownership changes needed. If your app needs writable paths at runtime, use `COPY --chown=1001:1001` for those specific files/directories.
 
+### Azure Linux Python Images: No Bare `python` Symlink
+
+**Issue:** MCR `azurelinux/base/python:3.12` ships with `/usr/bin/python3` and `/usr/bin/python3.12`, but **NO bare `/usr/bin/python` symlink**. This breaks:
+1. pip-installed console scripts (uvicorn, pytest) — shebangs generated as `#!/usr/bin/python`
+2. Explicit `python` invocations in docker-compose or scripts
+
+**Error:**
+```
+exec: "python": executable file not found in $PATH
+```
+
+**Solution:** Add a python symlink after pip install, before USER switch:
+
+```dockerfile
+# Install dependencies
+RUN pip install --no-cache-dir --root-user-action=ignore .
+
+# ✅ Create python symlink for compatibility
+RUN ln -sf /usr/bin/python3 /usr/bin/python
+
+# Drop to non-root user
+USER 1001
+```
+
+**Why this works:**
+- Symlink must be created before `USER` switch (requires root to write `/usr/bin/`)
+- Fixes both uvicorn shebangs AND explicit `python` commands in one change
+- PEP 394 compliant: Python 3-only environments can provide bare `python` → `python3`
+- Safe for K8s: same Dockerfiles run in AKS, symlink is transparent
+
+**When to add:**
+- All Python services using MCR Azure Linux base images
+- After dependencies are installed (`pip install`)
+- Before switching to non-root user (`USER 1001`)
+
+**Verification:**
+```bash
+docker run --rm <image> sh -c 'python --version && python3 --version'
+# Both should return Python 3.12.x
+```
+
 ## User Creation Reference
 
 ### Command Comparison

@@ -8360,3 +8360,105 @@ For any future Swashbuckle/Microsoft.OpenApi major version upgrades:
 - Swashbuckle.AspNetCore 10.1.7 GitHub releases
 - Microsoft.OpenApi 2.4.1 NuGet package documentation
 - CS0234 namespace resolution error diagnostics
+---
+date: 2026-06-05
+author: turk
+status: implemented
+---
+
+# Add Python Symlink to MCR Azure Linux Python Dockerfiles
+
+## Context
+
+After migrating Python services to `mcr.microsoft.com/azurelinux/base/python:3.12` (commit 59b4342), `docker compose up` failed with:
+
+```
+Error response from daemon: failed to create task for container: 
+OCI runtime create failed: runc create failed: unable to start container process:
+exec: "python": executable file not found in $PATH: unknown
+```
+
+## Problem
+
+MCR Azure Linux Python base images ship with:
+- `/usr/bin/python3` (symlink to python3.12)
+- `/usr/bin/python3.12` (actual binary)
+
+But **NOT** a bare `/usr/bin/python` symlink.
+
+This breaks:
+1. **pip-installed console scripts** (uvicorn, pytest, etc.) — shebangs generated as `#!/usr/bin/python`
+2. **Explicit python invocations** — e.g., docker-compose.yml `command: ["python", "-m", "app.worker"]`
+
+## Decision
+
+Add `RUN ln -sf /usr/bin/python3 /usr/bin/python` to all Python service Dockerfiles:
+- After `pip install .` (dependencies are installed)
+- Before `USER 1001` (symlink requires root to write to `/usr/bin/`)
+
+## Rationale
+
+1. **Minimal fix** — one-line symlink vs. rewriting all shebangs/commands
+2. **Safe for K8s** — same Dockerfiles run in AKS; symlink is transparent
+3. **PEP 394 compliant** — Python 3-only environments can provide bare `python` → `python3`
+4. **Robust** — fixes both uvicorn CMD and explicit `python` invocations in one change
+
+## Files Modified
+
+- `src/ai-service/Dockerfile`
+- `src/account-opening-service/Dockerfile`
+- `src/budget-service/Dockerfile`
+- `src/chatbot-service/Dockerfile`
+
+## Verification
+
+```bash
+# Build and test
+docker build -t banking-ai-service:test src/ai-service
+docker run --rm banking-ai-service:test sh -c 'python --version && uvicorn --version'
+# Output: Python 3.12.9, uvicorn 0.32.1 ✅
+
+# Start full stack
+docker compose up -d redis ai-service account-opening-worker budget-service chatbot-service
+docker ps --filter "name=banking-"
+# All containers Up ✅
+
+# Check logs
+docker compose logs ai-service account-opening-worker | grep -i "exec\|python"
+# No "exec: python: not found" errors ✅
+```
+
+## Alternatives Considered
+
+1. **Change `command: python` → `python3` in docker-compose.yml**
+   - Only fixes explicit invocations, not uvicorn shebangs
+   - Incomplete solution
+
+2. **Install shadow-utils and create `python` symlink via useradd workaround**
+   - Adds unnecessary package bloat
+   - Symlink can be created directly
+
+3. **Rewrite all console-script shebangs after pip install**
+   - Fragile (must track all scripts)
+   - Breaks on future dependency changes
+
+## Risks & Mitigations
+
+**Risk:** Symlink might not exist in AKS runtime
+**Mitigation:** Same Dockerfile runs in both local and K8s — symlink is baked into image layer
+
+**Risk:** Future MCR image updates might change python3 location
+**Mitigation:** Symlink uses relative target (`python3` → resolved via PATH), not hardcoded `/usr/bin/python3.12`
+
+## Rollback
+
+If issues arise:
+1. Remove `RUN ln -sf ...` line from Dockerfiles
+2. Use `python3` explicitly in all CMD/command invocations
+3. Rebuild images
+
+## Related
+
+- Issue: Post-MCR migration runtime error
+- Skill: `.squad/skills/mcr-base-image-migration/SKILL.md` (updated with Python symlink gotcha)
+- Prior decision: MCR base image migration (commit 59b4342)

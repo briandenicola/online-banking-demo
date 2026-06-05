@@ -7,6 +7,9 @@ COPY ./pyproject.toml ./
 
 RUN pip install --no-cache-dir --root-user-action=ignore .
 
+# Create python symlink for compatibility (MCR azurelinux only has python3)
+RUN ln -sf /usr/bin/python3 /usr/bin/python
+
 EXPOSE 8004
 
 USER 1001
