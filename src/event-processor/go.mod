@@ -3,7 +3,7 @@ module event-processor
 go 1.25.0
 
 require (
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.21.1
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.22.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
 	github.com/redis/go-redis/v9 v9.20.0
 	go.opentelemetry.io/otel v1.44.0
