@@ -117,8 +117,8 @@ tasks:
       - sed -i s/devicecode/azurecli/g ~/.kube/config
       - task: _infra:cert-manager
       - task: _secrets:create
-      - task: _configmap:update
-      - task: _secretproviderclass:update
+      - task: _configmap:apply
+      - task: _secretproviderclass:apply
     vars:
       RG_NAME:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw resource_group_name
