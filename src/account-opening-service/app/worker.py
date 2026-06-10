@@ -211,14 +211,36 @@ async def main() -> int:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop_event.set)
 
-    tasks = [asyncio.create_task(consumer.run(stop_event)) for consumer in consumers]
+    consumer_by_name = {c.consumer_name: c for c in consumers}
+    tasks = {
+        c.consumer_name: asyncio.create_task(c.run(stop_event)) for c in consumers
+    }
     logger.info("Account-opening agents started", count=len(tasks))
 
-    await stop_event.wait()
+    # Supervise consumer tasks. run() is internally resilient to transient
+    # errors, but if a task ever exits unexpectedly (or raises) while the worker
+    # is still meant to be running, log it loudly and restart it so the pipeline
+    # can never silently stall while the pod reports healthy.
+    while not stop_event.is_set():
+        await asyncio.wait(
+            set(tasks.values()), timeout=5.0, return_when=asyncio.FIRST_COMPLETED
+        )
+        if stop_event.is_set():
+            break
+        for name, task in list(tasks.items()):
+            if task.done():
+                exc = task.exception() if not task.cancelled() else None
+                logger.error(
+                    "Consumer task exited unexpectedly; restarting",
+                    consumer=name,
+                    error=str(exc) if exc else None,
+                    exc_info=exc,
+                )
+                tasks[name] = asyncio.create_task(consumer_by_name[name].run(stop_event))
 
-    for task in tasks:
+    for task in tasks.values():
         task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.gather(*tasks.values(), return_exceptions=True)
 
     close_result = redis_client.close()
     if asyncio.iscoroutine(close_result):

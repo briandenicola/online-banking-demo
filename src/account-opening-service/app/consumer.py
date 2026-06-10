@@ -221,7 +221,22 @@ class AgentConsumer(abc.ABC):
         while True:
             if stop_event and stop_event.is_set():
                 return
-            await self.process_one()
+            try:
+                await self.process_one()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # A transient error (e.g. Redis connection reset on token
+                # refresh) must never silently kill the consumer loop. Log it
+                # and retry after a short backoff so the worker self-heals.
+                logger.error(
+                    "Consumer loop error; retrying",
+                    group=self.consumer_group,
+                    consumer=self.consumer_name,
+                    error=str(exc),
+                    exc_info=True,
+                )
+                await asyncio.sleep(self.retry_delay)
 
     async def get_lag(self) -> int | None:
         try:

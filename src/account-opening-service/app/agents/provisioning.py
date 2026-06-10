@@ -100,6 +100,7 @@ class ProvisioningConsumer(AgentConsumer):
             raise
 
         self._credential = credential
+        self._project_endpoint = foundry_endpoint.rstrip("/")
         self._agent = FoundryAgent(
             project_endpoint=foundry_endpoint.rstrip("/"),
             credential=self._credential,
@@ -342,7 +343,7 @@ Return ONLY the explanation text, no JSON wrapper."""
             from agent_framework_foundry import FoundryAgent
             
             explanation_agent = FoundryAgent(
-                project_endpoint=self._agent.project_endpoint,
+                project_endpoint=self._project_endpoint,
                 credential=self._credential,
                 agent_name="customer-explanation-generator",
                 agent_version="1",
