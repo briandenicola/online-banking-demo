@@ -55,10 +55,12 @@ resource "azurerm_role_assignment" "cus_storage_blob_reader" {
 }
 
 # RBAC: Azure AI Project Manager (required for AI Foundry Agents API)
+# Use role_definition_id with the built-in GUID instead of role_definition_name
+# to avoid lookup issues at project scope.
 resource "azurerm_role_assignment" "banking_ai_project_manager" {
-  scope                = azapi_resource.ai_foundry_project.id
-  role_definition_name = "Azure AI Project Manager"
-  principal_id         = azurerm_user_assigned_identity.banking_services.principal_id
+  scope              = azapi_resource.ai_foundry_project.id
+  role_definition_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/eadc314b-1a2d-4efa-be10-5d325db5065e"
+  principal_id       = azurerm_user_assigned_identity.banking_services.principal_id
 }
 
 # RBAC: Storage Blob Data Contributor

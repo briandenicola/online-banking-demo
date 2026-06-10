@@ -96,7 +96,8 @@ resource "azapi_resource" "content_understanding" {
 
   response_export_values = [
     "properties.endpoint",
-    "identity.principalId"
+    "identity.principalId",
+    "properties.provisioningState"
   ]
 }
 
@@ -104,6 +105,17 @@ data "azurerm_cognitive_account" "content_understanding" {
   depends_on          = [azapi_resource.content_understanding]
   name                = local.cus_name
   resource_group_name = azurerm_resource_group.this.name
+}
+
+# Wait for CUS provisioning to complete before attaching private endpoint.
+# Cross-region AI Services can report creation complete but remain in "Accepted"
+# state for several minutes. The private endpoint creation will fail with
+# "AccountProvisioningStateInvalid" if attempted before the account reaches
+# "Succeeded" state.
+resource "time_sleep" "wait_cus_provisioning" {
+  create_duration = "120s"
+
+  depends_on = [azapi_resource.content_understanding]
 }
 
 resource "azapi_resource" "gpt54_mini" {

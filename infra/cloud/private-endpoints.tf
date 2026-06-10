@@ -203,7 +203,10 @@ resource "azurerm_private_endpoint" "content_understanding" {
   resource_group_name = azurerm_resource_group.this.name
   subnet_id           = azurerm_subnet.private_endpoints.id
 
-  depends_on = [azapi_resource.content_understanding]
+  depends_on = [
+    azapi_resource.content_understanding,
+    time_sleep.wait_cus_provisioning
+  ]
 
   private_service_connection {
     name                           = "${local.resource_name}-cus-psc"

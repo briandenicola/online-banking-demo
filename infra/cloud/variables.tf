@@ -33,3 +33,9 @@ variable "deploy_embedding_model" {
   type        = bool
   default     = false
 }
+
+variable "keyvault_allowed_ip_rules" {
+  description = "Additional IP ranges (in CIDR notation) to allow Key Vault access during bootstrap. The detected deployer IP is always added. Use this to add more IPs if your egress is NAT'd across multiple addresses."
+  type        = list(string)
+  default     = []
+}

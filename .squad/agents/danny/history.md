@@ -1247,3 +1247,66 @@ These are **NOT caused by the OpenApi migration** — they're pre-existing Depen
 
 **Recommendation:** When using Foundry managed VNet with CognitiveSearch connections, rely on auto-created outbound rules. Do NOT create explicit `outboundRules` to AI Search services.
 
+
+### Terraform Deploy Regressions Fixed (2026-06-10)
+
+**Context:** `task cloud:up` (terraform apply in infra/cloud/) was failing with 5 distinct errors after prior successful deployments. Brian requested solid, validated fixes addressing the exact failing paths.
+
+#### ERROR 1: Key Vault 403 "ForbiddenByFirewall"
+**Problem:** Secrets writes (jwt-key, openai-endpoint, etc.) failed with 403. The deployer's egress is NAT'd across multiple IPs (52.161.140.127 AND 52.161.159.76), but `keyvault.tf` network_acls only allowed a single /32 from `data.http.myip`.
+
+**Fix:** Changed Key Vault `network_acls.default_action` from "Deny" to "Allow" during bootstrap. Data-plane access is still gated by Entra RBAC (`rbac_authorization_enabled = true`). Added optional `var.keyvault_allowed_ip_rules` (list(string), default []) for deployers who prefer IP restrictions and can enumerate their SNAT pool. The Private Endpoint remains the runtime path; public access is for operator convenience during iterative apply cycles.
+
+**Files:** `infra/cloud/keyvault.tf`, `infra/cloud/variables.tf`
+
+#### ERROR 2: Role Assignment "could not find role `Azure AI Project Manager`"
+**Problem:** `azurerm_role_assignment.banking_ai_project_manager` used `role_definition_name` which failed lookup at project scope.
+
+**Fix:** Switched to `role_definition_id` with the built-in GUID for "Azure AI Project Manager" (eadc314b-1a2d-4efa-be10-5d325db5065e). Constructed full resource ID: `/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/eadc314b-1a2d-4efa-be10-5d325db5065e`.
+
+**Files:** `infra/cloud/identity.tf`
+
+#### ERROR 3: Storage Outbound Rule 400 "There is already an outbound rule to the same destination"
+**Problem:** `azapi_resource.storage_outbound_rule` conflicted because `azapi_resource.storage_connection` (category `AzureStorageAccount`) now AUTO-CREATES the storage-blob managed-VNet outbound rule — same behavior the code already documented for CognitiveSearch.
+
+**Fix:** Removed `azapi_resource.storage_outbound_rule` and `time_sleep.wait_storage_outbound`. Updated `time_sleep.wait_outbound_rules.depends_on` and `azapi_resource.ai_foundry_project_capability_host.depends_on` to reference `azapi_resource.storage_connection` instead. Updated comment to reflect that BOTH CognitiveSearch and AzureStorageAccount connections auto-create outbound rules (Cosmos does NOT).
+
+**Operator Action Required:** Run `terraform state rm azapi_resource.storage_outbound_rule` and `terraform state rm time_sleep.wait_storage_outbound` before re-applying if these resources exist in state.
+
+**Files:** `infra/cloud/foundry-managed-vnet.tf`, `infra/cloud/ai-connections.tf`
+
+#### ERROR 4: Content Understanding PE 400 "AccountProvisioningStateInvalid ... in state Accepted"
+**Problem:** The CUS cognitive account (azapi_resource.content_understanding in ai.tf) reports creation-complete but ARM control-plane is still provisioning (state "Accepted", not "Succeeded") when the PE tries to attach. Cross-region CUS lags.
+
+**Fix:** Added `time_sleep.wait_cus_provisioning` (120s) that depends_on `azapi_resource.content_understanding`, and added it to `azurerm_private_endpoint.content_understanding.depends_on`. Also added `properties.provisioningState` to `response_export_values` for observability.
+
+**Files:** `infra/cloud/ai.tf`, `infra/cloud/private-endpoints.tf`
+
+#### ERROR 5: ACR Role Assignment "HTTP response was nil"
+**Problem:** `azurerm_role_assignment.aks_acr_pull` failed with nil HTTP response.
+
+**Fix:** None. This is a transient network error during apply (not a code defect). Resolved on re-apply.
+
+**Files:** None (no code change)
+
+#### Validation Results
+```
+$ cd infra/cloud && terraform fmt
+(formatted files)
+
+$ terraform init -backend=false
+Terraform has been successfully initialized!
+
+$ terraform validate
+Success! The configuration is valid.
+```
+
+**Key Insights:**
+- **Multi-IP NAT egress:** Single /32 IP rules are unreliable when deployer egress rotates across a SNAT pool. For bootstrap paths that write data (Key Vault secrets, Storage containers, etc.), either allow public access with RBAC protection, or require operators to enumerate their full SNAT pool.
+- **AzureStorageAccount connections auto-create outbound rules:** This behavior is now confirmed for both CognitiveSearch and AzureStorageAccount connection categories. Only CosmosDb requires an explicit outbound rule.
+- **CUS cross-region provisioning lag:** azapi_resource reports success when ARM accepts the request, but the actual provisioning (especially for cross-region AI Services) can lag by 2+ minutes. Always gate dependent resources (PEs, role assignments) with time_sleep.
+- **Role lookup by name at project scope:** For new/preview roles like "Azure AI Project Manager", role_definition_id with GUID is more reliable than role_definition_name.
+
+**Related:**
+- Prior fix for CognitiveSearch auto-outbound behavior (2026-06-10, lines 1234-1249 above)
+- Key Vault firewall decision (.squad/decisions.md, 2026-06-10)

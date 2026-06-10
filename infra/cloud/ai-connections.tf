@@ -144,9 +144,9 @@ resource "azapi_resource" "ai_foundry_project_capability_host" {
     time_sleep.wait_project_rbac,
     # Managed VNet outbound rules must be Succeeded before the capability host
     # binds the project to the agent runtime. See foundry-managed-vnet.tf.
-    azapi_resource.storage_outbound_rule,
+    # NOTE: aisearch and storage connections auto-create their outbound rules;
+    # cosmos_outbound_rule is the only explicit rule.
     azapi_resource.cosmos_outbound_rule,
-    azapi_resource.aisearch_outbound_rule,
     time_sleep.wait_outbound_rules
   ]
   # API version 2025-04-01-preview matches the working Microsoft sample.

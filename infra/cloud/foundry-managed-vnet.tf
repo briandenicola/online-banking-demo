@@ -20,18 +20,10 @@
 # instead of creating it as a standalone resource to avoid conflicts.
 
 #############################################
-# 10-minute waits — backing services + their PEs must be fully provisioned
-# before the managed network can create its own PE to them.
+# 10-minute wait — Cosmos backing service + its PE must be fully provisioned
+# before the managed network can create its own PE to it.
+# NOTE: Storage and Search waits removed — their connections auto-create outbound rules.
 #############################################
-
-resource "time_sleep" "wait_storage_outbound" {
-  create_duration = "10m"
-
-  depends_on = [
-    azurerm_storage_account.main,
-    azurerm_private_endpoint.storage,
-  ]
-}
 
 resource "time_sleep" "wait_cosmos_outbound" {
   create_duration = "10m"
@@ -42,43 +34,25 @@ resource "time_sleep" "wait_cosmos_outbound" {
   ]
 }
 
-resource "time_sleep" "wait_aisearch_outbound" {
-  create_duration = "10m"
-
-  depends_on = [
-    azapi_resource.ai_search,
-    azurerm_private_endpoint.search,
-  ]
-}
+# NOTE: AI Search and AzureStorageAccount connections auto-create managed-VNet
+# outbound rules. CognitiveSearch (aisearch_connection in ai-connections.tf) and
+# AzureStorageAccount (storage_connection in ai-connections.tf) both auto-create
+# outbound rules to their respective backing services. Attempting to create explicit
+# rules results in HTTP 400 "There is already an outbound rule to the same destination".
+# CosmosDb connections do NOT auto-create outbound rules, so an explicit rule is
+# required for Cosmos. See: microsoft-foundry/foundry-samples issue discussions on
+# managed VNet behavior.
 
 #############################################
 # Outbound rules — managed PE per backing service
 #############################################
 
-resource "azapi_resource" "storage_outbound_rule" {
-  type      = "Microsoft.CognitiveServices/accounts/managedNetworks/outboundRules@2025-10-01-preview"
-  name      = "storage-blob-rule"
-  parent_id = "${azapi_resource.this.id}/managedNetworks/default"
-
-  schema_validation_enabled = false
-
-  body = {
-    properties = {
-      type = "PrivateEndpoint"
-      destination = {
-        serviceResourceId = azurerm_storage_account.main.id
-        subresourceTarget = "blob"
-      }
-      category = "UserDefined"
-    }
-  }
-
-  depends_on = [
-    time_sleep.wait_storage_outbound,
-    azurerm_role_assignment.foundry_network_connection_approver,
-    azurerm_role_assignment.foundry_storage_blob_data_contributor,
-  ]
-}
+# Storage outbound rule removed — auto-created by storage_connection (category AzureStorageAccount).
+# The explicit azapi_resource.storage_outbound_rule is no longer needed and causes conflicts.
+# If migrating from an existing deployment, run:
+#   terraform state rm azapi_resource.storage_outbound_rule
+#   terraform state rm time_sleep.wait_storage_outbound
+# before re-applying.
 
 resource "azapi_resource" "cosmos_outbound_rule" {
   type      = "Microsoft.CognitiveServices/accounts/managedNetworks/outboundRules@2025-10-01-preview"
@@ -106,40 +80,16 @@ resource "azapi_resource" "cosmos_outbound_rule" {
   ]
 }
 
-resource "azapi_resource" "aisearch_outbound_rule" {
-  type      = "Microsoft.CognitiveServices/accounts/managedNetworks/outboundRules@2025-10-01-preview"
-  name      = "aisearch-rule"
-  parent_id = "${azapi_resource.this.id}/managedNetworks/default"
-
-  schema_validation_enabled = false
-
-  body = {
-    properties = {
-      type = "PrivateEndpoint"
-      destination = {
-        serviceResourceId = azapi_resource.ai_search.id
-        subresourceTarget = "searchService"
-      }
-      category = "UserDefined"
-    }
-  }
-
-  depends_on = [
-    time_sleep.wait_aisearch_outbound,
-    azurerm_role_assignment.foundry_network_connection_approver,
-    azurerm_role_assignment.foundry_search_index_data_contributor,
-    azurerm_role_assignment.foundry_search_service_contributor,
-  ]
-}
-
 # 600s wait — outbound rules need extra time to reach `Succeeded` state before
-# the capability host can validate them. Per canonical sample.
+# the capability host can validate them. Per canonical sample. The aisearch and
+# storage connections auto-create their outbound rules, so we wait for the
+# connections instead of explicit rules.
 resource "time_sleep" "wait_outbound_rules" {
   create_duration = "600s"
 
   depends_on = [
-    azapi_resource.storage_outbound_rule,
     azapi_resource.cosmos_outbound_rule,
-    azapi_resource.aisearch_outbound_rule,
+    azapi_resource.aisearch_connection, # aisearch connection auto-creates outbound rule
+    azapi_resource.storage_connection,  # storage connection auto-creates outbound rule
   ]
 }
