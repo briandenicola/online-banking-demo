@@ -782,3 +782,11 @@ Issues #137 (eval failures) and #130 ("AI Calls Today" counter stuck at 0) are n
 **Commits:** 464f7c5, a15498f  
 **Branch:** squad/135-136-account-opening-state-machine  
 **Unblock Path:** Basher (backend /resubmit, retry cap logic) → Linus (UI) → remove test.skip() → verify green
+
+---
+
+**2026-06-10 Scribe note:** Agent Framework 1.8.1 pinning milestone:
+- **ai-service exact-pinned to 1.8.1:** The ai-service that Livingston has been testing now uses exact-pinned agent-framework-core and agent-framework-foundry at version 1.8.1 (up from ^1.3.0 open-ended range).
+- **Pin-guard violation resolved:** This was the root cause blocking 13 Python Dependabot PRs. The upgrade was backward-compatible; all existing ai-service tests pass (113✓) without code changes.
+- **Test reliability improvement:** Exact pinning ensures that container rebuilds and test environment setups always pull the same ai-service dependencies. Previously, the ^1.3.0 range could silently drift to 1.9.0 or 2.x on next `pip install`, causing non-deterministic test failures.
+- **For future test work:** When testing eval pipelines or ai-service integrations, assume ai-service runs with exact 1.8.1. See `.squad/skills/preview-sdk-pinning/SKILL.md` for why exact pins are mandatory for preview SDKs (no semver guarantees).

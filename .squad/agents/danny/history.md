@@ -1310,3 +1310,12 @@ Success! The configuration is valid.
 **Related:**
 - Prior fix for CognitiveSearch auto-outbound behavior (2026-06-10, lines 1234-1249 above)
 - Key Vault firewall decision (.squad/decisions.md, 2026-06-10)
+
+---
+
+**2026-06-10 Scribe note:** Agent Framework 1.8.1 pinning milestone:
+- **ai-service pin-guard culprit resolved:** ai-service was the sole source of Dependabot pin-guard CI failures with its open-ended `^1.3.0` range for agent-framework-core and agent-framework-foundry.
+- **All three services now exact-pinned:** account-opening-service, ai-service, and chatbot-service upgraded from mixed versions (1.7.0, ^1.3.0, 1.7.0) to unified exact-pin **1.8.1**.
+- **Backward-compatible upgrade:** 1.8.1 is fully backward-compatible; zero code changes required. All tests pass (ai 113✓, account-opening 150✓, chatbot 27✓).
+- **Dependabot unblocked:** 13 Python Dependabot PRs now ready to pass CI. Coordinator rebased remaining 8 PRs to pick up the main-branch fix.
+- **Decision recorded:** See `.squad/decisions.md` (2026-06-10) "Agent Framework 1.8.1 Upgrade (Preview SDK Pin Fix)" for full upgrade rationale, backward-compatibility analysis, and verification results.
