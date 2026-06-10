@@ -1243,3 +1243,18 @@ All service Dockerfiles used Docker Hub base images (python:3.11-slim, node:20-a
 - Docker Compose containers can inherit host DNS search domains; host `search denicolafamily.com` plus Docker `options ndots:0` can make nginx `resolver` + variable `proxy_pass` resolve a short service name like `user-service` as an external wildcard host, causing misleading backend 404s.
 - Fix the leak locally with `dns_search: ["."]`; if nginx still cannot safely resolve dynamic upstreams, use startup-resolved static upstreams only for services guaranteed to be running.
 - AKS-safe local proxy pattern: never edit image-baked `src/ui-app/nginx.conf` for local `/api/*` proxying; mount a local-only override such as `infrastructure/local/ui-app.nginx.conf` from docker-compose while Azure/AKS continues using Istio ingress routing.
+
+## 2026-06-10 — Foundry AI Search Outbound Rule Fix (Infra)
+
+**Problem:** `terraform apply` failed with HTTP 400: "already an outbound rule to the same destination" when provisioning AI Search backing-service connection in Foundry Managed VNet.
+
+**Root Cause (Danny investigation):** Azure AI Foundry CognitiveSearch connections **auto-create** managed-VNet outbound rules. Explicit rule duplication → conflict.
+
+**Solution:** Removed explicit `azapi_resource.aisearch_outbound_rule` + intermediate sleep; repointed dependencies to auto-created rule via `aisearch_connection`.
+
+**Files:** `infra/cloud/foundry-managed-vnet.tf`, `infra/cloud/ai-connections.tf`
+
+**Pattern Discovery:** CognitiveSearch behaves differently from Storage/Cosmos — connections manage their own outbound rules automatically. Not documented in Microsoft public docs.
+
+**Status:** terraform validate ✅; ready for apply.
+

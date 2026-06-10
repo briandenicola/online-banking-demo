@@ -77,7 +77,10 @@ resource "azapi_resource" "managed_network" {
 
 ### 3. Outbound Rules (Managed PEs)
 
+**IMPORTANT:** Only Storage and Cosmos require explicit outbound rules. AI Search outbound rules are **auto-created** by the CognitiveSearch connection (see section 1b).
+
 ```hcl
+# Storage outbound rule (REQUIRED — not auto-created)
 resource "azapi_resource" "storage_outbound_rule" {
   type      = "Microsoft.CognitiveServices/accounts/managedNetworks/outboundRules@2025-10-01-preview"
   name      = "storage-blob-rule"
@@ -101,6 +104,34 @@ resource "azapi_resource" "storage_outbound_rule" {
     azurerm_role_assignment.foundry_network_connection_approver
   ]
 }
+
+# Cosmos outbound rule (REQUIRED — not auto-created)
+resource "azapi_resource" "cosmos_outbound_rule" {
+  type      = "Microsoft.CognitiveServices/accounts/managedNetworks/outboundRules@2025-10-01-preview"
+  name      = "cosmos-sql-rule"
+  parent_id = azapi_resource.managed_network.id
+
+  schema_validation_enabled = false
+
+  body = {
+    properties = {
+      type = "PrivateEndpoint"
+      destination = {
+        serviceResourceId = azurerm_cosmosdb_account.main.id
+        subresourceTarget = "Sql"
+      }
+      category = "UserDefined"
+    }
+  }
+
+  depends_on = [
+    time_sleep.wait_cosmos,
+    azurerm_role_assignment.foundry_network_connection_approver
+  ]
+}
+
+# AI Search outbound rule is AUTO-CREATED by the CognitiveSearch connection
+# DO NOT create an explicit aisearch_outbound_rule resource — it will fail with HTTP 400
 ```
 
 ### 4. Network Connection Approver Role
@@ -174,9 +205,9 @@ resource "azapi_resource" "project_capability_host" {
   depends_on = [
     azapi_resource.storage_outbound_rule,
     azapi_resource.cosmos_outbound_rule,
-    azapi_resource.aisearch_outbound_rule,
-    time_sleep.wait_outbound_rules,          # 600s after all rules
-    time_sleep.wait_project_rbac             # 90s after project RBAC
+    azapi_resource.aisearch_connection,          # aisearch connection auto-creates outbound rule
+    time_sleep.wait_outbound_rules,              # 600s after all rules
+    time_sleep.wait_project_rbac                 # 90s after project RBAC
   ]
 }
 ```
@@ -197,6 +228,57 @@ When creating project connections (type `Microsoft.CognitiveServices/accounts/pr
 - AI Search: `CognitiveSearch`
 
 **Do NOT use `useWorkspaceManagedIdentity` property** — this field does not exist in the API schema and causes HTTP 400 "unable to deserialize request body" errors.
+
+### 1b. **CognitiveSearch Connections Auto-Create Outbound Rules** (CRITICAL — 2026-06-10)
+
+**VERIFIED BEHAVIOR:** When you create a Foundry project connection with `category: "CognitiveSearch"` and `authType: "AAD"` in a managed-VNet environment, Azure **automatically creates a managed-VNet outbound rule** to the search service. 
+
+**Do NOT create an explicit outbound rule for AI Search** — it will fail with HTTP 400 "There is already an outbound rule to the same destination".
+
+**Category-Specific Auto-Creation:**
+- `CognitiveSearch` — **Auto-creates outbound rule** (DO NOT create explicit rule)
+- `AzureStorageAccount` — Does NOT auto-create (explicit rule REQUIRED)
+- `CosmosDb` — Does NOT auto-create (explicit rule REQUIRED)
+
+**Correct Pattern:**
+```hcl
+# AI Search connection — creates outbound rule automatically
+resource "azapi_resource" "aisearch_connection" {
+  type      = "Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview"
+  name      = azurerm_search_service.main.name
+  parent_id = azapi_resource.ai_foundry_project.id
+  
+  body = {
+    properties = {
+      category = "CognitiveSearch"
+      authType = "AAD"
+      target   = "https://${azurerm_search_service.main.name}.search.windows.net"
+      metadata = {
+        ResourceId = azurerm_search_service.main.id
+        # ...
+      }
+    }
+  }
+}
+
+# DO NOT create this — it will conflict with the auto-created rule:
+# resource "azapi_resource" "aisearch_outbound_rule" { ... }  # WRONG!
+
+# Capability host waits for the connection (which creates the outbound rule)
+resource "azapi_resource" "project_capability_host" {
+  depends_on = [
+    azapi_resource.aisearch_connection,  # Wait for connection (includes outbound rule)
+    azapi_resource.storage_outbound_rule,
+    azapi_resource.cosmos_outbound_rule,
+    time_sleep.wait_outbound_rules
+  ]
+  # ...
+}
+```
+
+**Why This Isn't Documented:** Microsoft's reference sample (microsoft-foundry/foundry-samples/.../18-managed-virtual-network) shows explicit outbound rules for all three services, but this may work only with conditional enablement or specific ordering. The auto-creation behavior is empirically confirmed but not clearly documented in Microsoft's official docs as of 2026-06-10.
+
+**Evidence:** HTTP 400 error during `terraform apply`: "There is already an outbound rule to the same destination: .../Microsoft.Search/searchServices/[name] - searchService" when attempting to create explicit `aisearch_outbound_rule` after the connection was already created.
 
 **Required connection schema per microsoft-foundry/foundry-samples:**
 ```hcl
@@ -294,9 +376,9 @@ East US, East US2, Japan East, France Central, UAE North, Brazil South, Spain Ce
 ### 6. Required Outbound Rules per Scenario
 
 **Agents (always needed):**
-- PE to Storage (blob)
-- PE to Cosmos DB (Sql)
-- PE to AI Search (searchService)
+- PE to Storage (blob) — **EXPLICIT rule required**
+- PE to Cosmos DB (Sql) — **EXPLICIT rule required**
+- PE to AI Search (searchService) — **AUTO-CREATED by CognitiveSearch connection** (do NOT create explicit rule)
 
 **Evaluations & Traces (if using App Insights):**
 - FQDN: `settings.sdk.monitor.azure.com`, `*.livediagnostics.monitor.azure.com`, `*.in.applicationinsights.azure.com`

@@ -1230,3 +1230,20 @@ These are **NOT caused by the OpenApi migration** — they're pre-existing Depen
 
 
 **[2026-06-05 Scribe Note]** Two-setup gateway design: Local docker-compose uses dedicated gateway service + local nginx override (infrastructure/local/); Azure/AKS uses Istio. Do NOT add local gateway logic to image-baked src/ui-app/nginx.conf (it ships to cloud). See decision: Local API Gateway vs Azure Istio Gateway.
+
+### Foundry Managed VNet: CognitiveSearch Connection Auto-Outbound Behavior (2026-06-10)
+
+**Problem:** `terraform apply` failed with HTTP 400 "There is already an outbound rule to the same destination" when creating `azapi_resource.aisearch_outbound_rule`. Storage and Cosmos outbound rules succeeded.
+
+**Root Cause:** Azure AI Foundry project connections with `category: "CognitiveSearch"` and `authType: "AAD"` **auto-create a managed-VNet outbound rule** to the search service when the connection is created. Storage (`AzureStorageAccount`) and Cosmos (`CosmosDb`) connections do NOT auto-create outbound rules.
+
+**Fix:** Removed explicit `azapi_resource.aisearch_outbound_rule` resource from `infra/cloud/foundry-managed-vnet.tf`. The `aisearch_connection` now handles outbound rule creation automatically. Updated dependencies in `ai_foundry_project_capability_host` and `time_sleep.wait_outbound_rules` to reference `azapi_resource.aisearch_connection` instead of the removed explicit rule.
+
+**Files Changed:**
+- `infra/cloud/foundry-managed-vnet.tf` — Removed aisearch_outbound_rule resource, time_sleep.wait_aisearch_outbound, added explanatory comments
+- `infra/cloud/ai-connections.tf` — Updated capability host depends_on to reference aisearch_connection instead of removed rule
+
+**Key Insight:** Microsoft's reference sample (microsoft-foundry/foundry-samples/.../18-managed-virtual-network) defines explicit outbound rules for all three services but uses conditional `count` flags. The sample's serial chaining of outbound rules may avoid the conflict, or the sample may have the same latent issue. The auto-creation behavior is not clearly documented but empirically confirmed by our 400 error.
+
+**Recommendation:** When using Foundry managed VNet with CognitiveSearch connections, rely on auto-created outbound rules. Do NOT create explicit `outboundRules` to AI Search services.
+

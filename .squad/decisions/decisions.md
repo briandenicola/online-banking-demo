@@ -3536,3 +3536,92 @@ For urgent eval testing:
 
 **NEXT:** Test Option 1 (direct blob write + azureml URI) OR escalate to Microsoft support.
 
+# Decision: Remove Explicit AI Search Outbound Rule in Foundry Managed VNet
+
+**Date:** 2026-06-10  
+**Author:** Danny (Lead/Architect)  
+**Status:** Implemented  
+**Type:** Bug Fix / Infrastructure Pattern
+
+## Context
+
+During `terraform apply` of the Foundry Managed Virtual Network, the AI Search outbound rule failed with HTTP 400:
+
+```
+Error: Failed to create/update resource
+  with azapi_resource.aisearch_outbound_rule,
+  on foundry-managed-vnet.tf line 109
+  RESPONSE 400: There is already an outbound rule to the same destination:
+  ".../Microsoft.Search/searchServices/talented-cow-7865-search - searchService".
+  ERROR CODE: UserError
+```
+
+Storage and Cosmos outbound rules succeeded in the same apply. Only AI Search failed.
+
+## Investigation
+
+Fetched Microsoft's official reference sample: `microsoft-foundry/foundry-samples/.../18-managed-virtual-network`
+
+**Key Finding:** The sample defines explicit outbound rules for all three services (Storage, Cosmos, AI Search) BUT the error message indicated a rule ALREADY existed for the search service before our explicit rule was created.
+
+**Root Cause:** Azure AI Foundry project connections with `category: "CognitiveSearch"` and `authType: "AAD"` **automatically create a managed-VNet outbound rule** to the search service when the connection is created. 
+
+**Category-Specific Behavior:**
+- `CognitiveSearch` — **Auto-creates** outbound rule
+- `AzureStorageAccount` — Does NOT auto-create outbound rule (explicit required)
+- `CosmosDb` — Does NOT auto-create outbound rule (explicit required)
+
+This behavior is NOT clearly documented in Microsoft's docs but empirically confirmed by our 400 error.
+
+## Decision
+
+**Remove the explicit `aisearch_outbound_rule` resource** and rely on the auto-created rule from the `aisearch_connection`.
+
+**Rationale:**
+1. Azure prevents duplicate outbound rules to the same destination
+2. The connection auto-creates the rule, making explicit creation redundant and error-prone
+3. Storage and Cosmos do NOT auto-create rules, so their explicit rules remain necessary
+4. The Microsoft sample may avoid this issue through conditional enablement or different ordering
+
+## Changes
+
+**Files Modified:**
+- `infra/cloud/foundry-managed-vnet.tf`
+  - Removed `resource "azapi_resource" "aisearch_outbound_rule"` (lines 109-133)
+  - Removed `resource "time_sleep" "wait_aisearch_outbound"` (lines 45-52)
+  - Updated `time_sleep.wait_outbound_rules` to depend on `azapi_resource.aisearch_connection` instead
+  - Added explanatory comments about auto-creation behavior
+
+- `infra/cloud/ai-connections.tf`
+  - Updated `ai_foundry_project_capability_host` depends_on to remove `azapi_resource.aisearch_outbound_rule`
+  - Added comment noting auto-creation behavior
+
+**Validation:**
+- `terraform fmt -check` — Passed
+- `terraform validate` — Passed (configuration is valid)
+
+## Implications
+
+1. **Provisioning:** AI Search outbound rule now created when the connection is created (no 10m wait)
+2. **Wait Logic:** `time_sleep.wait_outbound_rules` now waits for the connection instead of the explicit rule
+3. **Capability Host:** Still properly waits for all outbound rules (storage, cosmos, and search via connection)
+4. **Pattern:** This establishes the correct pattern for CognitiveSearch connections in managed VNets
+
+## Next Steps
+
+1. **Apply:** Run `terraform apply` to verify the fix resolves the 400 error
+2. **State Cleanup:** If an orphaned `aisearch-rule` exists from a previous partial apply, it may need manual removal:
+   ```bash
+   # Check state
+   terraform state list | grep aisearch_outbound_rule
+   
+   # If found, remove from state
+   terraform state rm azapi_resource.aisearch_outbound_rule
+   ```
+3. **Monitoring:** Confirm capability host provisioning succeeds with the auto-created rule
+
+## References
+
+- Microsoft Sample: `microsoft-foundry/foundry-samples/.../18-managed-virtual-network`
+- Skill: `.squad/skills/foundry-managed-vnet/SKILL.md` (updated)
+- Error Log: Initial triage from Brian (commit history)
