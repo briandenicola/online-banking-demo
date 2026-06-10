@@ -786,6 +786,12 @@ async def _create_redis_client() -> tuple[redis.Redis, Optional[asyncio.Task]]:
             password=token.token,
             ssl=parsed["ssl"],
             ssl_cert_reqs="required",
+            # Azure Managed Redis OSS Cluster discovers backend nodes by internal
+            # IP; the TLS cert is only valid for the cluster hostname, so per-node
+            # connections fail the IP/hostname check. Keep CA-chain validation
+            # (ssl_cert_reqs="required") but skip the name match — mirrors the Go
+            # event-processor pinning ServerName to the Redis hostname.
+            ssl_check_hostname=False,
             decode_responses=True,
         )
 

@@ -129,7 +129,11 @@ async def _create_entra_redis_client(parsed: dict) -> aioredis.RedisCluster | No
             username=oid,
             password=token,
             ssl=True,
-            ssl_cert_reqs=None,
+            ssl_cert_reqs="required",
+            # OSS Cluster nodes are reached by internal IP, but the TLS cert is
+            # only valid for the cluster hostname. Keep CA-chain validation but
+            # skip the IP/hostname match so this works for any Redis name/IP.
+            ssl_check_hostname=False,
         )
         await client.ping()
         logger.info(
