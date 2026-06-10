@@ -1258,3 +1258,52 @@ All service Dockerfiles used Docker Hub base images (python:3.11-slim, node:20-a
 
 **Status:** terraform validate ✅; ready for apply.
 
+
+## 2026-06-10 — Agent Framework 1.8.1 Upgrade (Preview SDK Pin Fix)
+
+**Problem:** Dependabot PRs failing `preview-sdk-pin-guard` CI check because `src/ai-service/pyproject.toml` had open-ended `^1.3.0` ranges for agent-framework packages (violates exact-pin rule). Guard scans ALL pyproject.toml whenever any is touched, so one violation red-X'd every Python Dependabot PR.
+
+**Affected Services:**
+- `src/account-opening-service/pyproject.toml` — pinned at 1.7.0
+- `src/ai-service/pyproject.toml` — **^1.3.0** (the culprit)
+- `src/chatbot-service/pyproject.toml` — pinned at 1.7.0
+
+**Solution:** Upgraded ALL THREE services to exact-pin `"1.8.1"` (Brian's decision — upgrade to latest stable + fix pin-guard).
+
+**Breaking Changes Discovered:**
+- **NONE!** Agent Framework 1.8.1 is backward-compatible with 1.7.0 and 1.3.0.
+- All imports (`Agent`, `Message`, `FoundryAgent`, `FoundryChatClient`, `EvalItem`, `EvalResults`, `enable_instrumentation`) work without modification.
+- All API patterns remain stable: `project_endpoint=`, `credential=`, `default_options={"extra_body": {"model": ...}}`, `usage_details` attributes.
+
+**Test Results:**
+- **ai-service:** 113 passed, 1 skipped (all tests pass with 1.8.1)
+- **account-opening-service:** 150 passed (all tests pass with 1.8.1)
+- **chatbot-service:** 27 passed (all tests pass with 1.8.1)
+- **Pin-guard check:** ✅ PASSES — no violations found after upgrade
+
+**Files Modified:**
+1. `src/account-opening-service/pyproject.toml` — `1.7.0` → `"1.8.1"`
+2. `src/ai-service/pyproject.toml` — `"^1.3.0"` → `"1.8.1"` (removed caret)
+3. `src/chatbot-service/pyproject.toml` — `1.7.0` → `"1.8.1"`
+
+**Verification:**
+```bash
+# Pin-guard check (must return NOTHING)
+grep -nHE '^agent-framework[a-z-]*[[:space:]]*=[[:space:]]*"(\*|[\^~>].*|>=.*)"' src/*/pyproject.toml
+# Result: no output ✅
+
+# Service-by-service testing with 1.8.1 installed in isolated venvs
+# ai-service: python -m pytest tests/ -q → 113 passed
+# account-opening-service: python -m pytest tests/ -q → 150 passed
+# chatbot-service: python -m pytest tests/ -q → 27 passed
+```
+
+**Key Learnings:**
+- **Agent Framework 1.7.0 → 1.8.1 is a clean upgrade** — no breaking API changes, all existing code works as-is.
+- **Preview SDK exact-pin discipline works** — upgrading from open-range `^1.3.0` to exact `"1.8.1"` prevents future drift without requiring code changes.
+- **Version-matched constraint still holds** — `agent-framework-core` and `agent-framework-foundry` MUST stay on the same version (all three services now at 1.8.1).
+- **Pin-guard enforcement is effective** — scanning all pyproject.toml on every Python Dependabot PR catches violations early.
+
+**Documentation:**
+- Created `.squad/decisions/inbox/turk-af-181-upgrade.md` (upgrade + API stability summary)
+- No skill extraction needed (clean upgrade with no gotchas)

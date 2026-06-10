@@ -133,6 +133,70 @@ git add src/*/pyproject.toml
 git commit -m "fix(deps): exact-pin agent-framework preview SDKs to stop daily-build drift"
 ```
 
+### Clean Preview SDK Upgrade (1.7.0 → 1.8.1, 2026-06-10)
+
+```bash
+# Scenario: ai-service has open-ended ^1.3.0 (pin-guard violation),
+# account-opening and chatbot are at 1.7.0. User wants all at 1.8.1.
+
+# 1. Edit all three pyproject.toml files
+vi src/ai-service/pyproject.toml
+vi src/account-opening-service/pyproject.toml
+vi src/chatbot-service/pyproject.toml
+
+# Change:
+#   agent-framework-core = "^1.3.0"  →  "1.8.1"
+#   agent-framework-foundry = "^1.3.0"  →  "1.8.1"
+#   (and same for other two services from 1.7.0 → 1.8.1)
+
+# 2. Test each service with 1.8.1 installed (isolated venvs)
+cd src/ai-service && python3 -m venv .venv-test
+source .venv-test/bin/activate
+pip install agent-framework-core==1.8.1 agent-framework-foundry==1.8.1
+pip install pytest pytest-asyncio <other test deps>
+python -m pytest tests/ -q
+# Result: 113 passed ✅
+
+cd ../account-opening-service && python3 -m venv .venv-test
+source .venv-test/bin/activate
+pip install agent-framework-core==1.8.1 agent-framework-foundry==1.8.1
+pip install pytest pytest-asyncio <other test deps>
+python -m pytest tests/ -q
+# Result: 150 passed ✅
+
+cd ../chatbot-service && python3 -m venv .venv-test
+source .venv-test/bin/activate
+pip install agent-framework-core==1.8.1 agent-framework-foundry==1.8.1
+pip install pytest pytest-asyncio <other test deps>
+python -m pytest tests/ -q
+# Result: 27 passed ✅
+
+# 3. Verify pin-guard passes
+grep -nHE '^agent-framework[a-z-]*[[:space:]]*=[[:space:]]*"(\*|[\^~>].*|>=.*)"' src/*/pyproject.toml
+# Result: no output ✅
+
+# 4. Commit with detailed message
+git add src/*/pyproject.toml
+git commit -m "build(deps): upgrade agent-framework to 1.8.1 (exact-pin)
+
+Upgrades all three services to agent-framework-core/foundry 1.8.1
+(from 1.7.0 in account-opening/chatbot, ^1.3.0 in ai-service).
+Fixes pin-guard violation in ai-service that blocked Dependabot PRs.
+
+Breaking changes: NONE (1.8.1 is backward-compatible with 1.7.0).
+
+Tested:
+- ai-service: 113 passed
+- account-opening-service: 150 passed
+- chatbot-service: 27 passed
+- Pin-guard: passes (no violations)
+
+Decision: .squad/decisions/inbox/turk-af-181-upgrade.md
+"
+```
+
+**Key takeaway:** 1.7.0 → 1.8.1 was a clean upgrade with zero breaking changes. Always verify with isolated venvs + full test suites before committing.
+
 ### Adding New Preview Dependency
 
 ```toml
