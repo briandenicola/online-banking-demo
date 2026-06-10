@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timezone
 
 import structlog
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from .models import LastError
 
@@ -225,6 +226,15 @@ class AgentConsumer(abc.ABC):
                 await self.process_one()
             except asyncio.CancelledError:
                 raise
+            except (RedisTimeoutError, asyncio.TimeoutError):
+                # Benign: the blocking XREADGROUP read timed out on an idle
+                # stream. The next iteration re-issues the read immediately, so
+                # no message is ever missed. Log at debug to avoid flooding.
+                logger.debug(
+                    "Idle read timeout; re-polling",
+                    group=self.consumer_group,
+                    consumer=self.consumer_name,
+                )
             except Exception as exc:
                 # A transient error (e.g. Redis connection reset on token
                 # refresh) must never silently kill the consumer loop. Log it
