@@ -238,6 +238,14 @@ Azure Resource Group
 
 **Deployment**: Taskfile-driven (`task cloud:up`, `task cloud:build`, `task cloud:deploy`)
 
+### Azure Infrastructure Diagram
+
+The diagram below shows the full Azure topology — edge routing, the AKS workloads, the private-endpoint network boundary, and the PaaS/AI services. All PaaS services have public access disabled and are reached via Private Endpoints + Private DNS, with Entra ID / Workload Identity used throughout.
+
+![Azure architecture diagram](diagrams/azure-architecture.png)
+
+> Editable source: [`diagrams/azure-architecture.excalidraw`](diagrams/azure-architecture.excalidraw) — open at [excalidraw.com](https://excalidraw.com) or with the VS Code Excalidraw extension.
+
 ## Scaling Considerations
 
 ### Horizontal Scaling
