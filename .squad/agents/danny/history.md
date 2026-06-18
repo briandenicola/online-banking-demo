@@ -1319,3 +1319,12 @@ Success! The configuration is valid.
 - **Backward-compatible upgrade:** 1.8.1 is fully backward-compatible; zero code changes required. All tests pass (ai 113✓, account-opening 150✓, chatbot 27✓).
 - **Dependabot unblocked:** 13 Python Dependabot PRs now ready to pass CI. Coordinator rebased remaining 8 PRs to pick up the main-branch fix.
 - **Decision recorded:** See `.squad/decisions.md` (2026-06-10) "Agent Framework 1.8.1 Upgrade (Preview SDK Pin Fix)" for full upgrade rationale, backward-compatibility analysis, and verification results.
+
+---
+
+**2026-06-18 Scribe note:** UI build tooling change — CRACO webpack override:
+- **ui-app now uses @craco/craco (v7.1.0)** to override webpack config for MUI v9 ESM resolution issue.
+- **Build scripts changed:** `npm run start/build/test` now invoke `craco start/build/test` (not react-scripts directly).
+- **Why:** MUI v9 .mjs modules import react-transition-group without extensions, hitting webpack 5's fullySpecified enforcement in react-scripts 5.0.1. CRACO disables fullySpecified for .m?js files.
+- **Cloud build impact:** Azure ACR builds now succeed. Docker multi-stage build flow unchanged (craco.config.js included in COPY).
+- **Decision recorded:** See `.squad/decisions.md` (2026-06-18) "UI Build Fix — CRACO Webpack Override for MUI v9 ESM Resolution".

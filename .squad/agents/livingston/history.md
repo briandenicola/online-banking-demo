@@ -790,3 +790,12 @@ Issues #137 (eval failures) and #130 ("AI Calls Today" counter stuck at 0) are n
 - **Pin-guard violation resolved:** This was the root cause blocking 13 Python Dependabot PRs. The upgrade was backward-compatible; all existing ai-service tests pass (113✓) without code changes.
 - **Test reliability improvement:** Exact pinning ensures that container rebuilds and test environment setups always pull the same ai-service dependencies. Previously, the ^1.3.0 range could silently drift to 1.9.0 or 2.x on next `pip install`, causing non-deterministic test failures.
 - **For future test work:** When testing eval pipelines or ai-service integrations, assume ai-service runs with exact 1.8.1. See `.squad/skills/preview-sdk-pinning/SKILL.md` for why exact pins are mandatory for preview SDKs (no semver guarantees).
+
+---
+
+**2026-06-18 Scribe note:** UI build tooling change — CRACO webpack override:
+- **ui-app now uses @craco/craco (v7.1.0)** to override webpack config for MUI v9 ESM resolution issue.
+- **Build scripts changed:** `npm run start/build/test` now invoke `craco start/build/test` (not react-scripts directly).
+- **Why:** MUI v9 .mjs modules import react-transition-group without extensions, hitting webpack 5's fullySpecified enforcement in react-scripts 5.0.1. CRACO disables fullySpecified for .m?js files.
+- **Cloud build impact:** Azure ACR builds now succeed. Docker multi-stage build flow unchanged (craco.config.js included in COPY).
+- **Decision recorded:** See `.squad/decisions.md` (2026-06-18) "UI Build Fix — CRACO Webpack Override for MUI v9 ESM Resolution".

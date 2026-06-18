@@ -8872,3 +8872,98 @@ grep -nHE '^agent-framework[a-z-]*[[:space:]]*=[[:space:]]*"(\*|[\^~>].*|>=.*)"'
 **Implemented by:** Turk  
 **Reviewed by:** (Pending)  
 **Approved by:** Brian (via explicit upgrade directive in task)
+
+---
+date: 2026-06-18
+author: Linus
+status: implemented
+component: ui-app/build
+---
+
+# UI Build Fix — CRACO Webpack Override for MUI v9 ESM Resolution
+
+**Date:** 2026-06-18  
+**Agent:** Linus (Frontend Dev)  
+**Status:** Implemented  
+**Scope:** src/ui-app/ only
+
+## Problem
+
+Azure ACR cloud builds failed at `RUN npm run build` (react-scripts 5.0.1) with:
+
+```
+Module not found: Error: Can't resolve 'react-transition-group/TransitionGroupContext' in '.../node_modules/@mui/material/internal'
+BREAKING CHANGE: The request failed to resolve only because it was resolved as fully specified
+The extension in the request is mandatory for it to be fully specified.
+```
+
+**Root Cause:**
+- MUI v9 ships ESM `.mjs` modules that import `react-transition-group` without file extensions
+- Webpack 5 (bundled in react-scripts 5.0.1) enforces `fullySpecified: true` by default for strict ESM
+- The extensionless import `'react-transition-group/TransitionGroupContext'` violates this requirement
+
+## Solution
+
+Installed **@craco/craco** (v7.1.0) as a devDependency to override webpack config without ejecting CRA:
+
+**Files Changed:**
+1. `src/ui-app/craco.config.js` (new):
+   - Adds webpack rule: `{ test: /\.m?js$/, resolve: { fullySpecified: false } }`
+   - Allows extensionless imports from ESM modules
+
+2. `src/ui-app/package.json`:
+   - Scripts updated: `react-scripts start/build/test` → `craco start/build/test`
+   - Added devDependency: `"@craco/craco": "^7.1.0"`
+
+3. `src/ui-app/package-lock.json`:
+   - Auto-updated by `npm install --legacy-peer-deps` (craco + 22 transitive deps)
+
+## Validation
+
+**Before Fix:**
+```bash
+$ npm run build
+Failed to compile.
+Module not found: Error: Can't resolve 'react-transition-group/TransitionGroupContext'
+```
+
+**After Fix:**
+```bash
+$ npm run build
+Compiled with warnings.
+File sizes after gzip:
+  244.06 kB  build/static/js/main.a4dbe553.js
+The build folder is ready to be deployed.
+```
+
+## Why This Works
+
+- CRACO (Create React App Configuration Override) is the standard, non-ejecting solution for webpack customization in CRA
+- Setting `fullySpecified: false` for `.m?js` files allows webpack to resolve extensionless imports while maintaining all other CRA defaults
+- Docker build flow (`COPY package.json package-lock.json ./` → `npm install --legacy-peer-deps` → `COPY . .` → `npm run build`) works unchanged since craco is now in devDependencies and lockfile
+
+## Alternatives Considered
+
+1. **Eject CRA:** Too invasive, loses CRA maintenance/updates
+2. **Pin react-transition-group version:** Doesn't solve root issue (MUI v9 will continue shipping .mjs)
+3. **Patch-package:** Fragile, requires manual maintenance across MUI updates
+
+## Impact
+
+- ✅ Cloud ACR builds now succeed
+- ✅ Local `npm run build` compiles successfully
+- ✅ No changes to runtime behavior or bundle output
+- ✅ Compatible with Docker multi-stage build (copies craco.config.js via `COPY . .`)
+- ℹ️ Developers must use `craco start` (already updated in package.json scripts)
+
+## References
+
+- Issue: Azure ACR build failing on MUI v9 + react-scripts 5.0.1
+- Standard fix pattern: https://github.com/dilanx/craco/issues/484 (webpack fullySpecified override)
+- CRACO docs: https://craco.js.org/
+
+## Approval
+
+**Implemented by:** Linus  
+**Reviewed by:** (Pending)  
+**Approved by:** Brian (via task directive)

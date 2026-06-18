@@ -785,3 +785,48 @@ cd src/ui-app && npm run build
 **Files Changed:** 7 files, +515 -230 lines (net +285)
 
 **[2026-06-05 Scribe Note]** Two-setup gateway design: Local docker-compose uses dedicated gateway service + local nginx override (infrastructure/local/); Azure/AKS uses Istio. Do NOT add local gateway logic to image-baked src/ui-app/nginx.conf (it ships to cloud). See decision: Local API Gateway vs Azure Istio Gateway.
+
+---
+
+## Learnings
+
+### 2026-06-18: Webpack 5 fullySpecified ESM Resolution Issue
+
+**Root Cause:**
+MUI v9's ESM build (`.mjs` files) imports `react-transition-group/TransitionGroupContext` without a file extension. Webpack 5 in react-scripts 5.0.1 enforces `fullySpecified: true` by default for strict ESM modules, causing the build to fail with:
+```
+Module not found: Error: Can't resolve 'react-transition-group/TransitionGroupContext'
+BREAKING CHANGE: The request failed to resolve only because it was resolved as fully specified
+The extension in the request is mandatory for it to be fully specified.
+```
+
+**Fix Applied:**
+Installed `@craco/craco` (^7.1.0) as devDependency and created `craco.config.js` to override webpack config without ejecting:
+```javascript
+module.exports = {
+  webpack: {
+    configure: (webpackConfig) => {
+      webpackConfig.module.rules.push({
+        test: /\.m?js$/,
+        resolve: {
+          fullySpecified: false,
+        },
+      });
+      return webpackConfig;
+    },
+  },
+};
+```
+
+Updated package.json scripts to use `craco` instead of `react-scripts` for start/build/test commands.
+
+**Files Changed:**
+- `src/ui-app/craco.config.js` (created)
+- `src/ui-app/package.json` (scripts section + devDependencies)
+- `src/ui-app/package-lock.json` (auto-updated by npm install)
+
+**Validation:**
+`npm run build` now compiles successfully. Build output: 244.06 kB gzipped main.js bundle, deployed to build/ folder.
+
+**Why This Works:**
+CRACO is the standard, non-ejecting solution for Create React App webpack overrides. Setting `fullySpecified: false` for `.m?js` files allows webpack to resolve extensionless imports from ESM modules (MUI's .mjs) while maintaining all other CRA defaults.
