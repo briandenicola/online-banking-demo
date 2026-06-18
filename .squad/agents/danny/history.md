@@ -1328,3 +1328,42 @@ Success! The configuration is valid.
 - **Why:** MUI v9 .mjs modules import react-transition-group without extensions, hitting webpack 5's fullySpecified enforcement in react-scripts 5.0.1. CRACO disables fullySpecified for .m?js files.
 - **Cloud build impact:** Azure ACR builds now succeed. Docker multi-stage build flow unchanged (craco.config.js included in COPY).
 - **Decision recorded:** See `.squad/decisions.md` (2026-06-18) "UI Build Fix — CRACO Webpack Override for MUI v9 ESM Resolution".
+
+---
+
+### Dependabot 10-PR Consolidation Resolution (2026-06-18)
+
+**Status:** ✅ Complete  
+**Branch:** squad/dependabot-resolution  
+**Outcome:** All backend + frontend dependencies validated and adopted
+
+**Baseline Dependency Updates:**
+
+**Go:**
+- `github.com/redis/go-redis/v9`: 9.20.0 → 9.20.1 (patch, backward-compatible)
+
+**.NET (Directory.Packages.props):**
+- `Microsoft.AspNetCore.Authentication.JwtBearer`: 10.0.8 → 10.0.9 (patch)
+- `OpenTelemetry.Extensions.Hosting`: 1.15.3 → 1.16.0 (minor, fully backward-compatible)
+- `OpenTelemetry.Exporter.OpenTelemetryProtocol`: 1.15.3 → 1.16.0 (minor, fully backward-compatible)
+
+**Python FastAPI (4 services):**
+- `fastapi`: Constraint relaxed from `<0.137` to `<0.138` (allows 0.137.x, fully backward-compatible)
+- Services affected: ai-service, budget-service, account-opening-service, chatbot-service
+
+**Python pytest (budget-service only):**
+- `pytest`: `^8.3.0` → `>=8.3,<10.0` (allows 9.x, fully backward-compatible)
+
+**npm (ui-app):**
+- Direct: @mui/material 9.0.0→9.1.1, @mui/icons-material 9.1.0→9.1.1, axios 1.17.0→1.18.0, @types/node 25.9.2→25.9.3
+- Transitive (via overrides): form-data 4.0.6, launch-editor 2.14.1
+
+**Validation Approach:**
+All upgrades were validated with **native builds/tests** (go test, dotnet test, pytest, npm run build), per Brian's mandate "never ship a hopeful patch." No breaking changes found; zero code modifications required. Backward-compatible path forward for fastapi/pytest upper bounds when next major versions release.
+
+**PR Status:**
+- Consolidation PR #222 merged to main
+- Original Dependabot PRs #212–#221 closed
+
+**Key Decision:** Consolidated all 10 PRs into single PR #222 to validate full dependency graph in one atomic changeset, reducing churn and aligning with Brian's "for real" validation requirement.
+

@@ -830,3 +830,43 @@ Updated package.json scripts to use `craco` instead of `react-scripts` for start
 
 **Why This Works:**
 CRACO is the standard, non-ejecting solution for Create React App webpack overrides. Setting `fullySpecified: false` for `.m?js` files allows webpack to resolve extensionless imports from ESM modules (MUI's .mjs) while maintaining all other CRA defaults.
+
+### 2026-06-18: Dependabot PR Resolution - Transitive Security Bumps via npm Overrides
+
+**Task:**
+Resolved 3 Dependabot PRs for src/ui-app:
+- PR #215: npm-minor-patch group (@mui/material 9.0.0→9.1.1, @mui/icons-material 9.1.0→9.1.1, @types/node 25.9.2→25.9.3, axios 1.17.0→1.18.0)
+- PR #220: form-data security bump (transitive via axios, required >= 4.0.6)
+- PR #221: launch-editor security bump (transitive via webpack-dev-server, required >= 2.14.1)
+
+**Approach:**
+1. Edited package.json with the 4 direct dependency bumps from PR #215
+2. Ran `npm install --legacy-peer-deps` (required for react-scripts 5.0.1 peer conflicts)
+3. Verified transitive deps with `npm ls form-data launch-editor`:
+   - form-data: 4.0.5 (needed 4.0.6) and 3.0.4 (needed 3.0.5)
+   - launch-editor: 2.13.2 (needed 2.14.1)
+4. **Added npm overrides** to package.json to force the security versions:
+   ```json
+   "overrides": {
+     "form-data": "4.0.6",
+     "launch-editor": "2.14.1",
+     ...
+   }
+   ```
+5. Re-ran `npm install --legacy-peer-deps` to apply overrides
+
+**Why Overrides (Not `npm update`):**
+Attempted `npm update form-data launch-editor --legacy-peer-deps` first, but these are deep transitive deps locked by react-scripts 5.0.1's own package-lock. The `overrides` field in package.json is the canonical npm 8+ solution for forcing transitive dependency versions without forking upstream packages.
+
+**Validation:**
+- `npm ls form-data launch-editor` confirmed both at required security versions (4.0.6 overridden, 2.14.1 overridden)
+- `npm run build` compiled successfully with craco (244.99 kB gzipped main.js, +932 B vs previous)
+- Vulnerabilities reduced from 35→33 (form-data and launch-editor CVEs resolved)
+- MUI 9.1.1 + axios 1.18.0 work with existing craco fullySpecified fix
+
+**Files Changed:**
+- `src/ui-app/package.json` (4 version bumps + 2 override entries)
+- `src/ui-app/package-lock.json` (regenerated, 10 packages changed first pass, 3 on override pass)
+
+**Key Insight:**
+npm overrides are the correct mechanism for security bumps of transitive deps when upstream (react-scripts) hasn't published a fix yet. They're declarative, auditable, and persist across installs. The craco build continues to work flawlessly with MUI 9.1.1.
