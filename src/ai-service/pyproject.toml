@@ -7,7 +7,7 @@ packages = [{include = "app"}]
 
 [tool.poetry.dependencies]
 python = "^3.11"
-fastapi = ">=0.115,<0.138"
+fastapi = ">=0.115,<0.139"
 uvicorn = ">=0.32,<0.50"
 redis = ">=5.2.1,<9.0.0"
 azure-identity = "^1.17.0"
@@ -27,8 +27,8 @@ structlog = ">=24.1,<27.0"
 PyJWT = "^2.8.0"
 httpx = ">=0.27,<0.29"
 aiohttp = "^3.10.0"
-agent-framework-core = "1.8.1"
-agent-framework-foundry = "1.8.1"
+agent-framework-core = "1.9.0"
+agent-framework-foundry = "1.8.2"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.3,<10.0"
