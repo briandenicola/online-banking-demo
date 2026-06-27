@@ -33,9 +33,9 @@ src/
 ├── ui-app/                     # React 19 + TypeScript - Frontend web application
 └── shared/                     # Shared contracts and utilities
 
-infrastructure/
-├── terraform/                  # Azure infrastructure-as-code
-└── local/                      # Local development infrastructure
+infra/
+├── cloud/                      # Azure infrastructure-as-code (Terraform)
+└── local/                      # Local development infrastructure (Terraform + nginx configs)
 
 tests/
 ├── e2e/                        # End-to-end Playwright tests
