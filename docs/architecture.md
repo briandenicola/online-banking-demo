@@ -246,6 +246,14 @@ The diagram below shows the full Azure topology — edge routing, the AKS worklo
 
 > Editable source: [`diagrams/azure-architecture.excalidraw`](diagrams/azure-architecture.excalidraw) — open at [excalidraw.com](https://excalidraw.com) or with the VS Code Excalidraw extension.
 
+#### Azure Service Icon View
+
+The same topology rendered with the official Microsoft Azure architecture icon set, for a more recognizable service-by-service view:
+
+![Azure architecture diagram with Azure service icons](diagrams/azure-architecture-icons.svg)
+
+> Editable source: [`diagrams/azure-architecture-icons.excalidraw`](diagrams/azure-architecture-icons.excalidraw). The icons are the official Azure architecture icons; a PNG can be exported from Excalidraw if a raster image is needed.
+
 ## Scaling Considerations
 
 ### Horizontal Scaling
