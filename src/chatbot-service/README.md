@@ -105,8 +105,16 @@ Use `task local:memory:disable` or `task cloud:memory:disable` to roll back with
 
 ```bash
 cd src/chatbot-service
-pytest
+python -m pytest
 ```
+
+Phase 2.5 lightweight memory evals can be run from the repository root:
+
+```bash
+task local:memory:test
+```
+
+The Phase 2.5 suite uses `tests/fixtures/memory_eval_scenarios.json` and fake services, so it does not require live Azure resources. It covers recall, cross-session continuity, JWT-scoped user isolation, prompt-injection resistance, PII redaction, relevance/noise control, and contradiction handling.
 
 ## Agent Tools
 

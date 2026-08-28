@@ -290,6 +290,7 @@ CHAT_MEMORY_EMBEDDING_DEPLOYMENT=<embedding-deployment-name> task cloud:memory:e
 After a successful rollout, send a few authenticated chat messages, then inspect the chatbot logs and Cosmos containers:
 
 ```bash
+task local:memory:test
 task cloud:memory:status
 kubectl get pods -n banking-demo -l app=chatbot-service
 az cosmosdb sql container list \
@@ -300,6 +301,28 @@ az cosmosdb sql container list \
 ```
 
 Expected containers are `AgentMemoryTurns`, `AgentMemories`, `AgentMemorySummaries`, `AgentMemoryCounters`, and `AgentMemoryLeases`.
+
+### Phase 2.5 Lightweight Memory Evals
+
+Phase 2.5 adds deterministic chatbot memory evals without introducing live Azure dependencies or a hosted eval pipeline. These tests use curated fixtures plus fake agent/memory services to verify the demo-critical behavior before or after enabling the MVP in a deployed environment.
+
+```bash
+task local:memory:test
+```
+
+The scenario fixture lives at `src/chatbot-service/tests/fixtures/memory_eval_scenarios.json` and currently covers:
+
+| Category | What it proves |
+|----------|----------------|
+| Memory recall | Relevant user preferences can influence the prompt and response |
+| Cross-session continuity | User-level memory can carry useful goals into a new chat thread |
+| User isolation | Memory lookup uses the authenticated JWT user, not a spoofable request body user ID |
+| Prompt-injection resistance | Stored memory remains background context and cannot override banking guardrails |
+| PII redaction | SSNs, card/account-like numbers, emails, phone numbers, and secrets are redacted before memory writes |
+| Relevance/noise control | Irrelevant memories do not leak into unrelated banking answers |
+| Contradiction handling | Newer stated preferences can be favored over stale ones in curated scenarios |
+
+Keep these evals small and deterministic for the demo. If memory becomes production-bound, extend this into offline/online quality evaluation with realistic conversations, LLM-as-judge scoring, drift tracking, and regression thresholds.
 
 ### Roll Back
 

@@ -10,6 +10,8 @@ The E2E test suite uses [Playwright](https://playwright.dev/) with TypeScript. T
 
 The Account Opening Service also has its own unit/integration test suite and an E2E smoke test.
 
+The Chatbot Service includes a lightweight Phase 2.5 memory eval suite for the Agent Memory Toolkit MVP.
+
 ### Account Opening Service Tests
 
 **Unit/integration tests** are located at `src/account-opening-service/tests/` and cover:
@@ -33,6 +35,28 @@ pytest tests/
 ```
 
 **E2E smoke test** at `tests/e2e/specs/core/account-opening.spec.ts` tests the full pipeline: submit application → document extraction → identity verification → compliance check → account provisioning.
+
+### Chatbot Memory Evals
+
+The Phase 2.5 chatbot memory evals are deterministic pytest tests with fake agent and memory services. They do not require live Azure resources.
+
+```bash
+task local:memory:test
+```
+
+Coverage:
+
+| Category | Coverage |
+|----------|----------|
+| Memory recall | Relevant preferences are injected and can influence the response |
+| Cross-session continuity | User-level memory can carry goals into a later chat thread |
+| User isolation | Authenticated JWT user ID controls memory lookup, not request body `user_id` |
+| Prompt-injection resistance | Stored memory is treated as untrusted background context |
+| PII redaction | Sensitive values are redacted before memory writes |
+| Relevance/noise control | Irrelevant memories stay out of unrelated answers |
+| Contradiction handling | Newer preferences can be favored over stale ones |
+
+Scenario fixtures are stored in `src/chatbot-service/tests/fixtures/memory_eval_scenarios.json`.
 
 ## Prerequisites
 

@@ -115,6 +115,11 @@ tasks:
       - grep '^CHAT_MEMORY_' .env
       - docker compose --env-file .env logs --tail=80 chatbot-service | grep -Ei "memory|agent memory|cosmos|embedding" || true
 
+  memory:test:
+    desc: Run lightweight chatbot memory eval tests without live Azure dependencies
+    cmds:
+      - cd src/chatbot-service && python -m pytest tests/test_memory_service.py tests/test_chat_memory_integration.py tests/test_memory_evals.py
+
   test:
     desc: Run all tests
     cmds:
