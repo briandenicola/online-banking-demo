@@ -221,6 +221,7 @@ Azure Resource Group
 │
 ├─ Cosmos DB (Entra RBAC auth, BankingDemo database)
 │  ├─ Users, Accounts, Transactions, Transfers, ChatSessions
+│  ├─ AgentMemoryTurns, AgentMemories, AgentMemorySummaries, AgentMemoryCounters, AgentMemoryLeases (created by Agent Memory Toolkit when enabled)
 │
 ├─ Azure Managed Redis (Balanced B0, port 10000/TLS, Entra auth)
 ├─ Azure Container Registry (ACR, Premium SKU)

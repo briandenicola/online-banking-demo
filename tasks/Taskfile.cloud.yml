@@ -57,6 +57,14 @@ tasks:
         echo "AZURE_CLIENT_ID={{.AZURE_CLIENT_ID}}"
         echo "AZURE_OPENAI_MODEL={{.AZURE_OPENAI_MODEL}}"
         echo "AZURE_OPENAI_EMBEDDING_MODEL={{.AZURE_OPENAI_EMBEDDING_MODEL}}"
+        echo "CHAT_MEMORY_ENABLED=false"
+        echo "CHAT_MEMORY_DATABASE=BankingDemo"
+        echo "CHAT_MEMORY_CONTAINER=AgentMemories"
+        echo "CHAT_MEMORY_TURNS_CONTAINER=AgentMemoryTurns"
+        echo "CHAT_MEMORY_SUMMARIES_CONTAINER=AgentMemorySummaries"
+        echo "CHAT_MEMORY_COUNTER_CONTAINER=AgentMemoryCounters"
+        echo "CHAT_MEMORY_LEASE_CONTAINER=AgentMemoryLeases"
+        echo "CHAT_MEMORY_EMBEDDING_DEPLOYMENT={{.AZURE_OPENAI_EMBEDDING_MODEL}}"
         echo "APPLICATIONINSIGHTS_CONNECTION_STRING={{.APPLICATIONINSIGHTS_CONNECTION_STRING}}"
     silent: true
     vars:

@@ -54,6 +54,27 @@ async def handle_chat(
                 if not session:
                     session = agent_state.financial_agent.create_session()
                     agent_state.user_sessions[authenticated_user_id] = session
+                memory_thread_id = agent_state.user_memory_threads.get(authenticated_user_id)
+                if not memory_thread_id and agent_state.chat_memory_service:
+                    memory_thread_id = agent_state.chat_memory_service.new_thread_id(authenticated_user_id)
+                    agent_state.user_memory_threads[authenticated_user_id] = memory_thread_id
+
+            if agent_state.chat_memory_service and memory_thread_id:
+                try:
+                    memory_context = await agent_state.chat_memory_service.build_context(
+                        user_id=authenticated_user_id,
+                        thread_id=memory_thread_id,
+                        message=request.message,
+                    )
+                    if memory_context:
+                        user_content = f"{memory_context}\n\nCurrent user message:\n{user_content}"
+                        span.set_attribute("memory.context_injected", True)
+                        span.set_attribute("memory.context_length", len(memory_context))
+                    else:
+                        span.set_attribute("memory.context_injected", False)
+                except Exception as error:
+                    logger.warning("Failed to retrieve chat memory context", user_id=authenticated_user_id, error=str(error))
+                    span.set_attribute("memory.context_error", True)
 
             result = await agent_state.financial_agent.run(user_content, session=session)
             answer = str(result) if result else "I couldn't generate a response at this time."
@@ -61,6 +82,18 @@ async def handle_chat(
             # Persist both messages to Cosmos
             await agent_service.save_chat_message(agent_state, authenticated_user_id, "user", request.message)
             await agent_service.save_chat_message(agent_state, authenticated_user_id, "assistant", answer)
+            if agent_state.chat_memory_service and memory_thread_id:
+                try:
+                    await agent_state.chat_memory_service.record_exchange(
+                        user_id=authenticated_user_id,
+                        thread_id=memory_thread_id,
+                        user_message=request.message,
+                        assistant_message=answer,
+                    )
+                    span.set_attribute("memory.exchange_recorded", True)
+                except Exception as error:
+                    logger.warning("Failed to record chat memory", user_id=authenticated_user_id, error=str(error))
+                    span.set_attribute("memory.record_error", True)
 
             span.set_attribute("response.length", len(answer))
 
@@ -89,6 +122,7 @@ async def start_new_session(
     """Start a new chat session (clears conversation history for this user)."""
     async with agent_state.session_lock:
         agent_state.user_sessions.pop(user.user_id, None)
+        agent_state.user_memory_threads.pop(user.user_id, None)
     return await handle_chat(request, http_request, user, agent_state)
 
 
@@ -96,7 +130,14 @@ async def get_chat_history(user_id: str, user: UserContext, agent_state: AgentSt
     """Load persisted chat history for the authenticated user."""
     if user.user_id != user_id and user.role.lower() != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot access another user's history")
-    messages = await agent_service.load_chat_history(agent_state, user_id)
+    messages = []
+    if agent_state.chat_memory_service:
+        try:
+            messages = await agent_state.chat_memory_service.get_history(user_id=user_id)
+        except Exception as error:
+            logger.warning("Failed to load Agent Memory Toolkit history", user_id=user_id, error=str(error))
+    if not messages:
+        messages = await agent_service.load_chat_history(agent_state, user_id)
     return {"messages": messages}
 
 

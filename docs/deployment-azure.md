@@ -42,7 +42,7 @@ Azure Resource Group
 | Resource | Purpose | Configuration |
 |----------|---------|---------------|
 | **AKS** | Container orchestration | Auto-scaling, Istio mesh, OIDC + Workload Identity, Key Vault CSI |
-| **Cosmos DB** | Primary database | Entra RBAC auth, 5 containers |
+| **Cosmos DB** | Primary database and chatbot memory store | Entra RBAC auth; Terraform creates application containers, Agent Memory Toolkit creates memory containers when enabled |
 | **Azure Managed Redis** | Caching & events | Balanced_B0, port 10000/TLS, Entra ID auth |
 | **Azure AI Foundry** | AI services | gpt-5.4-mini deployment, agent framework |
 | **ACR** | Container registry | Premium SKU (required for PE), AKS has AcrPull role, `az acr build` |
@@ -60,6 +60,11 @@ Azure Resource Group
 | Transactions | `/accountId` | Transaction records |
 | Transfers | `/id` | Transfer records |
 | ChatSessions | `/userId` | AI chat history |
+| AgentMemoryTurns | `/user_id`, `/thread_id` | Agent Memory Toolkit raw chatbot turns; created by toolkit when `CHAT_MEMORY_ENABLED=true` |
+| AgentMemories | `/user_id`, `/thread_id` | Agent Memory Toolkit facts, procedural memories, and episodic memories; created by toolkit when `CHAT_MEMORY_ENABLED=true` |
+| AgentMemorySummaries | `/user_id`, `/thread_id` | Agent Memory Toolkit thread and user summaries; created by toolkit when `CHAT_MEMORY_ENABLED=true` |
+| AgentMemoryCounters | `/user_id`, `/thread_id` | Agent Memory Toolkit processing cadence counters; created by toolkit when `CHAT_MEMORY_ENABLED=true` |
+| AgentMemoryLeases | `/id` | Agent Memory Toolkit lease support; created by toolkit when `CHAT_MEMORY_ENABLED=true` |
 | account-applications | `/id` | Account opening application state |
 
 ### Authentication Model
@@ -131,7 +136,7 @@ task cloud:apply
 Terraform provisions all Azure resources defined in `infra/cloud/`:
 
 - AKS cluster with Istio service mesh, OIDC, workload identity, Key Vault CSI
-- Cosmos DB account + `BankingDemo` database + 5 containers
+- Cosmos DB account + `BankingDemo` database + application containers; Agent Memory Toolkit creates memory containers at startup when enabled
 - Azure Managed Redis (Balanced_B0)
 - Azure AI Foundry project + gpt-5.4-mini deployment
 - Key Vault with secrets (see `infra/cloud/keyvault-secrets.tf`)

@@ -17,6 +17,7 @@ from app.services.agent_tools import (
     get_user_accounts,
     get_user_transactions,
 )
+from app.services.memory_service import ChatMemoryService, MemorySettings
 
 logger = structlog.get_logger("chatbot-service")
 
@@ -79,7 +80,9 @@ class AgentState:
     agent_ready: bool = False
     model_name: str = ""
     cosmos_chat_container: Any = None
+    chat_memory_service: ChatMemoryService | None = None
     user_sessions: dict[str, Any] = field(default_factory=dict)
+    user_memory_threads: dict[str, str] = field(default_factory=dict)
     session_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -143,10 +146,12 @@ async def lifespan(app: FastAPI):
         or os.getenv("AZURE_OPENAI_ENDPOINT")
     )
     model_name = os.getenv("FOUNDRY_MODEL") or os.getenv("AZURE_OPENAI_MODEL", "gpt-5.4-mini")
+    memory_settings = MemorySettings.from_env()
     state.model_name = model_name
 
     logger.info(f"  Endpoint: {endpoint or '❌ NOT SET'}")
     logger.info(f"  Model: {model_name}")
+    logger.info(f"  CHAT_MEMORY_ENABLED: {'✅ enabled' if memory_settings.enabled else 'disabled'}")
     logger.info(f"  AZURE_TENANT_ID: {'✅ set' if os.getenv('AZURE_TENANT_ID') else '❌ not set'}")
     logger.info(f"  AZURE_CLIENT_ID: {'✅ set' if os.getenv('AZURE_CLIENT_ID') else '❌ not set'}")
     logger.info(f"  AGENT_FRAMEWORK_AVAILABLE: {AGENT_FRAMEWORK_AVAILABLE}")
@@ -204,6 +209,20 @@ async def lifespan(app: FastAPI):
         else:
             logger.info("ℹ️  No Cosmos endpoint — chat history is in-memory only")
 
+        try:
+            state.chat_memory_service = await ChatMemoryService.create(
+                settings=memory_settings,
+                cosmos_endpoint=cosmos_endpoint,
+                ai_foundry_endpoint=endpoint,
+                credential=credential,
+            )
+        except Exception:
+            if memory_settings.required:
+                raise
+            logger.warning("⚠️  Chat memory init failed; continuing without Agent Memory Toolkit", exc_info=True)
+
     logger.info("=" * 60)
     yield
+    if state.chat_memory_service:
+        await state.chat_memory_service.close()
     logger.info("🛑 Chatbot service shutting down")

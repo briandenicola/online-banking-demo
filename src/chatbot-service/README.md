@@ -12,7 +12,7 @@ Provides conversational AI assistant for banking operations. Users can ask natur
 - FastAPI
 - Azure AI Foundry / Azure AI Agents
 - Azure OpenAI
-- Azure Cosmos DB (chat history)
+- Azure Cosmos DB (chat history and optional agent memory)
 - OpenTelemetry
 - JWT authentication
 
@@ -44,6 +44,21 @@ Provides conversational AI assistant for banking operations. Users can ask natur
 | `TRANSACTION_SERVICE_URL` | Transaction service base URL | Yes |
 | `ACCOUNT_SERVICE_URL` | Account service base URL | Yes |
 | `COSMOS_DB_ENDPOINT` | Cosmos DB endpoint for chat history | Yes |
+| `CHAT_MEMORY_ENABLED` | Enables Agent Memory Toolkit retrieval and derived memory writes | No, default `false` |
+| `CHAT_MEMORY_REQUIRED` | Fail startup if memory cannot initialize when enabled | No, default `false` |
+| `CHAT_MEMORY_DATABASE` | Cosmos DB database for agent memory | No, default `BankingDemo` |
+| `CHAT_MEMORY_CONTAINER` | Toolkit memories container for facts/procedural/episodic records | No, default `AgentMemories` |
+| `CHAT_MEMORY_TURNS_CONTAINER` | Toolkit turns container | No, default `AgentMemoryTurns` |
+| `CHAT_MEMORY_SUMMARIES_CONTAINER` | Toolkit summaries container | No, default `AgentMemorySummaries` |
+| `CHAT_MEMORY_COUNTER_CONTAINER` | Toolkit processing cadence counter container | No, default `AgentMemoryCounters` |
+| `CHAT_MEMORY_LEASE_CONTAINER` | Toolkit lease container for change-feed/processing support | No, default `AgentMemoryLeases` |
+| `CHAT_MEMORY_MAX_CONTEXT_TURNS` | Recent turns to inject into a chat prompt | No, default `8` |
+| `CHAT_MEMORY_MAX_FACTS` | Relevant derived memories to inject into a chat prompt | No, default `5` |
+| `CHAT_MEMORY_MAX_PROMPT_CHARS` | Max characters of memory context injected into the prompt | No, default `4000` |
+| `CHAT_MEMORY_MIN_CONFIDENCE` | Minimum toolkit confidence for retrieved facts | No, default `0.7` |
+| `CHAT_MEMORY_PROCESS_EVERY_N_TURNS` | In-process derived memory cadence; `0` disables processing | No, default `2` |
+| `CHAT_MEMORY_RECONCILE_EVERY_N_TURNS` | Contradiction reconciliation cadence; `0` disables reconciliation | No, default `8` |
+| `CHAT_MEMORY_EMBEDDING_DEPLOYMENT` | Foundry embedding deployment used by toolkit semantic search | No, default `text-embedding-ada-002` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OpenTelemetry collector endpoint | No |
 | `AZURE_TENANT_ID` | Azure Entra tenant ID for auth | Yes |
 | `AZURE_CLIENT_ID` | Azure Entra client ID for auth | Yes |
@@ -103,6 +118,10 @@ The chatbot has access to these custom tools:
 
 - All endpoints require JWT authentication
 - Chat sessions persist in Cosmos DB for history
+- Agent Memory Toolkit integration is feature-flagged with `CHAT_MEMORY_ENABLED`
+- When enabled, the toolkit creates `AgentMemoryTurns`, `AgentMemories`, `AgentMemorySummaries`, `AgentMemoryCounters`, and `AgentMemoryLeases` with its required policies
+- Memory context is retrieved only for the authenticated JWT user and injected as untrusted background context
+- The service redacts common sensitive values before writing turns to agent memory
 - Agent uses function calling to interact with backend services
 - OpenTelemetry traces all AI agent interactions
 - Responses include conversational explanations of financial data
