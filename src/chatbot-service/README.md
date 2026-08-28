@@ -90,6 +90,17 @@ docker build -t chatbot-service .
 docker run -p 8001:8001 --env-file .env chatbot-service
 ```
 
+### Agent Memory Toolkit MVP
+
+Memory is disabled by default. To roll out the MVP, keep `CHAT_MEMORY_REQUIRED=false`, provision or point at a Foundry embedding deployment, then use the deployment tasks:
+
+```bash
+task local:memory:enable
+task cloud:memory:enable
+```
+
+Use `task local:memory:disable` or `task cloud:memory:disable` to roll back without changing the rest of the application. See [Azure Deployment](../../docs/deployment-azure.md#chatbot-agent-memory-mvp) for the full rollout checklist.
+
 ## Testing
 
 ```bash

@@ -35,6 +35,7 @@ task local:up
 - **[Documentation Hub](docs/README.md)** — Start here for all guides
 - **[Local Development](docs/deployment-local.md)** — Docker Compose setup, environment variables, hot reload workflows
 - **[Azure Cloud Deployment](docs/deployment-azure.md)** — Terraform provisioning, AKS + Istio, Taskfile-driven deployment
+- **[Chatbot Memory MVP](docs/deployment-azure.md#chatbot-agent-memory-mvp)** — Agent Memory Toolkit rollout, validation, and rollback
 - **[System Architecture](docs/architecture.md)** — Service map, communication patterns, authentication, event pipeline
 - **[Testing Guide](docs/testing.md)** — Playwright E2E test suite (4 phases, 195+ specs)
 

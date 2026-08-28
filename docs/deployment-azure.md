@@ -200,8 +200,9 @@ task cloud:deploy
 This command:
 1. Updates kustomize image references to point to the ACR registry
 2. Applies the observability stack (`deploy/kustomize/observability/`)
-3. Applies the base workloads (`deploy/kustomize/base/`)
-4. Applies the Istio gateway configuration with `envsubst` for `CUSTOM_DOMAIN`
+3. Streams Terraform output and `.env` values into `deploy/kustomize/base/configmap.yaml`
+4. Applies the base workloads (`deploy/kustomize/base/`)
+5. Applies the Istio gateway configuration with `envsubst` for `CUSTOM_DOMAIN`
 
 ### Verify Deployment
 
@@ -232,6 +233,93 @@ The Istio VirtualService (`cluster-config/istio/gateway/default-ingress.yaml`) r
 | `/api/applications` | account-opening-service |
 | `/api/evaluations` | prompt-eval-service |
 | `/` (default) | ui-app |
+
+## Chatbot Agent Memory MVP
+
+The chatbot Agent Memory Toolkit integration is deployed with safe defaults:
+
+- `CHAT_MEMORY_ENABLED=false` by default
+- `CHAT_MEMORY_REQUIRED=false` so memory initialization failures do not block chatbot startup
+- Existing `ChatSessions` writes remain enabled as the fallback history store
+- The toolkit creates its own vector/full-text enabled Cosmos containers when memory is first enabled; Terraform intentionally does not pre-create these containers
+
+### Prerequisites
+
+Before enabling memory in AKS, confirm the environment has:
+
+- The current `chatbot-service` image, built from Python 3.11+ with `azure-cosmos-agent-memory`
+- Cosmos DB Entra RBAC access for the `banking-workload-identity` managed identity
+- Azure AI Foundry chat deployment for normal chatbot responses
+- Azure AI Foundry embedding deployment matching `CHAT_MEMORY_EMBEDDING_DEPLOYMENT` (`text-embedding-ada-002` by default)
+
+If the embedding deployment was not provisioned previously, recreate or update infrastructure with the embedding flag before enabling memory:
+
+```bash
+DEPLOY_EMBEDDING_MODEL=true task cloud:apply
+task cloud:infra:config
+```
+
+### Deploy With Memory Disabled
+
+Ship the application first with memory disabled. This confirms the new package and ConfigMap defaults do not affect normal chat behavior:
+
+```bash
+task cloud:build:chatbot-service
+task cloud:deploy
+kubectl rollout status deployment/chatbot-service -n banking-demo --timeout=180s
+```
+
+### Enable Memory
+
+Enable the MVP only after the disabled deployment is healthy:
+
+```bash
+task cloud:memory:enable
+```
+
+This reapplies `banking-demo-config` with `CHAT_MEMORY_ENABLED=true`, restarts only `deployment/chatbot-service`, waits for rollout, and prints current memory settings plus recent memory-related logs.
+
+To use a different embedding deployment name:
+
+```bash
+CHAT_MEMORY_EMBEDDING_DEPLOYMENT=<embedding-deployment-name> task cloud:memory:enable
+```
+
+### Verify Memory
+
+After a successful rollout, send a few authenticated chat messages, then inspect the chatbot logs and Cosmos containers:
+
+```bash
+task cloud:memory:status
+kubectl get pods -n banking-demo -l app=chatbot-service
+az cosmosdb sql container list \
+  --account-name <cosmos-account-name> \
+  --resource-group <resource-group-name> \
+  --database-name BankingDemo \
+  --query "[?starts_with(name, 'AgentMemory')].name" -o table
+```
+
+Expected containers are `AgentMemoryTurns`, `AgentMemories`, `AgentMemorySummaries`, `AgentMemoryCounters`, and `AgentMemoryLeases`.
+
+### Roll Back
+
+Memory can be disabled without redeploying the whole application:
+
+```bash
+task cloud:memory:disable
+```
+
+Existing memory containers and documents remain in Cosmos DB, but the chatbot stops retrieving memory context and stops writing new toolkit turns. Existing `ChatSessions` history continues to work.
+
+### Troubleshooting
+
+| Symptom | Likely Cause | Check/Fix |
+|---------|--------------|-----------|
+| Chatbot starts but memory logs show initialization failure | `CHAT_MEMORY_REQUIRED=false` allows fallback | Run `task cloud:memory:status` and inspect the first error in chatbot logs |
+| Toolkit cannot create containers | Managed identity lacks Cosmos DB data-plane permissions | Confirm the workload identity has Cosmos DB data contributor access |
+| Semantic search or `process_now` fails | Missing or mismatched embedding deployment | Set `CHAT_MEMORY_EMBEDDING_DEPLOYMENT` to the actual Foundry deployment or run `DEPLOY_EMBEDDING_MODEL=true task cloud:apply` |
+| Import/package error in chatbot container | Old image still running or build did not include the new dependency | Re-run `task cloud:build:chatbot-service`, then `task cloud:deploy` |
+| Container policy error | Memory containers were manually created without toolkit-required vector/full-text policies | Delete/recreate only the affected empty AgentMemory containers, then restart chatbot |
 
 ### Account Opening Service Deployment
 
@@ -294,8 +382,9 @@ Non-sensitive configuration is stored in `deploy/kustomize/base/configmap.yaml`:
 
 - Inter-service URLs (`Services__AccountService`, `Services__TransactionService`)
 - Cosmos DB endpoint (`COSMOS_DB_ENDPOINT`)
+- Chatbot memory MVP settings (`CHAT_MEMORY_*`)
 - OTEL collector endpoint
-- `task cloud:infra:config` patches the Cosmos DB endpoint from Terraform output
+- `task cloud:infra:config` patches the Cosmos DB endpoint, workload identity values, and memory rollout settings from Terraform output and `.env`
 
 ### Environment Variables
 
@@ -304,6 +393,9 @@ The `.env` file at the repo root is loaded by Taskfile (`dotenv: ['.env']`). Key
 | Variable | Purpose |
 |----------|---------|
 | `CUSTOM_DOMAIN` | Domain for TLS certificate and Istio gateway |
+| `DEPLOY_EMBEDDING_MODEL` | Set to `true` when provisioning the default `text-embedding-ada-002` deployment for chatbot memory |
+| `CHAT_MEMORY_ENABLED` | Set to `true` only when explicitly rolling out the Agent Memory Toolkit MVP |
+| `CHAT_MEMORY_EMBEDDING_DEPLOYMENT` | Foundry embedding deployment used by memory semantic search |
 
 See `.env.example` for the full template.
 

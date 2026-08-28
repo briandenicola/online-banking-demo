@@ -131,6 +131,12 @@ AZURE_OPENAI_MODEL=gpt-4o-mini
 # Azure AI Agents - For advanced chatbot features (optional)
 AZURE_AI_AGENTS_ENDPOINT=https://<your-resource>.cognitiveservices.azure.com/
 
+# Chatbot Agent Memory Toolkit MVP - Optional, disabled by default
+# Requires COSMOS_DB_ENDPOINT, Azure AI Foundry chat model, and embedding deployment
+CHAT_MEMORY_ENABLED=false
+CHAT_MEMORY_REQUIRED=false
+CHAT_MEMORY_EMBEDDING_DEPLOYMENT=text-embedding-ada-002
+
 # Account Opening Service - Required for AI-powered account opening pipeline
 FOUNDRY_PROJECT_ENDPOINT=https://<your-foundry-project>.cognitiveservices.azure.com/
 CUS_ENDPOINT=https://<your-cus-resource>.cognitiveservices.azure.com/
@@ -141,6 +147,24 @@ APPLICATIONINSIGHTS_CONNECTION_STRING=
 ```
 
 > **Note:** The Account Opening Service uses `DefaultAzureCredential` for local development (no Entra Agent ID sidecar needed). You must have Azure AI Foundry and Content Understanding Service endpoints configured to test the full pipeline locally.
+
+#### Chatbot Agent Memory MVP (Optional)
+
+Agent Memory Toolkit is off by default for local development. When enabled, the chatbot keeps writing existing `ChatSessions` history and additionally stores sanitized turns plus derived memories in toolkit-created Cosmos containers.
+
+If `task local:apply` has provisioned local Azure resources, enable or disable memory with:
+
+```bash
+task local:memory:enable
+task local:memory:status
+
+# Roll back
+task local:memory:disable
+```
+
+These tasks update `CHAT_MEMORY_ENABLED` in `.env` and recreate only the `chatbot-service` container. The expected toolkit containers are `AgentMemoryTurns`, `AgentMemories`, `AgentMemorySummaries`, `AgentMemoryCounters`, and `AgentMemoryLeases`.
+
+If you manage `.env` manually, set `CHAT_MEMORY_ENABLED=true` and ensure `COSMOS_DB_ENDPOINT`, `AZURE_AI_AGENTS_ENDPOINT` or `FOUNDRY_PROJECT_ENDPOINT`, `AZURE_OPENAI_MODEL`, and `CHAT_MEMORY_EMBEDDING_DEPLOYMENT` point to working Azure resources.
 
 ### Minimal `.env` for Local Development
 
