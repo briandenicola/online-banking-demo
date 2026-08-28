@@ -99,7 +99,7 @@ task local:memory:enable
 task cloud:memory:enable
 ```
 
-Use `task local:memory:disable` or `task cloud:memory:disable` to roll back without changing the rest of the application. See [Azure Deployment](../../docs/deployment-azure.md#chatbot-agent-memory-mvp) for the full rollout checklist.
+Use `task local:memory:disable` or `task cloud:memory:disable` to roll back without changing the rest of the application. See [Azure Deployment](../../docs/deployment-azure.md#chatbot-agent-memory-mvp) for the rollout checklist and [MVP vs. Production Quality Gaps](../../docs/deployment-azure.md#mvp-vs-production-quality-gaps) before promoting this beyond a demo.
 
 ## Testing
 

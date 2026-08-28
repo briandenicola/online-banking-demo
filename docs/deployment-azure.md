@@ -321,6 +321,26 @@ Existing memory containers and documents remain in Cosmos DB, but the chatbot st
 | Import/package error in chatbot container | Old image still running or build did not include the new dependency | Re-run `task cloud:build:chatbot-service`, then `task cloud:deploy` |
 | Container policy error | Memory containers were manually created without toolkit-required vector/full-text policies | Delete/recreate only the affected empty AgentMemory containers, then restart chatbot |
 
+### MVP vs. Production Quality Gaps
+
+Phase 3 is intentionally deferred for this demo application. The current implementation is appropriate for showcasing user-scoped chatbot memory because it is feature-flagged, bounded, redacts common sensitive values, keeps the original `ChatSessions` history fallback, and can be rolled back by disabling `CHAT_MEMORY_ENABLED`.
+
+For production, the largest gap is operational hardening rather than basic functionality. The demo performs lightweight memory processing in the chatbot process; a production system should move derived-memory processing, reconciliation, retries, and lag monitoring into a dedicated background worker.
+
+| Area | Current MVP | Production-quality gap |
+|------|-------------|------------------------|
+| Processing model | Chatbot writes sanitized turns and periodically calls toolkit processing/reconciliation in-process | Use a dedicated processor, such as Cosmos DB change feed plus Azure Functions or Durable Functions, so chat latency and memory extraction are isolated |
+| Reliability | Memory failures are logged and non-blocking because `CHAT_MEMORY_REQUIRED=false` | Add retry policy, checkpointing, poison-message handling, replay procedures, and alerting for failed memory extraction |
+| Observability | `task cloud:memory:status` surfaces ConfigMap values and recent logs | Add dashboards and alerts for processing lag, failure rate, RU consumption, embedding failures, and memory container growth |
+| Data governance | Basic regex redaction before memory writes | Add formal retention policy, user deletion/export workflow, audit trail, and domain-reviewed PII/financial-data classification |
+| Memory quality | Toolkit summaries/facts are bounded by confidence and prompt-size settings | Add offline evaluation for memory relevance, contradiction handling, hallucinated-memory rate, and regression tests with realistic customer conversations |
+| Scaling | Sufficient for low-volume demo traffic | Validate RU/s, partition distribution, concurrency, and embedding throughput under expected user load |
+| Security controls | Memory is keyed by authenticated JWT user ID and injected as untrusted background context | Add threat modeling for prompt injection via stored memories, stricter content filters, access reviews, and tenant/customer isolation requirements if the app becomes multi-tenant |
+| Operations | Manual enable/disable tasks and rollback via ConfigMap flag | Add release gates, runbooks, SLOs, backup/restore procedures, and scripted cleanup for retired memory containers |
+| Dependency maturity | Uses preview Agent Memory Toolkit package pinned in the chatbot dependency set | Track SDK breaking changes, pin upgrade tests, and require production supportability review before relying on preview APIs |
+
+These gaps do not block the demo. They should be treated as the checklist to revisit if chatbot memory becomes a production feature rather than a showcase capability.
+
 ### Account Opening Service Deployment
 
 The Account Opening Service has a unique deployment model with multiple containers defined in `deploy/kustomize/base/account-opening-service.yaml`:
