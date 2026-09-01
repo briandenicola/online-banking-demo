@@ -1,0 +1,11 @@
+# See the root .dockerignore for why rules must NOT have trailing slashes:
+# az acr build only strips them for `!` negations, so `build/` never matches.
+# Allowlist: ignore everything, then re-include exactly what the Dockerfile COPYs.
+#
+# Note: a 30 MiB compiled 'event-processor' binary is often left in this
+# directory by local 'go build'. The allowlist below keeps it out of the upload.
+
+*
+!go.mod
+!go.sum
+!main.go

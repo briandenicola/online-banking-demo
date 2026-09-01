@@ -1,0 +1,16 @@
+# See the root .dockerignore for why rules must NOT have trailing slashes:
+# az acr build only strips them for `!` negations, so `build/` never matches.
+# Allowlist: ignore everything, then re-include exactly what the Dockerfile COPYs.
+#
+# The Dockerfile runs 'npm install' then 'npm run build' inside the image, so
+# node_modules/ and build/ must never be uploaded (node_modules alone is ~600 MiB).
+
+node_modules
+build
+coverage
+.env
+.env.local
+npm-debug.log*
+**/__pycache__
+**/.pytest_cache
+**/.DS_Store

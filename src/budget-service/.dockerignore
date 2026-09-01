@@ -1,0 +1,13 @@
+# See the root .dockerignore for why rules must NOT have trailing slashes:
+# az acr build only strips them for `!` negations, so `build/` never matches.
+# Allowlist: ignore everything, then re-include exactly what the Dockerfile COPYs.
+
+*
+!app
+!pyproject.toml
+
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.pyc

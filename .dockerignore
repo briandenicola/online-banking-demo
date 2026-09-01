@@ -1,45 +1,48 @@
-# Dependencies
+# .dockerignore for ROOT-CONTEXT builds.
+#
+# Only the five .NET services build from the repo root:
+#   az acr build ... -f ./src/<svc>/Dockerfile .
+# Everything else builds from its own directory and has its own .dockerignore.
+#
+# IMPORTANT — do not add trailing slashes to rules. `az acr build` compiles each
+# rule to an anchored regex (azure/cli/command_modules/acr/_archive_utils.py,
+# class IgnoreRule) and only strips trailing slashes for `!` negations. A rule
+# written as `infra/` becomes `^infra/$`, but directory entries are named
+# `infra` with no trailing slash, so the rule silently never matches. The old
+# version of this file used trailing slashes throughout, which is why the upload
+# was 323 MiB (113 MiB compressed) instead of ~1 MiB.
+#
+# This is an allowlist: ignore everything, then re-include exactly what the
+# root-context Dockerfiles COPY. If a Dockerfile starts needing another root
+# file, add a matching `!` rule here or the build will fail on a missing path.
+
+# Ignore everything at the top level.
+*
+
+# Re-include only what the .NET Dockerfiles COPY. Parent directories do not need
+# their own `!` rule: az acr build always walks into ignored directories, so a
+# deeper exception still applies.
+!Directory.Packages.props
+!src/shared/Contracts
+!src/shared/Observability
+!src/account-service
+!src/prompt-eval-service
+!src/transaction-service
+!src/transfer-service
+!src/user-service
+
+# Re-exclude build output inside the re-included trees. These rules come last,
+# so they take priority over the `!` rules above.
+**/bin
+**/obj
+**/obj2
+**/obj.old
 **/node_modules
-**/bin/
-**/obj/
-**/obj2/
-**/obj.old/
-
-# Git
-.git
-.gitignore
-
-# Infrastructure (not needed for builds)
-infra/
-
-# Tests
-tests/
-
-# IDE and tooling
-.vscode/
-.idea/
-**/.vs/
-
-# Squad / AI team state
-.squad/
-.copilot/
-
-# Documentation
-docs/
-
-# Terraform state
-**/.terraform
-**/*.tfstate*
-**/.terraform.lock.hcl
-
-# Python
 **/__pycache__
-**/.venv
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
 **/*.pyc
-
-# OS files
+**/.vs
 **/.DS_Store
 **/Thumbs.db
-
-# Deploy manifests (not needed for container builds)
-deploy/
