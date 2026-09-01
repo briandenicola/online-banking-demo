@@ -23,6 +23,19 @@ resource "azurerm_cosmosdb_account" "main" {
     name = "EnableServerless"
   }
 
+  # Required by the Agent Memory Toolkit: it creates the AgentMemory* containers
+  # with vector and full-text index policies, which the account rejects unless
+  # these capabilities are enabled ("A Container Vector Policy has been
+  # provided, but the capability has not been enabled on your account").
+  # Harmless when chatbot memory is disabled.
+  capabilities {
+    name = "EnableNoSQLVectorSearch"
+  }
+
+  capabilities {
+    name = "EnableNoSQLFullTextSearch"
+  }
+
   tags = {
     AppName = local.resource_name
   }
