@@ -95,6 +95,14 @@ resource "azurerm_role_assignment" "jumpbox_rg_reader" {
   principal_id         = azurerm_user_assigned_identity.jumpbox.principal_id
 }
 
+# Same Reader grant for the VM's system-assigned identity, so `az login
+# --identity` with no client ID can also read the resource group.
+resource "azurerm_role_assignment" "jumpbox_system_identity_rg_reader" {
+  scope                = azurerm_resource_group.this.id
+  role_definition_name = "Reader"
+  principal_id         = azurerm_linux_virtual_machine.jumpbox.identity[0].principal_id
+}
+
 resource "azurerm_linux_virtual_machine" "jumpbox" {
   name                  = local.jumpbox_name
   location              = azurerm_resource_group.this.location
@@ -119,7 +127,11 @@ resource "azurerm_linux_virtual_machine" "jumpbox" {
   }
 
   identity {
-    type         = "UserAssigned"
+    # System-assigned is enabled alongside the user-assigned identity so tooling
+    # that calls `az login --identity` with no client ID still works. The
+    # user-assigned identity remains the one that holds Key Vault Secrets
+    # Officer (see azurerm_role_assignment.jumpbox_keyvault_secrets_officer).
+    type         = "SystemAssigned, UserAssigned"
     identity_ids = [azurerm_user_assigned_identity.jumpbox.id]
   }
 
