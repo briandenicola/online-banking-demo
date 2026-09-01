@@ -20,8 +20,12 @@ write_files:
     permissions: "0644"
     owner: root:root
     content: |
-      # Identity and app name for the Key Vault bootstrap script.
-      export AZURE_CLIENT_ID="${identity_client_id}"
+      # App name for the Key Vault bootstrap script.
+      #
+      # AZURE_CLIENT_ID is deliberately NOT exported. Leaving it unset means
+      # `az login --identity` selects the VM's system-assigned identity, which
+      # holds Key Vault Secrets Officer on the vault and Reader on the resource
+      # group. Export it only to force the user-assigned identity instead.
       export BANKING_APP_NAME="${app_name}"
 
   - path: /etc/motd

@@ -103,6 +103,15 @@ resource "azurerm_role_assignment" "jumpbox_system_identity_rg_reader" {
   principal_id         = azurerm_linux_virtual_machine.jumpbox.identity[0].principal_id
 }
 
+# The system-assigned identity is the ergonomic one to use on the box — plain
+# `az login --identity` picks it with no client ID — so it gets the same
+# data-plane write access to the vault as the user-assigned identity.
+resource "azurerm_role_assignment" "jumpbox_system_identity_keyvault_secrets_officer" {
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Secrets Officer"
+  principal_id         = azurerm_linux_virtual_machine.jumpbox.identity[0].principal_id
+}
+
 resource "azurerm_linux_virtual_machine" "jumpbox" {
   name                  = local.jumpbox_name
   location              = azurerm_resource_group.this.location
@@ -145,9 +154,8 @@ resource "azurerm_linux_virtual_machine" "jumpbox" {
   # Installs the Azure CLI and drops the bootstrap script at
   # /usr/local/bin/setup-keyvault-secrets.sh.
   custom_data = base64encode(templatefile("${path.module}/cloud-init/jumpbox.yaml.tftpl", {
-    setup_script       = file("${path.module}/../../scripts/setup-keyvault-secrets.sh")
-    identity_client_id = azurerm_user_assigned_identity.jumpbox.client_id
-    app_name           = local.resource_name
+    setup_script = file("${path.module}/../../scripts/setup-keyvault-secrets.sh")
+    app_name     = local.resource_name
   }))
 
   tags = {
