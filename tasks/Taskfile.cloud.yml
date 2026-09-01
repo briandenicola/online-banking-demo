@@ -313,23 +313,22 @@ tasks:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw app_name || true
 
   keyvault:ssh:
-    desc: SSH into the in-VNet jumpbox through Azure Bastion
+    desc: Open the Azure Portal Bastion session for the in-VNet jumpbox (Developer SKU is browser-only)
     cmds:
       - |
-        az network bastion ssh \
-          --name "{{.BASTION_NAME}}" \
-          --resource-group "{{.RG_NAME}}" \
-          --target-resource-id "{{.JUMPBOX_ID}}" \
-          --auth-type ssh-key \
-          --username manager \
-          --ssh-key ~/.ssh/id_rsa
+        echo "Bastion Developer SKU does not support native-client SSH"
+        echo "(az network bastion ssh requires Standard or higher)."
+        echo "Open this URL, then connect as 'manager' with your private key:"
+        echo
+        echo "  https://portal.azure.com/#@/resource{{.JUMPBOX_ID}}/bastionHost"
+        echo
+        echo "On the jumpbox, run:"
+        echo "  setup-keyvault-secrets.sh {{.APP_NAME}}"
     vars:
-      BASTION_NAME:
-        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw bastion_name
-      RG_NAME:
-        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw resource_group_name
       JUMPBOX_ID:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw jumpbox_id
+      APP_NAME:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw app_name
 
   # === Internal tasks ===
   _secrets:create:

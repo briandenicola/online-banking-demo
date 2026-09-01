@@ -82,16 +82,22 @@ output "bastion_name" {
 
 # Key Vault secrets are not managed by Terraform (see keyvault.tf). Connect to
 # the in-VNet jumpbox and run the bootstrap script from there.
+#
+# Bastion Developer SKU does not support native-client connections
+# (`az network bastion ssh` requires Standard or higher), so connect from the
+# Azure Portal: Virtual machines -> ${local.jumpbox_name} -> Connect -> Bastion.
 output "keyvault_bootstrap_instructions" {
   value = <<-EOT
-    az network bastion ssh \
-      --name ${azurerm_bastion_host.jumpbox.name} \
-      --resource-group ${azurerm_resource_group.this.name} \
-      --target-resource-id ${azurerm_linux_virtual_machine.jumpbox.id} \
-      --auth-type ssh-key --username ${var.jumpbox_admin_username} \
-      --ssh-key ${replace(var.jumpbox_ssh_public_key_path, ".pub", "")}
+    Bastion Developer SKU is browser-only. In the Azure Portal, open:
 
-    # then, on the jumpbox:
-    setup-keyvault-secrets.sh ${local.resource_name}
+      Virtual machines -> ${local.jumpbox_name} -> Connect -> Bastion
+
+    Authenticate as "${var.jumpbox_admin_username}" with the private key matching
+    ${var.jumpbox_ssh_public_key_path}, then run on the jumpbox:
+
+      setup-keyvault-secrets.sh ${local.resource_name}
+
+    Direct portal link:
+      https://portal.azure.com/#@/resource${azurerm_linux_virtual_machine.jumpbox.id}/bastionHost
   EOT
 }

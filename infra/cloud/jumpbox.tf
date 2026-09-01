@@ -7,7 +7,7 @@
 #
 # This jumpbox lives in the same VNet and therefore resolves every
 # privatelink.* zone. Connect through Bastion and run
-# `sudo setup-keyvault-secrets.sh <app-name>` to populate the vault.
+# `setup-keyvault-secrets.sh <app-name>` to populate the vault.
 #############################################
 
 resource "azurerm_subnet" "jumpbox" {
@@ -143,6 +143,10 @@ resource "azurerm_linux_virtual_machine" "jumpbox" {
   }
 }
 
+# Developer SKU: free, no AzureBastionSubnet and no public IP required. It is
+# browser-only — native-client connections (`az network bastion ssh`) need
+# Standard or higher. Connect from the Azure Portal:
+#   Virtual machines -> <app>-jump -> Connect -> Bastion
 resource "azurerm_bastion_host" "jumpbox" {
   name                = local.bastion_name
   location            = azurerm_resource_group.this.location

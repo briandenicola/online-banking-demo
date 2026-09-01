@@ -54,12 +54,12 @@ resource "azurerm_role_assignment" "csi_keyvault_secrets_user" {
 #   Error: checking for presence of existing Secret ... Status=403
 #   Code="Forbidden" ... InnerError={"code":"ForbiddenByConnection"}
 #
-# Instead, populate the vault from the in-VNet jumpbox (see jumpbox.tf):
+# Instead, populate the vault from the in-VNet jumpbox (see jumpbox.tf). The
+# Bastion is a Developer SKU, which is browser-only — native-client SSH
+# (`az network bastion ssh`) requires Standard or higher. Connect from the
+# Azure Portal (Virtual machines -> <app>-jump -> Connect -> Bastion) and run:
 #
-#   az network bastion ssh --name <bastion> --resource-group <rg> \
-#     --target-resource-id <vm-id> --auth-type ssh-key \
-#     --username manager --ssh-key ~/.ssh/id_rsa
-#   sudo setup-keyvault-secrets.sh <app-name>
+#   setup-keyvault-secrets.sh <app-name>
 #
 # The script derives every value from the app name via the Azure control plane.
 # Secrets created: jwt-key, openai-endpoint, content-understanding-endpoint,

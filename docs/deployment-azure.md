@@ -416,20 +416,17 @@ Key Vault secrets are **not** managed by Terraform. Writing a secret is a Key Va
 Status=403 Code="Forbidden" ... InnerError={"code":"ForbiddenByConnection"}
 ```
 
-Instead, secrets are created once from the in-VNet jumpbox (`infra/cloud/jumpbox.tf`), which has private DNS line of sight to the vault:
+Instead, secrets are created once from the in-VNet jumpbox (`infra/cloud/jumpbox.tf`), which has private DNS line of sight to the vault. The Bastion is a **Developer SKU**, which is browser-only — native-client SSH (`az network bastion ssh`) requires Standard or higher — so connect from the Azure Portal:
 
 ```bash
-# Print the exact connect + bootstrap commands for this deployment
+# Print the portal link and the exact bootstrap command for this deployment
 task cloud:keyvault:secrets
+```
 
-# Connect through Bastion (Developer SKU — no public IP on the VM)
-az network bastion ssh \
-  --name "$(terraform -chdir=infra/cloud output -raw bastion_name)" \
-  --resource-group "$(terraform -chdir=infra/cloud output -raw resource_group_name)" \
-  --target-resource-id "$(terraform -chdir=infra/cloud output -raw jumpbox_id)" \
-  --auth-type ssh-key --username manager --ssh-key ~/.ssh/id_rsa
+Then in the Azure Portal, open **Virtual machines → `<app-name>-jump` → Connect → Bastion**, authenticate as `manager` with the private key matching `~/.ssh/id_rsa.pub`, and run:
 
-# Then, on the jumpbox — every value is derived from the app name
+```bash
+# Every value is derived from the app name
 setup-keyvault-secrets.sh <app-name> [--force] [--dry-run]
 ```
 
