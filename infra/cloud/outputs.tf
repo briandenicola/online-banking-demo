@@ -56,3 +56,42 @@ output "acr_name" {
 output "acr_login_server" {
   value = azurerm_container_registry.main.login_server
 }
+
+output "app_name" {
+  description = "Base name every resource is derived from. Pass this to scripts/setup-keyvault-secrets.sh."
+  value       = local.resource_name
+}
+
+output "jwt_key" {
+  description = "JWT signing key held in state. Export as JWT_KEY before running scripts/setup-keyvault-secrets.sh to reuse it instead of generating a new one."
+  value       = random_password.jwt_key.result
+  sensitive   = true
+}
+
+output "jumpbox_name" {
+  value = azurerm_linux_virtual_machine.jumpbox.name
+}
+
+output "jumpbox_id" {
+  value = azurerm_linux_virtual_machine.jumpbox.id
+}
+
+output "bastion_name" {
+  value = azurerm_bastion_host.jumpbox.name
+}
+
+# Key Vault secrets are not managed by Terraform (see keyvault.tf). Connect to
+# the in-VNet jumpbox and run the bootstrap script from there.
+output "keyvault_bootstrap_instructions" {
+  value = <<-EOT
+    az network bastion ssh \
+      --name ${azurerm_bastion_host.jumpbox.name} \
+      --resource-group ${azurerm_resource_group.this.name} \
+      --target-resource-id ${azurerm_linux_virtual_machine.jumpbox.id} \
+      --auth-type ssh-key --username ${var.jumpbox_admin_username} \
+      --ssh-key ${replace(var.jumpbox_ssh_public_key_path, ".pub", "")}
+
+    # then, on the jumpbox:
+    setup-keyvault-secrets.sh ${local.resource_name}
+  EOT
+}

@@ -39,3 +39,28 @@ variable "keyvault_allowed_ip_rules" {
   type        = list(string)
   default     = []
 }
+
+#############################################
+# JUMPBOX — In-VNet Linux VM reached through Azure Bastion (Developer SKU).
+# Provides private-network line of sight to the Key Vault / Cosmos / Redis
+# private endpoints so operators can run data-plane bootstrap (notably
+# scripts/setup-keyvault-secrets.sh).
+#############################################
+
+variable "jumpbox_vm_size" {
+  description = "VM size for the in-VNet jumpbox"
+  type        = string
+  default     = "Standard_D2s_v5"
+}
+
+variable "jumpbox_admin_username" {
+  description = "Admin username for the jumpbox VM"
+  type        = string
+  default     = "manager"
+}
+
+variable "jumpbox_ssh_public_key_path" {
+  description = "Path to the SSH public key authorized on the jumpbox VM"
+  type        = string
+  default     = "~/.ssh/id_rsa.pub"
+}

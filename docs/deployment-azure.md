@@ -139,9 +139,10 @@ Terraform provisions all Azure resources defined in `infra/cloud/`:
 - Cosmos DB account + `BankingDemo` database + application containers; Agent Memory Toolkit creates memory containers at startup when enabled
 - Azure Managed Redis (Balanced_B0)
 - Azure AI Foundry project + gpt-5.4-mini deployment
-- Key Vault with secrets (see `infra/cloud/keyvault-secrets.tf`)
+- Key Vault (secrets are **not** Terraform-managed — see [Secrets](#secrets--key-vault-csi-driver))
 - ACR with AcrPull role for AKS (Premium SKU for private endpoint support)
-- VNet (/16) with 3 subnets: AKS (/24, offset 3), Private Endpoints (/24, offset 4), Agents (/24, offset 5 with `Microsoft.App/environments` delegation)
+- VNet (/16) with 3 subnets: AKS (/24, offset 3), Private Endpoints (/24, offset 4), Jumpbox (/24, offset 6)
+- Jumpbox VM (Ubuntu 22.04) + Azure Bastion (Developer SKU) + NAT gateway for in-VNet data-plane access
 - NSG (ports 80/443 inbound)
 - 9 private endpoints (Key Vault, Cosmos DB, Redis, ACR, AI Services, Storage blob/queue/table/file)
 - 10 private DNS zones for endpoint name resolution
@@ -409,10 +410,39 @@ This sets up:
 
 ### Secrets — Key Vault CSI Driver
 
-Secrets are managed in Terraform (`infra/cloud/keyvault-secrets.tf`) and synced to Kubernetes automatically via the Azure Key Vault CSI driver. No manual secret creation is needed.
+Key Vault secrets are **not** managed by Terraform. Writing a secret is a Key Vault *data-plane* call, and the vault's data plane is reachable only over its private endpoint. A `terraform apply` from outside the VNet always races the private endpoint / firewall converging and fails with:
+
+```text
+Status=403 Code="Forbidden" ... InnerError={"code":"ForbiddenByConnection"}
+```
+
+Instead, secrets are created once from the in-VNet jumpbox (`infra/cloud/jumpbox.tf`), which has private DNS line of sight to the vault:
+
+```bash
+# Print the exact connect + bootstrap commands for this deployment
+task cloud:keyvault:secrets
+
+# Connect through Bastion (Developer SKU — no public IP on the VM)
+az network bastion ssh \
+  --name "$(terraform -chdir=infra/cloud output -raw bastion_name)" \
+  --resource-group "$(terraform -chdir=infra/cloud output -raw resource_group_name)" \
+  --target-resource-id "$(terraform -chdir=infra/cloud output -raw jumpbox_id)" \
+  --auth-type ssh-key --username manager --ssh-key ~/.ssh/id_rsa
+
+# Then, on the jumpbox — every value is derived from the app name
+setup-keyvault-secrets.sh <app-name> [--force] [--dry-run]
+```
+
+`scripts/setup-keyvault-secrets.sh` is staged onto the VM by cloud-init. It takes the app name (`terraform output -raw app_name`) and derives the resource group, vault, Redis, App Insights, Foundry, and Content Understanding names from it, reading the values it needs from the Azure control plane. The jumpbox's managed identity holds **Key Vault Secrets Officer** on the vault and **Reader** on the resource group. Existing secrets are skipped unless `--force` is passed.
+
+To reuse the JWT key Terraform holds in state rather than generating a new one, export it first:
+
+```bash
+JWT_KEY="$(terraform -chdir=infra/cloud output -raw jwt_key)" setup-keyvault-secrets.sh <app-name>
+```
 
 **How it works:**
-1. Terraform creates secrets in Key Vault: `jwt-key`, `openai-endpoint`, `redis-connection-string`, `appinsights-connection-string`
+1. The bootstrap script creates the secrets in Key Vault: `jwt-key`, `openai-endpoint`, `content-understanding-endpoint`, `redis-connection-string`, `appinsights-connection-string`
 2. `deploy/kustomize/base/secret-provider-class.yaml` defines a `SecretProviderClass` that maps Key Vault secrets to a K8s Secret named `banking-secrets`
 3. The CSI driver uses workload identity (`useVMkubeletIdentity: "true"`) to authenticate
 4. `task cloud:infra:config` patches the placeholder values (Key Vault name, tenant ID, client ID) in the SecretProviderClass

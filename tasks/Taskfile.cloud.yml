@@ -294,6 +294,43 @@ tasks:
       - kubectl get challenges --all-namespaces 2>/dev/null || true
       - kubectl get orders --all-namespaces 2>/dev/null || true
 
+  keyvault:secrets:
+    desc: Print the commands to populate Key Vault from the in-VNet jumpbox (secrets are not Terraform-managed)
+    cmds:
+      - |
+        cat <<'NOTE'
+        Key Vault secrets are NOT managed by Terraform. The vault data plane is
+        reachable only over its private endpoint, so writes from outside the VNet
+        fail with ForbiddenByConnection. Run the bootstrap from the jumpbox:
+        NOTE
+      - terraform -chdir=./{{.INFRA_DIR}} output -raw keyvault_bootstrap_instructions
+      - |
+        echo
+        echo "To reuse the JWT key Terraform holds in state, run on the jumpbox:"
+        echo "  JWT_KEY=\"\$(terraform -chdir=./{{.INFRA_DIR}} output -raw jwt_key)\" setup-keyvault-secrets.sh {{.APP_NAME}}"
+    vars:
+      APP_NAME:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw app_name || true
+
+  keyvault:ssh:
+    desc: SSH into the in-VNet jumpbox through Azure Bastion
+    cmds:
+      - |
+        az network bastion ssh \
+          --name "{{.BASTION_NAME}}" \
+          --resource-group "{{.RG_NAME}}" \
+          --target-resource-id "{{.JUMPBOX_ID}}" \
+          --auth-type ssh-key \
+          --username manager \
+          --ssh-key ~/.ssh/id_rsa
+    vars:
+      BASTION_NAME:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw bastion_name
+      RG_NAME:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw resource_group_name
+      JUMPBOX_ID:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw jumpbox_id
+
   # === Internal tasks ===
   _secrets:create:
     internal: true

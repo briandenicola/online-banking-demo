@@ -35,3 +35,33 @@ resource "azurerm_role_assignment" "deployer_keyvault_admin" {
   role_definition_name = "Key Vault Secrets Officer"
   principal_id         = data.azurerm_client_config.current.object_id
 }
+
+# RBAC — CSI driver (kubelet identity) needs Key Vault read access
+resource "azurerm_role_assignment" "csi_keyvault_secrets_user" {
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_kubernetes_cluster.main.key_vault_secrets_provider[0].secret_identity[0].object_id
+}
+
+#############################################
+# SECRETS ARE NOT MANAGED BY TERRAFORM
+#
+# Writing a secret is a Key Vault *data-plane* call. This vault's data plane is
+# reachable only over its Private Endpoint (public surface is gated by the
+# network_acls above), so `azurerm_key_vault_secret` writes race the Private
+# Endpoint / firewall converging and fail with:
+#
+#   Error: checking for presence of existing Secret ... Status=403
+#   Code="Forbidden" ... InnerError={"code":"ForbiddenByConnection"}
+#
+# Instead, populate the vault from the in-VNet jumpbox (see jumpbox.tf):
+#
+#   az network bastion ssh --name <bastion> --resource-group <rg> \
+#     --target-resource-id <vm-id> --auth-type ssh-key \
+#     --username manager --ssh-key ~/.ssh/id_rsa
+#   sudo setup-keyvault-secrets.sh <app-name>
+#
+# The script derives every value from the app name via the Azure control plane.
+# Secrets created: jwt-key, openai-endpoint, content-understanding-endpoint,
+# redis-connection-string, appinsights-connection-string.
+#############################################

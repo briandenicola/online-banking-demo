@@ -1,0 +1,40 @@
+#cloud-config
+# Jumpbox bootstrap. Installs the Azure CLI and stages the Key Vault secret
+# bootstrap script so an operator can populate the vault from inside the VNet.
+package_update: true
+package_upgrade: false
+
+packages:
+  - curl
+  - jq
+  - openssl
+
+write_files:
+  - path: /usr/local/bin/setup-keyvault-secrets.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      ${indent(6, setup_script)}
+
+  - path: /etc/profile.d/banking-demo.sh
+    permissions: "0644"
+    owner: root:root
+    content: |
+      # Identity and app name for the Key Vault bootstrap script.
+      export AZURE_CLIENT_ID="${identity_client_id}"
+      export BANKING_APP_NAME="${app_name}"
+
+  - path: /etc/motd
+    permissions: "0644"
+    owner: root:root
+    content: |
+
+      Online Banking Demo — in-VNet jumpbox
+      -------------------------------------
+      This host has private DNS line of sight to the Key Vault private endpoint.
+      Populate the vault with:
+
+          setup-keyvault-secrets.sh ${app_name}
+
+runcmd:
+  - [bash, -c, "curl -sL https://aka.ms/InstallAzureCLIDeb | bash"]
