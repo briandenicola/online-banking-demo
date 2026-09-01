@@ -29,9 +29,9 @@ variable "kubernetes_version" {
 }
 
 variable "deploy_embedding_model" {
-  description = "Deploy the text-embedding-ada-002 model (not available in all regions)"
+  description = "Deploy the text-embedding-ada-002 model, required by chatbot Agent Memory (not available in all regions)"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "keyvault_allowed_ip_rules" {

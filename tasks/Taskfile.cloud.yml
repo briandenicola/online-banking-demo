@@ -2,7 +2,7 @@ version: '3'
 
 env:
   INFRA_DIR: infra/cloud
-  DEPLOY_EMBEDDING_MODEL: '{{default "false" .DEPLOY_EMBEDDING_MODEL}}'
+  DEPLOY_EMBEDDING_MODEL: '{{default "true" .DEPLOY_EMBEDDING_MODEL}}'
   CHAT_MEMORY_ENABLED: '{{default "false" .CHAT_MEMORY_ENABLED}}'
   CHAT_MEMORY_EMBEDDING_DEPLOYMENT: '{{default "text-embedding-ada-002" .CHAT_MEMORY_EMBEDDING_DEPLOYMENT}}'
 

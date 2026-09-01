@@ -253,10 +253,10 @@ Before enabling memory in AKS, confirm the environment has:
 - Azure AI Foundry chat deployment for normal chatbot responses
 - Azure AI Foundry embedding deployment matching `CHAT_MEMORY_EMBEDDING_DEPLOYMENT` (`text-embedding-ada-002` by default)
 
-If the embedding deployment was not provisioned previously, recreate or update infrastructure with the embedding flag before enabling memory:
+If the embedding deployment was not provisioned previously, recreate or update infrastructure before enabling memory. `DEPLOY_EMBEDDING_MODEL` defaults to `true`, so a normal apply is enough:
 
 ```bash
-DEPLOY_EMBEDDING_MODEL=true task cloud:apply
+task cloud:apply
 task cloud:infra:config
 ```
 
@@ -341,9 +341,10 @@ Existing memory containers and documents remain in Cosmos DB, but the chatbot st
 |---------|--------------|-----------|
 | Chatbot starts but memory logs show initialization failure | `CHAT_MEMORY_REQUIRED=false` allows fallback | Run `task cloud:memory:status` and inspect the first error in chatbot logs |
 | Toolkit cannot create containers | Managed identity lacks Cosmos DB data-plane permissions | Confirm the workload identity has Cosmos DB data contributor access |
-| Semantic search or `process_now` fails | Missing or mismatched embedding deployment | Set `CHAT_MEMORY_EMBEDDING_DEPLOYMENT` to the actual Foundry deployment or run `DEPLOY_EMBEDDING_MODEL=true task cloud:apply` |
+| Semantic search or `process_now` fails | Missing or mismatched embedding deployment | Set `CHAT_MEMORY_EMBEDDING_DEPLOYMENT` to the actual Foundry deployment or run `task cloud:apply` |
 | Import/package error in chatbot container | Old image still running or build did not include the new dependency | Re-run `task cloud:build:chatbot-service`, then `task cloud:deploy` |
 | Container policy error | Memory containers were manually created without toolkit-required vector/full-text policies | Delete/recreate only the affected empty AgentMemory containers, then restart chatbot |
+| `A Container Vector Policy has been provided, but the capability has not been enabled on your account` | The Cosmos `EnableNoSQLVectorSearch` capability takes ~10-15 minutes to reach the data plane after ARM reports `Succeeded` | Confirm capabilities with `az resource show --ids <cosmos-id> --api-version 2024-11-15 --query properties.capabilities[].name`, wait, then restart chatbot |
 
 ### MVP vs. Production Quality Gaps
 
@@ -463,7 +464,7 @@ The `.env` file at the repo root is loaded by Taskfile (`dotenv: ['.env']`). Key
 | Variable | Purpose |
 |----------|---------|
 | `CUSTOM_DOMAIN` | Domain for TLS certificate and Istio gateway |
-| `DEPLOY_EMBEDDING_MODEL` | Set to `true` when provisioning the default `text-embedding-ada-002` deployment for chatbot memory |
+| `DEPLOY_EMBEDDING_MODEL` | Provisions the default `text-embedding-ada-002` deployment for chatbot memory. Defaults to `true`; set to `false` only in regions where the model is unavailable |
 | `CHAT_MEMORY_ENABLED` | Set to `true` only when explicitly rolling out the Agent Memory Toolkit MVP |
 | `CHAT_MEMORY_EMBEDDING_DEPLOYMENT` | Foundry embedding deployment used by memory semantic search |
 
