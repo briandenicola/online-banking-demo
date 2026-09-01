@@ -142,11 +142,14 @@ cus_endpoint="$(arm_property "Microsoft.CognitiveServices/accounts" "${CUS_NAME}
 [[ -n "${cus_endpoint}" ]] || die "Could not read the endpoint of Content Understanding account ${CUS_NAME}."
 
 # Matches the value Terraform used to compute (base64 of a 32-char alphanumeric).
+# `cut` rather than `head -c` on purpose: `head` closes the pipe early, which
+# raises SIGPIPE in the upstream process and aborts the script under pipefail.
 if [[ -n "${JWT_KEY:-}" ]]; then
   jwt_raw="${JWT_KEY}"
 else
-  jwt_raw="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)"
+  jwt_raw="$(LC_ALL=C head -c 512 /dev/urandom | tr -dc 'A-Za-z0-9' | cut -c1-32)"
 fi
+[[ ${#jwt_raw} -eq 32 ]] || die "Generated JWT key is ${#jwt_raw} chars, expected 32."
 jwt_value="$(printf '%s' "${jwt_raw}" | base64 | tr -d '\n')"
 
 declare -A SECRET_VALUES=(
@@ -158,17 +161,17 @@ declare -A SECRET_VALUES=(
 )
 
 #############################################
-# Write the secrets.
+# Write the secrets. Only secret *names* are printed — never values.
 #############################################
+created=()
+skipped=()
+
 for name in "${SECRET_NAMES[@]}"; do
   value="${SECRET_VALUES[$name]}"
 
   if [[ "${DRY_RUN}" == true ]]; then
-    if [[ "${name}" == "jwt-key" ]]; then
-      log "[dry-run] would set ${name} = <redacted>"
-    else
-      log "[dry-run] would set ${name} = ${value}"
-    fi
+    log "[dry-run] would set ${name}"
+    created+=("${name}")
     continue
   fi
 
@@ -176,6 +179,7 @@ for name in "${SECRET_NAMES[@]}"; do
     && az keyvault secret show --vault-name "${KEYVAULT_NAME}" --name "${name}" \
          --only-show-errors >/dev/null 2>&1; then
     log "${name} already exists — skipping (use --force to overwrite)"
+    skipped+=("${name}")
     continue
   fi
 
@@ -185,9 +189,31 @@ for name in "${SECRET_NAMES[@]}"; do
     --value "${value}" \
     --only-show-errors >/dev/null
   log "Set ${name}"
+  created+=("${name}")
 done
 
+#############################################
+# Summary — names only.
+#############################################
+echo
+if [[ "${DRY_RUN}" == true ]]; then
+  log "Would create/update ${#created[@]} secret(s) in ${KEYVAULT_NAME}:"
+else
+  log "Created/updated ${#created[@]} secret(s) in ${KEYVAULT_NAME}:"
+fi
+for name in "${created[@]:-}"; do
+  [[ -n "${name}" ]] && printf '      %s\n' "${name}"
+done
+
+if [[ ${#skipped[@]} -gt 0 ]]; then
+  log "Skipped ${#skipped[@]} existing secret(s) (use --force to overwrite):"
+  for name in "${skipped[@]}"; do
+    printf '      %s\n' "${name}"
+  done
+fi
+
 if [[ "${DRY_RUN}" != true ]]; then
-  log "Done. Restart the workloads so the CSI driver re-reads the vault:"
+  echo
+  log "Restart the workloads so the CSI driver re-reads the vault:"
   log "  kubectl rollout restart deployment -n banking-demo"
 fi
