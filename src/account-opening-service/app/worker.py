@@ -109,9 +109,8 @@ async def main() -> int:
             project_endpoint=foundry_endpoint.rstrip("/"),
             credential=credential,
             agent_name="identity-verifier",
-            agent_version="1",
+            agent_version=None,  # newest version — provisioned by init_agents
             description="Foundry connectivity check agent",
-            instructions="Respond with JSON: {\"status\": \"ok\"}",
             default_options={"extra_body": {"model": foundry_model}},
         )
         session = connectivity_agent.create_session()

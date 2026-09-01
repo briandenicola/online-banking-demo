@@ -1082,9 +1082,8 @@ async def lifespan(app: FastAPI):
                 project_endpoint=endpoint,
                 credential=credential,
                 agent_name="risk-assessor",
-                agent_version="1",
+                agent_version=None,  # newest version — provisioned by init_agents
                 description="Financial transaction risk scoring agent",
-                instructions=FoundryRiskAnalyzer.SYSTEM_PROMPT,
                 # agent-framework-foundry 1.2.x: model deployment name MUST
                 # be passed via default_options, not `model=` (rejected by
                 # FoundryAgent.__init__) and not omitted (responses.create
@@ -1098,9 +1097,8 @@ async def lifespan(app: FastAPI):
                 project_endpoint=endpoint,
                 credential=credential,
                 agent_name="transaction-categorizer",
-                agent_version="1",
+                agent_version=None,  # newest version — provisioned by init_agents
                 description="Financial transaction categorization agent",
-                instructions=FoundryCategorizer.SYSTEM_PROMPT,
                 default_options={"extra_body": {"model": model_name}},
             )
             foundry_categorizer.initialize(categorizer_agent)

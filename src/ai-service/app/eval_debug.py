@@ -456,6 +456,7 @@ async def _run_eval_once(
         _build_judge_instructions,
         _build_judge_user_prompt,
         _parse_judge_scores,
+        _with_system_prompt,
     )
 
     credential = DefaultAzureCredential()
@@ -464,16 +465,15 @@ async def _run_eval_once(
             project_endpoint=endpoint,
             credential=credential,
             agent_name="risk-assessor",
-            agent_version="1",
-            instructions=state.system_prompt,
+            agent_version=None,  # newest version — provisioned by init_agents
             default_options={"extra_body": {"model": model}},
         )
+        judge_instructions = _build_judge_instructions(state.evaluators)
         judge_agent = FoundryAgent(
             project_endpoint=endpoint,
             credential=credential,
             agent_name="risk-assessor",
-            agent_version="1",
-            instructions=_build_judge_instructions(state.evaluators),
+            agent_version=None,  # newest version — provisioned by init_agents
             default_options={"extra_body": {"model": model}},
         )
 
@@ -483,7 +483,10 @@ async def _run_eval_once(
             f"\nCalling candidate agent (timeout {state.agent_run_timeout_seconds:.0f}s)..."
         )
         candidate_response = await _await_with_progress(
-            candidate_agent.run(user_prompt, session=candidate_session),
+            candidate_agent.run(
+                _with_system_prompt(state.system_prompt, user_prompt),
+                session=candidate_session,
+            ),
             "Candidate call",
             timeout_seconds=state.agent_run_timeout_seconds,
         )
@@ -506,7 +509,10 @@ async def _run_eval_once(
             f"Calling judge agent (timeout {state.agent_run_timeout_seconds:.0f}s)..."
         )
         judge_response = await _await_with_progress(
-            judge_agent.run(judge_prompt, session=judge_session),
+            judge_agent.run(
+                _with_system_prompt(judge_instructions, judge_prompt),
+                session=judge_session,
+            ),
             "Judge call",
             timeout_seconds=state.agent_run_timeout_seconds,
         )

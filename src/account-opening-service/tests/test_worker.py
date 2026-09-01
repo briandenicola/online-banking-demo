@@ -212,3 +212,111 @@ class TestFoundryAgentSignatureContract:
         assert "model" not in used_kwargs, (
             f"{module_path} must not pass model= to FoundryAgent"
         )
+
+    @staticmethod
+    def _foundry_agent_call_bodies(src: str) -> list[str]:
+        """Yield the argument text of every FoundryAgent(...) call.
+
+        A naive ``FoundryAgent\(([^)]*)\)`` regex stops at the first ``)``, so a
+        call whose first argument is ``foundry_endpoint.rstrip("/")`` gets
+        truncated before ``agent_name`` and is silently skipped. Balance the
+        parentheses instead.
+        """
+        import re
+
+        src = re.sub(r"(?m)#.*$", "", src)
+        bodies = []
+        for m in re.finditer(r"FoundryAgent\(", src):
+            i = m.end()
+            depth = 1
+            while i < len(src) and depth:
+                if src[i] == "(":
+                    depth += 1
+                elif src[i] == ")":
+                    depth -= 1
+                i += 1
+            bodies.append(src[m.end() : i - 1])
+        return bodies
+
+    @staticmethod
+    def _top_level_kwargs(body: str) -> set:
+        import re
+
+        inner = set()
+        for chunk in re.findall(r"\{[^{}]*\}", body):
+            inner |= set(re.findall(r"\b(\w+)\s*=(?!=)", chunk))
+        nested = set()
+        for chunk in re.findall(r"\.\w+\(([^()]*)\)", body):
+            nested |= set(re.findall(r"\b(\w+)\s*=(?!=)", chunk))
+        return set(re.findall(r"\b(\w+)\s*=(?!=)", body)) - inner - nested
+
+    @pytest.mark.parametrize(
+        "module_path",
+        [
+            "app/worker.py",
+            "app/agents/identity_verification.py",
+            "app/agents/compliance_check.py",
+            "app/agents/provisioning.py",
+        ],
+    )
+    def test_foundry_agent_call_sites_do_not_pass_instructions(self, module_path):
+        """A referenced Foundry agent must not also carry `instructions=`.
+
+        agent-framework-foundry always injects `agent_reference` into the
+        request body (`_agent.py::_prepare_options`), and the Responses API
+        rejects the pair with:
+
+            400 invalid_payload — "Not allowed when agent is specified."
+                                  param: instructions
+
+        The system prompt belongs on the agent version in Foundry — see
+        `app/agents/prompts.py` and `app/agents/init_agents.py`.
+        """
+        from pathlib import Path
+
+        src = (Path(__file__).resolve().parent.parent / module_path).read_text()
+        bodies = self._foundry_agent_call_bodies(src)
+        assert bodies, f"{module_path}: no FoundryAgent() call found — guard would pass vacuously"
+
+        for body in bodies:
+            used_kwargs = self._top_level_kwargs(body)
+
+            if "agent_name" in used_kwargs:
+                assert "instructions" not in used_kwargs, (
+                    f"{module_path}: FoundryAgent() passes both agent_name and "
+                    f"instructions — the Responses API rejects that pairing. "
+                    f"Provision the prompt via app/agents/prompts.py instead."
+                )
+
+    def test_every_referenced_agent_is_provisioned(self):
+        """Each agent_name used at runtime must exist in init_agents.AGENTS.
+
+        customer-explanation-generator was referenced by provisioning.py but
+        never provisioned, so the agent had no versions and the call 404'd.
+        """
+        import re
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent.parent
+        provisioned = set(
+            re.findall(r'"agent_name":\s*"([^"]+)"', (root / "app/agents/init_agents.py").read_text())
+        )
+        assert provisioned, "no agents parsed out of init_agents.py"
+
+        referenced = set()
+        for module_path in [
+            "app/worker.py",
+            "app/agents/identity_verification.py",
+            "app/agents/compliance_check.py",
+            "app/agents/provisioning.py",
+        ]:
+            src = (root / module_path).read_text()
+            for body in self._foundry_agent_call_bodies(src):
+                referenced |= set(re.findall(r'agent_name="([^"]+)"', body))
+
+        assert referenced, "no agent_name references parsed — guard would pass vacuously"
+
+        missing = referenced - provisioned
+        assert not missing, (
+            f"agents referenced at runtime but never provisioned: {sorted(missing)}"
+        )

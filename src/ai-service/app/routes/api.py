@@ -436,8 +436,7 @@ async def run_foundry_evaluation(
         project_endpoint=state.foundry_endpoint,
         credential=state.foundry_credential,
         agent_name="risk-assessor",
-        agent_version="1",
-        instructions=request.system_prompt,
+        agent_version=None,  # newest version — provisioned by init_agents
         default_options={"extra_body": {"model": eval_model}},
     )
 
@@ -446,8 +445,7 @@ async def run_foundry_evaluation(
         project_endpoint=state.foundry_endpoint,
         credential=state.foundry_credential,
         agent_name="risk-assessor",
-        agent_version="1",
-        instructions=judge_instructions,
+        agent_version=None,  # newest version — provisioned by init_agents
         default_options={"extra_body": {"model": eval_model}},
     )
 
@@ -471,7 +469,10 @@ async def run_foundry_evaluation(
 
         candidate_session = candidate_agent.create_session()
         try:
-            candidate_response = await candidate_agent.run(user_prompt, session=candidate_session)
+            candidate_response = await candidate_agent.run(
+                _with_system_prompt(request.system_prompt, user_prompt),
+                session=candidate_session,
+            )
         except Exception as exc:  # noqa: BLE001
             import traceback
             from app.telemetry import extract_openai_error_fields
@@ -498,7 +499,10 @@ async def run_foundry_evaluation(
         )
         judge_session = judge_agent.create_session()
         try:
-            judge_response = await judge_agent.run(judge_prompt, session=judge_session)
+            judge_response = await judge_agent.run(
+                _with_system_prompt(judge_instructions, judge_prompt),
+                session=judge_session,
+            )
         except Exception as exc:  # noqa: BLE001
             import traceback
             from app.telemetry import extract_openai_error_fields
@@ -586,6 +590,21 @@ async def run_foundry_evaluation(
 
 
 _JUDGE_SCORE_THRESHOLD = 3
+
+
+
+def _with_system_prompt(system_prompt: str, user_prompt: str) -> str:
+    """Prepend a per-request system prompt to the user turn.
+
+    The eval flow needs a prompt that varies per request, but the Responses API
+    rejects ``instructions`` whenever an ``agent_reference`` is present, and the
+    Foundry SDK discards system/developer messages on the agent path
+    (``_prepare_options`` drops the extracted instructions). Folding the prompt
+    into the user turn is therefore the only way to deliver it.
+    """
+    if not system_prompt:
+        return user_prompt
+    return f"{system_prompt}\n\n---\n\n{user_prompt}"
 
 
 def _build_judge_instructions(evaluators: list[str]) -> str:

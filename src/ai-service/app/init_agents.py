@@ -2,8 +2,15 @@
 Init-container script: provision Foundry prompt-agents before the main
 ai-service starts.
 
-Idempotent — checks whether each agent version already exists and only
-creates it when missing.  Exits 0 on success, 1 on any failure.
+Idempotent — compares each agent's latest version against the instructions
+below and only creates a new version when the text has changed.
+
+The runtime clients reference these agents WITHOUT pinning a version, so the
+newest version wins. This matters because the Responses API rejects an
+``instructions`` field whenever an ``agent_reference`` is present, which means
+the agent definition here is the only channel for the system prompt.
+
+Exits 0 on success, 1 on any failure.
 
 Usage:
     python -m app.init_agents
@@ -32,7 +39,6 @@ TOKEN_SCOPE = "https://ai.azure.com/.default"
 AGENTS: list[dict] = [
     {
         "agent_name": "risk-assessor",
-        "agent_version": "1",
         "description": "Financial transaction risk scoring agent",
         "definition": {
             "kind": "prompt",
@@ -63,7 +69,6 @@ AGENTS: list[dict] = [
     },
     {
         "agent_name": "transaction-categorizer",
-        "agent_version": "1",
         "description": "Financial transaction categorization agent",
         "definition": {
             "kind": "prompt",
@@ -91,21 +96,34 @@ def _get_auth_header(credential: DefaultAzureCredential) -> dict[str, str]:
     return {"Authorization": f"Bearer {token.token}"}
 
 
-def _agent_exists(
+def _latest_instructions(
     client: httpx.Client,
     endpoint: str,
     agent_name: str,
-    agent_version: str,
     headers: dict[str, str],
-) -> bool:
-    url = f"{endpoint}/agents/{agent_name}/versions/{agent_version}"
+) -> str | None:
+    """Return the instructions on the agent's highest-numbered version.
+
+    Returns None when the agent does not exist yet, or exists with no versions.
+    """
+    url = f"{endpoint}/agents/{agent_name}/versions"
     resp = client.get(url, params={"api-version": API_VERSION}, headers=headers)
-    if resp.status_code == 200:
-        return True
     if resp.status_code == 404:
-        return False
+        return None
     resp.raise_for_status()
-    return False  # unreachable
+
+    versions = resp.json().get("data") or []
+    if not versions:
+        return None
+
+    def _key(item: dict) -> int:
+        try:
+            return int(item.get("version"))
+        except (TypeError, ValueError):
+            return -1
+
+    latest = max(versions, key=_key)
+    return (latest.get("definition") or {}).get("instructions")
 
 
 def _create_agent(
@@ -153,17 +171,19 @@ def main() -> int:
     with httpx.Client(timeout=30.0) as client:
         for spec in AGENTS:
             name = spec["agent_name"]
-            version = spec["agent_version"]
             spec["definition"]["model"] = model
+            instructions = spec["definition"]["instructions"]
 
             try:
-                if _agent_exists(client, endpoint, name, version, headers):
-                    logger.info(f"✅ Agent '{name}' v{version} already exists")
+                current = _latest_instructions(client, endpoint, name, headers)
+                if current is not None and current.strip() == instructions.strip():
+                    logger.info(f"✅ Agent '{name}' is already up to date")
                     continue
 
-                logger.info(f"Creating agent '{name}' v{version} ...")
+                action = "creating" if current is None else "updating (prompt changed)"
+                logger.info(f"Agent '{name}': {action} ...")
                 _create_agent(client, endpoint, name, spec, headers)
-                logger.info(f"✅ Agent '{name}' v{version} created successfully")
+                logger.info(f"✅ Agent '{name}' provisioned successfully")
             except httpx.HTTPStatusError as exc:
                 logger.error(
                     f"❌ Failed to provision agent '{name}': "

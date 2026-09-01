@@ -477,3 +477,79 @@ class TestFoundryAgentSignatureContract:
                 f"top-level `model` to responses.create(); use "
                 f"default_options={{'extra_body': {{'model': ...}}}} (#137 / #130)"
             )
+
+    @staticmethod
+    def _foundry_agent_call_bodies(src: str) -> list[str]:
+        """Yield the argument text of every FoundryAgent(...) call.
+
+        A naive ``FoundryAgent\(([^)]*)\)`` regex stops at the first ``)``, so a
+        call whose first argument is ``foundry_endpoint.rstrip("/")`` gets
+        truncated before ``agent_name`` and is silently skipped. Balance the
+        parentheses instead.
+        """
+        import re
+
+        src = re.sub(r"(?m)#.*$", "", src)
+        bodies = []
+        for m in re.finditer(r"FoundryAgent\(", src):
+            i = m.end()
+            depth = 1
+            while i < len(src) and depth:
+                if src[i] == "(":
+                    depth += 1
+                elif src[i] == ")":
+                    depth -= 1
+                i += 1
+            bodies.append(src[m.end() : i - 1])
+        return bodies
+
+    @staticmethod
+    def _top_level_kwargs(body: str) -> set:
+        import re
+
+        inner = set()
+        for chunk in re.findall(r"\{[^{}]*\}", body):
+            inner |= set(re.findall(r"\b(\w+)\s*=(?!=)", chunk))
+        nested = set()
+        for chunk in re.findall(r"\.\w+\(([^()]*)\)", body):
+            nested |= set(re.findall(r"\b(\w+)\s*=(?!=)", chunk))
+        return set(re.findall(r"\b(\w+)\s*=(?!=)", body)) - inner - nested
+
+    @pytest.mark.parametrize(
+        "module_path",
+        [
+            "app/services/anomaly_service.py",
+            "app/routes/api.py",
+            "app/eval_debug.py",
+        ],
+    )
+    def test_foundry_agent_call_sites_do_not_pass_instructions(self, module_path):
+        """A referenced Foundry agent must not also carry `instructions=`.
+
+        agent-framework-foundry always injects `agent_reference` into the
+        request body (`_agent.py::_prepare_options`), and the Responses API
+        rejects the pair with:
+
+            400 invalid_payload — "Not allowed when agent is specified."
+                                  param: instructions
+
+        The system prompt belongs on the agent version in Foundry (see
+        `app/init_agents.py`); a per-request prompt must be folded into the
+        user turn instead (see `_with_system_prompt`).
+        """
+        from pathlib import Path
+
+        src = (Path(__file__).resolve().parent.parent / module_path).read_text()
+        bodies = self._foundry_agent_call_bodies(src)
+        assert bodies, f"{module_path}: no FoundryAgent() call found — guard would pass vacuously"
+
+        for body in bodies:
+            used_kwargs = self._top_level_kwargs(body)
+
+            if "agent_name" in used_kwargs:
+                assert "instructions" not in used_kwargs, (
+                    f"{module_path}: FoundryAgent() passes both agent_name and "
+                    f"instructions — the Responses API rejects that pairing. "
+                    f"Provision the prompt in init_agents.py, or fold a "
+                    f"per-request prompt into the user turn."
+                )
