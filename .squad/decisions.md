@@ -436,3 +436,105 @@ Independent of this epic; these are latent issues discovered during the spike:
 Design doc only; no service code modified; no UI work; architecture-level calls deferred to Danny and flagged (D).
 
 ---
+
+---
+date: 2026-09-04
+author: Brian Denicola (rulings) / Danny (Lead/Architect, recording)
+status: approved
+component: epic/banker-copilot
+---
+
+# Banker Copilot — Brian's Five Rulings (Round 2)
+
+## RULING 1 — Service split stands. `authority-service` is .NET.
+
+**Services:** `banker-copilot-service` (Python/FastAPI, agent loop) and `authority-service` (.NET 10, policy engine + approval store + sole write path).
+
+**Rationale:** Enforcement boundary and static typing on security-critical component justify the language boundary despite Python affinity elsewhere. Language boundary makes "the mediator contains no model SDK" *mechanically checkable* rather than a review norm. Turk's reasoning preserved in full with three accepted claims called out.
+
+**Cost Mitigations Mandatory:** `authority-service` owns Cosmos containers exclusively (no Python service touches `authority-proposals`); harness↔authority contract is REST with published schema, not shared document format.
+
+**Reference:** Epic #332 §2.2, Turk's `docs/design/banker-copilot-policy-engine.md` §1.3 with annotation.
+
+## RULING 2 — `banker` and `supervisor` roles move into Phase 1.
+
+**Role Hierarchy:**
+- `supervisor` ⊃ `banker`
+- `admin` implies NEITHER (deliberate separation of platform and banking authority)
+
+**Mechanism:** Flat `role` claim retained for ADR-003 compatibility; new `effectiveRoles` array computed at token issuance. Expansion rules in `config/role-hierarchy.yaml` (invariant I-3).
+
+**Bootstrap:** Terraform seed identity → idempotent startup seed → ongoing promotion via admin console.
+
+**SoD Enforcement:** Server-side in `authority-service`, §5.8.4 algorithm, step 5 unconditional: `signerId != proposal.actorId`.
+
+**Migration:** Additive, non-breaking, optional `effectiveRoles` (computed not persisted), no backfill.
+
+**Seed Data:** Must contain two distinct identities for L2 demo.
+
+**Reference:** Epic #332 §5.8.
+
+## RULING 3 — Two-browser demo is intentional, non-blocking.
+
+L2 beat uses two authenticated sessions (banker + supervisor) to demonstrate separation of duties as visible handoff. No work will collapse into single session.
+
+**Reference:** Epic #332 §1.3 step 6, supervisor-disagreement centerpiece retained.
+
+## RULING 4 — Trajectory evaluation → #333 (Phase 2 requirement).
+
+**Obligation:** Harness must emit structured, replayable traces from day one.
+
+**Single Schema:** Linus's `CopilotEventEnvelope` (`{id, seq, runId, kind, ts, payload}`) ratified.
+
+**Additions with Envelope:** Durable `copilot-traces` persistence, `traceId`/`spanId`, token counts, `parentRunId`, redaction at emit, **`policyVersion` + resolved rung on `approval.required`**.
+
+**Key Insight:** Eval question is **"did authority ladder resolve correctly?"** — unanswerable without rung and policy version.
+
+**Reference:** Epic #332 §8.0, Linus's `docs/design/banker-copilot-ui.md` §4.2.
+
+## RULING 5 — `policyVersion` bound into payload hash, asymmetric void-on-escalation-only (Closes Q1).
+
+**Rule:** `policyVersion` part of canonicalized payload. At execution, re-evaluate under CURRENT policy:
+- Rung HIGHER than signed → void, re-propose
+- Rung unchanged or LOWER → honor, execute
+- Never auto-downgrade; never auto-honor under-signed
+
+**Principle:** Same monotonic rule as escalators (I-4), applied over time instead of context.
+
+**Derivation:** Content hash of RESOLVED policy (`pv1:<sha256[:16]>`), derivable from content alone, covers env-var overrides where file bytes don't change.
+
+**Critical Detail:** Hash recompute uses STORED policy version; rung re-evaluation uses CURRENT version. (If hash used current, every edit would fail comparison — directly contradicts ruling clause 3.)
+
+**Composition Bug Fixed:** `policyVersion` duplicated twice in same Cosmos document (would have shipped). Now single-definition normative; contract test asserts byte-identity across hash, trace frame, audit events, approval record. `rungExplanation`'s copy deleted.
+
+**Worked Example:** Banker signs $40k loan at L1 → policy updated, L1 drops to $25k → execution re-evaluates to L2 → prior signature void → re-propose at L2 → supervisor co-signs.
+
+**For Linus:** `POLICY_RUNG_ESCALATED` reason code — voided signature must explain itself, not fail generically.
+
+**Reference:** Epic #332 §5.1, §5.3, §5.3.1, §5.3.2; Turk's policy engine design §6.2, §6.4.
+
+## Verified Findings (Filed as Issues)
+
+### #334 — JWT Signing Vulnerability
+All 9 services validate `banking-demo` audience with one shared symmetric key (HS256 + SymmetricSecurityKey). **Every service can forge tokens, not merely verify.**
+- **Impact:** Layer 2 (broker-only claim) blocked
+- **Sequencing:** Phase 3
+
+### #335 — Audit Gap
+`event-processor:403-410` handles only "TransactionCreated" and "TransferInitiated"; other types silently unaudited.
+
+### #336 — Shared Workload Identity
+One KSA for all 11 pods. Layer 1 "no domain Cosmos assignment" not achievable; Layer 3's "`authority-service` pod identity" doesn't exist as distinct.
+- **Sequencing:** Phase 1 takes smallest slice (dedicated identity for `authority-service`)
+
+**§4.4 Defense:** Currently one-and-a-half layers, not four. Documented honestly, not implied.
+
+## Outstanding Open Items
+
+- **Q2** `payloadHash` display permanent or demo-only? *Recommend: permanent.*
+- **Q3** Require denial reason? *Recommend: yes, ≥20 chars.*
+- **Q4** Step-up auth/MFA at L2? *Recommend: **no**.*
+- **O9** Policy-voided approvals: first-class `voided` state or `denied` + terminalReason? Turk chose latter. **AWAITING DANNY RATIFICATION.**
+- **O10** Wire `/policy/impact` into CI gate? Defer until approval store seeded.
+
+---

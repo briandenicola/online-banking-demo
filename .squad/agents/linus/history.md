@@ -959,3 +959,38 @@ Remediation: Introduce a second `banking-copilot` audience minted by user-servic
 `infra/local/gateway.nginx.conf` and `ui-app.nginx.conf` have no `proxy_buffering off` on any `/api/` location. Without it, the entire SSE trace stream arrives as one lump when the run ends, silently defeating the live-harness illusion. The banker sees no events during the run, then the entire trace dumps at the end.
 
 Remediation: Add `proxy_buffering off;` to all location blocks serving `/api/` paths carrying SSE streams. Identified by Linus during frontend-UX spike. **Status: BLOCKING; this is the single highest-risk non-frontend dependency in the epic and needs an owner now.**
+
+---
+
+## 2026-09-04T14:35:00Z — Banker Copilot Round 2: UI Requirements from Policy Engine Ruling
+
+**Two requirements handed from this round's ruling work:**
+
+### 1. Reason Code for Policy-Escalated Voids — `POLICY_RUNG_ESCALATED`
+
+`approval.voided` event already exists (your existing §4.2 event kind). New requirement: when a signature is voided because the policy escalated (re-evaluated rung is higher than signed rung), surface a **specific reason code** (`POLICY_RUNG_ESCALATED`) that renders differently from other void causes.
+
+**Banker-facing copy (critical for trust):** *"The approval policy changed while this was pending — this now requires supervisor co-approval (L1 → L2)."* Name the threshold transition and its environment variable. Do not render generic error. Someone who signed in good faith and finds it un-signed deserves the reason; generic failures train people to distrust the approval card, which this entire epic rests on.
+
+**Mechanism:** Voided signature must explain itself, not fail generically. If you log `approval.voided` with terminalReason, that field must carry sufficient detail for the UI to render the right message — either the terminalReason itself must include both rungs, or it must be keyed to allow the UI to look up the transition.
+
+### 2. Bulk Policy-Invalidation Events — No Bulk Re-Approve Affordance
+
+When one policy edit invalidates N pending approvals:
+- **DO:** Surface bulk `policy-invalidated` event digest to bankers (eager notification sweep, even if lazy void-at-execution is the correctness guarantee).
+- **DO NOT:** Offer a "re-approve all 40" button.
+
+Rationale: Bulk *re-proposal* is fine (they go back to pending, signers try again). Bulk *signing* reconstitutes blanket approval by the back door, at the moment of maximum approval fatigue (R3 — "just approve everything to clear the backlog") — the worst possible time for a single-click remediation. It's a general shape worth watching: a cleanup affordance that quietly undoes a control the system was built around.
+
+**For Design:** `approval.voided` event carries policyVersion + rung transition (old and new). Trace persists both for #333 offline replay: can't tell "escalated correctly" from "mis-resolved" without both endpoints.
+
+**Reference:** `docs/design/banker-copilot-policy-engine.md` §6.6 (operations), §7.2 (audit), §8.10 (/policy/impact endpoint).
+
+**Verified Findings Appended to This Agent's History**
+
+From Round 2 verified-findings pass (Coordinator's work):
+- #334 — all 9 services can forge JWT tokens (shared symmetric key). Layer 2 blocked.
+- #335 — event-processor silently drops 4 of 4 event types. Authority events inherit this gap.
+- #336 — shared KSA for 11 pods blocks Layer 1 isolation.
+
+---

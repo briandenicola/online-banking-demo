@@ -143,3 +143,108 @@ Three-part pattern:
 - [ ] Expiry semantics separated from physical deletion
 - [ ] CI lint enforces the no-literals rule
 - [ ] Config example in the design doc is machine-parsed and cross-validated in CI
+
+---
+
+## 4. The temporal axis — config drift under an in-flight approval
+
+Once approvals outlive a single request, a fourth question appears: **what happens to a signature
+already given when the policy changes underneath it?**
+
+Resist inventing a new rule. It is **the same monotonic rule, applied over time instead of over
+context**: escalators only push the rung up; policy drift only invalidates, never rescues.
+
+```
+At execution time, re-evaluate under the CURRENT policy.
+  required_rung > rung_the_signature_satisfied  -> VOID. Re-propose at the new rung.
+  required_rung <= rung_the_signature_satisfied -> honour it. Execute.
+```
+
+No auto-downgrade. No auto-honouring an under-signed action. Note there is deliberately **no `else`
+branch that adjusts anything** on the loosened path — a loosened policy is simply not an event. If
+you find yourself writing `if stored_version != current_version:` as a *decision* rather than as a
+bare audit annotation, the model has diverged.
+
+### Version the policy by content hash of the RESOLVED config
+
+```
+policy_version = "pv1:" + sha256(canonical(resolved_policy))[:16]
+```
+
+- **Resolved, not the file bytes.** If thresholds are env-overridable (they should be, §2), a
+  ConfigMap edit changes behaviour with a byte-identical file. A file hash reports "no change" and
+  is actively misleading.
+- **Not a hand-maintained semver.** It is a field someone must remember to bump in the same commit
+  as the rule they changed. They will not, and the failure is silent.
+- **Comparable but deliberately not ordered.** Equal/unequal only. Ordering invites
+  `if current > signed` special-casing — the exact divergence the rule exists to prevent. Denying
+  yourself an operator is legitimate when the operator's existence is what tempts the wrong code.
+- Exclude provenance (`effective_from`, `owner`) so a redeploy of unchanged rules does not
+  manufacture a new version. Keep a human label (`policy_id`) alongside: one identity for
+  correctness, one for conversation.
+
+### Bind the version into the signature preimage
+
+Put it in the **domain-separation prefix**, next to the action id — not as a key in the projected
+object, where a payload field of the same name could collide with it and where it would blur the
+projection's meaning ("the business facts the human agreed to").
+
+What this buys is narrow and worth stating precisely: re-evaluation is what stops an under-signed
+write; the binding is what stops **tampering with the record of which ruleset applied**. Without it,
+the stored version is an ordinary mutable field and anyone who can write the document can relabel a
+signature. With it, editing that field breaks verification. It converts "this human signed under
+this ruleset" from asserted to verifiable.
+
+### ⚠️ The detail that makes it consistent — split which version each check reads
+
+| Check | Which version | Why |
+|---|---|---|
+| Signature / hash recompute | the version **stored on the record** | Verifies *what was signed*. Historical fact; cannot change. |
+| Authority re-evaluation | the **current**, freshly loaded version | Decides *whether it may still execute*. Present-tense judgement. |
+
+Share one input between them and every policy edit — including a comment reflow — fails hash
+comparison for every pending record, silently converting the rule into "any edit invalidates
+everything." **Signature verification is archaeology; authority is live.**
+
+### Key invalidation off the re-evaluated OUTCOME, never off version inequality
+
+This is the single most likely misimplementation. Keying off inequality voids all pending work on
+every edit; keying off "does this now require more authority?" confines the blast radius to records
+that actually cross a newly-tightened value, and makes loosening and cosmetic churn free.
+
+| What changed | Records affected |
+|---|---|
+| Comments, descriptions, provenance | none |
+| A threshold *raised* (loosened) | none |
+| A threshold *lowered* / new escalator | only those whose payload crosses the new value |
+| Action removed or moved to the forbidden tier | all pending of that type |
+
+### Operational obligations this creates
+
+1. **Simulate blast radius before rollout.** Evaluation is pure over data already on the record, so
+   "what would this change cost?" is answerable by replay. Expose it as a dry-run endpoint returning
+   the affected set *with reasons*. Wire it to the config-change path. It must **warn, never block** —
+   gating a policy *tightening* behind pending work runs the incentive exactly backwards.
+2. **Notify eagerly, guarantee lazily.** Sweep on reload to *tell people*; keep the check at use
+   time as the *correctness guarantee*. Same separation as expiry — never one mechanism doing both.
+3. **Audit the discard explicitly.** Emit an event carrying the full set of discarded signatures
+   (who, which slot, when) plus both versions. "A machine threw away a human's approval" is exactly
+   what an incident review asks about; it must not be reconstructible only by inference.
+4. **No bulk re-approve.** Bulk *re-proposal* is fine; bulk *signing* is not. A "re-approve all"
+   button reconstitutes blanket approval by the back door, at the moment of maximum approval
+   fatigue. Watch for this general shape: a cleanup affordance that quietly undoes the control the
+   system was built around.
+5. **Distinguish the states in the UI.** "Invalidated by policy change", "expired", and "denied by a
+   human" are three different facts and must not collapse into one grey *unavailable*. The
+   user-facing string should name the threshold and its env key, never a generic error.
+
+### Checklist additions
+
+- [ ] Policy version = content hash of the **resolved** config; provenance fields excluded
+- [ ] Version bound into the signature preimage, in the prefix, not the payload object
+- [ ] Hash recompute reads the **stored** version; re-evaluation reads the **current** one
+- [ ] Invalidation keyed off re-evaluated **rung**, not version inequality
+- [ ] Loosened-policy path has no branch at all (no downgrade, no signature removal)
+- [ ] Dry-run impact endpoint exists and warns rather than blocks
+- [ ] Discard event carries every discarded signature and both versions
+- [ ] No bulk re-sign anywhere in the API shape

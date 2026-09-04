@@ -1445,3 +1445,141 @@ Remediation: Introduce a second `banking-copilot` audience minted by user-servic
 `infra/local/gateway.nginx.conf` and `ui-app.nginx.conf` have no `proxy_buffering off` on any `/api/` location. Without it, the entire SSE trace stream arrives as one lump when the run ends, silently defeating the live-harness illusion. The banker sees no events during the run, then the entire trace dumps at the end.
 
 Remediation: Add `proxy_buffering off;` to all location blocks serving `/api/` paths carrying SSE streams. Identified by Linus during frontend-UX spike. **Status: BLOCKING; this is the single highest-risk non-frontend dependency in the epic and needs an owner now.**
+
+## 2026-09-04 — Q1 ruling: policy version bound into the signature (amendment)
+
+Brian ruled on Q1 and Danny overruled my §1.3 language recommendation. Both written into
+`docs/design/banker-copilot-policy-engine.md`.
+
+### Learnings
+
+**Version a config artifact by content hash of the RESOLVED config, not the file bytes, and not
+a hand-maintained semver.** This project makes every threshold env-overridable, which means a
+ConfigMap edit changes behaviour with a byte-identical file on disk. A file hash reports "no
+change" and is actively misleading. A semver is a field someone must remember to bump in the same
+commit as the rule they changed — they will not, and the failure is silent. Hash the resolved
+values. Exclude provenance fields (`effective_from`, `owner`) so redeploying an unchanged ruleset
+does not manufacture a new version. Keep the human label (`policy_id`) alongside it: one identity
+for correctness, one for conversation, neither load-bearing for the other.
+
+**Deliberately make the version comparable but NOT ordered.** Equal/unequal only, no
+newer/older arithmetic. Ordering invites `if current_version > signed_version:` special-case logic,
+which is exactly the divergence the ruling was written to prevent. Denying yourself an operator is
+a legitimate design move when the operator's existence is what tempts the wrong implementation.
+
+**When a signature must survive config drift, split which version each check reads.** The rule that
+makes the whole thing consistent, and the thing I would most expect an implementer to get backwards:
+- **Hash recompute uses the version STORED on the record** — it verifies *what was signed*, a
+  historical fact that cannot change.
+- **Authority re-evaluation uses the CURRENT version** — it decides *whether it may still execute*,
+  a present-tense judgement.
+Share one input between them and every config edit invalidates everything, including comment
+reflows. Signature verification is archaeology; authority is live.
+
+**Key an invalidation decision off the re-evaluated OUTCOME, not off version inequality.** Version
+inequality is the obvious implementation and it is wrong: it voids all pending work on every edit,
+including cosmetic ones, and bankers learn that the system randomly rejects their work. Keying off
+"does the current evaluation require more authority?" makes loosening and cosmetic churn free, and
+confines blast radius to records that actually cross a newly-tightened value. Same shape as the
+monotonic escalator rule — one principle over two axes, which is why no separate temporal rule
+was needed.
+
+**Blast radius should be simulatable before rollout.** Because evaluation is a pure function over
+data already on the record, "what would this policy change cost?" is answerable by replay. Shipped
+as a dry-run endpoint returning the exact affected set with reasons. It **warns and never blocks** —
+gating a policy *tightening* behind pending work runs the incentive exactly backwards.
+
+**Never let one mechanism be both housekeeper and safety control.** Applied for the second time in
+this design (first for TTL expiry, now for policy voiding): the eager sweep on reload exists to
+*notify*, the lazy check at use time is the *guarantee*. If the sweep stalls, correctness is
+unaffected. This is becoming a reliable pattern for anything where a background job and a
+request-path check appear to do "the same thing."
+
+**Reconciling a doc to an overruled premise: add a mapping note, don't do 40 rewrites.** My design
+said "mediator" throughout for what is now a separate .NET `authority-service`. A total,
+mechanical terminology table at the top plus surgical rewrites of only the places where the old
+premise was *load-bearing* (topology diagram, the network-policy hedge, the Cosmos casing warning,
+which service owns the sweeper, endpoint ownership) preserved the argument's integrity and left the
+overruled reasoning readable. Scattered find-and-replace would have produced sentences that no
+longer parsed as arguments.
+
+**A split-language design turns a documented hazard into an active one.** The approval store is now
+written by .NET (Newtonsoft) and read by Python (`azure-cosmos`). Cosmos field paths are
+case-sensitive and a mismatch returns **zero rows, not an error** — see
+`.squad/skills/cosmos-casing-audit`. When a decision moves a shared store across two runtimes, a
+round-trip test (write from one, read from the other) stops being optional. I had flagged the
+config/serializer-drift cost when arguing against the split; the argument lost, so the mitigation is
+now mine to insist on rather than mine to feel vindicated about.
+
+**Audit the discarding of a human signature explicitly.** `ApprovalVoidedByPolicyChange` carries the
+full `discardedSignatures[]` (who, which slot, when). "A machine threw away a human's approval" is
+precisely the fact an incident review or regulator asks about, and it must not be reconstructible
+only by inference from a superseded document.
+
+**Resist the bulk-remediation button.** After a policy change voids N approvals, the natural product
+instinct is "re-approve all." That reconstitutes blanket approval by the back door, at the moment of
+maximum approval fatigue — the worst possible time to offer one click. Bulk *re-proposal* is fine;
+bulk *signing* is not. Worth watching for the general shape: a cleanup affordance that quietly
+undoes a control the system was built around.
+
+---
+
+## 2026-09-04T14:25:00Z — Applied policyVersion binding ruling to policy engine design
+
+**Session:** Banker Copilot Round 2 orchestration
+
+Implemented Brian's asymmetric policyVersion binding ruling into the policy-engine design document. Reconciled single-service draft with two-service split (authority-service .NET, banker-copilot-service Python). Corrected my own Q1 recommendation and documented the gap honestly.
+
+**Key changes in `docs/design/banker-copilot-policy-engine.md`:**
+
+1. **PolicyVersion derivation — content hash (§6.2.1).** Format: `pv1:<sha256[:16]>`. Recommended over hand-maintained semver because: (a) cannot be forgotten on edit, (b) **covers env-var overrides** (ConfigMap threshold edits are real policy changes with byte-identical YAML), (c) deliberately not ordered so nobody can write temporal special-casing.
+
+2. **Placement in canonical preimage** — domain-separation prefix after `action_id`, not as key inside projected object. Avoids collision with literal `policyVersion` payload field. Scheme tag bumped `bcp.v1` → `bcp.v2`.
+
+3. **Execution-time re-evaluation (§3.6)** — `authorize_execution()` pseudocode, reusing same `evaluate()` and `RUNG_ORDER` as propose-time. No `else` branch on loosened path — policy relaxation is not an event.
+
+4. **CRITICAL IMPLEMENTATION DETAIL (§6.4):** Hash recompute uses STORED policy version; rung re-evaluation uses CURRENT version. If hash recompute used current, every edit would fail hash comparison for every pending approval, directly contradicting ruling. Signature verification is archaeology; authority is live; they cannot share an input. Documented as two-row table, cannot be skimmed past.
+
+5. **Narrowed blast radius (§6.6)** — key off re-evaluated rung, not version inequality. Cosmetic edits and policy *loosening* void nothing. Only approvals crossing newly-tightened value affected. Keying off version inequality would nuke everything on every edit; called out twice.
+
+6. **Operations (§6.6)** — eager sweep for notification, lazy execute-time check as correctness guarantee (same separation as expiry design). New `POST /api/copilot/policy/impact` dry-runs candidate policy and returns exactly which approvals would void and why. **Warns, never blocks.**
+
+7. **No bulk re-sign.** Re-proposal may be bulk; signing may not. "Re-approve all 40" button reconstitutes blanket approval at moment of maximum fatigue — worst possible timing.
+
+8. **Audit (§7.2)** — `ApprovalVoidedByPolicyChange` carries full `discardedSignatures[]`. "Machine discarded human's signature" is exactly what incident reviews ask about.
+
+**Two-service reconciliation (O1 closed).** Added terminology-mapping note up front (mediator → `authority-service`, harness → `banker-copilot-service`) and rewrote load-bearing places: topology diagram, Layer 3 hedge, Cosmos casing warning, sweeper owner, endpoint table. Split makes §4 stronger: Layer 3 was previously hedged (one pod = one mesh identity); two pods make it genuine network partition. O7 (split shared KSA) now hard prerequisite.
+
+**Self-correction on Q1 (critical).** Standing recommendation: symmetric ("void if rung changes"). Ruling is asymmetric, and asymmetric is right. Voiding on downward change punishes banker for policy *relaxation* and generates re-signing churn. Signature given was for strictly *more* scrutiny than now required — safe by construction. Pattern-matched to "any drift invalidates" instead of deriving from existing monotonic principle (I-4). Failure mode is reusable: **when new rule feels like its own shape, check whether existing invariant already generates it.**
+
+**Discovered hang-togethers:**
+- **O9 (new, Danny's call):** Policy-voided approvals persist as `denied` + terminalReason (my choice) or get first-class `voided` lifecycle state? Former matches how supersede-by-re-plan works; latter arguably cleaner for auditors.
+- **O10 (new, Danny's call):** Tempting to wire `/policy/impact` into CI as required check, but runs against empty approval store (false confidence worse than no check). Ship endpoint for operators; defer gate.
+
+**For Linus:** Distinct treatment for policy-voided vs. expired vs. denied; banker-facing copy *"approval policy changed while pending — now requires supervisor co-signature (L1 → L2)"* with threshold and env key; post-reload digest; provenance on re-proposals.
+
+**Cosmos round-trip test added (§10, item 8).** Approval store written by .NET (Newtonsoft), read by Python (`azure-cosmos`). Case-sensitive mismatch returns zero rows, not error. Round-trip test is now mandatory.
+
+**Config keys added (§10):** `POLICY_RELOAD_MODE`, `POLICY_IMPACT_WARN_COUNT`, `POLICY_RELOAD_SWEEP_BATCH_SIZE` (no hardcoded values).
+
+**Status:** SUCCESS. Phase 1 signature path unblocked. All Q1 questions closed. Policy engine design fully reconciled to two-service split with honest documentation of corrected reasoning.
+
+**Orchestration log:** `.squad/orchestration-log/2026-09-04T14-25-00Z-turk.md`
+
+---
+
+## Verified Finding: Shared JWT audience blocks Layer 2
+
+All 9 services validate audience `banking-demo` with one shared symmetric key (HS256 + SymmetricSecurityKey). **Every service can forge tokens, not merely verify.** Worse than initially reported "shared audience" framing. Layer 2 (broker-only claim) cannot be built until landed. → **#334**, sequenced Phase 3.
+
+---
+
+## Verified Finding: Event-processor audit gap
+
+`src/event-processor/main.go:403-410` handles only "TransactionCreated" and "TransferInitiated"; other published event types silently unaudited. → **#335**.
+
+---
+
+## Verified Finding: Shared workload identity blocks Layer 1 isolation
+
+One KSA (`banking-workload-identity` → `banking_services` UAMI) for all 11 pods. Layer 1 "no domain Cosmos role assignment" not achievable; tool-shape isolation degrades to ConfigMap convention. → **#336**, Phase 1 takes smallest slice (dedicated identity for `authority-service`).

@@ -1467,3 +1467,202 @@ Remediation: Introduce a second `banking-copilot` audience minted by user-servic
 `infra/local/gateway.nginx.conf` and `ui-app.nginx.conf` have no `proxy_buffering off` on any `/api/` location. Without it, the entire SSE trace stream arrives as one lump when the run ends, silently defeating the live-harness illusion. The banker sees no events during the run, then the entire trace dumps at the end.
 
 Remediation: Add `proxy_buffering off;` to all location blocks serving `/api/` paths carrying SSE streams. Identified by Linus during frontend-UX spike. **Status: BLOCKING; this is the single highest-risk non-frontend dependency in the epic and needs an owner now.**
+
+### Banker Copilot — Brian's Rulings Ratified (2026-09-04, follow-up session)
+
+**Deliverables:** epic spec updated (`docs/epics/banker-copilot.md`, now 11 sections / ~1370
+lines), Turk's design doc annotated, epic #332 body rewritten, three standalone defect issues
+filed (#334, #335, #336), ratification record at
+`.squad/decisions/inbox/danny-banker-copilot-decisions-ratified.md`.
+
+#### The four rulings
+
+1. **Service split stands; `authority-service` is .NET.** Turk had independently recommended a
+   *single Python service with two internal planes* (`docs/design/banker-copilot-policy-engine.md`
+   §1.3). Brian overruled. Recorded rationale: the enforcement boundary beats language affinity
+   (a `.csproj` without an agent SDK makes "no model SDK in the mediator" *mechanically
+   checkable*; in one Python service `import agent_framework` is one careless line away);
+   `authority-service` does no Foundry work at all; static typing helps on the security-critical
+   component. **Turk's config-drift cost objection was accepted with mandatory mitigations**, not
+   waved away.
+2. **`banker`/`supervisor` roles moved into Phase 1.** New §5.8.
+3. **Two-browser L2 demo is a non-issue** — Brian does multi-browser demos routinely. I had
+   over-called this as "demo-blocking." Only real residue was seed data.
+4. **Trajectory eval → #333**, and it imposes a Phase-2 requirement: replayable traces from day
+   one. New §8.0.
+
+#### Pattern: how to overrule a teammate's design doc
+
+Brian explicitly asked me to **reconcile without deleting Turk's reasoning**. The shape that
+worked, and that I should reuse:
+- Banner at the top of *their* doc + an inline marker at the overruled section, so a reader
+  landing mid-document can't miss it.
+- **Name the claims that were accepted**, specifically. Three of Turk's four claims were correct
+  and load-bearing in my own spec — saying so is what makes the overrule land as a decision
+  rather than a dismissal.
+- State explicitly what does NOT change ("everything else is language-neutral by Turk's own
+  framing and holds unchanged"), so the doc stays usable rather than becoming suspect.
+- Point out that the ruling *is* their own stated alternative where that's true — Turk had
+  already written a "ratification alternative" that matched Brian's ruling exactly.
+
+#### Role hierarchy decision worth remembering
+
+**`supervisor` ⊃ `banker`. `admin` implies NEITHER — deliberately.** The tempting shortcut is
+admin-as-superset. If `admin` implied `supervisor`, one admin identity could satisfy *both*
+signatures on an L2 proposal (requester + co-signer) and separation of duties evaporates **while
+every test still passes**. Platform authority and banking authority are different axes and must
+not be modelled as one ladder. Generalizable: any dual-control system with a superuser role has
+this hole unless the superuser is explicitly excluded from the control ladder.
+
+Mechanism: keep the flat `role` claim (ADR-003 compat), add `effectiveRoles` array computed once
+at issuance in `AuthService.cs`, expansion rules in `config/role-hierarchy.yaml` (config, not
+constants). `effectiveRoles` is **computed, not persisted** — persisting it invites a stale-copy
+consistency bug.
+
+#### Three defects verified and filed standalone
+
+Turk surfaced two; I verified both and found the second was broader than reported, plus confirmed
+a third.
+
+- **#334 — shared JWT audience + shared symmetric key.** All 5 .NET `appsettings.json` and all 4
+  Python `app/auth.py` validate `banking-demo`; `docker-compose.yml` sets it uniformly. HS256 +
+  shared secret means every service can **forge**, not just verify. **Blocks §4.4 layer 2.**
+- **#335 — audit gap, worse than Turk described.** Turk reported the account-opening envelope
+  divergence (flat XADD fields, no `payload` wrapper, `data` as a JSON string, different stream
+  `account-opening-events`). Verified — but the sharper defect is on the *correct* stream:
+  `banking-events` receives 4 event types (`TransactionCreated`, `TransferInitiated`,
+  `UserRegistered`, `InsufficientFundsAttempt`) and `main.go` handles only the first two.
+  `UserRegistered` and `InsufficientFundsAttempt` hit `default:` → `slog.Warn("Audit Unknown
+  event type")`. Both are security-relevant. **Lesson: verify a teammate's finding rather than
+  transcribing it — the verification found the more consequential half.**
+- **#336 — single shared workload identity.** All 11 pods use SA `banking-workload-identity` →
+  UAMI `banking_services`, holding **account-scoped** Cosmos Data Contributor. **Blocks §4.4
+  layers 1 and 3.** Filed separately from #334 (application layer vs. infrastructure layer;
+  disjoint fixes, different files) — but both are needed for the four-layer defence to be four
+  layers.
+
+#### The honest caveat I had to add
+
+**My §4.4 four-layer bypass defence is currently a one-and-a-half-layer defence.** Layer 1's
+claim ("the harness receives no domain Cosmos role assignment") is not achievable under a shared
+UAMI — it degrades to *not putting a container name in a ConfigMap*, a convention rather than a
+control. I wrote that claim in the first pass without checking `infra/cloud/identity.tf`.
+**Check the infrastructure before asserting an infrastructure-enforced control.**
+
+#### Trace schema — ratified Linus's envelope rather than inventing one
+
+`docs/design/banker-copilot-ui.md` §4.2 `CopilotEventEnvelope` = `{id, seq, runId, kind, ts,
+payload}` over 20 event kinds. Already eval-ready in the important respects (`seq` monotonic and
+gapless per run; server-clock `ts`). Additions specified: durable persistence to `copilot-traces`
+(PK `/runId`), `traceId`/`spanId` on tool frames, model/token metadata, `parentRunId` on subagent
+frames, **redaction at emit not at render**, and `policyVersion` + resolved rung on
+`approval.required`.
+
+That last item is the one worth remembering: for an approval-gated agent system the highest-value
+eval question is **not** "was the recommendation good?" but **"did the authority ladder resolve
+correctly given the evidence?"** — unanswerable unless the resolved rung *and* the policy version
+that produced it are in the trace.
+
+#### User preferences reconfirmed (Brian)
+
+- Wants competing designs **reconciled in writing**, with the losing argument preserved and its
+  correct parts named. Legible history matters to him.
+- Wants defects **verified before filing** — he explicitly said to skip Turk's finding if it
+  didn't hold up rather than file a bogus issue.
+- Cross-agent artifacts should converge on **one schema**, not parallel ones (UI stream and eval
+  replay share an envelope).
+- Repo labels: `type:bug` exists (also bare `bug`, `type:feature`, `type:spike`, `type:chore`,
+  `type:docs`, `type:epic`).
+
+### Session: `policyVersion` binding ruling (Q1 closed) — 2026-09-04
+
+**The ruling (Brian).** `policyVersion` is bound into the signature payload hash. At execution,
+re-evaluate under the current policy: **higher rung → signature void; unchanged or lower →
+honor and execute.** Never auto-downgrade, never auto-honor an under-signed action.
+
+**I was wrong and the correction generalizes.** My standing recommendation was symmetric —
+"void if the rung would change." The ruling is asymmetric and asymmetric is right: voiding on a
+*relaxation* punishes a banker for a policy that got *less* strict and generates churn, when the
+signature they gave was for strictly more scrutiny than is now required. I had pattern-matched
+to "any drift invalidates" instead of deriving the rule from invariant I-4, which already
+generates it. **Reusable lesson: when a new rule seems to need its own shape, first check
+whether an existing invariant already produces it.** Brian framed it as one principle on two
+axes — escalators are monotonic over *context*, policy drift is monotonic over *time* — and
+added a standing guardrail: special-case logic for the temporal case means the model has
+diverged and comes back to him.
+
+**Drift hazard found while checking composition with §8.0 — this is the transferable finding.**
+Asked to confirm the ruling composed with the #333 trace requirement, I grepped every
+`policyVersion` occurrence and found **the spec already had it twice in the same Cosmos
+document** — top-level and nested inside `rungExplanation`. Harmless as metadata; a latent
+forgery-adjacent bug once the value is bound into a security hash. It would have shipped.
+**Rule I am now applying generally: any value bound into a security hash gets exactly ONE
+authoritative home and a byte-identity contract test across every site that reads it.** Wrote
+§5.3.1 to make that normative (5 sites enumerated). The specific failure prevented: the trace
+envelope's copy defaults to "policy active at emit," #333 replays across a policy change, and
+the eval judges the rung against the wrong policy — invisible normally, wrong exactly when it
+matters.
+
+**Content hash over hand-maintained semver.** I stated the constraint (derivable from policy
+content alone) and delegated the mechanism to Turk. Reason: a semver someone forgets to bump
+gives two different policies one version, which *silently defeats the entire binding* — a
+signature from the old policy still validates under the new one. A control that depends on
+someone remembering is not a control. Removed the literal `policyVersion: "1.0.0"` from the
+policy YAML in §4.2 and replaced it with a derived-at-load-time comment.
+
+**Design pattern worth reusing: purity as an enabler.** The re-evaluation gate is a *reuse* of
+the §4.3 evaluator, not new logic — possible only because that evaluator was specified pure
+(same inputs → same rung, no I/O). Purity bought a whole feature for one comparison. Worth
+defending when someone proposes reaching into a datastore from inside `evaluate()`.
+
+**Human-factors requirement I keep having to re-add.** Every void path needs a *specific*
+banker-facing reason ("the approval policy changed while this was pending — now requires
+supervisor co-approval, L1 → L2"), never a generic error. Someone who signed in good faith and
+finds it un-signed deserves the reason; generic failures train people to distrust the approval
+card, which is the one artifact the whole epic rests on. Flagged for Linus as a
+`POLICY_RUNG_ESCALATED` reason code on his existing `approval.voided` event kind.
+
+**Open, handed to Turk (risk 5 rewritten, not closed).** Correctness is settled; the
+*operational* blast radius is not — one policy edit invalidates N pending approvals and signers
+find out asynchronously. My lean: **lazy voiding (correct, simple) + eager notification** —
+void at execution, tell people immediately. Plus a bulk "these were invalidated" surface and a
+confirmation step on policy writes reporting the affected count before the change lands.
+
+**Key paths this session:** `docs/epics/banker-copilot.md` §5.3.1 (one-definition rule), §5.3.2
+(the ruling + worked $40k example), §5.1 (lifecycle gate), §4.2 (policy YAML annotation), §5.7
+(void reason codes) · `.squad/decisions/inbox/danny-policy-version-binding.md` · epic #332 body.
+
+---
+
+## 2026-09-04T14:20:00Z — Banker Copilot Round 2: Five rulings ratified & policyVersion binding closed
+
+**Session:** Banker Copilot epic ideation — ruling round 2 (Brian as ruling authority)
+
+Executed the "ruling round 2" orchestration with Brian ratifying five major architectural decisions and my applying the policyVersion binding ruling to the design. Verified findings against source code; documented composition bug (policyVersion duplicated twice in same Cosmos document).
+
+**Five rulings ratified:**
+1. Service split: `authority-service` stays .NET — enforcement boundary + static typing justify language choice. Turk's reasoning preserved in full.
+2. Role provisioning into Phase 1 — `banker` and `supervisor` roles with hierarchy, idempotent startup seed bootstrap, server-side SoD enforcement.
+3. Two-browser demo accepted — L2 uses two sessions intentionally to show separation of duties. Constraint is a feature, no engineering around it.
+4. Trajectory evaluation → #333 — harness emits structured replayable traces from day one. Linus's `CopilotEventEnvelope` ratified as single schema. Key insight: eval question is "did ladder resolve correctly?" not "was recommendation good?"
+5. PolicyVersion binding — asymmetric void-on-escalation-only (CLOSES Q1). Bound into payload hash; current policy re-evaluated at execution; higher rung ⇒ void, unchanged/lower ⇒ honor. Same monotonic principle as escalators (I-4), applied over time.
+
+**Verified findings filed as issues:**
+- #334: All services mint JWT with shared key — any service can forge tokens, not merely verify. Layer 2 blocked.
+- #335: Event-processor drops 4 event types silently. Authority events would inherit this.
+- #336: Shared KSA for all 11 pods — Layer 1 "no domain Cosmos assignment" not achievable.
+
+**Composition bug corrected:** `policyVersion` was duplicated twice in same Cosmos document (would have shipped silent forgery bug). Now single-definition normative; contract test asserts byte-identity across approval record, signature hash, trace frame, audit events. `rungExplanation`'s redundant copy deleted.
+
+**Self-correction on Q1:** My standing recommendation was symmetric ("void if rung changes"). Asymmetric is right — voiding on downward change punishes banker for relaxation and generates re-signing churn. Pattern-matched to "any drift invalidates" instead of deriving from existing invariant I-4. Failure mode is reusable.
+
+**Critical detail for implementation:** Hash recompute uses STORED policy version; rung re-evaluation uses CURRENT version. If hash used current, every edit (including comment reflow) would fail comparison for every pending approval, directly contradicting ruling clause 3. Signature verification is archaeology; authority is live; they cannot share an input.
+
+**For Linus:** Distinct treatment for policy-voided vs. expired vs. denied (three meanings, cannot collapse); banker-facing copy *"approval policy changed while pending — now requires supervisor co-signature (L1 → L2)"* naming threshold and env key; `POLICY_RUNG_ESCALATED` reason code (voided sig must explain itself, not fail generically).
+
+**For Turk:** Confirm exactly one definition of `policyVersion` shared by audit envelope, payload hash, approval record. My recommendation is content hash (pv1:<sha256[:16]>), derivable from policy content, covers env-var overrides where YAML bytes don't change.
+
+**Status:** SUCCESS. Phase 1 signature path unblocked. All five rulings executed. Composition bug corrected. Honest documentation of verified findings and corrected reasoning.
+
+**Orchestration logs:** `.squad/orchestration-log/2026-09-04T14-20-00Z-danny.md`
+

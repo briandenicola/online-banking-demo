@@ -1,9 +1,120 @@
 # Banker Copilot — Authority & Approval Policy Engine (Design Spike)
 
-**Status:** DESIGN SPIKE — not implemented. Feeds Danny's epic spec (`docs/epics/banker-copilot.md`).
+**Status:** DESIGN SPIKE — **§1.3 language recommendation OVERRULED** and **Q1 (policy version vs.
+signature in flight) RULED ON** (see banners below); the remainder is ratified and is the detailed
+design under `docs/epics/banker-copilot.md`.
 **Author:** Turk (Backend Dev)
 **Date:** 2026-09-04
-**Ratification required from:** Danny (Lead/Architect) on §1, §4, and all items in §9.
+**Ratification:** Danny (Lead/Architect), 2026-09-04. §1 ruled on below. §4 and §9 ratified as
+written except where the epic spec supersedes.
+**Amended:** 2026-09-04 by Turk, incorporating Brian's Q1 ruling — §3.6, §6.2 (rule 9), §6.2.1,
+§6.3, §6.4, §6.6, §7.2, §8.10, and the two-service reconciliation throughout §4/§5/§8/§10.
+
+---
+
+> ## ⚠️ Ratification note — §1.3 recommendation considered and OVERRULED (2026-09-04)
+>
+> **Turk's recommendation in §1.3 was: one Python/FastAPI service, `banker-copilot-service`,
+> with two internally separated planes (harness + mediator).**
+>
+> **Brian ruled otherwise: two services — `banker-copilot-service` (Python/FastAPI, harness) and
+> `authority-service` (.NET 10, policy engine + approval store + sole write path).** This is
+> Turk's own "ratification alternative" from the end of §1.3, and Q&A item **O1** in §9 is
+> resolved that way.
+>
+> **Turk's reasoning is preserved below in full and is not deleted.** It is well argued and the
+> evidence-gathering in §1.1–§1.2 (the Foundry/agent-framework inventory across services) is the
+> best survey of the repo anyone has written and was load-bearing in the epic spec. Three of his
+> points stand as correct and were accepted:
+> - Every first-class agent construct in this repo exists only in Python. ✅ Decisive for the
+>   *harness* — which is why the harness is Python.
+> - `prompt-eval-service` reaches Foundry via hand-rolled REST with no agent SDK. ✅ Correct, and
+>   the epic spec cites it as the precedent for "**.NET owns state and control; Python owns the
+>   model runtime**."
+> - A split doubles the config-consistency surface (ConfigMap drift, Cosmos casing drift). ✅
+>   **Accepted as a real cost, with mandatory mitigations** — see epic §2.2.
+>
+> **Why it was overruled anyway** (full rationale in `docs/epics/banker-copilot.md` §2.2):
+>
+> 1. **The enforcement boundary matters more than language affinity.** Turk is right that the
+>    security property comes from the process/network boundary, not the language. But a language
+>    boundary buys something additional: it makes "the mediator contains no model SDK" a
+>    *mechanically checkable* property. In a single Python service, `import agent_framework`
+>    inside the mediator plane is one careless line away and will pass review on a busy day.
+>    Across a `.csproj` with no such package, it is not expressible.
+> 2. **`authority-service` does no Foundry or model work at all.** The Python-affinity argument
+>    is decisive for the harness and simply does not apply to policy evaluation + Cosmos
+>    persistence + JWT verification + an outbound REST broker — which is exactly what five .NET
+>    services in this repo already do well.
+> 3. **Static typing on the security-critical component**, which §1.2 concedes twice as a
+>    genuine .NET advantage (typing, exact decimal money math).
+>
+> **What this changes in this document:** §1.3's recommendation only. Everything else — the
+> policy schema, evaluator semantics, `max`-over-total-order escalation, approval lifecycle,
+> Cosmos design, signing scheme, §4's enforcement model, and the open items in §9 — is
+> language-neutral by Turk's own framing and **holds unchanged**. Read `.NET` wherever the
+> mediator plane is described as Python.
+>
+> Two findings Turk surfaced while writing this have been verified and filed standalone:
+> **#334** (shared JWT audience, §8.x), **#335** (audit envelope divergence, §12.x — verified and
+> found to be broader than reported), and **#336** (single shared workload identity).
+> — *Danny*
+
+---
+
+> ## ⚖️ Ruling — Q1: policy version vs. signature in flight (Brian, 2026-09-04)
+>
+> **`policyVersion` is bound into the payload hash. A signature is valid only for the exact
+> policy version under which it was produced.**
+>
+> 1. `policyVersion` is part of the canonicalized preimage that is hashed and signed, alongside
+>    action type, target, amount, and terms.
+> 2. **At execution time, re-evaluate the action under the CURRENT policy.**
+>    - Required rung **higher** than the rung the signature satisfied ⇒ **signature is void.**
+>      Re-propose; gather signatures again at the new rung.
+>    - Required rung **unchanged or lower** ⇒ honour the existing signature. Execute.
+> 3. **Never auto-downgrade, never auto-honour an under-signed action.** A signature can be
+>    *invalidated* by a policy change; it can never be *rescued into sufficiency* by one.
+>
+> **The principle to record:** this is the **same monotonic rule as the dynamic escalators,
+> applied over time instead of over context.** Escalators only push a rung up; policy drift only
+> invalidates, never rescues. One principle, two axes. There is deliberately **no second,
+> differently-shaped rule for the temporal case** — if implementation finds itself writing
+> special-case logic here, that is a signal the model has diverged and it goes back to Brian.
+>
+> Implemented in this document at §6.2.1 (derivation), §6.2 rule 9 + §6.3 (binding), §3.6
+> (execution-time re-evaluation pseudocode and the void path), §6.6 (blast radius and
+> operations), §7.2 (`ApprovalVoidedByPolicyChange`). **O1 in §9.1 is closed.**
+> — *ruled by Brian; written up by Turk*
+
+---
+
+> ### 📖 Terminology after the O1 ruling — read this before §4 onward
+>
+> This document was written against a single-service design and uses the word **"mediator"**
+> throughout for the plane that owns policy evaluation, the approval store, signing, and the
+> sole write path. Under Brian's ruling that plane is a **separate .NET 10 service named
+> `authority-service`**. The mapping is total and mechanical:
+>
+> | As written | Read as |
+> |---|---|
+> | "the mediator" / "the mediator plane" | **`authority-service`** (.NET 10) |
+> | "the harness plane" | **`banker-copilot-service`** (Python/FastAPI) |
+> | "in-process, no network hop" (§4.3) | an **authenticated HTTP hop** across a service boundary |
+> | `/internal/mediate/*` | routes on `authority-service`, never exposed through ingress |
+> | `mypy --strict` on the mediator package (§1.3) | nullable-reference-types + analyzers on the `authority-service` csproj |
+>
+> **The split makes the design stronger, not weaker.** §4.4 Layer 3 notes that in a single pod
+> the harness and mediator share a mesh identity, so network policy could protect the perimeter
+> but not the internal boundary — and that Layers 1 and 2 therefore had to carry the load. With
+> two services and two KSAs, **Layer 3 becomes a genuine network partition** and the enforcement
+> story is materially better than what is described below. Where the text hedges about the
+> single-service case, the hedge is now moot.
+>
+> **The cost I flagged is now real and must be actively managed** — one ConfigMap contract per
+> service, two `docker-compose` service definitions, and **two Cosmos serializers that must agree
+> on casing** (§5.3). See `.squad/skills/cosmos-casing-audit`; this is the exact shape of bug that
+> silently returns zero rows.
 
 ---
 
@@ -55,6 +166,12 @@ From `.squad/decisions/inbox/copilot-directive-banker-copilot-{epic,authority-mo
 | Team/Squad familiarity | Turk's primary surface | Also covered |
 
 ### 1.3 Recommendation — split by plane, majority Python
+
+> 🚫 **OVERRULED 2026-09-04 — see the ratification banner at the top of this document.**
+> Ruling: **two services**, `banker-copilot-service` (Python, harness) + `authority-service`
+> (.NET, mediator) — i.e. the "ratification alternative" at the end of this section. The
+> reasoning below is preserved deliberately; it was considered, and three of its four claims
+> were accepted. Only the single-service/single-language conclusion was rejected.
 
 > **RECOMMENDATION FOR DANNY TO RATIFY.**
 
@@ -893,6 +1010,78 @@ Corollary: a mis-tuned or even maliciously-edited threshold value can make the s
 
 `evaluate()` is a pure function of `(ctx, policy, cfg)`. It performs no I/O — evidence is collected *before* evaluation, by the proposal pipeline. The resolved `cfg` snapshot and `policy.metadata.policy_id` are recorded on the approval document, so a decision is exactly reproducible from the audit record.
 
+### 3.6 Execution-time re-evaluation and the void path (Q1 ruling)
+
+Evaluation runs **twice**: once at proposal (to build the ladder and the slots) and once again at execution (to confirm the ladder has not tightened underneath a signature already given). The second run is the same `evaluate()` — no temporal variant, no special case.
+
+```python
+def authorize_execution(approval: Approval, policy: Policy, cfg: ResolvedThresholds) -> ExecDecision:
+    """Runs immediately before egress. Gate (4) of §8.8's ordered gate."""
+
+    # ---- a. Expiry is checked first and independently. TTL expiry == DENIED. --
+    if now_utc() >= approval.expiresAt:
+        return REFUSE(kind="expired",
+                      reason="This approval expired at %s without full signature."
+                             % approval.expiresAt)
+
+    # ---- b. Re-evaluate under the CURRENT policy, not the stored one. ---------
+    #         Same pure function as at proposal time. ctx is rebuilt from the
+    #         approval's frozen payload + evidence, so the only thing that can
+    #         differ is the ruleset itself.
+    ctx     = rebuild_context(approval)
+    current = evaluate(ctx, policy, cfg)          # policy/cfg are the LIVE ones
+
+    # ---- c. Hard L3 is absolute, whatever was signed. ------------------------
+    if not current.admissible or current.required_rung == "L3":
+        return VOID(new_rung="L3",
+                    reason="The approval policy changed while this was pending, and this "
+                           "action is no longer permitted through the Copilot at all.")
+
+    # ---- d. THE RULING. Compare rungs on the SAME total order as §3.4. -------
+    signed_rung = approval.policy.requiredRung        # the rung the signature satisfied
+
+    if RUNG_ORDER[current.required_rung] > RUNG_ORDER[signed_rung]:
+        # TIGHTENED -> void. Re-propose at the new rung.
+        return VOID(new_rung=current.required_rung,
+                    new_signers=current.required_signers,
+                    fired=current.fired_escalators,
+                    reason="The approval policy changed while this was pending. This action "
+                           "now requires %s; your signature authorised %s."
+                           % (label(current.required_rung), label(signed_rung)))
+
+    # UNCHANGED or LOOSENED -> honour what was signed. Note there is deliberately
+    # no `else` branch that adjusts anything: we do NOT rewrite requiredRung down,
+    # do NOT drop a collected signature, do NOT shrink the quorum. A loosened
+    # policy is simply not an event.
+    return PROCEED(evaluated_under=policy_version(policy, cfg),
+                   signed_under=approval.policy.policyVersion)
+
+
+def label(rung: str) -> str:
+    return {"L1": "your signature alone",
+            "L2": "a supervisor co-signature",
+            "L3": "handling outside the Copilot"}[rung]
+```
+
+Four properties worth naming explicitly:
+
+- **There is no quorum-sufficiency comparison.** The check is on the *rung*, and the structural floors in `evaluate()` step 7 mean rung determines the minimum quorum. A policy that raised `min_signers` within the same rung is caught because `evaluate()` re-derives the slots; `VOID` carries `new_signers` so the re-proposal is built correctly.
+- **The comparison is `>` on the same `RUNG_ORDER` used by §3.4.** One ordering exists in the engine, and both the contextual axis and the temporal axis read it. If someone ever needs a second ordering, the model has diverged.
+- **`PROCEED` records both versions** — `signed_under` and `evaluated_under` — on the execution record. When they differ, that is an audit annotation and nothing more; it must never become a branch condition (§6.4).
+- **The void path cannot be skipped by retry.** `VOID` is terminal for that approval document (persisted as `denied` / `terminalReason = "policy_change"`, see §6.4); a client replaying `execute` gets the same `409` forever. The only forward path is a new proposal.
+
+**Worked example (the canonical one for the docs and the UI copy).**
+
+| | |
+|---|---|
+| 1 | Banker proposes a **$40,000 loan approval**. Under the policy in force, the L1 ceiling is $50,000, so this is **L1** — the banker signs alone. Signature is bound to the payload hash *and* to that policy version. |
+| 2 | Approval sits `pending`/`signed`, awaiting execution. |
+| 3 | Ops rolls out a policy change dropping the L1 ceiling to **$25,000** (a ConfigMap edit to `POLICY_LOAN_L1_MAX` — note this needs no file edit, which is exactly why §6.2.1 hashes the *resolved* policy). |
+| 4 | Execution is attempted. `authorize_execution` re-evaluates: $40,000 now exceeds the L1 ceiling ⇒ required rung is **L2**. `L2 > L1` ⇒ **the prior signature is void.** |
+| 5 | A new approval is proposed at **L2**. The supervisor agent produces its second opinion; a **human supervisor of a different identity co-signs**. Only then does it execute. |
+
+The banker must see **"the approval policy changed while this was pending — this loan now requires a supervisor co-signature"**, naming the threshold and its env key exactly as §3.3 does for escalators, and *not* a generic `409 Conflict` or "approval invalid". The void reason string is rendered and frozen onto the new proposal the same way `firedEscalators[]` reasons are, so the re-proposal explains its own provenance. **UI requirement — flagged for Linus, not designed here.**
+
 ---
 
 ## 4. Enforcement architecture
@@ -916,23 +1105,27 @@ That last point is the crux: **the current token model provides no way to say "t
   Browser (thin client)
         │  banker JWT   aud=banking-demo
         ▼
-  ┌──────────────────────────────────────────────────────────┐
-  │ banker-copilot-service            (KSA: banker-copilot)  │
-  │                                                          │
-  │  ┌────────────────┐        in-process,                   │
-  │  │ HARNESS plane  │  ───►  no network hop  ───►  ┌──────────────────┐
-  │  │ Foundry Agent  │                             │ MEDIATOR plane   │
-  │  │ Service host   │  ◄── tool results ◄──       │ policy + approval│
-  │  └────────────────┘                             │ + executor       │
-  │        │                                        └────────┬─────────┘
-  │        │ tool calls                                      │
-  └────────┼─────────────────────────────────────────────────┼──────────┘
-           │                                                 │
-           ▼                                                 ▼
-   Azure AI Foundry Agent Service              domain services (account, transfer,
-   (model + tool-call protocol)                 transaction, user, ai, account-opening,
-                                                prompt-eval)
+  ┌───────────────────────────────┐        ┌────────────────────────────────┐
+  │ banker-copilot-service        │        │ authority-service              │
+  │ Python/FastAPI  (KSA:         │  HTTP  │ .NET 10   (KSA:                │
+  │ banker-copilot-harness)       │ ─────► │ banker-copilot-authority)      │
+  │                               │  aud=  │                                │
+  │  HARNESS plane                │ banking│  policy engine                 │
+  │  • Foundry Agent Service host │ -copilot│ approval store (Cosmos)       │
+  │  • tool registry              │        │  signing / verification        │
+  │  • SSE trace stream           │ ◄───── │  executor  ── SOLE write path  │
+  │                               │ results│                                │
+  │  NO downstream credential     │        │  holds APPROVAL_SIGNING_KEY    │
+  └───────────────┬───────────────┘        └────────────────┬───────────────┘
+       ▲          │ tool calls                              │ mints per-execution
+       │          ▼                                         ▼ single-use token
+   Browser   Azure AI Foundry Agent Service    domain services (account, transfer,
+ (thin client) (model + tool-call protocol)     transaction, user, ai, account-opening,
+  banker JWT                                    prompt-eval)
+  aud=banking-demo
 ```
+
+The harness↔authority hop is now a **real network boundary** carrying its own audience-scoped token, not an in-process call. That is the upgrade the O1 ruling buys: the chokepoint is enforceable by network policy and mesh identity, not merely by code layout.
 
 Every agent tool is a thin wrapper over a mediator call. There is no HTTP client in the harness plane pointed at a domain service — **the harness plane owns no downstream credential at all.** Read tools go through `POST /internal/mediate/read`; write tools go through `POST /internal/mediate/propose`, which *never* executes. Execution happens only on `POST /api/copilot/approvals/{id}/execute`, and that handler's first three lines are:
 
@@ -975,7 +1168,7 @@ Give the harness its **own** KSA (`banker-copilot`) instead of the shared `banki
 - Per-service `AuthorizationPolicy` allowing `principals: [<mesh identity of banking-workload-identity>]` and the mediator's identity — but **not** the harness identity — as sources for domain services.
 - `AuthorizationPolicy` on `banker-copilot-service` allowing the ingress gateway only.
 
-If harness and mediator are split into two pods (Danny's call, §1.3), this becomes a genuine network partition: the harness pod's egress allowlist is `{mediator, Foundry endpoint, OTLP collector}` and nothing else. In one pod they share a sidecar identity, so Layer 3 protects the perimeter but not the internal split — which is why Layers 1 and 2 carry the load in the single-service design.
+**Resolved by the O1 ruling — this is now a genuine network partition.** With `banker-copilot-service` and `authority-service` in separate pods under separate KSAs, the harness pod's egress allowlist is `{authority-service, Foundry endpoint, OTLP collector}` and nothing else, and no domain service accepts the harness identity as a source principal. (In the single-pod design originally proposed here, the two planes would have shared one sidecar identity, so Layer 3 protected only the perimeter and Layers 1–2 had to carry the load. That hedge no longer applies.) This depends on **O7** — splitting the shared `banking-workload-identity` KSA — which is now a hard prerequisite rather than a nice-to-have.
 
 **Layer 4 — Capability allowlist at tool-registration time.**
 The tool registry is built *from* `policy.actions`. An action with `agent_may_propose: false` yields no tool at all — it is not in the Foundry agent's tool schema, so the model has no name to call. Actions absent from the policy file are similarly unreachable (`unknown_action: deny`). Prompt injection cannot invent a tool that was never registered.
@@ -1046,7 +1239,7 @@ Serverless matters: there is no autoscale to hide sloppy cross-partition queries
 
 ### 5.3 Document schema
 
-Camel-cased throughout, and the .NET/Python serializer settings must agree — see `.squad/skills/cosmos-casing-audit`. If Danny ratifies a split-language design, this schema is the exact place casing drift will bite.
+Camel-cased throughout. **Under the ratified split-language design this is the highest-risk schema in the epic:** `authority-service` (.NET, `Microsoft.Azure.Cosmos` + Newtonsoft) writes these documents and `banker-copilot-service` (Python, `azure-cosmos`) reads some of them for the trace pane. Cosmos SQL field paths are case-sensitive and a serializer mismatch returns **zero rows rather than an error** — see `.squad/skills/cosmos-casing-audit`. Mitigation is not optional: pin an explicit camelCase contract, generate both sides from one schema definition, and add a round-trip test that writes from .NET and reads from Python.
 
 ```jsonc
 {
@@ -1073,11 +1266,12 @@ Camel-cased throughout, and the .NET/Python serializer settings must agree — s
                "amount": "7500.00", "currency": "USD", "memo": "wire recall" },
   "payloadHash": "sha256:9f2b…",           // §6 — what the signature binds to
   "hashFields": ["fromAccountId","toAccountId","amount","currency","memo"],
-  "canonicalizationVersion": 1,
+  "canonicalizationVersion": 2,
 
   "policy": {
-    "policyId": "banker-copilot-authority-v1",
-    "policyVersion": 1,
+    "policyId": "banker-copilot-authority-v1",        // human label, stable across edits
+    "policyVersion": "pv1:6b41c0d9e2a7f318",          // content hash of the RESOLVED policy (§6.2.1)
+                                                      // bound into payloadHash; tampering breaks verification
     "baseRung": "L1",
     "requiredRung": "L2",
     "requiredSigners": 2,
@@ -1121,7 +1315,11 @@ Camel-cased throughout, and the .NET/Python serializer settings must agree — s
     "attempts": 0,
     "downstreamStatus": null,
     "downstreamRef": null,
-    "lastError": null                      // shape per .squad/skills/cosmos-workflow-state
+    "lastError": null,                     // shape per .squad/skills/cosmos-workflow-state
+    "signedUnderPolicyVersion": null,      // == policy.policyVersion above; the ruleset SIGNED under
+    "evaluatedUnderPolicyVersion": null    // the LIVE ruleset at execute time (§3.6).
+                                           // Differing values are an audit annotation ONLY,
+                                           // never a branch condition (§6.4).
   },
 
   "ttl": null,                              // set ONLY after terminal state — retention purge
@@ -1138,7 +1336,7 @@ Cosmos native TTL **deletes** the document. The directive says TTL expiry means 
 **Recommendation: sweeper for semantics + native TTL for retention purge, plus lazy read-side expiry.**
 
 1. **Lazy expiry on read (the actual safety property).** Every code path that loads an approval — `sign`, `deny`, `execute`, `get` — compares `expiresAt` to `now()` *before* acting. If past, it refuses and transitions the doc to `expired`. This means sweeper lag can never permit a late signature. The sweeper is a *housekeeper*, not a security control — that separation matters, because a background job that is also a security control is a single point of failure.
-2. **Sweeper (housekeeper).** A background task in `banker-copilot-service` (asyncio task, same pattern as the account-opening consumer) runs every `APPROVAL_SWEEP_INTERVAL_SECONDS` (config, default `60`) and queries:
+2. **Sweeper (housekeeper).** A background task in **`authority-service`** (a hosted `BackgroundService`, the standard .NET pattern in this repo — it must live with the approval store and the signing key, never in the harness) runs every `APPROVAL_SWEEP_INTERVAL_SECONDS` (config, default `60`) and queries:
    `SELECT * FROM c WHERE c.docType='approval' AND c.status='pending' AND c.expiresAtEpoch <= @now OFFSET 0 LIMIT @batch`
    For each: etag-guarded transition to `expired`, `terminalReason = "ttl_expired_denied"`, emit `ApprovalExpired` to the audit stream (§7), and set `ttl = APPROVAL_RETENTION_SECONDS`. Multi-replica safety via a Redis lock (`copilot:sweeper:lock`, SET NX PX) — the repo already uses Redis leases for the chat-memory reconciler.
 3. **Native TTL for retention.** `default_ttl = -1` (enabled, no default). `ttl` is set on a document **only when it reaches a terminal state**, to `APPROVAL_RETENTION_SECONDS` (config, default `7776000` = 90 days). Live approvals have `ttl: null` and are immortal until a human or the sweeper resolves them — so a stalled sweeper can never cause silent deletion of a pending approval.
@@ -1167,9 +1365,9 @@ Indexing policy: default indexing **off** for `/payload/*` and `/evidence/*` (la
 
 Not the raw request body. The **projection** of the payload onto `action.hash_fields`, in the order declared in the policy file, canonicalized. Projecting explicitly (rather than hashing everything) means adding a non-material field later does not invalidate in-flight approvals, and — more importantly — it makes "what did the human actually agree to?" a reviewable list in the policy file rather than an emergent property of whatever the agent happened to serialize.
 
-### 6.2 Canonicalization rules (v1)
+### 6.2 Canonicalization rules (v2)
 
-Based on **RFC 8785 (JCS)** with two deliberate deviations for money. `canonicalizationVersion` is stored on every approval so the rules can evolve without invalidating history.
+Based on **RFC 8785 (JCS)** with two deliberate deviations for money, plus the `policyVersion` binding required by Brian's Q1 ruling (rule 9). `canonicalizationVersion` is stored on every approval so the rules can evolve without invalidating history.
 
 1. **Object keys** sorted by UTF-16 code unit, ascending (JCS rule). Deterministic regardless of dict insertion order or language.
 2. **No insignificant whitespace.** Separators are exactly `,` and `:`.
@@ -1179,22 +1377,49 @@ Based on **RFC 8785 (JCS)** with two deliberate deviations for money. `canonical
 6. **Arrays** preserve order (order is semantic). Elements canonicalized recursively.
 7. **Nested objects** recurse with the same rules; `hash_fields` may name dotted paths (`conditions.rateCapBps`).
 8. **Missing declared field** → hard error, never silently skipped. A proposal that cannot supply a `hash_fields` entry is malformed.
+9. **`policyVersion` is part of the preimage** (Brian's Q1 ruling). It sits in the **domain-separation prefix**, on its own line, immediately after `action_id` and before the canonical projection — *not* as a key inside the projected object. Two reasons this placement is the correct reading of "part of the canonicalized payload": (a) `action_id` is already carried in the prefix, and the ruling explicitly places `policyVersion` *"alongside action type"*; (b) putting it in the object would let a payload field literally named `policyVersion` collide with it, and would blur the projection's meaning — the projection is exactly *"the business facts the human agreed to"*, and the policy version is the *ruleset those facts were judged under*. Ordering is fixed by the format string below, so determinism is unaffected.
 
 ```
 canonical_string = JCS_MODIFIED( project(payload, action.hash_fields) )
 payload_hash     = "sha256:" + hex(SHA256(
-                       "bcp.v1\n" + action_id + "\n" + canonical_string ))
+                       "bcp.v2\n" + action_id + "\n" + policy_version + "\n" + canonical_string ))
 ```
 
-The domain-separation prefix (`bcp.v1` + `action_id`) means an identical payload under a different action produces a different hash — a signature for `risk_score.rescore` can never be replayed against `risk_score.override`.
+The scheme tag moves `bcp.v1` → **`bcp.v2`** and `canonicalizationVersion` moves `1` → **`2`**, because the preimage shape changed. Nothing is in flight yet, so there is no migration; the version bump exists so that a future reader can never mistake a v1 hash for a v2 one.
+
+The domain-separation prefix (`bcp.v2` + `action_id` + `policy_version`) means an identical payload under a different action — **or under a different ruleset** — produces a different hash. A signature for `risk_score.rescore` can never be replayed against `risk_score.override`, and a signature produced under a permissive policy can never be presented as though it were produced under the current one.
+
+**What this binding actually buys, stated precisely.** §3.6's execution-time re-evaluation already refuses to execute when the ladder has tightened, so the binding is not what stops an under-signed write. What it stops is *tampering with the record of which ruleset applied*. Without the binding, `approval.policy.policyVersion` is an ordinary mutable document field: anyone who can write the document can relabel a signature as having been produced under a different policy, and the audit trail cannot tell. With the binding, editing that field breaks hash verification at execute time and at any later audit re-verification. It converts "this human signed under this ruleset" from an **asserted** fact into a **verifiable** one. That is the whole of it, and it is worth having.
+
+### 6.2.1 How `policyVersion` is derived — content hash, not semver
+
+**Recommendation: `policyVersion` is a content hash of the *resolved* policy, not a hand-maintained version string.**
+
+```
+resolved_policy = { policy file AST, with every threshold reference
+                    replaced by its resolved value (env → file default) }
+
+policy_version  = "pv1:" + hex(SHA256( JCS_MODIFIED(resolved_policy) ))[:16]
+```
+
+Three properties, in order of importance:
+
+1. **It cannot be forgotten on edit.** A hand-maintained `policy_version: 3` is a field someone must remember to bump in the same commit as the rule they changed. They will not, eventually, and the failure is silent and security-relevant: signatures keep validating against a ruleset that no longer exists. A content hash has no such failure mode — the version *is* the content.
+2. **It covers env-var overrides, which a file hash does not.** This is the subtle one and it is why the hash is over the **resolved** policy rather than the file bytes. Every threshold in this design is overridable by env var (§2.2). `POLICY_TRANSFER_L2_AMOUNT` changing from `5000.00` to `2500.00` in a ConfigMap is a genuine policy change that alters who must sign — but the YAML file on disk is byte-identical. Hashing the file would report "no change." Hashing the resolved values reports it correctly. Resolution happens once at startup and is already snapshotted (§3.5), so this costs nothing.
+3. **It is comparable but deliberately not ordered.** Two versions are equal or unequal; there is no "newer/older" arithmetic. That is a feature here — the ruling never asks "is the policy newer?", it asks "does the *current* evaluation require a higher rung?". Ordering would invite exactly the kind of "if version > signed version then…" special-case logic the ruling forbids.
+
+Costs, stated honestly: (a) hashes are not human-legible, so `policy_id` (`banker-copilot-authority-v1`) and `metadata.effective_from` stay in the document as the *human* label, with the content hash as the *machine* identity — one identity for correctness, one for conversation, and neither is load-bearing for the other; (b) a cosmetic edit (a `description:` string, a comment reflow) changes the hash. This is a non-event under the ruling: a changed hash by itself invalidates nothing, because §3.6 keys off the **re-evaluated rung**, not off hash inequality. Cosmetic churn is therefore invisible to bankers, and only genuine tightening reaches them. Worth stating plainly, because "any policy edit nukes all pending approvals" is the obvious wrong implementation of this ruling and the one a reasonable engineer would reach for first.
+
+**Ordering discipline for the hash to be stable:** `resolved_policy` is canonicalized with the same JCS-modified rules as payloads (sorted keys, money as fixed-scale decimal strings), so YAML key order, comment churn, and dict iteration order cannot perturb it. Anchors/aliases are expanded before hashing. The resolved snapshot excludes `metadata.effective_from` and `metadata.owner` — provenance, not rules — so re-deploying an unchanged ruleset with a new timestamp does not manufacture a new version.
 
 ### 6.3 What the signature binds
 
 ```
 signing_input =
-    "bcp-sig.v1"                 // scheme + version
+    "bcp-sig.v2"                 // scheme + version
   + "\n" + approval_id
   + "\n" + action_id
+  + "\n" + policy_version        // UNDER WHICH RULESET — Q1 ruling
   + "\n" + payload_hash
   + "\n" + signer_user_id        // WHO
   + "\n" + signer_token_jti      // WHICH authenticated session — ties to user-service's jti claim
@@ -1205,6 +1430,7 @@ signing_input =
 signature = SIGN(signing_input)
 ```
 
+- **`policy_version` appears here as well as inside `payload_hash`,** which is technically redundant — the hash already binds it. It is stated explicitly anyway so that a verifier (or an auditor writing a one-off script years later) can confirm *which ruleset a signature was produced under* without having to reconstruct the payload projection and recompute the canonical hash. Redundancy in a preimage costs nothing and buys legibility at exactly the moment legibility matters.
 - **`slot_ordinal` in the input is load-bearing:** without it, a captured signature could be replayed into the second slot, defeating dual control even though the identities differ. With it, each slot needs its own distinct signature.
 - **`signer_token_jti`** binds the signature to a specific authenticated session, so a stale/exfiltrated signature blob cannot be reused under a re-issued token.
 - **`nonce`** is issued by the server when the UI opens the approval card and is consumed on use (Redis `copilot:sig:nonce:<id>`, TTL = remaining approval TTL). One nonce, one signature.
@@ -1221,11 +1447,81 @@ Either way, the signature is produced **server-side after verifying an inbound h
 
 - The agent re-plans and changes *any* `hash_fields` value → new hash → **the existing approval is untouched and unusable**. `PATCH`-ing the payload of a `pending` approval is not an operation the API offers. The agent must call `propose` again, producing a **new** approval document with a new id, and the human must sign again against the changed figure. Superseded approvals are transitioned to `denied` with `terminalReason = "superseded_by:<newId>"` and audited.
 - At execute time the executor **recomputes** the canonical hash from the body it is about to send and compares to `approval.payloadHash`. Mismatch ⇒ `409`, `execution.state = failed`, `ActionExecutionFailed` emitted. This is the TOCTOU backstop: even a bug (not just an attack) between propose and execute is caught at the last possible moment.
-- Any signature already collected is cleared if the policy decision itself changes (e.g. a threshold was lowered by a config rollout and the required rung is now higher). Re-evaluation happens at execute time and, if `requiredRung` or `requiredSigners` increased, execution refuses and the approval reverts to `pending` with the new slots — **the ladder can tighten under an in-flight approval, never loosen.**
+
+  > ⚠️ **The one detail that makes the Q1 ruling internally consistent.** The recompute uses the
+  > **`policyVersion` stored on the approval**, never the currently-loaded one. If it used the
+  > current version, *every* policy edit — including a comment reflow — would break the hash
+  > compare for every pending approval, which directly contradicts ruling clause 3
+  > (*unchanged-or-lower ⇒ honour the existing signature*). The split is exact and worth stating
+  > in one line, because getting it backwards silently converts the ruling into "any policy edit
+  > invalidates everything":
+  >
+  > | Step | Which policy version | Why |
+  > |---|---|---|
+  > | Hash recompute (§6.4) | **stored** on the approval | Verifies *what was signed*. A historical fact; it cannot change. |
+  > | Rung re-evaluation (§3.6) | **current**, freshly loaded | Decides *whether it may still execute*. A present-tense judgement. |
+  >
+  > Signature verification is archaeology; authority is live. They must not share an input.
+
+- **Policy drift under an in-flight approval — Brian's Q1 ruling, restated as mechanism.** At execute time the action is re-evaluated under the **current** policy (§3.6):
+  - **Required rung higher than the rung the signature satisfied ⇒ the signature is void.** The approval reaches a terminal state carrying `terminalReason = "policy_change"`, all collected signatures are discarded (retained on the document for audit, but no longer countable), and a **new** approval is proposed carrying the new rung and new slots. The banker signs again at the new rung. This reuses the supersede mechanism above rather than introducing a parallel one.
+
+  > **Lifecycle note — no new state is invented.** The ratified lifecycle is
+  > `proposed → pending → signed | denied | expired`. Policy-voiding persists as **`denied` with
+  > `terminalReason = "policy_change"`**, exactly as supersede-by-re-plan persists as `denied` with
+  > `terminalReason = "superseded_by:<newId>"`. *"Voided"* is a **presentation label**, not a
+  > storage state — the distinction bankers need ("the rules changed" vs. "a human said no") is
+  > carried by `terminalReason`, which the UI keys off (§6.6). This keeps one terminal-state
+  > vocabulary and avoids a state-machine change that would need re-ratification. If Danny would
+  > rather have a first-class `voided` state for audit clarity, that is a cheap change and worth
+  > raising — but it is his call, not mine (added as **O9**).
+  - **Required rung unchanged or lower ⇒ the existing signature is honoured; execute.** No downgrade is applied and none is recorded: a signature collected at L2 that would today only need L1 simply executes. The system never *removes* a signature that was already given, and never *reduces* the quorum an approval was created with.
+  - **Never auto-honour an under-signed action.** There is no path where re-evaluation *adds* sufficiency. The ladder can tighten under an in-flight approval; it can never loosen one into validity.
+
+  This is deliberately **the same monotonic rule as the escalators (§3.4), applied over time rather than over context** — escalators only push the rung up; policy drift only invalidates, never rescues. It is one principle on two axes, not two rules. There is intentionally no special-case temporal logic anywhere in the engine, and a future implementer who finds themselves writing `if stored_version != current_version:` as a *decision* (rather than as a bare audit annotation) has diverged from the model and should escalate rather than improvise.
 
 ### 6.5 Secret-bearing payloads
 
-For `user.password.reset`, `hash_fields` deliberately excludes the new secret: `[userId, reasonCode]`. Hashing a secret would put a verifier for it into a 90-day-retained audit document. The material fact the human approves is "reset this user's password for this reason," not the secret bytes, which are generated at execution time and never stored. Same principle applies to any future action carrying PII/secret material.
+### 6.6 Policy edited while N approvals are pending — blast radius and operations
+
+The ruling creates a real operational event: a ConfigMap rollout can invalidate work already done by humans. This needs to be sized and made visible, or it will surface as "the Copilot randomly rejected my loan."
+
+**Blast radius is smaller than it first looks, and the reason matters.**
+
+| What changed | Approvals affected |
+|---|---|
+| Comment reflow, `description:` text, `metadata.effective_from` | **None.** Version hash may change (or not — provenance fields are excluded, §6.2.1); nothing re-evaluates higher, so nothing voids. |
+| A threshold *raised* (policy loosened) | **None.** Loosening is a non-event by construction — §3.6 has no branch for it. |
+| A threshold *lowered*, or a new escalator added | **Only** pending approvals of affected action types whose payload actually crosses the new value. Not "all pending." |
+| An action moved to hard L3 / removed from the catalogue | All pending approvals for that action type void. |
+
+The narrow blast radius is a direct consequence of keying off **re-evaluated rung** rather than off version inequality. Keying off version inequality — the obvious wrong implementation — would void every pending approval on every edit, including cosmetic ones. This is the single most likely way to misimplement the ruling and is called out again here on purpose.
+
+**Blast radius must be knowable *before* the rollout, not discovered after.**
+
+Re-evaluation is a pure function (§3.5) over data already on the approval document, so voiding is **predictable by simulation**: load candidate policy, replay `evaluate()` over every non-terminal approval, count and list what would void. Two surfaces, one mechanism:
+
+- **`POST /api/copilot/policy/impact`** (§8.10) — dry-run a candidate policy, return the affected set. Nothing is mutated. Intended for a pre-merge CI check on any PR touching `policy.yaml`, and for an operator about to change a `POLICY_*` value in a ConfigMap. A policy change that would void more than `POLICY_IMPACT_WARN_COUNT` pending approvals should fail the check loudly and require an explicit acknowledgement — **config-driven, and it warns, never blocks**; policy tightening must never be gated behind pending work, or the incentive runs backwards.
+- **The same evaluation runs eagerly on policy reload**, so bankers are told at reload time rather than at execute time (below).
+
+**When do bankers find out? Eagerly, on reload — with lazy re-check retained as the correctness guarantee.**
+
+This mirrors the expiry design (§5.4) exactly, and for the same reason: the **lazy check at execute time is the safety property** (a stalled reload sweep can never let an under-signed action through), and the eager sweep is a **notification convenience**. Never let one mechanism be both.
+
+On policy reload the service re-evaluates non-terminal approvals and marks the ones that would now void, emitting `ApprovalVoidedByPolicyChange` per affected approval and one `PolicyReloaded` carrying the version transition and the affected count. Bankers see invalidated items in their existing pending list, already annotated with the human-readable reason — the same `firedEscalators[]`-style rendering used everywhere else, so there is no new explanation vocabulary to learn.
+
+**Is there a bulk "these were invalidated" surface? Yes, and it is a listing, not a bulk action.**
+
+`GET /api/copilot/approvals?terminalReason=policy_change` (§8.5, existing endpoint, existing filters — no new shape needed) answers "what did that rollout cost me." Two hard limits on it:
+
+- **There is no bulk re-sign.** Re-proposals are individual, and each is signed individually at its new rung. A "re-approve all 40" button would reconstitute exactly the blanket-approval the directive forbids, by the back door, and would land at the *moment of maximum approval fatigue* (R3) — the worst possible time to offer a single click. Re-proposal may be *initiated* in bulk; **signing may not**.
+- **A voided approval is never silently re-proposed and auto-signed.** Re-proposal produces `pending` work. Always.
+
+**UI requirements — flagged for Linus, deliberately not designed here:**
+1. A distinct visual treatment for "invalidated by policy change" vs. expired vs. denied — three different meanings that must not collapse into one grey "unavailable" state.
+2. The banker-facing reason string must be the specific one ("the approval policy changed while this was pending; this now requires a supervisor co-signature") with the threshold and its env key named, never a generic error.
+3. A digest surface after a reload with a non-zero affected count, so someone who was not looking at the screen at rollout time still learns.
+4. The re-proposal must visibly carry its provenance ("re-proposed after a policy change on <date>; previously signed by <banker> at L1").
 
 ---
 
@@ -1296,8 +1592,14 @@ Same envelope, same stream, same field name:
 | `ApprovalSigned` | A slot is filled | `slotOrdinal`, `signerId`, `signaturesCollected/Required` |
 | `ApprovalDenied` | Human denies, or superseded by re-plan | `deniedBy`, `terminalReason` |
 | `ApprovalExpired` | Sweeper or lazy read-side expiry | `expiresAt`, `terminalReason: "ttl_expired_denied"` |
-| `ActionExecuted` | Downstream returns 2xx | `downstreamStatus`, `downstreamRef`, `latencyMs` |
+| `ActionExecuted` | Downstream returns 2xx | `downstreamStatus`, `downstreamRef`, `latencyMs`, `signedUnderPolicyVersion`, `evaluatedUnderPolicyVersion` |
 | `ActionExecutionFailed` | Non-2xx, hash mismatch, or refusal | `failureCode`, `downstreamStatus` |
+| `ApprovalVoidedByPolicyChange` | Re-evaluation (§3.6) returns a higher rung — at execute time or on eager reload sweep | `signedUnderPolicyVersion`, `evaluatedUnderPolicyVersion`, `signedRung`, `newRung`, `newEscalators[]`, `discardedSignatures[] {signerId, slotOrdinal, signedAt}`, `terminalReason: "policy_change"`, `resupersededBy` (new approval id, once re-proposed) |
+| `PolicyReloaded` | Policy file or `POLICY_*` env resolution changes and the service reloads | `previousPolicyVersion`, `newPolicyVersion`, `policyId`, `affectedApprovalCount`, `voidedApprovalIds[]` |
+
+`ApprovalVoidedByPolicyChange` is the audit-critical addition from the Q1 ruling: it is the **only** record that a human's signature was discarded by a machine. It deliberately carries `discardedSignatures[]` in full — who signed, in which slot, when — because "a signature existed and was thrown away" is precisely the fact a regulator or an incident review will ask about, and it must not be reconstructible only by inference from the superseded document. It is emitted at the **best-effort-with-retry** tier (§7.4), never fire-and-forget.
+
+`PolicyReloaded` gives the temporal axis a spine: every void event points at a version transition that is itself recorded, so "why did forty approvals die at 14:02?" resolves to one event rather than forty correlated guesses.
 
 Every one of these carries `approvalId` + `correlationId`, so an auditor can reconstruct a complete chain — proposal → escalation → each signature → execution — by filtering on either.
 
@@ -1307,7 +1609,8 @@ Today these land in the Go `default:` branch and log as `"Audit Unknown event ty
 
 ```go
 case "ActionProposed", "PolicyEscalated", "ApprovalSigned", "ApprovalDenied",
-     "ApprovalExpired", "ActionExecuted", "ActionExecutionFailed", "CopilotSessionStarted":
+     "ApprovalExpired", "ActionExecuted", "ActionExecutionFailed", "CopilotSessionStarted",
+     "ApprovalVoidedByPolicyChange", "PolicyReloaded":
     slog.Info("Audit "+evt.EventType,
         "approval_id", evt.Data["approvalId"],
         "action_id",   evt.Data["actionId"],
@@ -1329,9 +1632,23 @@ Audit emission must not be best-effort where it matters. Two tiers:
 
 ---
 
-## 8. API surface — `banker-copilot-service`
+## 8. API surface
 
-Base path `/api/copilot`. All endpoints require a valid `banking-demo`-audience end-user JWT (the browser's token) except the `/internal/*` mediator routes, which require the `banking-copilot` audience and are not exposed through ingress. Health endpoints follow the repo convention: `/healthz`, `/readyz`. Every response carries `X-Correlation-ID`.
+Base path `/api/copilot`. All endpoints require a valid `banking-demo`-audience end-user JWT (the browser's token) except the `/internal/*` routes, which require the `banking-copilot` audience and are **not exposed through ingress**. Health endpoints follow the repo convention: `/healthz`, `/readyz`. Every response carries `X-Correlation-ID`.
+
+**Ownership after the O1 ruling.** The endpoint contracts below are unchanged; what changed is which service terminates them. The browser sees one base path — ingress routes by path, so this is invisible to Linus's client.
+
+| Endpoint | Owner | Why |
+|---|---|---|
+| `POST /api/copilot/sessions` (§8.1) | `banker-copilot-service` | Foundry session lifecycle |
+| `GET /api/copilot/sessions/{id}/stream` (§8.2) | `banker-copilot-service` | SSE trace is a harness concern |
+| `POST /api/copilot/sessions/{id}/messages` (§8.3) | `banker-copilot-service` | Agent turn |
+| `POST /internal/mediate/propose` (§8.4) | **`authority-service`** | Policy evaluation + approval creation |
+| `GET /api/copilot/approvals` (§8.5) | **`authority-service`** | Reads the approval store |
+| `POST .../sign` (§8.6), `.../deny` (§8.7), `.../execute` (§8.8) | **`authority-service`** | Signing key, verification, sole write path |
+| `GET /api/copilot/policy` (§8.9), `POST /api/copilot/policy/impact` (§8.10) | **`authority-service`** | Owns the policy file |
+
+The rule that makes this easy to remember: **`authority-service` owns anything that touches the approval store, the signing key, or an outbound write. The harness owns the conversation.**
 
 ### 8.1 `POST /api/copilot/sessions` — start an agent session
 
@@ -1438,14 +1755,50 @@ Refuses with `409` on: expired (lazy check), hash mismatch, slot already filled 
 ### 8.8 `POST /api/copilot/approvals/{id}/execute`
 `{ "payloadHash": "sha256:9f2b…" }` → `200 { "status":"signed", "execution": { "state":"succeeded", "downstreamStatus":201, "downstreamRef":"trf_88a2" } }`.
 
-Ordered gate: (1) not expired; (2) signature quorum, seniority, distinct identities; (3) no signer is a service principal; (4) re-evaluate policy — refuse if the ladder tightened; (5) recompute canonical hash from the outbound body and compare; (6) etag-guarded `not_attempted → in_flight`; (7) mint the single-use execution token (§4.4 Layer 2); (8) call downstream with `Idempotency-Key: <approvalId>`; (9) record result, emit audit. Idempotent: replaying `execute` on a `succeeded` approval returns the recorded result without re-calling downstream.
+Ordered gate: (1) not expired; (2) signature quorum, seniority, distinct identities; (3) no signer is a service principal; (4) re-evaluate under the **current** policy (§3.6) — void if the ladder tightened, proceed if unchanged or loosened; (5) recompute the canonical hash from the outbound body **using the policy version stored on the approval** (§6.4) and compare; (6) etag-guarded `not_attempted → in_flight`; (7) mint the single-use execution token (§4.4 Layer 2); (8) call downstream with `Idempotency-Key: <approvalId>`; (9) record result, emit audit. Idempotent: replaying `execute` on a `succeeded` approval returns the recorded result without re-calling downstream.
 
 Auto-execute-on-final-signature is available behind `COPILOT_AUTO_EXECUTE_ON_QUORUM` (config, default `true`) — this is not an autonomy tier; quorum has already been met, and it just saves a click.
 
 ### 8.9 `GET /api/copilot/policy` — introspection
 Returns `policyId`, version, the action catalogue with base rungs, and **resolved threshold values with their env-var names** (values only, never secrets). This is what makes the ladder self-documenting to the humans operating under it.
 
-### 8.10 Config keys introduced
+### 8.10 `POST /api/copilot/policy/impact` — dry-run a policy change (Q1 ruling)
+
+Answers "what would this policy change cost?" **before** it ships. Pure read + pure function; mutates nothing.
+
+Request:
+```json
+{ "candidatePolicy": "<yaml>",            // optional; omit to use the currently-loaded file
+  "candidateOverrides": { "POLICY_TRANSFER_L2_AMOUNT": "2500.00" },
+  "scope": "non_terminal" }               // non_terminal | pending | signed
+```
+
+Response:
+```json
+{
+  "currentPolicyVersion": "pv1:6b41c0d9e2a7f318",
+  "candidatePolicyVersion": "pv1:c1704ea9bb2d5560",
+  "evaluated": 214,
+  "wouldVoid": 3,
+  "warnThreshold": 10,
+  "exceedsWarnThreshold": false,
+  "affected": [
+    { "approvalId": "apr_01JQ8Z3M4W7K", "actionId": "transfer.initiate",
+      "requesterId": "user_9f3a", "signedRung": "L1", "newRung": "L2",
+      "signaturesAlreadyCollected": 1,
+      "reason": "Transfer of 7500.00 is at or above 2500.00; supervisor co-signature required.",
+      "thresholdName": "transfer_l2_amount", "thresholdEnv": "POLICY_TRANSFER_L2_AMOUNT" }
+  ],
+  "thresholdDeltas": [
+    { "name": "transfer_l2_amount", "env": "POLICY_TRANSFER_L2_AMOUNT",
+      "from": "5000.00", "to": "2500.00", "direction": "tightened" }
+  ]
+}
+```
+
+Requires a supervisor-seniority human token; the agent has no access to this endpoint (it is policy introspection at a level that would help an adversarial agent map the ladder). Intended callers: a CI check on any PR touching `policy.yaml`, and an operator about to edit a `POLICY_*` ConfigMap value. `exceedsWarnThreshold` **warns and never blocks** — tightening policy must never be gated behind pending work, or the incentive runs backwards.
+
+### 8.11 Config keys introduced
 
 | Key | Default | Purpose |
 |---|---|---|
@@ -1464,6 +1817,9 @@ Returns `policyId`, version, the action catalogue with base rungs, and **resolve
 | `COSMOS_DB_ENDPOINT`, `COSMOS_APPROVALS_CONTAINER` | `copilot-approvals` | Store |
 | `REDIS__CONNECTIONSTRING` | — | Nonces, jti ledger, sweeper lock, audit stream |
 | `AZURE_CLIENT_ID` | — | Present ⇒ Entra/workload identity; absent ⇒ simple auth |
+| `POLICY_RELOAD_MODE` | `eager` | `eager` \| `lazy_only`. `eager` runs the void sweep + notification on reload; `lazy_only` relies solely on execute-time re-evaluation. **The safety property is identical either way** (§6.6) — this only controls when bankers are told. |
+| `POLICY_IMPACT_WARN_COUNT` | `10` | Voided-approval count above which `/policy/impact` sets `exceedsWarnThreshold`. Warns, never blocks. |
+| `POLICY_RELOAD_SWEEP_BATCH_SIZE` | `200` | Page size for the reload re-evaluation sweep |
 
 All must be added to **both** `deploy/kustomize/base/configmap.yaml` and `docker-compose.yml` in the same change — the drift between those two files is the recurring failure mode on this project.
 
@@ -1475,13 +1831,15 @@ All must be added to **both** `deploy/kustomize/base/configmap.yaml` and `docker
 
 | # | Question | My lean |
 |---|---|---|
-| O1 | Ratify **Python/FastAPI, single service, two internal planes** (§1.3)? Or split the mediator into .NET for static-typing assurance? | Single Python service. The security property comes from the process/network boundary and the token audience, not the language. A split doubles the config-drift surface. |
+| ~~O1~~ | ~~Ratify **Python/FastAPI, single service, two internal planes** (§1.3)?~~ | **CLOSED — overruled by Brian, 2026-09-04.** Two services: `banker-copilot-service` (Python, harness) + **`authority-service` (.NET, policy engine + approval store + sole write path)**. My repo survey (§1.1–§1.2) was accepted and load-bearing; the language conclusion was not. The mandatory mitigation for the config/serializer-drift cost I raised stands — see epic §2.2 and the Cosmos casing hazard in `.squad/skills/cosmos-casing-audit`. |
 | O2 | Is `banker` / `supervisor` / `risk_officer` a **new role model**? Today `user-service` mints a single `role` claim and everything admin-ish is `admin`/`Admin`. Separation of duties needs at least two distinct senior identities to be meaningful — with one `admin` role, "different identity" is enforceable but "more senior" is not. | Add a `seniority` claim to `user-service` tokens, or map roles→seniority in policy config as an interim. Needs a decision before L2 means anything real. |
 | O3 | Should domain services be modified to **require** `apid`/`pah` claims (Layer 2, phase 2)? That touches all seven services and is architecture-level. | Yes eventually, behind `REQUIRE_APPROVAL_CLAIMS`, but not in the first cut — Layer 1 carries the guarantee. Your call on sequencing. |
 | O4 | Is a **server-side signature** (mediator observes an authenticated human action and binds it) sufficient "signature," or does compliance narrative demand per-user asymmetric keys / true non-repudiation? | Server-side + Key Vault ES256 is right for a demo and defensible in a real bank. Worth saying out loud in the epic so nobody over-claims. |
 | O5 | `account.delete` has **no endpoint today**. Do we define the ladder entry now (as I have) or omit until the capability exists? | Define it now. An action with no policy entry is denied by default, but writing it down means nobody adds the endpoint later without a rung. |
 | O6 | The **account-opening event schema divergence** (§7.1) — flat fields on a separate stream vs the `payload` envelope on `banking-events`. Separate cleanup ticket? | Yes, separate ticket, not Banker Copilot's to fix. But it will bite someone. |
 | O7 | Should the shared `banking-workload-identity` KSA be **split per service**? Required for Layer 3 to mean anything, and it is a cluster-wide change well outside my lane. | Split at minimum for `banker-copilot`. Full per-service split is a good idea independently. |
+| O9 | Policy-voided approvals persist as `denied` + `terminalReason = "policy_change"` (§6.4) to avoid inventing a lifecycle state outside the ratified `proposed → pending → signed \| denied \| expired`. Should `voided` instead be a **first-class terminal state**? | Lean: keep `denied` + `terminalReason` for now — one terminal vocabulary, no re-ratification needed, and the UI distinction the bankers need is carried by `terminalReason` regardless. But "a machine discarded a human's signature" is arguably distinct enough from "a human said no" that an auditor would want it separated at the state level. Cheap either way; your call. |
+| O10 | Should `POST /api/copilot/policy/impact` (§8.10) be **wired into CI as a required check** on PRs touching `policy.yaml`? It needs a running `authority-service` with production-like pending data to be meaningful, which CI does not have. | Lean: ship the endpoint now for operators; defer the CI gate. A check that runs against an empty approval store always reports zero impact and teaches false confidence — worse than no check. |
 | O8 | Where does `session.anomalyFlags` come from? No session-anomaly signal exists in this repo today. | Stub it as an empty list in v1 (the escalator then never fires — safe, since escalators only raise) and wire it to a real signal later. Flagged as a knowingly-inert escalator, not a hidden gap. |
 
 ### 9.2 Top 3 technical risks
@@ -1499,11 +1857,14 @@ The design is technically sound and still fails if a banker clicks through forty
 
 ## 10. Summary of what needs to exist (not built here)
 
-1. `banker-copilot-service` (Python/FastAPI) — harness plane + mediator plane, pending O1.
+1. `banker-copilot-service` (Python/FastAPI) — harness plane only: Foundry Agent Service session host, tool registry, SSE trace stream. **Holds no write path and no signing key.**
+1b. `authority-service` (.NET 10) — policy engine, approval store, payload hashing, signature verification, execution-time re-evaluation (§3.6), and the **sole** egress path to domain services. Per Brian's ruling (O1).
 2. `config/banker-copilot/policy.yaml` + ConfigMap `banker-copilot-policy` + docker-compose bind mount.
 3. Cosmos container `copilot-approvals` (`/requesterId`, TTL enabled, not defaulted) in `infra/cloud/cosmos.tf`.
 4. `user-service` change: mint a second-audience harness token; ideally add a `seniority` claim (O2).
-5. Own KSA `banker-copilot`; Istio `PeerAuthentication` STRICT + default-deny + per-service `AuthorizationPolicy` (O7).
-6. Additive `case` arms in `src/event-processor/main.go` for the nine new audit event types.
-7. Key Vault entry for `APPROVAL_SIGNING_KEY`, distinct from `jwt-key`, via the existing CSI SecretProviderClass.
-8. CI: policy-lint (no literals), import-graph test (propose ⊥ executor), adversarial audience test, redaction test.
+5. **Two** KSAs — `banker-copilot-harness` and `banker-copilot-authority`; Istio `PeerAuthentication` STRICT + default-deny + per-service `AuthorizationPolicy` (O7, now a hard prerequisite for Layer 3 — see §4.4).
+6. Additive `case` arms in `src/event-processor/main.go` for the **eleven** new audit event types (nine, plus `ApprovalVoidedByPolicyChange` and `PolicyReloaded` from the Q1 ruling).
+7. Key Vault entry for `APPROVAL_SIGNING_KEY`, distinct from `jwt-key`, via the existing CSI SecretProviderClass. Mounted into **`authority-service` only** — the harness must never be able to read it.
+8. CI: policy-lint (no literals), import-graph test (propose ⊥ executor), adversarial audience test, redaction test, and a **Cosmos casing round-trip test** (write from .NET, read from Python) now that the store is shared across two runtimes (§5.3).
+9. Policy-version machinery from the Q1 ruling: resolved-policy content hashing (§6.2.1), execution-time re-evaluation (§3.6), `POST /api/copilot/policy/impact` (§8.10), and the eager reload sweep gated by `POLICY_RELOAD_MODE`.
+10. **UI work for Linus** (flagged, not designed here): distinct treatment for policy-voided vs. expired vs. denied; the specific "the approval policy changed while this was pending" copy naming the threshold and its env key; a post-reload digest surface; provenance on re-proposals. See §3.6 and §6.6.
