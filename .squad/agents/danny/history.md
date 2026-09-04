@@ -1367,3 +1367,103 @@ All upgrades were validated with **native builds/tests** (go test, dotnet test, 
 
 **Key Decision:** Consolidated all 10 PRs into single PR #222 to validate full dependency graph in one atomic changeset, reducing churn and aligning with Brian's "for real" validation requirement.
 
+
+---
+
+## Learnings
+
+### Banker Copilot Epic Specification (2026-09-04)
+
+**Deliverables:** `docs/epics/banker-copilot.md` (full spec), GitHub epic #332, boundary
+amendment comment on #140, decision at
+`.squad/decisions/inbox/danny-banker-copilot-architecture.md`, skill at
+`.squad/skills/agent-authority-ladder/SKILL.md`.
+
+#### Repo facts discovered (worth remembering)
+
+- **`prompt-eval-service` is .NET and has NO Foundry package.** Its csproj is Cosmos +
+  JwtBearer + OTEL only; it delegates every model call to `ai-service` via
+  `HttpClient("AiService")`. This is the repo's real convention: **.NET owns durable state and
+  control planes; Python owns the model runtime.** I used this to justify the Python/.NET split
+  for Banker Copilot. Do not cite prompt-eval-service as ".NET does Foundry work" — it doesn't.
+- **All Agent Framework work is Python**, pinned: `ai-service` uses
+  `agent-framework-core 1.16.0` + `agent-framework-foundry 1.10.0`, imports
+  `FoundryAgent`/`FoundryChatClient` guarded by try/except ImportError in
+  `src/ai-service/app/config.py`.
+- **.NET services target `net10.0`** with central package management (`Directory.Packages.props`)
+  and `Banking.Observability` (`UseBankingSerilog`, `AddBankingOpenTelemetry`).
+- **Cosmos PK convention is `/id`** for nearly everything (`users`, `accounts`, `transfers`,
+  `login_audits`, `account_applications`); exceptions are `transactions` → `/accountId` and
+  `chat_sessions` → `/userId`. Containers are declared in `infra/cloud/cosmos.tf`.
+- **`event-processor` (Go)** consumes `BankingEvent{eventType, data}` from a Redis Stream with
+  consumer groups + DLQ (`banking-events-dlq`). Its `switch evt.EventType` **warns
+  "Audit Unknown event type" on anything unrecognized** — so publishing new event types without
+  adding cases yields an audit trail that is technically present but operationally invisible.
+  Always add the switch cases.
+- **Gateway routing** is `infra/local/gateway.nginx.conf` with `location` blocks →
+  `$upstream_<service>` vars. Note `/api/admin/` falls through to **ai-service**, with
+  `/api/admin/users`, `/api/admin/login-audits`, `/api/admin/promote` carved out to user-service
+  and `/api/admin/replay-events` to transaction-service. SSE will need `proxy_buffering off`.
+- **`AdminPage.tsx` has 8 tabs** (not 7): Account Applications, User Management, All
+  Transactions, Flagged Transactions, Chatbot Prompt, AI Evaluation, Login Audit, System Health.
+- **`src/loan-origination-service/` exists but is EMPTY** — scaffolded dir only, #140 not started.
+- **Roles today are `admin` and `user` only** (`UserService.Constants.Roles`,
+  `docs/adr/003-jwt-claim-roles.md`). `banker` and `supervisor` do not exist and must be added
+  for the authority ladder.
+- Real mutating admin surface: `PUT /api/admin/flagged-transactions/{txId}/review`,
+  `PUT /api/admin/scored-transactions/{txId}/override`, `POST .../rescore` (ai-service);
+  `PATCH /api/account-opening/applications/{id}/review`, `POST .../resubmit`;
+  `PUT /api/admin/users/{id}/lock|unlock|reset-password`, `DELETE /api/admin/users/{id}`,
+  `POST /api/admin/promote` (user-service); `POST /api/admin/replay-events` (transaction-service);
+  `POST /api/accounts/{id}/balance` (account-service).
+
+#### Architecture decisions made
+
+- **Two services, not one.** `banker-copilot-service` (Python/FastAPI, agent loop + SSE) and
+  `authority-service` (.NET, policy engine + approval store + **action broker**). The split is
+  the enforcement mechanism, not organizational preference.
+- **The harness registers zero write tools.** Only `propose_action` exists, targeting
+  `authority-service`. Combined with an `action-broker` JWT claim that only authority-service
+  can obtain, plus AKS NetworkPolicy, plus server-side re-validation — four layers, and a fully
+  prompt-injected agent yields read access only.
+- **Cosmos `authority-proposals` PK = `/actorId`** (departs from the `/id` default). Hot path is
+  "what's waiting for me?"; `/id` would make every inbox read a cross-partition fan-out.
+  Supervisor inbox uses a duplicated `cosignerId` pointer doc — duplicating a pointer beats
+  fanning out a query.
+- **Explicit expiry sweeper, never Cosmos TTL deletion**, for approval expiry. Losing the record
+  ≠ denying the request. `BackgroundService` shape copied from
+  `prompt-eval-service/Services/EvaluationBackgroundService.cs`.
+
+#### User preferences confirmed (Brian)
+
+- **Config-driven everything.** Zero hardcoded thresholds — I added a CI grep gate to the
+  acceptance criteria to make it enforceable rather than aspirational.
+- Wants **honest risk sections**, including "what Brian hasn't considered." Do not sand the
+  edges. The items that landed hardest: approval fatigue is the real threat model (not prompt
+  injection); single-browser demos structurally cannot show L2; `requiredEvidence` verifies
+  presence not relevance; the read surface is itself a privacy event.
+- Wants specs **concrete enough to build from** — real endpoint paths from this repo, complete
+  policy files, actual JSON schemas. Not architectural hand-waving.
+- Values the **demo narrative** framing: what a viewer literally sees on screen, beat by beat.
+
+#### Reusable pattern extracted
+
+`.squad/skills/agent-authority-ladder/SKILL.md` — human-signature authority ladders for
+agentic write paths (rung ladder, payload-hash signing, structural bypass prevention, blind
+second opinions). Applies to any agent system with mutating actions.
+
+---
+
+#### Cross-cutting findings from Banker Copilot ideation (2026-09-04)
+
+**Finding 1: Single shared JWT audience is the repo's biggest latent authorization gap**
+
+Today all services validate a single audience (`banking-demo`) against a shared HS256 key. This means a compromised agent holding a banker token can call `POST /api/transfers` directly, and the Banker Copilot approval ladder is pure decoration. 
+
+Remediation: Introduce a second `banking-copilot` audience minted by user-service for harness-only authentication. This requires splitting the shared `banking-workload-identity` KSA to enable per-service Istio AuthorizationPolicy (currently impossible because KSA is shared). Identified by Turk during policy-engine spike. **Status: NOT STARTED; open question O7 to Danny for priority.**
+
+**Finding 2: nginx configs lack `proxy_buffering off` — SSE trace streaming silently batches**
+
+`infra/local/gateway.nginx.conf` and `ui-app.nginx.conf` have no `proxy_buffering off` on any `/api/` location. Without it, the entire SSE trace stream arrives as one lump when the run ends, silently defeating the live-harness illusion. The banker sees no events during the run, then the entire trace dumps at the end.
+
+Remediation: Add `proxy_buffering off;` to all location blocks serving `/api/` paths carrying SSE streams. Identified by Linus during frontend-UX spike. **Status: BLOCKING; this is the single highest-risk non-frontend dependency in the epic and needs an owner now.**

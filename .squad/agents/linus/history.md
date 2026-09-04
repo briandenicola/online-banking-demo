@@ -870,3 +870,92 @@ Attempted `npm update form-data launch-editor --legacy-peer-deps` first, but the
 
 **Key Insight:**
 npm overrides are the correct mechanism for security bumps of transitive deps when upstream (react-scripts) hasn't published a fix yet. They're declarative, auditable, and persist across installs. The craco build continues to work flawlessly with MUI 9.1.1.
+
+## Learnings
+
+### 2026-09-04 — Banker Copilot Frontend Design Spike (docs/design/banker-copilot-ui.md)
+
+Design-only spike for the "Banker Copilot" epic — an agentic harness for the banker/admin
+experience. Deliverable: `docs/design/banker-copilot-ui.md` (9 sections). No code changed.
+
+**Framing decision that drove everything:** this is a WORK SURFACE, not a chatbot. Three panes
+(task queue / live plan-trace / artifact canvas) with the command input demoted to a ~48px strip
+at the bottom. Design test applied to every screen: *remove the text input — is the surface still
+usable?* Must be yes. That single layout choice is what stops it reading as `Chat.tsx` v2.
+
+**Existing-code findings that shaped the design:**
+- `api/client.ts` attaches the bearer token from `localStorage` via an axios interceptor.
+  Native `EventSource` **cannot set headers**, which would force the token into a query string
+  (nginx access logs, browser history, APM spans). Therefore: **SSE over `fetch` +
+  `ReadableStream`**, not `EventSource`, not WebSocket. Traffic is ~all server→client; the rare
+  client→server events (sign/deny) are high-stakes and want real HTTP status codes + idempotency
+  keys, which argues against a socket.
+- `infra/local/gateway.nginx.conf` has **no `proxy_buffering off`** on any `/api/` location.
+  Without it nginx buffers the whole SSE response and the "live" trace arrives as one lump at the
+  end. Flagged as the single highest-risk non-frontend dependency for the epic.
+- `components/account-opening/ApplicationStages.tsx` + `AgentPipeline.tsx` are the direct
+  ancestors of the trace node (same `pending/in_progress/completed/failed` union, same
+  confidence + reasoning + timestamp card). Reused the *vocabulary*, not the layout — that's a
+  horizontal `Stepper`, the trace is a vertical recursive tree.
+- `formatRiskScore` now exists in `AdminPage.tsx` and is about to be needed a third time. Should
+  be promoted to `utils/format.ts` rather than copy-pasted again.
+- `Chat.tsx`'s unconditional `scrollIntoView` on every message is an autoscroll bug I explicitly
+  did not repeat: the trace releases follow-the-tail on any user scroll-up and offers a
+  `↓ N new steps` pill.
+
+**Admin tabs disposition** (3 buckets, phased, `/admin` stays alive): *subsumed* (Flagged Txns,
+All Txns, Account Applications → become task sources + agent tools, tabs demoted to "Classic
+Admin"); *retained unchanged* (Chatbot Prompt, AI Eval, Login Audit, System Health — config/ops
+surfaces with no per-item decision loop); *explicitly L3* (User Management — agent may not even
+propose; typing "promote X to admin" yields a refusal card). Key argument: the agent's
+credibility depends on the banker being able to verify its claims. Removing the ground-truth
+tables on day one makes the agent unfalsifiable.
+
+**aria-live for a high-frequency live region — the subtle bit.** Naive `aria-live="polite"` on
+the trace tree announces every tool call and timer tick; the screen-reader user turns it off,
+which is worse than nothing. Correct pattern: the **visual region and the announced region are
+different regions.** Trace tree is `aria-live="off"` + `role="tree"` + `aria-busy` (explorable on
+demand); a separate visually-hidden region gets **coalesced 2500ms plan-level summaries**.
+`assertive` reserved for exactly three events: approval required, approval voided, agent
+disagreement. Countdowns are `role="timer"` with `aria-hidden` digits + discrete announcements at
+5:00/1:00/0:30.
+
+**State management — no new dependency.** Repo uses plain React Context + CRA/craco; adding
+Redux/Zustand for one surface isn't a trade worth making. Instead: external mutable store +
+`useSyncExternalStore` + per-node version counters + a single `requestAnimationFrame` coalescing
+frame (bursts of 40 events in 16ms → one render pass) + one shared 1s ticker for all countdowns.
+Reducer is a pure `(state, event) => state`, which also buys a deterministic fixture-driven
+**demo mode** that survives a bad conference network. Build that in week one, not week six.
+
+**Anti-approval-fatigue is a design problem, not a discipline problem.** Concrete mechanisms I'd
+ship: stakes-scaled dwell timers (0s batch → 25s + written justification for L2 disagreement,
+full reset after a payload void); `IntersectionObserver` gate requiring material fields to
+actually be scrolled into view; batch cap of 10 within a single action type under threshold,
+never L2; randomised 7% transcribe-one-fact spot checks; per-session approval meter with a soft
+pause card; deliberate visual variance on irreversible items to break rubber-stamp muscle memory.
+Explicitly rejected: hard blocks (get worked around via a second login), CAPTCHAs, mandatory
+free-text on every item (produces "ok" fourteen times and devalues the field where it matters).
+
+**Signature-void UX.** On `approval.voided` the card must NOT quietly update — that's precisely
+the TOCTOU the payload-hash design exists to prevent. Old card freezes, greys, stamps VOID, stays
+in history; new card shows a **field-level** diff (not text diff) with material changes
+highlighted; dwell resets to full; first two lines of copy answer the banker's actual first fear:
+*"Nothing was executed."*
+
+**Reusable pattern extracted:** `.squad/skills/streaming-agent-trace-ui/SKILL.md`.
+
+---
+
+#### Cross-cutting findings from Banker Copilot ideation (2026-09-04)
+
+**Finding 1: Single shared JWT audience is the repo's biggest latent authorization gap**
+
+Today all services validate a single audience (`banking-demo`) against a shared HS256 key. This means a compromised agent holding a banker token can call `POST /api/transfers` directly, and the Banker Copilot approval ladder is pure decoration. 
+
+Remediation: Introduce a second `banking-copilot` audience minted by user-service for harness-only authentication. This requires splitting the shared `banking-workload-identity` KSA to enable per-service Istio AuthorizationPolicy (currently impossible because KSA is shared). Identified by Turk during policy-engine spike. **Status: NOT STARTED; open question O7 to Danny for priority.**
+
+**Finding 2: nginx configs lack `proxy_buffering off` — SSE trace streaming silently batches**
+
+`infra/local/gateway.nginx.conf` and `ui-app.nginx.conf` have no `proxy_buffering off` on any `/api/` location. Without it, the entire SSE trace stream arrives as one lump when the run ends, silently defeating the live-harness illusion. The banker sees no events during the run, then the entire trace dumps at the end.
+
+Remediation: Add `proxy_buffering off;` to all location blocks serving `/api/` paths carrying SSE streams. Identified by Linus during frontend-UX spike. **Status: BLOCKING; this is the single highest-risk non-frontend dependency in the epic and needs an owner now.**

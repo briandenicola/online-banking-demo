@@ -1365,3 +1365,83 @@ uv pip install --python .venv 'pytest>=8.3,<10.0' && uv run --python .venv pytes
 
 **No Code Changes Required:** All 10 PRs were clean upgrades with no breaking API changes.
 
+
+## 2026-09-04 — Banker Copilot Policy Engine Design Spike
+
+**Deliverable:** `docs/design/banker-copilot-policy-engine.md` (design only — no service code written).
+
+### Learnings
+
+**Foundry stack in this repo is Python-only, and that decides the language question.**
+Measured, not assumed: `ai-service`, `chatbot-service`, and `account-opening-service` all pin
+`agent-framework-core 1.16.0` + `agent-framework-foundry 1.10.0`; chatbot and account-opening also
+carry `azure-ai-projects >= 2.1.0`. The one .NET service touching Foundry (`prompt-eval-service`,
+`net10.0`) has **no** agent SDK at all — it uses `IHttpClientFactory` and raw REST. So any .NET
+harness would mean hand-rolling the agent loop, which directly contradicts the "not a hand-rolled
+orchestrator" directive. When a language decision comes up for agent work here, check
+`pyproject.toml` vs `.csproj` first — the answer is already in the dependency files.
+
+**The single shared JWT audience is this repo's biggest latent authorization gap.**
+All services validate `ValidIssuer = user-service` and one audience value, against a symmetric
+HS256 key shared via the `jwt-key` secret. There is currently **no way to express** "this principal
+may call the mediator but not transfer-service" — any bearer-token holder can call any service.
+Minting a *second audience* is the cheapest possible fix because every service already validates
+audience; it just needs a different value. Remember this any time someone proposes a service that
+must be prevented from reaching its peers.
+
+**`serviceAccountName: banking-workload-identity` is shared by every deployment.**
+Combined with `istio.io/rev: asm-1-28` on the namespace, this means the mesh is present but
+*cannot distinguish workloads* — every pod presents the same identity, so per-service
+`AuthorizationPolicy` is currently unwritable. Any design relying on mesh-level source-principal
+rules must first split the KSA.
+
+**Cosmos native TTL is the wrong tool when expiry has semantics.**
+Native TTL deletes. If "expired" must mean "denied" — observable, auditable, visible in UI — a
+delete is indistinguishable from "never existed." Correct pattern: (1) **lazy read-side expiry**
+as the actual safety control (every read compares `expiresAt` before acting, so sweeper lag can
+never permit a late action), (2) a sweeper as pure housekeeper emitting the state transition, and
+(3) native TTL set **only on terminal documents** for retention purge, with live docs at `ttl: null`
+so a stalled sweeper can never silently delete pending work. Never let a background job be both a
+housekeeper and a security control.
+
+**Audit stream schema divergence found (worth a separate ticket).**
+The Go `event-processor` reads `banking-events` and unmarshals `message.Values["payload"]` (a single
+stream field holding the whole `{eventType,timestamp,data}` envelope). All .NET `RedisEventPublisher`
+classes match. But `account-opening-service/app/events.py` publishes **flat** fields
+(`eventType`/`applicationId`/`timestamp`/`data`) to a **different** stream (`account-opening-events`).
+Anything new that publishes in the account-opening style to `banking-events` would be silently
+invisible to the audit consumer. Always copy the .NET `payload`-envelope form for audit events.
+
+**Monotonicity is provable if you make downgrade unrepresentable.**
+Rather than reviewing policy rules for "does this lower authority?", give the rule grammar only
+`raise_to` / `min_signers` / `min_seniority` and fold with `max` over a total order. Then
+"escalators can only raise" is a property of the schema, not a discipline. Add code-level floors
+(`signers >= 1`) *after* all config input so the worst possible misconfiguration is "too strict,"
+never "no human signed."
+
+**Money in canonical hashing: deviate from RFC 8785 deliberately.**
+JCS uses ES6 double serialization, which is unsafe for currency. Canonicalize money as fixed-scale
+decimal strings and reject floats outright in money positions. Also: omit `null` and absent fields
+identically so `{"memo": null}` and `{}` cannot produce two different hashes.
+
+**Validation trick used here:** the policy YAML embedded in the design doc was extracted and parsed
+programmatically to confirm every `threshold("x")` reference resolves, every threshold declares an
+`env` override, every `default` is a string (not a YAML float), every evidence key is defined and
+used, and no `batchable` action has a non-L1 base rung. Design docs containing config examples
+should be machine-checked — a spec with an inconsistent example teaches the wrong thing.
+
+---
+
+#### Cross-cutting findings from Banker Copilot ideation (2026-09-04)
+
+**Finding 1: Single shared JWT audience is the repo's biggest latent authorization gap**
+
+Today all services validate a single audience (`banking-demo`) against a shared HS256 key. This means a compromised agent holding a banker token can call `POST /api/transfers` directly, and the Banker Copilot approval ladder is pure decoration. 
+
+Remediation: Introduce a second `banking-copilot` audience minted by user-service for harness-only authentication. This requires splitting the shared `banking-workload-identity` KSA to enable per-service Istio AuthorizationPolicy (currently impossible because KSA is shared). Identified by Turk during policy-engine spike. **Status: NOT STARTED; open question O7 to Danny for priority.**
+
+**Finding 2: nginx configs lack `proxy_buffering off` — SSE trace streaming silently batches**
+
+`infra/local/gateway.nginx.conf` and `ui-app.nginx.conf` have no `proxy_buffering off` on any `/api/` location. Without it, the entire SSE trace stream arrives as one lump when the run ends, silently defeating the live-harness illusion. The banker sees no events during the run, then the entire trace dumps at the end.
+
+Remediation: Add `proxy_buffering off;` to all location blocks serving `/api/` paths carrying SSE streams. Identified by Linus during frontend-UX spike. **Status: BLOCKING; this is the single highest-risk non-frontend dependency in the epic and needs an owner now.**
