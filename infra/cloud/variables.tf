@@ -64,3 +64,31 @@ variable "jumpbox_ssh_public_key_path" {
   type        = string
   default     = "~/.ssh/id_rsa.pub"
 }
+
+#############################################
+# BANKER COPILOT — authority-service platform wiring (epic #332, Phase 1)
+#############################################
+
+variable "kubernetes_namespace" {
+  description = "Kubernetes namespace the banking workloads are deployed into. Used to build workload-identity federated credential subjects."
+  type        = string
+  default     = "banking-demo"
+}
+
+variable "authority_service_service_account" {
+  description = "Kubernetes service account name bound to the dedicated authority-service workload identity (#336). Deliberately NOT the shared banking-workload-identity account — a distinct service account is what makes the isolation a control rather than a naming convention."
+  type        = string
+  default     = "authority-workload-identity"
+}
+
+variable "bootstrap_supervisor_email" {
+  description = "Email address of the identity seeded with the `supervisor` role at user-service startup. Role promotion to supervisor is itself an L3 action and therefore cannot be performed through the Copilot harness, so the first supervisor must be provisioned out of band. Seeding is idempotent and is skipped entirely once any supervisor exists."
+  type        = string
+  default     = "supervisor@banking-demo.com"
+}
+
+variable "bootstrap_banker_email" {
+  description = "Email address of the identity seeded with the `banker` role. Separation of duties needs two DISTINCT real identities to be demonstrable, so the banker is seeded alongside the supervisor rather than reusing one account."
+  type        = string
+  default     = "banker@banking-demo.com"
+}

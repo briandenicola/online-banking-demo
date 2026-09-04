@@ -17,6 +17,7 @@
 | Linus | Frontend Dev | .squad/agents/linus/charter.md | ⚛️ Active |
 | Livingston | Tester/QA | .squad/agents/livingston/charter.md | 🧪 Active |
 | Turk | Backend Dev | .squad/agents/turk/charter.md | 🔧 Active |
+| Rusty | Platform/Infra Engineer | .squad/agents/rusty/charter.md | ⚙️ Active |
 | Scribe | Session Logger | .squad/agents/scribe/charter.md | 📋 Active |
 | Ralph | Work Monitor | — | 🔄 Monitor |
 

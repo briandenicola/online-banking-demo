@@ -77,7 +77,7 @@ design; only the definition was missing.
 | Cosmos container | **`copilot-approvals`**, PK `/requesterId` | `authority-proposals`, PK `/actorId` | Follows the entity; Turk's partition-key analysis is the load-bearing part and is unchanged. |
 | Timestamps | **`expiresAt`, `terminalAt`** | `expiresAtUtc`, `resolvedAtUtc` | `terminalAt` pairs with `terminalReason`; `…Utc` suffixes are noise when everything is UTC by convention. |
 | Rung on the record | **`requiredRung`** (+ `baseRung`) | bare `rung` | Bare `rung` is ambiguous next to `baseRung` and the rung a signature satisfied. |
-| Signature count | **`requiredSigners`** (+ `distinctIdentitiesRequired`) | `signaturesRequired` | Counts people, and the distinction between signatures and identities is the whole of separation of duties. |
+| Signature count | **`requiredSigners`** (`distinctIdentitiesRequired` retired — §5.2.3b) | `signaturesRequired` | Counts people, and the distinction between signatures and identities is the whole of separation of duties. |
 | Action-type id | **`actionId`** | `actionTypeId` | Shorter, already dominant, unambiguous in context. |
 | Escalators on the record | **`firedEscalators`** | `matchedEscalators` | An escalator *fires*; "matched" suggests it might have matched and not applied. |
 | Browser-facing prefixes | **`/api/authority/*`** (approvals, policy, evaluate) and **`/api/copilot/*`** (sessions, runs, stream, messages) | everything under `/api/copilot` | One prefix per service = one nginx `location` block per service, matching the existing gateway pattern, and the enforcement boundary is legible in the URL. Routing `/api/copilot/approvals` to a different service than `/api/copilot/sessions` needs a more-specific location block whose ordering, if disturbed, silently sends approval writes to the harness. |
@@ -988,80 +988,133 @@ rely on, and a mutable one lets a document's history be silently rewritten.)*
 
 ### 5.2 Cosmos design
 
-**Container `copilot-approvals`, PK `/requesterId`.**
+> **AUTHORITY RULING (Danny, 2026-09-04) — `docs/design/banker-copilot-policy-engine.md` §5.3 is
+> the authoritative definition of the `copilot-approvals` document.** This section previously
+> carried a second, divergent copy of that document. It no longer carries any copy at all.
+>
+> **The arbitration is the smaller half of the ruling. The duplication was the bug.** Two
+> documents restating one physical schema will drift, and Cosmos is the worst possible place for
+> that to happen: field paths are name-sensitive and a mismatch returns **zero rows, not an
+> error**. An index built on `createdAt` against a service writing `proposedAtUtc` does not fail —
+> it silently stops serving the `ORDER BY`, degrades to a cross-partition scan, and looks
+> perfectly healthy at demo volume. This is the same class of failure as the duplicated
+> `policyVersion` I removed in §5.3.1, one level up: **structure instead of identifier.** Fixing
+> only today's instance would leave the mechanism intact, so the fix is that the shape is now
+> defined in exactly one place and §5.3.1a is extended to enforce it (§5.3.1b).
+>
+> *Why the design doc and not the epic, given the epic is the specification?* Because authority
+> follows the analysis, not the document's rank. Design §5.3 is the copy with the query patterns,
+> the RU analysis and the composite-index derivation attached; Rusty's `infra/cloud/cosmos.tf` is
+> already indexed to it and Turk is implementing against it. Two of the three consumers agreed
+> with each other and only the epic disagreed — and the disagreeing copy was the one with no
+> query analysis behind it. It was also, on the merits, worse: `…Utc` suffixes that §0.1 already
+> ruled to be noise, `matchedThresholds` as opaque strings where the design has structured
+> escalator objects carrying the threshold name, env var and value, and no `execution` block.
 
-PK justification: the dominant query is *"what is waiting for me?"* — a single-partition read
-by the signed-in banker on every harness poll and every UI refresh. `/id` (the repo default)
-would make the inbox a cross-partition fan-out on the hottest path. Supervisor co-signing is
-handled by a **second document**, a `cosignerId`-keyed pointer doc written in the same logical
-operation, so the supervisor's inbox is also single-partition. Duplicating a pointer beats
-fanning out a query.
+#### 5.2.1 What this epic still owns
 
-TTL: container-level `defaultTimeToLive = -1` (opt-in), per-item `ttl` set to the policy TTL
-**plus a 90-day retention tail** — the document must outlive the decision window for audit.
-Expiry-as-denial is driven by an explicit sweeper (see §5.5), never by Cosmos TTL deletion.
-Losing the record is not the same as denying the request.
+The split is **layered, and the layer boundary is now normative**:
 
-```jsonc
-{
-  "id": "apr_01JQ...",
-  "requesterId": "user:banker-mchen",       // PARTITION KEY
-  "cosignerId": null,
-  "sessionId": "sess_01JQ...",
-  "actionId": "transaction.flag.review",
-  "toolId": "review_flagged_transaction",
-  "status": "pending",
-  "requiredRung": "L2",
-  "rungExplanation": {
-    "baseRung": "L1",
-    "matchedThresholds": ["transaction.amount >= 25000"],
-    "firedEscalators": ["low-agent-confidence"]
-  },
-  "payload": { "txId": "tx_884", "decision": "cleared", "note": "..." },
-  "payloadHash": "sha256:9f2c...",
-  "canonicalization": "JCS/RFC-8785",
-  "target": { "service": "ai-service", "method": "PUT",
-              "path": "/api/admin/flagged-transactions/tx_884/review" },
-  "idempotencyKey": "tx_884:cleared",
-  "evidence": [
-    { "toolId": "get_flagged_transaction", "traceId": "...", "spanId": "...", "hash": "sha256:..." },
-    { "toolId": "list_account_transactions", "traceId": "...", "spanId": "...", "hash": "sha256:..." }
-  ],
-  "agentAssessment": { "recommendation": "clear", "confidence": 0.62, "agentId": "primary" },
-  "secondOpinion": {
-    "agentId": "supervisor",
-    "independenceMode": "blind",
-    "recommendation": "clear",
-    "confidence": 0.81,
-    "agreesWithPrimary": true
-  },
-  "signatures": [
-    { "signerId": "user:banker-mchen", "role": "banker",
-      "signedAtUtc": "2026-09-04T14:02:11Z", "payloadHash": "sha256:9f2c...",
-      "authMethod": "jwt", "jti": "...", "ipHash": "sha256:..." }
-  ],
-  "requiredSigners": 2,
-  "distinctIdentitiesRequired": 2,
-  "proposedAtUtc": "2026-09-04T13:58:02Z",
-  "expiresAt": "2026-09-04T14:28:02Z",
-  "terminalAt": null,
-  "terminalReason": null,                  // MANDATORY once status is terminal (§5.1.1)
-  "supersededByApprovalId": null,          // set with PAYLOAD_SUPERSEDED / POLICY_RUNG_ESCALATED
-  "batchId": null,
-  "policyVersion": "sha256:4a1f...",
-  "ttl": 7776000
-}
-```
+| Layer | Owner | Content |
+|---|---|---|
+| *What must be true* | **This epic** | Container identity, partition key, TTL semantics, and the field **inventory** below — which facts must be recorded and which invariant each one serves |
+| *What it looks like on the wire* | **Design §5.3** | Field paths, nesting, types, casing, example values |
+| *How it is queried and indexed* | **Design §5.5 + `infra/cloud/cosmos.tf`** | Query patterns, composite indexes, denormalised query fields |
 
-> **`policyVersion` appears exactly once in this document — here, at the top level.** It was
-> previously duplicated inside `rungExplanation`; that copy has been removed. See §5.3.1 for
-> the single-definition rule. Two copies of a value that is bound into a security hash is a
-> drift bug waiting to happen, and it would have shipped.
+**No layer restates another.** The epic names a fact; the design names the path. If you want to
+know whether `policyVersion` is nested, read the design doc — this document must not answer that
+question, because a document that answers it can be wrong about it.
 
-**Container `authority-policy`, PK `/id`.** Doc `active` plus immutable versioned history docs,
-keyed by `policyVersion`. Every approval stamps `policyVersion`, so a decision can always be
-re-explained under the policy in force at the time — not today's policy. Auditors ask this
-question, and "we changed the YAML" is not an answer.
+**Container `copilot-approvals`, PK `/requesterId`** — unchanged, and both documents already
+agreed. The dominant read is *"what is waiting for me?"*, single-partition for the signed-in
+banker. Turk's rejected-alternatives analysis (§5.2 of the design) stands.
+
+**TTL:** container-level `defaultTimeToLive = -1` (opt-in), per-item `ttl` set only **after** a
+terminal state, with a retention tail that outlives the decision window. Expiry-as-denial is
+driven by an explicit sweeper (§5.5), never by Cosmos TTL deletion. **Losing the record is not
+the same as denying the request** — invariant I-6 requires a `denied` document with
+`TTL_EXPIRED`, and a deleted document cannot carry a `terminalReason`.
+
+**Required field inventory (normative — paths live in design §5.3):**
+
+| Fact that must be recorded | Invariant it serves |
+|---|---|
+| Requester identity (partition key) | I-1; separation of duties needs a subject to differ *from* |
+| Action type id | The policy-file primary key (§0.1) — §11.1 finding 4 |
+| Lifecycle status, from the five-value set | §5.1 |
+| Terminal reason, mandatory and non-null once terminal | §5.1.1 |
+| Terminal detail (human denial text, ≥20 chars) | §5.4.2 |
+| Supersede link to the replacement approval | §5.1.1, §5.3.2 |
+| Payload, payload hash, canonicalization version | §5.3 — what the signature binds to |
+| Resolved policy version, **recorded exactly once** | §5.3.1 |
+| Rung required, signer count, and the escalators that fired **with their thresholds** | §4; "it escalated" is not an explanation |
+| Signature slots, pre-declaring seniority and exclusions | §5.4 — see 5.2.3 |
+| Evidence references | §3 — a recommendation without evidence is not reviewable |
+| Execution state, idempotency key, attempts, downstream result | §5.1 `status` vs `execution.state` |
+| Created / expires / terminal timestamps | I-6 |
+| Optimistic concurrency token | Every transition is a compare-and-swap |
+
+#### 5.2.2 The `cosignerId` pointer document — RULED OUT
+
+The earlier draft of this section proposed a second, `cosignerId`-keyed pointer document so the
+supervisor's inbox would also be single-partition. **It is out.** Turk's cross-partition query,
+bounded by the `(status, awaitingSeniority, createdAt)` composite index and a page size, is the
+design of record. Rusty is correct not to have built it.
+
+The performance argument against it is real but ordinary — a second write per approval, to a
+different partition key, therefore **outside any transactional batch**. A crash between the two
+writes leaves either an approval no supervisor can see (which presents as a silent drop in the
+component that gates money movement) or a pointer to nothing. Dual-write consistency is a bad
+trade for a query on the exception path.
+
+**The argument that actually decides it is a security argument, and I missed it the first time.**
+Writing a pointer keyed by `cosignerId` requires knowing **who will co-sign, at proposal time.**
+Under separation of duties we specifically do *not* know that: any supervisor of sufficient
+seniority who is not the requester may sign. A named co-signer converts the ladder from
+*"a second qualified human must review this"* into *"this named person must review this"*, which
+(a) makes one person's absence a hard block on the escalation path, and (b) hands the requesting
+banker — or an agent acting under their identity — **the ability to choose their reviewer.**
+Choosing your own reviewer is the self-dealing pattern the L2 rung exists to prevent, so a
+performance optimisation would have quietly reintroduced the thing being defended against.
+
+`cosignerId` is therefore deleted as a field, not merely as an index strategy. The design doc's
+`awaitingSeniority` / `pendingSlotOrdinal` denormalisation is the correct replacement **because
+it describes what kind of signer is still needed, never which person** — the queue is a property
+of the work, not of an individual. If L2 volume ever justifies a pointer document, Turk's
+deferred escape hatch (`copilot-approval-queue` partitioned by `/queueKey`) preserves that
+property; a `cosignerId` key does not. **Any future optimisation here must key on the queue,
+never on a person.**
+
+#### 5.2.3 Two corrections the schema merge surfaced
+
+Reconciling the two documents turned up two problems that were in **neither** of Rusty's diff
+rows, because each document was internally consistent about them.
+
+**(a) `execution.signedUnderPolicyVersion` is a second copy of `policy.policyVersion` — remove
+it from the document.** The design doc annotates the field `// == policy.policyVersion above`,
+which states the violation outright: §5.3.1 permits the approval record **one** copy of the
+policy version, and this is a second one, in the same document, of a value bound into a security
+hash. It is also provably always equal, and the ruling that makes it so is §5.3.2: if the policy
+version changes while an approval is pending, the signature is *void* and a *replacement*
+approval is created — an executing document's signatures were therefore always bound to its own
+`policy.policyVersion`. The two values cannot diverge, so the field carries no information and
+can only ever be wrong. `execution.evaluatedUnderPolicyVersion` **stays**: that is a genuinely
+new value (the live ruleset at execute time), and comparing it against `policy.policyVersion`
+yields exactly the audit annotation Turk wants, with no branch condition (§6.4 of the design).
+
+> This is not a contradiction of §5.7, which requires *both* `signedUnderPolicyVersion` and
+> `evaluatedUnderPolicyVersion` on the `ApprovalVoidedByPolicyChange` **event**. An audit event
+> is a standalone, flat record that must be interpretable without joining back to a document;
+> denormalisation there is correct. A second copy inside the document it was denormalised from
+> is not. The rule is *one copy per document*, not *one copy per system*.
+
+**(b) `distinctIdentitiesRequired` is retired — `signatureSlots[].mustDifferFrom` subsumes it,
+and is stronger.** The two can never disagree: Q4 (§5.4.1) forbids the same human satisfying two
+slots, so the distinct-identity count is always equal to `requiredSigners` and the field is
+redundant. More importantly the slot form is a better control. A count is satisfied by
+*arithmetic* and a miscount silently passes; `mustDifferFrom: ["user_9f3a"]` **names the
+identity that is excluded**, so the check is a set-membership test against a specific subject
+rather than a tally. §0.1 and the §5.4 signing algorithm are updated accordingly.
 
 ### 5.3 Payload-hash signing scheme
 
@@ -1096,15 +1149,29 @@ It must never be independently computed, defaulted, or re-derived at any of its 
 | Site | Field | Relationship |
 |---|---|---|
 | Policy document | `authority-policy` doc identity | **Authoritative source.** The value IS the identity of the resolved policy. |
-| Approval record (§5.2) | `approval.policyVersion` | Copied once at `proposed`, then **immutable for the life of the approval**. |
+| Approval record (design §5.3) | `approval.policy.policyVersion` | Copied once at `proposed`, then **immutable for the life of the approval**. |
 | Payload hash (§5.3) | hash input | Reads `approval.policyVersion`. Never re-reads the live policy. |
 | Trace envelope (§8.0) | `approval.required` payload | Copied from `approval.policyVersion` at emit. |
 | Audit events (§5.7) | `Approval*` / `PolicyReloaded` | Copied from `approval.policyVersion`. |
 
 **Invariant (testable):** for any approval, the `policyVersion` in the approval record, the
 value bound into every signature's `payloadHash`, the value on the `approval.required` trace
-frame, and the value on every audit event **are byte-identical**. A contract test asserts this;
-`rungExplanation` deliberately carries no copy.
+frame, and the value on every audit event **are byte-identical**. A contract test asserts this.
+
+> **The rule constrains cardinality, not depth — and nesting it was an improvement.** An earlier
+> draft of this document said `policyVersion` "appears exactly once — here, at the top level."
+> The design doc nests it at `policy.policyVersion`. **That satisfies both the intent and the
+> letter of this ruling**, because the ruling counts copies and there is still exactly one; the
+> words "at the top level" were describing where it happened to sit in a document this epic no
+> longer owns (§5.2), not imposing a depth. I am ruling explicitly rather than by silence
+> because Turk has already built it and deserves a straight answer: **the nesting is correct and
+> he should not change it.**
+>
+> It is also the better shape. Grouping the resolved policy version with `baseRung`,
+> `requiredRung`, `firedEscalators` and `resolvedThresholdSnapshot` gives every policy-derived
+> value one obvious home. A flat namespace is what *invites* the second copy — which is precisely
+> how the original `rungExplanation.policyVersion` duplicate arose, and how
+> `execution.signedUnderPolicyVersion` (§5.2.3a) arose after it.
 
 The failure this prevents is specific and quiet: the envelope's copy drifts (say it gets
 defaulted to "current" at emit time), #333 replays a run and judges the rung against the wrong
@@ -1157,6 +1224,45 @@ version — which silently defeats the entire binding, because a signature from 
 would still validate under the new one. The example above shows `sha256:4a1f...` in the
 expectation that Turk lands on a content hash.
 
+#### 5.3.1b The structural contract test — field paths, not just field names
+
+**§5.3.1a would not have caught the schema drift Rusty found, and that is a defect in the test,
+not in Rusty.** The identifier test compares *names* across documents. But `createdAt` and
+`proposedAtUtc` are each perfectly consistent **within** their own document — there is no shared
+name spelled two ways to grep for. What diverged was the **set of field paths**, and a set
+difference is not a substring search. The test is therefore extended along a second axis.
+
+**Canonical form.** Every artifact that describes the approval document is reduced to a **sorted
+set of dotted field paths** (`policy.policyVersion`, `signatureSlots[].mustDifferFrom`,
+`execution.state`). Nesting is captured for free: `policyVersion` and `policy.policyVersion` are
+different strings, so a depth change fails the same way a rename does.
+
+**The four sites, and the direction of each assertion — the directions are not symmetric:**
+
+| Site | Extraction | Assertion |
+|---|---|---|
+| Design §5.3 `jsonc` block | parse the fenced block (comments stripped) | **Defines the canonical set.** This is the source of truth. |
+| A real document written by `authority-service` | integration test writes one approval, reads the raw JSON back | **Must equal** the canonical set. Catches a .NET serializer naming-policy mismatch — which no doc-to-doc check can see. |
+| `banker-copilot-service` read models (Python) | model field paths | **Must be a subset.** The reader may ignore fields; it may never invent one. |
+| `infra/cloud/cosmos.tf` `included_path` / `composite_index` | parse the HCL | **Must be a subset.** This is the silent one: an index on a path nobody writes throws no error, it just quietly stops serving the query. |
+
+**Fail closed on the subset checks.** A path present in the index or the reader but absent from
+the canonical set is a hard failure, never a warning — that is exactly Rusty's `createdAt` /
+`proposedAtUtc` case, and its whole character is that nothing complains at runtime.
+
+**And the epic asserts nothing here, by design.** This document no longer contains a copy of the
+approval schema (§5.2), so it has no path set to compare. **That absence is the primary fix**;
+the test is the backstop that detects the copy coming back. A CI check therefore also fails if a
+`jsonc` block describing a `copilot-approvals` document reappears in `docs/epics/banker-copilot.md`.
+
+> **The generalisation worth carrying past this epic.** §5.3.1 was "one value, one definition."
+> §5.3.1a extended that to identifiers. This extends it to shape. All three are the same rule:
+> **anything restated in more than one artifact must be generated from one source or checked
+> against one source — never maintained in parallel by careful people.** The version that bites
+> is always the one where each copy is locally correct, because local correctness is what makes
+> reviewers sign off. Rusty's find is the strongest evidence of that so far: both documents were
+> internally coherent, both had been reviewed, and they still specified different databases.
+
 #### 5.3.2 Policy change vs. signature in flight — RATIFIED
 
 > **Ruling (Brian, 2026-09-04), closing Q1.** A signature is valid only for the policy version
@@ -1200,9 +1306,9 @@ executeProposal(p):
         p.terminalAt  := now()
         emit('ApprovalVoidedByPolicyChange', {           # see §5.7 for the full shape
             signedRung: rungSigned, newRung: rungNow,
-            signedUnderPolicyVersion:     p.policyVersion,
+            signedUnderPolicyVersion:     p.policy.policyVersion,
             evaluatedUnderPolicyVersion:  activePolicy.version,
-            discardedSignatures: p.signatures })         # WHOSE signature was thrown away
+            discardedSignatures: signedSlots(p) })       # WHOSE signature was thrown away
         q := propose(p.actionId, p.payload, rung = rungNow,
                      policyVersion = activePolicy.version)   # new id, new hash, new slots
         p.supersededByApprovalId := q.id
@@ -1248,9 +1354,9 @@ surface are real requirements, not edge cases — see §9 risk 5.
 
 Enforced in `authority-service`, not in the UI:
 
-- `signerId` uniqueness across the `signatures` array — a replayed signature is a no-op.
-- Distinct-identity count must reach `distinctIdentitiesRequired`. The same human with two
-  sessions or two tokens counts once.
+- `signerId` uniqueness across filled `signatureSlots` — a replayed signature is a no-op.
+- Each slot's `mustDifferFrom` set is evaluated against the presented `signerId` (§5.2.3b). The
+  same human with two sessions or two tokens is one identity and cannot fill two slots.
 - Co-signer's role must appear in `rungs.L2.cosignerRoles`.
 - Co-signer must not be the approval's `requesterId`, and must not be a subject of the payload —
   the self-dealing check runs a second time at signing, against the co-signer.
@@ -1470,11 +1576,11 @@ model attached:
 POST /api/authority/approvals/{id}/sign
   1. Verify JWT (issuer, audience, lifetime, signature).
   2. signerId := sub claim.                     // never from the request body
-  3. Reject if signerId already present in signatures[].
+  3. Reject if signerId already fills another signatureSlot.
   4. Reject if role/effectiveRoles lacks the rung's required signerRole/cosignerRole.
   5. Reject if this is a co-signature AND signerId == approval.requesterId.   ← the core check
   6. Re-run the self-dealing escalator against THIS signer (not just the requester).
-  7. Accept only if distinct(signerIds) would reach distinctIdentitiesRequired.
+  7. Reject if signerId appears in this slot's mustDifferFrom set.
   8. Recompute payloadHash; reject on mismatch (§5.3).
 ```
 
@@ -1580,6 +1686,25 @@ visualization, and Phase 3 downstream integration (loan → account → seed tra
 **Banker Copilot takes:** the review dashboard and the decision panel from #140 Phase 2. Those
 become the Copilot artifact canvas and the approval card. Turk should not build a decision
 panel we then delete.
+
+> **Amended under the Phase 5 coexistence ruling (§8.5).** The supersession **holds, and it is
+> not softened to "available behind the flag."** The two cases are different and the distinction
+> is worth stating, because it looks inconsistent at first glance:
+>
+> - The **admin tabs already exist** and are already exercised by demo scripts and e2e specs.
+>   Keeping them costs a flag and buys a control group (§8.5.1). There is a comparison to be had.
+> - The **#140 decision panel does not exist yet.** Keeping it "behind the flag" means *building*
+>   a second review surface in order to hide it. That is not a comparison, it is speculative
+>   duplication — and it would duplicate the highest-risk surface we have, the one where a human
+>   signs. Two places to sign a loan decision means two code paths that must both enforce the
+>   ladder, and the whole #140 seam is the single broker-only endpoint in §7.1.
+>
+> **The rule that reconciles them: coexistence applies to what already exists, not to what has
+> not been built.** Retiring working software to prove a point was the thing Brian's ruling
+> corrected; declining to build a second signing surface is not the same act.
+>
+> Turk still should not build a decision panel. If loan review through the Copilot canvas turns
+> out to be worse, the fix is to build the panel *then*, with evidence — not to hedge now.
 
 **Contract #140 must expose** — read-only, plus one broker-called write:
 
@@ -1753,7 +1878,7 @@ valuable and independently demoable.**
 
 - Supervisor agent with blind construction; independence assertions in tests.
 - Fan-out engine, limits config, nested trace rendering.
-- Co-signature flow, second-inbox pointer doc, out-of-band notification sinks.
+- Co-signature flow, supervisor queue (cross-partition + composite index; **no pointer doc** — §5.2.2), out-of-band notification sinks.
 - Payload-mutation void path, wired into the UI.
 - Batch approval within one action type, L1 only.
 - **#334 (per-service JWT audience + asymmetric signing) should land in this window.** L2 is
@@ -1774,10 +1899,213 @@ two sessions by design, per §1.3).
 
 **Exit:** the "not proposable" beat from §7.2 runs live.
 
-### Phase 5 — Admin tab retirement
-- Saved Copilot views replace tabs; `/admin` becomes the break-glass console for L3 actions
-  with heightened audit.
-- Docs, ADRs, smoke tests against `${CUSTOM_DOMAIN}`.
+### Phase 5 — Coexistence and comparison (RATIFIED — Brian, 2026-09-04)
+
+> **Ruling: Phase 5 is no longer "Admin tab retirement." The admin tabs stay.** A feature flag
+> shows/hides them so the two experiences can be run side by side and compared.
+> `.squad/decisions/inbox/danny-phase5-coexistence.md`.
+
+#### 8.5.1 Why this is a strength, not a compromise
+
+This document has asserted from §1 that an intent→plan→tools→artifact loop beats eight admin
+tabs. **Until now that was rhetoric.** Retiring the tabs would have made the claim permanently
+unfalsifiable — the alternative would no longer exist to lose to. Keeping both makes the claim
+*testable*, and Phase 5 changes from a deletion task into **the only phase that produces
+evidence.**
+
+More than that, it gives us a **control group for §9 risk 1**, which is the risk I believe is
+the actual threat model: approval fatigue. If a banker signs forty cards an hour, "human in the
+loop" is theatre and we have built a slower autonomous system with a liability shield. The
+defence has always been that the harness must produce *fewer, better* approvals — but "fewer than
+what?" had no answer. Now it does: fewer than the number of unreviewed mutating clicks the same
+banker makes doing the same work through the tabs.
+
+**Measure the same task both ways** (measurement design is Phase 5's real deliverable):
+
+| Metric | Why it matters | The reading that would worry me |
+|---|---|---|
+| Time to complete an identical task | The headline claim | Harness slower *and* not more accurate |
+| Mutating actions taken | Fewer, better approvals (risk 1) | Harness produces **more** signature events than the tabs produced clicks — that is the fatigue failure, quantified |
+| Time-to-sign, over a session | Risk 1 treats a **falling** time-to-sign as a defect | Time-to-sign declining as the session goes on = rubber-stamping |
+| Context switches / tab loads | The tab-hunting claim | Roughly equal — the premise was wrong |
+| Read fan-out per customer | §9 risk 13 — tab friction is an implicit privacy control | Harness pulls far more customer data per task |
+| Reversals / corrections after the fact | The only real quality proxy we have | Harness decisions reversed more often |
+
+**Publish the results even when they are unflattering.** A demo that cannot lose is not a
+demonstration, and the fatigue metrics are the ones most likely to embarrass us — which is
+exactly why they are the ones worth collecting. If the harness produces more signature events
+than the tabs produced clicks, we have made the problem worse and should know it here, in a
+phase built to find out, rather than in production.
+
+#### 8.5.2 The honest tension — the ladder is no longer the only road
+
+**Stated plainly, because a reader will otherwise find it themselves and trust the rest of the
+document less:** keeping the admin tabs keeps a **write path that does not traverse the authority
+ladder.** A banker can still lock an account by clicking a tab, with no policy evaluation, no
+rung, no payload hash and no signature record.
+
+**This does not violate I-1.** The invariant is that *agents* never approve. A human clicking an
+admin tab is a human acting directly with no agent in the loop, no delegated identity, and
+nothing proposing anything — which is precisely the situation the ladder was built to constrain
+*into*, not the situation it was built to prevent. The ladder governs **agent-originated** state
+change. Direct human administration was never inside its scope and still is not.
+
+**What it does mean** is that "every mutating action in this system carries a policy-evaluated
+signature" is **not** true, and no part of this epic may claim it is. The true statement is
+narrower and still worth a lot: *every action an agent originates carries a human signature bound
+to a payload hash, evaluated against a versioned policy.* Phase 5 must not blur those two. If
+someone later wants the strong claim, the way to earn it is to route the tabs through the broker
+too — which is a real option, and explicitly **not** what was ruled today.
+
+#### 8.5.3 Audit asymmetry between the two surfaces — KNOWN AND ACCEPTED
+
+> **Ruling (Brian, 2026-09-04):** *"since this is demo, i'm okay with that gap."*
+>
+> **Audit parity between the admin tabs and the broker write path is explicitly OUT of Phase 5
+> scope.** This is a decision, not a deferral, and it is recorded here so that it reads as one.
+
+**The asymmetry, stated exactly.** The broker path produces, for every write: a policy
+evaluation, a rung, the escalators that fired with their thresholds, a payload hash, one or two
+signature records bound to that hash, a policy version, and a full audit event stream. The admin
+tab path produces, for the same operation, **nothing at all** — verified 2026-09-04 against
+`src/user-service/Services/UserService.cs`, which publishes from exactly two paths
+(`PublishUserRegisteredEvent`, `PublishRoleGrantedEvent`). `LockUserAsync`, `UnlockUserAsync`,
+`DeleteUserAsync` and the reset-password path emit no event. Those four *are* the admin tabs'
+entire mutating surface (see 8.5.3.1). So the same operation is fully evidenced through the
+Copilot and invisible through the tab.
+
+**Why accepting it is reasonable here.** Retrofitting equivalent audit emission across the legacy
+admin surface is real work in service of a control nobody exercises in a demo, and it is not what
+this epic is for. The gap is **priced, not missed**: it costs us the ability to say "every write
+in this system is attributable," which we already could not say (§8.5.2), and it does not touch
+any property the harness itself provides. Nothing in the ladder, the signing scheme, the policy
+engine or the trace stream is weakened by it.
+
+**What we therefore may not claim.** Two sentences that must not appear in a demo script, a
+README, or this document:
+
+- ~~"Every mutating action in this system is audited."~~ It is not. Four are not.
+- ~~"The feature flag lets you compare two equally governed surfaces."~~ It does not. It compares
+  a governed surface against an ungoverned one, and the comparison in §8.5.1 is **about
+  experience — time, clicks, context switches, approval volume — not about governance.**
+
+The honest version, and the one worth demoing: *the harness makes agent-originated change
+attributable; the tabs never did, and turning the flag off does not make them so.*
+
+**If this ever leaves demo status.** The four `user-service` admin writes would need to publish
+audited events at parity with the existing `RoleGranted` shape (same `banking-events` stream,
+same single-field XADD, PascalCase `eventType`) with actor/action/target attribution, plus
+matching `case` arms in `event-processor` so they do not land in `default:`. **The reason it
+would become urgent is not completeness — it is that an unaudited surface sitting beside a
+governed one is an incentive**: under a heavy approval load the rational move becomes *"just use
+the other UI,"* and the ladder degrades into an opt-in. In a demo nobody is under load, so the
+incentive is inert. In production it would not be. That is the whole of the argument; no plan is
+needed until then.
+
+**#337 is closed as accepted**, with this ruling attached, rather than left open. An open issue is
+a debt someone will feel obliged to pay down; a closed one with a recorded decision is a choice
+someone can reopen deliberately.
+
+##### 8.5.3.1 Related check — the published-but-unaudited set (noted only, per ruling)
+
+Rusty found and fixed two event types that were published to `banking-events` but fell through
+`event-processor`'s `default:` branch (`UserRegistered`, `InsufficientFundsAttempt`). The
+question was whether any admin tab write is in that same set.
+
+**It is not, and the answer is unusually clean.** The admin tabs' complete mutating surface is
+three call sites in `src/ui-app/src/components/AdminUserManagementTab.tsx` —
+`DELETE /admin/users/{id}`, `PUT /admin/users/{id}/{lock|unlock}`, and
+`PUT /admin/users/{id}/reset-password`. Every other admin tab (`AdminEvalTab`,
+`AdminChatbotPromptTab`, `AdminFoundryStatusTab`, `AdminLoginAuditTab`) is **read-only**. All
+four writes are in the **never-published** set, not the published-but-unaudited set, so Rusty's
+fix class does not overlap with them at all and extending his work would not have reached them.
+
+Recorded for completeness. **No action, per the ruling — and deliberately not carried into §9 as
+a risk**, because it is a decided caveat and the register is for things still undecided.
+
+#### 8.5.4 L3 and break-glass under coexistence
+
+The previous plan made `/admin` the break-glass console for L3. With the tabs always present,
+"break-glass" needs a definition that is **not** "the other UI," or the L3 boundary dissolves
+into a navigation choice.
+
+**L3 is unchanged and non-negotiable:** deletes, role promotion, adverse action, and edits to the
+harness's own policy remain outside the harness. The agent may not perform them and **may not
+even propose them** — `agent_may_propose: false`. That property belongs to the *action*, not to
+the surface it is performed on, and no flag state alters it.
+
+**Break-glass is a property of the action, not of the URL.** What distinguishes it from ordinary
+tab use is not which page you are on:
+
+| | Ordinary tab use | Break-glass (L3) |
+|---|---|---|
+| Which actions | L1/L2-class operations a banker may do directly | The L3 set only |
+| Audit | Harness path: full ladder trail. Tab path: **none** — accepted caveat §8.5.3 | Harness path: **plus** a mandatory operator reason and an elevated-severity event. Tab path: still none |
+| Notification | None | Out-of-band, to a second party, at the time of the action |
+| Review | Sampled | Every occurrence reviewed |
+
+So the ruling is: **the tabs are not the break-glass console; the L3 *actions* are break-glass,
+wherever they are performed.** Both remain reachable while the flag is on, and the difference is
+in the evidence each generates, not in which page hosts the button.
+
+**With §8.5.3 accepted, this has a sharp edge worth naming:** a banker who does L3 work through a
+tab has done break-glass work and **leaves no record of it.** `user.delete` is the clearest case
+— the one action an agent may not even *propose* is, on the tab path, the least evidenced thing
+in the system. That is the concrete cost of the accepted caveat, and it belongs next to the
+caveat rather than buried in it. It is acceptable at demo scale because the harness is what is
+being demonstrated; it is the first thing to fix if this surface ever carries real customers.
+
+#### 8.5.5 Flag semantics — decided
+
+Linus owns the implementation in `ui-app`; these are the constraints, coordinated through
+`docs/design/banker-copilot-ui.md`.
+
+| Question | Ruling | Why |
+|---|---|---|
+| Runtime or build-time | **Runtime-toggleable**, served from config, no rebuild | The whole value is flipping mid-demo to contrast the two experiences in one sitting. A build-time flag makes the comparison a tale of two deployments |
+| Scope | **Per-user, with a global default** | A/B measurement (§8.5.1) needs two cohorts at once; a global-only flag can only compare across time, which confounds the result with everything else that changed |
+| Default | **Tabs ON** | Nothing that exists today may disappear because a new flag failed to load. Fail toward the status quo |
+| Failure mode | If config is unreachable, **tabs render** | Same reason. A blank admin surface is a worse outage than a redundant one |
+| Does hiding refuse the routes? | **No. It removes navigation only.** The routes and APIs stay reachable | See below — this is the important one |
+
+> **NORMATIVE: this flag is a PRESENTATION toggle. It is NOT a security control, and nothing may
+> be built that treats it as one.**
+>
+> A hidden-but-reachable route is a UI convention. The API behind it is unchanged, still
+> authenticated, still authorized by role, and still reachable by anyone who types the URL or
+> calls the endpoint. **If anyone ever reasons about "the tabs are hidden" as a control, they
+> will be wrong**, and they will be wrong in the component where being wrong about a control is
+> most expensive.
+>
+> **What actually makes this acceptable, given §8.5.3.** An earlier draft argued that audit
+> parity was the backstop — that it does not matter which surface a write came from if both are
+> equally attributable. **That argument is no longer available**, because parity is now an
+> accepted caveat and the tab path emits nothing. The honest justification is narrower and still
+> sufficient: **the flag adds no exposure that did not already exist.** These routes are reachable
+> and role-authorized today, before this epic; hiding the navigation neither grants nor removes
+> access. The flag changes what a banker *sees*, never what a banker *may do*.
+>
+> That is precisely why it must never be described as a control. It has no security effect in
+> either position — and unlike the earlier framing, there is now **no compensating control behind
+> it either.** A reader who mistakes it for a boundary would be wrong twice over.
+>
+> Making it refuse routes would also destroy its purpose — you cannot A/B two experiences if one
+> of them 403s, and a flag that is *sometimes* a control is worse than one that never is, because
+> it teaches people to trust it.
+
+#### 8.5.6 Deliverables
+
+- Runtime feature-flag scaffolding in `ui-app`, per-user with a global default (Linus).
+- Elevated-severity audit + mandatory reason on the L3 action set **on the harness path**.
+  (The tab path emits nothing, by accepted caveat §8.5.3 — do not build tab-side audit.)
+- Saved Copilot views covering each existing tab's job, so the comparison is like-for-like.
+- The §8.5.1 measurement harness and a written, published result — including unflattering ones.
+- Docs, ADRs, smoke tests against `${CUSTOM_DOMAIN}` **in both flag states**.
+
+**Exit:** the same three tasks are completed by the same banker through both surfaces and the
+§8.5.1 table is filled in with real numbers. **Audit records are not compared** — the tab path
+emits none, by accepted caveat (§8.5.3), and the comparison is about *experience*, not
+governance.
 
 ---
 
@@ -1864,8 +2192,16 @@ two sessions by design, per §1.3).
     that friction is an implicit control. The Copilot dissolves it — one sentence pulls a
     customer's full financial and session history. We should log read-tool fan-out per customer
     and treat unusual breadth as auditable, even though reads need no signature.
-14. **`AdminPage.tsx` is used by demo scripts and Playwright tests.** Phase 5's retirement will
-    break `tests/e2e`. Plan the migration; do not discover it.
+14. **~~`AdminPage.tsx` retirement breaks `tests/e2e`~~ — largely defused by the Phase 5
+    coexistence ruling (§8.5).** The tabs stay, so the existing demo scripts and Playwright
+    specs keep working unchanged. **Residual risk, smaller but real:** the suite must now run in
+    **both flag states**, and any spec that navigates by clicking a tab link will fail when the
+    flag is off. Specs should address routes directly rather than via navigation, and the default
+    (tabs ON) means an unmodified suite keeps passing — so this degrades from a migration to a
+    coverage gap. The genuinely new risk is the opposite one: **with retirement off the table,
+    nothing now forces the Copilot surface to reach parity with the tabs.** Coexistence removes
+    the deadline that would have exposed a missing capability. §8.5.6's "saved views covering
+    each existing tab's job" is the mitigation, and it is easy to quietly skip.
 15. **NEW — the four-layer defence is currently one-and-a-half layers.** #334 and #336 (both
     verified, both filed) mean layers 2 and 3 of §4.4 cannot be built as specified. This is the
     single most important honest caveat in the document. Phase 1 takes the smallest slice of
@@ -1976,6 +2312,23 @@ they will.
 - [ ] **One `policyVersion`**: a contract test asserts the value is byte-identical across the
       approval record, every signature's hash input, the `approval.required` trace frame, and
       the audit events (§5.3.1).
+- [ ] **Structural contract test passes (§5.3.1b)**: the field-path set of a real approval
+      written by `authority-service` is **identical** to design §5.3; the Python read models and
+      the `infra/cloud/cosmos.tf` indexed paths are each a **subset** of it. An index on a path
+      no service writes fails the build — it cannot be allowed to fail silently at runtime.
+- [ ] **The approval schema is defined in exactly one artifact.** A CI check fails if a
+      `copilot-approvals` document body reappears in `docs/epics/banker-copilot.md` (§5.2).
+- [ ] **No named co-signer anywhere.** No field, index, queue key or notification routes an
+      approval to a *specific* supervisor; the supervisor queue is keyed on required seniority
+      only (§5.2.2). A banker cannot influence who reviews their work.
+- [ ] **No claim of universal audit coverage appears anywhere** — not in the demo script, the
+      README, or this document. The tab write path emits nothing and that is an accepted caveat
+      (§8.5.3), so the claim we make is "agent-originated change is attributable," never "every
+      change is."
+- [ ] **The admin-tab feature flag is presentational only**: with the flag off, the underlying
+      routes and APIs remain reachable and authorized exactly as before. No test, doc or code
+      comment describes the flag as a security control (§8.5.5).
+- [ ] The e2e suite passes in **both** flag states.
 - [ ] No path from `signed` to `executed` bypasses the re-evaluation gate (§5.1).
 - [ ] TTL expiry produces **`denied` + `TTL_EXPIRED`**, renders as **Denied (timed out)**, and
       **never executes** — no path exists by which an unsigned, timed-out approval is acted on
@@ -2049,6 +2402,37 @@ classes**, of which the two flagged were the *smallest*. All are now swept and c
 | 18 | **Lifecycle state union** | 5 states | 5 states | `proposed/pending/signed/denied/`**`expired`**`/`**`void`** | **Four + `executed`** — Linus's `ApprovalState` still carried both states the O9 and TTL rulings collapsed. Corrected in place. |
 | 19 | Signer count field | `requiredSigners` | `signaturesRequired` | **`requiredSignatureCount`** | **`requiredSigners`** — a *fourth* spelling of one concept, found only on the second pass |
 | 20 | Void reason field | `terminalReason` | `terminalReason` | **`voidedReason`** (+ `blockedReason: 'void'`) | **`terminalReason`** (closed enum) + `terminalDetail` (free text) |
+
+**Findings 21–29 — the approval document schema (raised by Rusty, 2026-09-04, from
+`infra/cloud/cosmos.tf`).** A different and worse class: the epic and design specified two
+different physical documents. Arbitrated in §5.2 — **design §5.3 is authoritative** and the epic
+now carries no copy.
+
+| # | Field | Epic §5.2 (was) | Design §5.3 | Canonical |
+|---|---|---|---|---|
+| 21 | Signature record | `signatures[]` | `signatureSlots[]` (pre-declared `minSeniority`, `mustDifferFrom`) | **`signatureSlots[]`** — a different, stronger shape, not a rename |
+| 22 | Created timestamp | `proposedAtUtc` | `createdAt` | **`createdAt`** — §0.1 already ruled `…Utc` noise |
+| 23 | Signature timestamp | `signedAtUtc` | `signedAt` | **`signedAt`** |
+| 24 | Rung | `requiredRung` (top level) | `policy.requiredRung` | **`policy.requiredRung`** — §0.1 ratified the name, not the depth |
+| 25 | Policy version | `policyVersion` (top level) | `policy.policyVersion` | **`policy.policyVersion`** — satisfies §5.3.1 in letter and intent (see §5.3.1) |
+| 26 | Escalators | `rungExplanation.firedEscalators[]` (strings) | `policy.firedEscalators[]` (objects w/ threshold name, env, value) | **design's** — "it escalated" is not an explanation |
+| 27 | Supervisor queue | `cosignerId` + pointer document | cross-partition + composite index | **no pointer doc, `cosignerId` deleted** (§5.2.2) |
+| 28 | Query denormalisation | — | `awaitingSeniority`, `pendingSlotOrdinal`, `expiresAtEpoch` | **design's** — the sweeper and two indexes depend on them |
+| 29 | Execution block | absent | `execution.{state,attempts,…}` | **design's** |
+
+**Two more found while merging, in neither document's diff (§5.2.3):**
+
+| # | Field | Problem | Ruling |
+|---|---|---|---|
+| 30 | `execution.signedUnderPolicyVersion` | Second copy of `policy.policyVersion` **in the same document** — the design doc's own comment says `// ==`. Violates §5.3.1; provably always equal under §5.3.2 | **Removed from the document.** Stays on `ApprovalVoidedByPolicyChange`, which is a standalone flat record |
+| 31 | `distinctIdentitiesRequired` | Always equals `requiredSigners` under Q4; a *count* is satisfied by arithmetic | **Retired** — `signatureSlots[].mustDifferFrom` names the excluded identity, a set test rather than a tally |
+
+**Why this class is worse than 1–20.** Findings 1–20 were one concept spelled two ways, so a grep
+could find them. 21–31 are **two internally-consistent documents describing different databases** —
+each locally correct, each reviewed, and invisible to any name-based check. And the runtime
+failure mode is the quiet one: Cosmos returns **zero rows, not an error**, so a path mismatch
+presents as an empty inbox or an unexplained RU bill rather than a stack trace. §5.3.1b extends
+the contract test to field *paths* to close it.
 
 **Findings 18–20 are the argument for the contract test, not just for this audit.** They were not
 in the set Brian grepped and they were not in my first pass either — they surfaced only when I

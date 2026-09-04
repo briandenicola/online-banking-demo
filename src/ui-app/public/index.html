@@ -25,6 +25,15 @@
       Learn how to configure a non-root public URL by running `npm run build`.
     -->
     <title>Online Banking Demo</title>
+    <!--
+      Runtime configuration. Loaded synchronously BEFORE the React bundle so
+      feature flags are resolved before first render and the app never flashes
+      the wrong surface. Replaced at deploy time by mounting over
+      /usr/share/nginx/html/runtime-config.js — no rebuild required.
+      Presentation settings only; never put secrets here.
+      See docs/design/banker-copilot-ui.md §10.
+    -->
+    <script src="%PUBLIC_URL%/runtime-config.js"></script>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>

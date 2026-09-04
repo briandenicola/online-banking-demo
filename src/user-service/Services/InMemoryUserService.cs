@@ -61,6 +61,55 @@ public sealed class InMemoryUserService : UserService
             Salt = "",
         });
 
+        // Banking authority ladder (epic #332 §5.8.3). Separation of duties
+        // needs TWO DISTINCT identities to be demonstrable at all: an L2
+        // approval requires a signature from the requesting banker and a
+        // co-signature from someone who is not them. One account with both roles
+        // would let the demo pass while proving nothing.
+        //
+        // Note that neither of the admins above gains banking authority — admin
+        // implies neither banker nor supervisor (§5.8.2), so the ladder cannot be
+        // satisfied by a single admin identity.
+        var bankerEmail = configuration["Authority:BootstrapBankerEmail"];
+        if (string.IsNullOrWhiteSpace(bankerEmail))
+        {
+            bankerEmail = "banker@banking-demo.com";
+        }
+
+        var supervisorEmail = configuration["Authority:BootstrapSupervisorEmail"];
+        if (string.IsNullOrWhiteSpace(supervisorEmail))
+        {
+            supervisorEmail = "supervisor@banking-demo.com";
+        }
+
+        repo.Seed(new UserModel
+        {
+            Id = "3",
+            Username = bankerEmail,
+            Email = bankerEmail,
+            FirstName = "Bianca",
+            LastName = "Torres",
+            Role = Constants.Roles.Banker,
+            PasswordHash = passwordHash,
+            Salt = "",
+        });
+
+        repo.Seed(new UserModel
+        {
+            Id = "4",
+            Username = supervisorEmail,
+            Email = supervisorEmail,
+            FirstName = "Miriam",
+            LastName = "Okafor",
+            Role = Constants.Roles.Supervisor,
+            PasswordHash = passwordHash,
+            Salt = "",
+        });
+
+        logger.LogInformation(
+            "Seeded banking authority identities: banker {BankerEmail}, supervisor {SupervisorEmail}",
+            bankerEmail, supervisorEmail);
+
         return repo;
     }
 }

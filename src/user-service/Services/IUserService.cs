@@ -20,6 +20,14 @@ public interface IUserService
 
     // Admin methods
     Task<User> PromoteToAdminAsync(string userId);
+
+    /// <summary>
+    /// Grants a role (admin / supervisor / banker / user) to an identity.
+    /// Role promotion is an L3 action and is never reachable from the Copilot
+    /// harness — see epic #332 §5.8.3.
+    /// </summary>
+    Task<User> GrantRoleAsync(string userId, string role);
+
     Task<int> GetAdminCountAsync();
     Task<List<User>> GetAllUsersAsync();
     Task<bool> LockUserAsync(string userId);

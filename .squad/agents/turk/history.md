@@ -1748,3 +1748,196 @@ Plus permanent `payloadHash` display on every approval card. When policy escalat
 
 ---
 
+
+---
+
+## Session: authority-service Phase 1 implementation (epic #332)
+
+### Learnings
+
+**The service exists and runs.** `src/authority-service/` builds clean (0 warnings, 0 errors) on
+net10.0, 94/94 unit tests pass in `src/authority-service.UnitTests/`, and I ran the real thing
+over HTTP: propose → sign → co-sign → deny, plus a 250,000 payload correctly escalating L1 → L2,
+plus same-human double-sign rejected with 403, plus a short denial reason rejected with 400. The
+policy loads and `/readyz` reports `pv1:92590557c5772211`.
+
+**Fail-closed is verified, not asserted.** Pointing `POLICY_FILE_PATH` at a missing file crashes
+the process at startup with an explicit message rather than starting permissive. That is the one
+behaviour I refused to take on trust, because a policy engine that starts without a policy is
+worse than no policy engine — it looks like a control.
+
+**Two bugs the tests caught that reading would not have.**
+
+1. `ExecuteAsync` originally rejected any approval where the requester was also a signer. That is
+   correct at L2 and *wrong at L1*, where the agent proposes and the banker who requested it is
+   the legitimate single approver. Separation of duties is a property of a **slot**
+   (`mustDifferFrom`), not of the document. I had generalised a rule from the case that motivated
+   it — the classic way a safety control becomes a bug.
+2. `transaction.flag.review` had `hashFields: [transactionId, decision, note]` — **`amount` was
+   not in the signed hash**, while `amount` is exactly what drives the rung. A signature would
+   have bound everything except the number that decided how many humans were needed. Caught only
+   because a tampering test refused to fail. Rule for the rest of Phase 2: **every field any
+   escalator reads must be in `hashFields`.** I want that enforced by the loader, not by review.
+
+**A missing hash field is now refused rather than hashed as absent.** The canonicalizer used to
+walk a missing path and shrug. That makes `{}` and `{amount: 0}` produce different approvals a
+signer cannot tell apart. Declared field absent → refuse the propose.
+
+**Where the §5.3.2 split actually lives.** At execute, the payload **hash** is recomputed under
+the `policyVersion` **stored on the approval** (hash fields, money fields and currency scale are
+frozen onto the document at propose time), while the **rung** is re-derived under the **live**
+policy. Get these backwards and every policy edit invalidates every outstanding approval as
+"tampered". This is the single subtlest thing in the service and it deserves the test that
+guards it in both directions.
+
+**V4 was unreachable and the config proved it.** With `ReasonMaxRepeatUnit = 4` and
+`ReasonMinDistinctChars = 5`, any string that IS a repeat of a ≤4-character unit has ≤4 distinct
+characters, so V3 always fires first and the repeated-unit rule can never be observed. Raised the
+repeat-unit bound to 8. A validation rule that cannot fire is not a strict rule — it is a rule
+that is lying about being enforced, and only writing the test for it exposed that.
+
+**Danny's schema arbitration cost me a refactor I earned.** I had flattened `policyVersion`,
+`baseRung`, `requiredRung` and `firedEscalators` to the top level; the ratified shape nests them
+under `policy`. Restored via a real `ApprovalPolicySnapshot` with `[JsonIgnore]` façade
+properties, so the 137 call sites still read `approval.RequiredRung` while the wire shape matches
+the contract. `ApprovalDocumentShapeTests` now pins it, including that `policyVersion` appears
+**exactly once** in the serialized document. Danny is right about the mechanism: a flat namespace
+is what invites the second copy.
+
+**Cosmos path mismatches return zero rows, not errors.** Everything the composite indexes in
+`infra/cloud/cosmos.tf` address — `status`, `createdAt`, `expiresAtEpoch`, `awaitingSeniority`,
+`terminalReason`, `terminalAt` — stays top level, and there is a test asserting so. In a service
+that gates money movement, "the supervisor's inbox is empty" and "the query is broken" must never
+look the same.
+
+**Zero hardcoded thresholds, enforced at load rather than by discipline.** Magnitude operators
+(`gte`/`gt`/`lte`/`lt`/`countGte`) must name a threshold; the loader rejects the policy if one
+carries a bare number. Only equality and membership may carry literals, and only non-numeric
+ones. I also had to add `defaults.supervisorSeniority` and `defaults.retentionSeconds` as named
+threshold references so that not even a threshold *name* is a literal in code.
+
+**`raiseBy: 1` compounds, and that is load-bearing for the property test.** Two firing escalators
+take L1 → L2 → L3, and L3 is not proposable — so a many-escalator subset produces a *refusal*,
+not a decision with more signers. The monotonicity property therefore asserts rung monotonicity
+unconditionally but signer monotonicity only between admissible subsets.
+
+**The local environment lied to me for ten minutes.** `AZURE_CLIENT_ID` is set in Brian's shell,
+so the dual-mode Redis/Cosmos path chose Entra ID and died on a Conditional Access policy — with
+a 500 whose message was "Failed to acquire token" and no clue which dependency. Dual-mode auth
+that switches on ambient env vars needs to *log which mode it chose at startup*. Filed as a
+decision note; it will burn the next person on any of our services, not just this one.
+
+
+---
+
+## Session: Danny's schema arbitration applied (epic #332)
+
+### Learnings
+
+**Danny's two removals landed, and the mechanism behind them found three more.** He ruled out
+`execution.signedUnderPolicyVersion` (a second copy of `policy.policyVersion` in the same
+document) and `distinctIdentitiesRequired` (a head count that always equalled `requiredSigners`).
+Applying the *rule* rather than the *instances* immediately turned up three more of the same
+class that neither of us had listed:
+
+- `signatureSlots[].boundPolicyVersion` — a per-slot copy of `policy.policyVersion`.
+- `signatureSlots[].rungSatisfied` — a per-slot copy of `policy.requiredRung`.
+- `target.pathParams` — the same fact as `target.resolvedPath`, in a second representation.
+
+All three are provably-equal duplicates for the same reason as Danny's: under §5.3.2 a change to
+the rung or the policy version **voids the signatures and creates a replacement approval**, so a
+filled slot's values can never diverge from the document's own. They could only ever be stale.
+All are gone from the document and all are still on the audit events, which are standalone flat
+records that must be readable without joining back.
+
+**`distinctIdentitiesRequired` HAD entered my code** — Danny's note assumed it was epic-only. It
+was in the evaluator, the decision object, the document, the API responses and the signing quorum
+check. Reporting "confirmed absent" would have been the easy answer and the wrong one. The
+signing check is now `filledSlots >= requiredSigners` with separation of duties enforced entirely
+by `mustDifferFrom` per slot.
+
+**Danny's reasoning generalises and I applied it to the policy file too.** A count is satisfied
+by arithmetic; naming the excluded identity is a set-membership test against a specific subject.
+So the `distinctIdentities` knob is gone from the rung schema — and the loader now **rejects** a
+policy that still declares it rather than ignoring it. Silently ignoring the key would let an
+operator write `distinctIdentities: 1`, read it back, and believe they had turned dual control
+off, when separation of duties is no longer reachable from the policy file at all. **A dead knob
+that looks live is worse than no knob.**
+
+**§5.3.1b, and the two serializer settings that would have broken it silently.** The contract test
+now reduces both the design doc's canonical block and a document the service **actually wrote** to
+sorted sets of dotted field paths and asserts equality. Building it exposed the Cosmos client
+configuration as the real hazard:
+
+- `PropertyNamingPolicy = CamelCase` layered a naming policy over my explicit `[JsonProperty]`
+  attributes. It happens to agree today. If a property ever loses its attribute, the policy would
+  quietly rename the Cosmos path instead of letting the mismatch surface.
+- `IgnoreNullValues = true` **dropped every null field from the document.** `terminalReason: null`
+  and no `terminalReason` at all are different things to a Cosmos predicate, and a path-set
+  comparison cannot see a field that was never written.
+
+Both are gone. There is now one explicit `JsonSerializerSettings`, used by the Cosmos serializer,
+the in-memory repository and the contract test, so the document the SDK writes is the document the
+test asserts. **Explicit and asserted, not inherited** — because a Cosmos path mismatch returns
+zero rows rather than an error, and in a service that gates money movement "the supervisor's inbox
+is empty" must never be indistinguishable from "the query is broken".
+
+**Three of my own negative tests were mutating nothing.** They did
+`File.ReadAllText(policy).Replace(x, y)` and `Replace` is a silent no-op when `x` is absent — so a
+test could load an *unmutated* policy, see no exception, and report that an invariant holds when
+it had never been challenged. One of them was already in that state after I edited the policy
+file. Every negative policy test now goes through `TestHarness.MutatedPolicyYaml`, which **throws**
+if the text is not found, and there is a test that the helper itself throws. A test that cannot
+fail is worse than a missing test, because it is counted.
+
+**`cosignerId` never existed in my code** — no field, no API parameter, no hash input, nothing in
+the queue. The cross-partition query keys on `awaitingSeniority`. Danny's security argument is the
+one I want to remember: a pointer keyed on the co-signer requires knowing *who* will co-sign at
+proposal time, which hands the requester the ability to **choose their own reviewer** — the exact
+self-dealing pattern L2 exists to prevent. Performance optimisations that need to name a person
+in advance should be treated as security changes.
+
+**Final state:** builds clean, 99/99 unit tests pass, live HTTP run re-verified after the
+serializer change (L2 escalation, same-human double-sign rejected, co-sign completes, execution
+gate reached). `policyVersion` moved to `pv1:47381f84ae616f46` because the resolved policy changed
+— which is the version doing its job.
+
+
+### Two role models, one of them wrong (2026-09-04)
+
+Brian found a privilege escalation pair in `config/authority-policy.yaml`: `banker.claimValues`
+listed `user`/`User` — the retail customer claim, seniority 0 in the ratified hierarchy — so a
+customer token satisfied an L1 signature; and `admin` sat at seniority 3 with L2 co-sign rights, so
+one admin identity could fill both slots of a dual-control approval.
+
+**The lesson is not "check role lists more carefully".** Both files were internally coherent, and
+Rusty's tests locking `admin` out of banking authority passed the whole time — they test his file.
+I had re-derived the role model in mine. A model stated twice is a model wrong once, and nothing in
+either service could see it, because the defect only exists *between* them.
+
+What I changed my mind about: I had assumed a config file that "just names roles" is cheap
+duplication. It is not — a claim-to-seniority map **is** the authorization decision, written in
+data. So the loader now consumes `role-hierarchy.yaml` and refuses to start on any disagreement,
+`seniority:` in the policy is a hard error rather than an ignored key, and a `claimValue` may only
+be a case variant of its own role's name (which kills cross-role aliases structurally rather than
+by review).
+
+Three things I would not have predicted going in:
+
+- **One integer could not carry two meanings.** `admin` needed L3 standing, so someone gave it a
+  number; a number that beats supervisor beats supervisor *everywhere*, including the L2 co-sign
+  check. Bug 2 was not a typo, it was a modelling collapse. L3 is now `outOfHarness` with
+  `platformRoles`, a different concept from banking `seniority`.
+- **The audit found a third copy.** An env-overridable `supervisor_seniority` threshold set the L2
+  bar — dual control lowerable to peer level by setting a number, with no role file touched and no
+  test failing. Derived from `cosignerRoles` now. When you go looking for one duplicate you should
+  expect to find the rest; I found four more.
+- **Proposing had no floor at all.** A customer could put an entry in a supervisor's queue that
+  read as though a banker raised it. Fixed, but I only noticed because a test I wrote to assert
+  "admin cannot propose" failed by *not* throwing. The test I expected to be redundant was the
+  one that found something.
+
+Also fixed from Livingston's pass: `RaiseBy` computed in `long` (an escalation could overflow into
+a downgrade), `.IgnoreUnmatchedProperties()` removed so a misspelled escalator key is a startup
+failure rather than a rule that silently does nothing, and an honest comment on `VerifyStoredHash`
+saying it is a self-consistency check — the real control is that `ExecuteAsync` accepts no payload.

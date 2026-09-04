@@ -20,7 +20,25 @@ resources:
 - event-processor.yaml
 - ui-app.yaml
 - prompt-eval-service.yaml
+- authority-service.yaml
+
+# ui-app deployment-level feature-flag defaults. Generated from the single copy
+# of runtime-config.js that lives in this directory and is bind-mounted by
+# docker-compose from the same path — one file, two mount mechanisms.
+#
+# The name-suffix hash is deliberately left ON: ui-app mounts this with subPath,
+# and subPath mounts never observe in-place ConfigMap updates. The hash makes a
+# content change produce a new ConfigMap name, which rolls the pod, which is the
+# only way the new flag defaults actually reach a browser.
+configMapGenerator:
+- name: ui-app-runtime-config
+  files:
+  - runtime-config.js
+
 images:
+- name: ghcr.io/banking-demo/authority-service
+  newName: REPLACE_WITH_ACR_LOGIN_SERVER/authority-service
+  newTag: REPLACE_WITH_TAG
 - name: ghcr.io/banking-demo/account-opening-service
   newName: REPLACE_WITH_ACR_LOGIN_SERVER/account-opening-service
   newTag: REPLACE_WITH_TAG

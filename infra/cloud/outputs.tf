@@ -101,3 +101,26 @@ output "keyvault_bootstrap_instructions" {
       https://portal.azure.com/#@/resource${azurerm_linux_virtual_machine.jumpbox.id}/bastionHost
   EOT
 }
+#############################################
+# BANKER COPILOT — authority-service platform wiring (epic #332, Phase 1)
+#############################################
+
+output "authority_service_client_id" {
+  description = "Client ID of the dedicated authority-service workload identity (#336). Annotated onto the authority-workload-identity Kubernetes service account."
+  value       = azurerm_user_assigned_identity.authority_service.client_id
+}
+
+output "authority_service_service_account" {
+  description = "Kubernetes service account bound to the authority-service workload identity."
+  value       = var.authority_service_service_account
+}
+
+output "bootstrap_supervisor_email" {
+  description = "Seeded bootstrap supervisor identity — supplied to user-service as Authority__BootstrapSupervisorEmail."
+  value       = var.bootstrap_supervisor_email
+}
+
+output "bootstrap_banker_email" {
+  description = "Seeded bootstrap banker identity — supplied to user-service as Authority__BootstrapBankerEmail."
+  value       = var.bootstrap_banker_email
+}

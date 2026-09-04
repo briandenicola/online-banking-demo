@@ -27,10 +27,14 @@ import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import ChatIcon from '@mui/icons-material/Chat';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import TuneIcon from '@mui/icons-material/Tune';
 import LogoutIcon from '@mui/icons-material/Logout';
 import PersonIcon from '@mui/icons-material/Person';
 import AddBusinessIcon from '@mui/icons-material/AddBusiness';
 import { useAuthContext } from '../contexts/AuthContext';
+import { useFeatureFlags } from '../contexts/FeatureFlagContext';
+import FeatureFlagPanel from './FeatureFlagPanel';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -47,12 +51,21 @@ const navItems = [
 
 const AppShell: React.FC<AppShellProps> = ({ children }) => {
   const { user, logout, isAdmin } = useAuthContext();
+  const { isEnabled } = useFeatureFlags();
   const navigate = useNavigate();
   const location = useLocation();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
+  const [flagPanelOpen, setFlagPanelOpen] = useState(false);
+
+  // Both admin surfaces are shown when both flags are on — that coexistence is
+  // deliberate, not a transitional accident. Running the same task on each is
+  // the only way the "the harness is better" claim can be checked rather than
+  // asserted. See docs/design/banker-copilot-ui.md §11.
+  const showClassicAdmin = isAdmin && isEnabled('classicAdminTabs');
+  const showCopilot = isAdmin && isEnabled('bankerCopilot');
 
   React.useEffect(() => {
     const loadAvatar = async () => {
@@ -135,15 +148,26 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
           {isMobile && <Box sx={{ flexGrow: 1 }} />}
 
-          {/* Admin Button — only for admin role */}
-          {isAdmin && (
+          {/* Admin surfaces — role-gated AND flag-gated. During coexistence both
+              can be visible at once; that is the comparison, not a bug. */}
+          {showCopilot && (
+            <Button
+              color="inherit"
+              startIcon={<AutoAwesomeIcon />}
+              onClick={() => navigate('/copilot')}
+              sx={{ mr: 1, opacity: 0.9, '&:hover': { opacity: 1 } }}
+            >
+              {!isMobile && 'Copilot'}
+            </Button>
+          )}
+          {showClassicAdmin && (
             <Button
               color="inherit"
               startIcon={<AdminPanelSettingsIcon />}
               onClick={() => navigate('/admin')}
               sx={{ mr: 1, opacity: 0.9, '&:hover': { opacity: 1 } }}
             >
-              {!isMobile && 'Admin'}
+              {!isMobile && (showCopilot ? 'Classic Admin' : 'Admin')}
             </Button>
           )}
 
@@ -183,11 +207,19 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
               <ListItemIcon><PersonIcon fontSize="small" /></ListItemIcon>
               <ListItemText>Settings</ListItemText>
             </MenuItem>
+            {isAdmin && (
+              <MenuItem onClick={() => { handleMenuClose(); setFlagPanelOpen(true); }}>
+                <ListItemIcon><TuneIcon fontSize="small" /></ListItemIcon>
+                <ListItemText>Surfaces &amp; flags</ListItemText>
+              </MenuItem>
+            )}
             <MenuItem onClick={handleLogout}>
               <ListItemIcon><LogoutIcon fontSize="small" /></ListItemIcon>
               <ListItemText>Sign Out</ListItemText>
             </MenuItem>
           </Menu>
+
+          <FeatureFlagPanel open={flagPanelOpen} onClose={() => setFlagPanelOpen(false)} />
         </Toolbar>
       </AppBar>
 

@@ -12,11 +12,34 @@ data:
   BUDGET_SERVICE_URL: "http://budget-service.banking-demo.svc.cluster.local"
   CHATBOT_SERVICE_URL: "http://chatbot-service.banking-demo.svc.cluster.local"
   EVENT_PROCESSOR_URL: "http://event-processor.banking-demo.svc.cluster.local"
+  AUTHORITY_SERVICE_URL: "http://authority-service.banking-demo.svc.cluster.local"
   Services__AccountService: "http://account-service.banking-demo.svc.cluster.local"
   Services__TransactionService: "http://transaction-service.banking-demo.svc.cluster.local"
+  Services__AuthorityService: "http://authority-service.banking-demo.svc.cluster.local"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4317"
   CosmosDb__Endpoint: "REPLACE_WITH_COSMOS_ENDPOINT"
   CosmosDb__AccountsContainerName: "Accounts"
+  # Banker Copilot authority store (epic #332). Container names are configuration,
+  # never literals in service code — authority-service and banker-copilot-service
+  # must agree on them and they are also referenced by the scoped Cosmos role
+  # assignments in infra/cloud/identity-authority.tf.
+  CosmosDb__ApprovalsContainerName: "copilot-approvals"
+  CosmosDb__AuthorityPolicyContainerName: "authority-policy"
+  # Bootstrap identities for the role ladder (§5.8.3). Seeding is idempotent and
+  # is skipped once an identity already holds the role.
+  Authority__BootstrapSupervisorEmail: "REPLACE_WITH_BOOTSTRAP_SUPERVISOR_EMAIL"
+  Authority__BootstrapBankerEmail: "REPLACE_WITH_BOOTSTRAP_BANKER_EMAIL"
+  # Denial reason quality gate (epic §5.5). Every bound is configuration: a deployment can
+  # tighten or relax it without a code change, and authority-service has no fallback literals.
+  Denial__ReasonMinLength: "20"
+  Denial__ReasonMaxLength: "2000"
+  Denial__ReasonMinDistinctChars: "5"
+  Denial__ReasonMaxRepeatUnit: "8"
+  Denial__ReasonMinLetters: "10"
+  # Expiry sweeper. Expiry means denied with TTL_EXPIRED — never auto-approved.
+  Approval__SweepIntervalSeconds: "60"
+  Approval__SweepBatchSize: "100"
+  Approval__RetentionSeconds: "7776000"
   COSMOS_DB_ENDPOINT: "REPLACE_WITH_COSMOS_ENDPOINT"
   CHAT_MEMORY_ENABLED: "REPLACE_WITH_CHAT_MEMORY_ENABLED"
   CHAT_MEMORY_REQUIRED: "false"

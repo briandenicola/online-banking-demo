@@ -27,6 +27,14 @@
     <PackageReference Include="FluentValidation.AspNetCore" />
     <PackageReference Include="Newtonsoft.Json" />
     <PackageReference Include="Swashbuckle.AspNetCore" />
+    <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Role hierarchy is configuration, not a constant (epic #332 §5.8.2) -->
+    <Content Include="config\role-hierarchy.yaml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

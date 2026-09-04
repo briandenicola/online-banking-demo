@@ -51,6 +51,12 @@ services:
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - OTEL_SERVICE_NAME=user-service
+      # Banking authority ladder (epic #332 §5.8.3). In-memory dev mode seeds
+      # these two as DISTINCT identities so the L2 co-signature path can be
+      # exercised locally — one account holding both roles would demonstrate
+      # nothing.
+      - Authority__BootstrapBankerEmail=${BOOTSTRAP_BANKER_EMAIL:-banker@banking-demo.com}
+      - Authority__BootstrapSupervisorEmail=${BOOTSTRAP_SUPERVISOR_EMAIL:-supervisor@banking-demo.com}
     depends_on:
       redis:
         condition: service_healthy
@@ -254,6 +260,43 @@ services:
       - transaction-service
 
 
+  # Authority Service (Banker Copilot policy engine + approval store)
+  authority-service:
+    build:
+      context: .
+      dockerfile: src/authority-service/Dockerfile
+    container_name: banking-authority-service
+    ports:
+      - "6010:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - UseInMemoryDatabase=true
+      - Jwt__Key=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
+      - Jwt__Issuer=${JWT_ISSUER:-user-service}
+      - Jwt__Audience=${JWT_AUDIENCE:-banking-demo}
+      # Distinct from the JWT key on purpose: the service refuses to start if they match.
+      - Approval__SigningKey=${AUTHORITY_SIGNING_KEY:-LocalDevAuthorityApprovalSigningKey-NotTheJwtKey}
+      - POLICY_FILE_PATH=/app/config/authority-policy.yaml
+      - ROLE_HIERARCHY_PATH=/app/config/role-hierarchy.yaml
+      - Redis__ConnectionString=redis:6379
+      - Downstream__transaction-service=http://transaction-service:8080
+      - Downstream__transfer-service=http://transfer-service:8080
+      - Downstream__account-service=http://account-service:8080
+      - Downstream__account-opening-service=http://account-opening-service:8000
+      - Downstream__user-service=http://user-service:8080
+      - Downstream__ai-service=http://ai-service:8002
+      - APPLICATIONINSIGHTS_CONNECTION_STRING=
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_SERVICE_NAME=authority-service
+    volumes:
+      # Edit config/authority-policy.yaml locally and restart to change the ladder.
+      - ./config/authority-policy.yaml:/app/config/authority-policy.yaml:ro
+      # user-service owns this file; authority-service reads it and may not diverge from it.
+      - ./src/user-service/config/role-hierarchy.yaml:/app/config/role-hierarchy.yaml:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+
   # Event Processor (audit/routing consumer)
   event-processor:
     build:
@@ -280,6 +323,18 @@ services:
       - "3000:8080"
     volumes:
       - ./infra/local/ui-app.nginx.conf:/etc/nginx/nginx.conf:ro
+      # Deployment-level feature-flag defaults (layer 3 of the resolver in
+      # src/ui-app/src/config/featureFlags.ts). Edit the file and reload the
+      # browser — no rebuild, no restart.
+      #
+      # Mounted from deploy/kustomize/base/ rather than infra/local/ so that
+      # docker-compose and the AKS ConfigMap read the SAME file: kustomize will
+      # not read outside its own root, and two copies that must agree with
+      # nothing comparing them is the bug class that cost us an L1 slot today.
+      #
+      # Optional by design — delete this line and the app still works, falling
+      # back to the template baked into the image.
+      - ./deploy/kustomize/base/runtime-config.js:/usr/share/nginx/html/runtime-config.js:ro
     depends_on:
       gateway:
         condition: service_healthy

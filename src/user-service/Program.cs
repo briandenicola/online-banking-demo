@@ -99,13 +99,20 @@ builder.Services.AddSingleton<IUserAgentParser, UserAgentParser>();
 builder.Services.AddScoped<ILoginAuditService, LoginAuditService>();
 builder.Services.AddScoped<IAccountProvisioningService, AccountProvisioningService>();
 
+// Role hierarchy (epic #332 §5.8.2). Loaded once from config/role-hierarchy.yaml
+// and used only at token issuance to expand the flat `role` claim into
+// `effectiveRoles`. The hierarchy is a policy statement, not a constant, which is
+// why it is a file and not a switch statement.
+builder.Services.AddSingleton<IRoleHierarchy>(sp => RoleHierarchy.Load(
+    builder.Configuration["RoleHierarchy:ConfigPath"],
+    sp.GetService<ILogger<RoleHierarchy>>()));
+
 if (useInMemory)
 {
     builder.Services.AddLogging();
     builder.Services.AddSingleton<IUserService, InMemoryUserService>();
     builder.Services.AddSingleton<IAuthService, AuthService>();
-}
-else
+}else
 {
     // Cosmos DB
     builder.Services.AddSingleton<CosmosClient>(sp =>
@@ -244,6 +251,83 @@ if (!useInMemory)
     catch (Exception ex)
     {
         logger.LogWarning(ex, "Failed to check/promote admin user on startup — non-critical");
+    }
+
+    // Bootstrap the banking authority ladder (epic #332 §5.8.3).
+    //
+    // The chicken-and-egg: promotion to `supervisor` is itself an L3 action, so
+    // the Copilot harness may not create supervisors. Something outside the
+    // harness must, and this is it — a Terraform-supplied identity, promoted at
+    // startup, idempotently.
+    //
+    // Rejected alternatives, recorded so they are not re-proposed: a
+    // harness-driven bootstrap (violates L3 outright), a manual Cosmos document
+    // edit (unauditable, and exactly the "someone edits the database" path this
+    // epic exists to eliminate), and an env-var superuser (a permanent standing
+    // credential with no audit trail). Accordingly this promotes an EXISTING
+    // registered identity; it never invents credentials.
+    var bootstrapRoles = new[]
+    {
+        (Role: global::UserService.Constants.Roles.Supervisor,
+         Email: builder.Configuration["Authority:BootstrapSupervisorEmail"]),
+        (Role: global::UserService.Constants.Roles.Banker,
+         Email: builder.Configuration["Authority:BootstrapBankerEmail"]),
+    };
+
+    foreach (var (role, email) in bootstrapRoles)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            continue;
+        }
+
+        try
+        {
+            // Idempotent: no-op on every boot once anybody holds the role.
+            var existingQuery = new QueryDefinition(
+                    "SELECT VALUE COUNT(1) FROM c WHERE c.Role = @role OR c.role = @role")
+                .WithParameter("@role", role);
+            var existingIterator = container.GetItemQueryIterator<int>(existingQuery);
+            var existingResult = await existingIterator.ReadNextAsync();
+
+            if (existingResult.FirstOrDefault() > 0)
+            {
+                logger.LogInformation("Role {Role} already held by an identity — bootstrap seed skipped", role);
+                continue;
+            }
+
+            var targetQuery = new QueryDefinition(
+                    "SELECT * FROM c WHERE LOWER(c.Email) = @email OR LOWER(c.email) = @email")
+                .WithParameter("@email", email.ToLowerInvariant());
+            var targetIterator = container.GetItemQueryIterator<UserService.Models.User>(targetQuery);
+            UserService.Models.User? target = null;
+            while (targetIterator.HasMoreResults)
+            {
+                var targetResult = await targetIterator.ReadNextAsync();
+                target = targetResult.FirstOrDefault();
+                if (target != null) break;
+            }
+
+            if (target == null)
+            {
+                logger.LogWarning(
+                    "Bootstrap {Role} is configured as '{Email}' but no matching identity exists yet — register that identity and restart. No {Role} exists, so the authority ladder cannot be exercised until then.",
+                    role, email, role);
+                continue;
+            }
+
+            var previousRole = target.Role;
+            target.Role = role;
+            await container.ReplaceItemAsync(target, target.Id, new PartitionKey(target.Id));
+
+            logger.LogWarning(
+                "ROLE GRANT (bootstrap): {Username} ({Email}) granted role {Role}, previously {PreviousRole}",
+                target.Username, target.Email, role, previousRole);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to seed bootstrap {Role} — non-critical", role);
+        }
     }
 }
 

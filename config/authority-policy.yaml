@@ -1,0 +1,598 @@
+apiVersion: authority/v1
+
+metadata:
+  policyId: banker-copilot-authority
+  # Provenance, NOT rules. Both fields are excluded from the policyVersion hash so that
+  # re-stamping a date does not invalidate every outstanding approval (design §6.2.1).
+  effectiveFrom: "2026-01-01T00:00:00Z"
+  owner: risk-operations
+  description: >
+    Banker Copilot authority ladder. Agents propose; humans dispose.
+    Every number in this file is a NAMED THRESHOLD with an env override. There are no numeric
+    literals in predicates and none in the engine — the loader rejects both.
+
+defaults:
+  approvalTtl: approval_ttl_default
+  unknownAction: deny             # I-4. `allow` is not representable; the loader rejects it.
+  ttlExpiryOutcome: denied        # I-6. Expiry is a denial, never an auto-approval.
+  currencyScale: 2
+  retentionSeconds: retention_seconds
+  evidenceRequired: []
+  batchApproval:
+    enabled: true
+    maxItems: batch_max_items
+    sameActionTypeOnly: true
+    maxRung: L1                   # I-10. A batch is never dual-control.
+
+# =========================================================================================
+# THRESHOLDS — the single home for every number in the system.
+#
+# Resolution order is env → default. There is no third source, so "where did this value come
+# from?" always has exactly one answer, and GET /api/authority/policy shows which one won.
+# =========================================================================================
+thresholds:
+
+  approval_ttl_default:
+    kind: duration_seconds
+    default: "1800"
+    env: POLICY_APPROVAL_TTL_SECONDS
+    description: Default time a human has to answer before the request is denied.
+
+  retention_seconds:
+    kind: duration_seconds
+    default: "7776000"
+    env: POLICY_RETENTION_SECONDS
+    description: How long a terminal approval is retained before Cosmos TTL purges it.
+
+  batch_max_items:
+    kind: count
+    default: "25"
+    env: POLICY_BATCH_MAX_ITEMS
+    description: Maximum items in a single batch approval.
+
+  # ---- Per-action TTLs -----------------------------------------------------------------
+  ttl_transaction_flag_review:
+    kind: duration_seconds
+    default: "1800"
+    env: POLICY_TTL_TRANSACTION_FLAG_REVIEW
+    description: TTL for clearing or confirming a flagged transaction.
+
+  ttl_transaction_score_override:
+    kind: duration_seconds
+    default: "3600"
+    env: POLICY_TTL_TRANSACTION_SCORE_OVERRIDE
+    description: TTL for overriding an AI risk score.
+
+  ttl_account_opening_review:
+    kind: duration_seconds
+    default: "7200"
+    env: POLICY_TTL_ACCOUNT_OPENING_REVIEW
+    description: TTL for an account-opening decision.
+
+  ttl_transfer_reverse:
+    kind: duration_seconds
+    default: "1200"
+    env: POLICY_TTL_TRANSFER_REVERSE
+    description: TTL for reversing a completed transfer.
+
+  ttl_balance_adjust:
+    kind: duration_seconds
+    default: "1200"
+    env: POLICY_TTL_BALANCE_ADJUST
+    description: TTL for posting a balance adjustment.
+
+  ttl_user_lock:
+    kind: duration_seconds
+    default: "900"
+    env: POLICY_TTL_USER_LOCK
+    description: TTL for locking a customer account.
+
+  ttl_user_unlock:
+    kind: duration_seconds
+    default: "1800"
+    env: POLICY_TTL_USER_UNLOCK
+    description: TTL for unlocking a customer account.
+
+  ttl_loan_decision:
+    kind: duration_seconds
+    default: "14400"
+    env: POLICY_TTL_LOAN_DECISION
+    description: TTL for recording an underwriting decision.
+
+  # ---- Money ---------------------------------------------------------------------------
+  flagged_transaction_dual_control_amount:
+    kind: money
+    currencyScale: 2
+    default: "25000.00"
+    env: POLICY_FLAGGED_TXN_DUAL_CONTROL_AMOUNT
+    description: At or above this amount, clearing a flagged transaction needs two people.
+
+  transfer_reversal_dual_control_amount:
+    kind: money
+    currencyScale: 2
+    default: "10000.00"
+    env: POLICY_TRANSFER_REVERSAL_DUAL_CONTROL_AMOUNT
+    description: At or above this amount, reversing a transfer needs two people.
+
+  balance_adjustment_dual_control_amount:
+    kind: money
+    currencyScale: 2
+    default: "1000.00"
+    env: POLICY_BALANCE_ADJUSTMENT_DUAL_CONTROL_AMOUNT
+    description: At or above this amount, a balance adjustment needs two people.
+
+  loan_dual_control_amount:
+    kind: money
+    currencyScale: 2
+    default: "100000.00"
+    env: POLICY_LOAN_DUAL_CONTROL_AMOUNT
+    description: At or above this loan amount, the underwriting decision needs two people.
+
+  loan_out_of_harness_amount:
+    kind: money
+    currencyScale: 2
+    default: "1000000.00"
+    env: POLICY_LOAN_OUT_OF_HARNESS_AMOUNT
+    description: At or above this loan amount the Copilot is out of its depth entirely (L3).
+
+  # ---- Counts / ratios -----------------------------------------------------------------
+  transfer_reversal_age_hours:
+    kind: count
+    default: "72"
+    env: POLICY_TRANSFER_REVERSAL_AGE_HOURS
+    description: Reversing a transfer older than this many hours needs two people.
+
+  session_fan_out_limit:
+    kind: count
+    default: "10"
+    env: POLICY_SESSION_FAN_OUT_LIMIT
+    description: Approvals of one action type in a session before bulk fan-out escalates.
+
+  signature_velocity_limit:
+    kind: count
+    default: "20"
+    env: POLICY_SIGNATURE_VELOCITY_LIMIT
+    description: Signatures per rolling window before the approval-fatigue guard fires.
+
+  policy_exception_count_floor:
+    kind: count
+    default: "1"
+    env: POLICY_EXCEPTION_COUNT_FLOOR
+    description: Number of underwriting/compliance exceptions that triggers escalation.
+
+  agent_confidence_floor:
+    kind: ratio
+    default: "0.70"
+    env: POLICY_AGENT_CONFIDENCE_FLOOR
+    description: Below this primary-agent confidence, a second human is required.
+
+  session_anomaly_score_floor:
+    kind: ratio
+    default: "0.80"
+    env: POLICY_SESSION_ANOMALY_SCORE_FLOOR
+    description: Above this login-audit anomaly score, the banker's own session is suspect.
+
+# =========================================================================================
+# ROLES
+#
+# This block names the roles that may sign and the claim spellings that denote them. It does
+# NOT say what a role is worth. Banking seniority has exactly one definition — user-service's
+# ratified config/role-hierarchy.yaml — and the loader STAMPS it in from there, refusing to
+# start if a role here is unknown to that file or if `seniority` is declared below.
+#
+# It used to be declared here, and the two files drifted in the two worst possible directions
+# at once: the claim `user` (every retail customer, seniority 0, "no harness access at all")
+# was listed under `banker`, so a customer token satisfied an L1 signature; and `admin` was
+# given seniority 3, above supervisor, so one admin identity could fill BOTH slots of an L2
+# approval and dual control evaporated while every test still passed. Each file was internally
+# coherent. That is the tell: a role model stated twice is a role model wrong once.
+#
+# Two consequences that look like restrictions and are actually the fix:
+#   * a claimValue may only be a case variant of its own role name — no cross-role aliases
+#     (`manager` -> supervisor, `administrator` -> admin), because an alias is a promotion that
+#     the ratified ladder never granted;
+#   * `admin` is NOT a signer role. It carries seniority 0 and implies neither banker nor
+#     supervisor. Platform authority is not banking authority.
+# =========================================================================================
+signerRoles:
+  banker:
+    claimValues: [banker, Banker]
+  supervisor:
+    claimValues: [supervisor, Supervisor]
+
+rungs:
+  L1:
+    requiredSigners: 1
+    signerRoles: [banker, supervisor]
+    proposable: true
+
+  L2:
+    requiredSigners: 2
+    signerRoles: [banker, supervisor]
+    cosignerRoles: [supervisor]
+    requiresIndependentSecondOpinion: true
+    proposable: true
+
+  # L3 is not a taller rung on the same ladder — it is off the ladder. This service never
+  # collects signatures for it, so it declares `platformRoles` (authority to act OUTSIDE the
+  # harness) rather than `signerRoles` (banking seniority WITHIN it). Keeping those as one
+  # integer is what made `admin` outrank a supervisor.
+  L3:
+    requiredSigners: 2
+    outOfHarness: true
+    platformRoles: [admin]
+    signerRoles: []
+    cosignerRoles: []
+    proposable: false              # the agent may not even ask
+    reason: >
+      Out-of-harness action. Perform it in the admin console, with break-glass audit.
+
+# =========================================================================================
+# EVIDENCE — what the agent must have READ before it is allowed to ask.
+# =========================================================================================
+evidence:
+  get_flagged_transaction:
+    description: The flagged transaction itself.
+    source: transaction-service
+    requiredFields: [transactionId, amount]
+
+  get_scored_transaction:
+    description: The transaction and the AI score being overridden.
+    source: ai-service
+    requiredFields: [transactionId, riskScore]
+
+  list_account_transactions:
+    description: Recent transactions on the affected account.
+    source: transaction-service
+    requiredFields: [accountId, count]
+
+  get_account_application:
+    description: The account-opening application under review.
+    source: account-opening-service
+    requiredFields: [applicationId, status]
+
+  get_application_audit:
+    description: The application's audit trail.
+    source: account-opening-service
+    requiredFields: [applicationId, events]
+
+  get_transfer:
+    description: The completed transfer being reversed.
+    source: transfer-service
+    requiredFields: [transferId, amount]
+
+  get_account:
+    description: The account being adjusted.
+    source: account-service
+    requiredFields: [accountId, balance]
+
+  get_user:
+    description: The customer record.
+    source: user-service
+    requiredFields: [userId, status]
+
+  list_login_audits:
+    description: Recent login audit records for the customer.
+    source: user-service
+    requiredFields: [userId, count]
+
+  get_loan_application:
+    description: The loan application.
+    source: loan-origination-service
+    requiredFields: [applicationId, amount]
+
+  get_underwriting_decision:
+    description: The underwriting decision being recorded.
+    source: loan-origination-service
+    requiredFields: [applicationId, verdict]
+
+  get_policy_evaluation:
+    description: The credit-policy evaluation, including any exceptions.
+    source: loan-origination-service
+    requiredFields: [applicationId, policyExceptions]
+
+# =========================================================================================
+# ESCALATORS — global, cross-cutting. Every one of them can only RAISE.
+#
+# The grammar admits raiseTo / raiseBy / minRung / minSigners / minSeniority and nothing else.
+# There is no lowerTo, no setRung, no exempt, no waive, no skipApproval — a downgrade is not
+# expressible, which is a stronger guarantee than a rule that says downgrades are forbidden.
+# =========================================================================================
+escalators:
+
+  - id: self-dealing
+    description: The approval touches an account or user related to the acting banker.
+    when: { field: context.selfDealing, op: isTrue }
+    raiseBy: 1
+    minRung: L2
+    reasonTemplate: >
+      This request touches an account related to you, so it cannot be self-approved.
+
+  - id: bulk-fan-out
+    description: Many approvals of the same action type in a single session.
+    when: { field: session.proposalCountForActionType, op: gt, threshold: session_fan_out_limit }
+    raiseBy: 1
+    reasonTemplate: >
+      This session has already produced more than {threshold} requests of this type
+      ({actual}), which looks like fan-out rather than case work.
+
+  - id: velocity
+    description: Signature rate exceeds the rolling-window limit — the approval-fatigue guard.
+    when: { field: actor.signaturesInWindow, op: gt, threshold: signature_velocity_limit }
+    raiseBy: 1
+    reasonTemplate: >
+      You have signed {actual} approvals recently, above the limit of {threshold}. A second
+      pair of eyes is required.
+
+  - id: low-agent-confidence
+    description: Primary agent confidence below the floor.
+    when: { field: agent.confidence, op: lt, threshold: agent_confidence_floor }
+    raiseBy: 1
+    reasonTemplate: >
+      The agent's own confidence ({actual}) is below the floor of {threshold}.
+
+  - id: policy-exception
+    description: One or more underwriting or compliance exceptions are present.
+    when: { field: underwriting.policyExceptions, op: countGte, threshold: policy_exception_count_floor }
+    raiseBy: 1
+    reasonTemplate: >
+      The case carries policy exceptions, so it is not a routine decision.
+
+  - id: severe-policy-exception
+    description: A hard-stop policy code is present.
+    when:
+      field: underwriting.policyExceptions
+      op: intersects
+      values: [POL-001, POL-002, POL-007]
+    raiseBy: 1
+    minRung: L3
+    reasonTemplate: >
+      A hard-stop compliance code is present. This is not a Copilot decision.
+
+  - id: high-risk-customer
+    description: The customer is high risk, sanctioned or politically exposed.
+    when: { field: customer.riskTier, op: in, values: [high, sanctions_hit, pep] }
+    raiseBy: 1
+    reasonTemplate: >
+      The customer's risk tier is {actual}.
+
+  - id: anomalous-session
+    description: The acting banker's own session was flagged by login-audit heuristics.
+    when: { field: session.anomalyScore, op: gte, threshold: session_anomaly_score_floor }
+    raiseBy: 1
+    minRung: L2
+    reasonTemplate: >
+      Your current session scored {actual} on the login-anomaly heuristic, at or above the
+      threshold of {threshold}.
+
+# =========================================================================================
+# ACTION TYPES — the complete allowlist. Anything absent is refused (defaults.unknownAction).
+# =========================================================================================
+actionTypes:
+
+  transaction.flag.review:
+    displayName: Clear or confirm a flagged transaction
+    baseRung: L1
+    baseSigners: 1
+    agentMayPropose: true
+    approvalTtl: ttl_transaction_flag_review
+    target:
+      service: transaction-service
+      method: POST
+      path: /api/transactions/{transactionId}/review
+    hashFields: [transactionId, amount, decision, note]
+    moneyFields: [amount]
+    requiredEvidence: [get_flagged_transaction, list_account_transactions]
+    rules:
+      - id: large-flagged-amount
+        when: { field: amount, op: gte, threshold: flagged_transaction_dual_control_amount }
+        raiseTo: L2
+        reasonTemplate: >
+          The transaction is {actual}, at or above the {threshold} dual-control limit.
+      - id: confirming-fraud
+        when: { field: decision, op: eq, value: confirmed_fraud }
+        raiseTo: L2
+        reasonTemplate: >
+          Confirming fraud is an adverse finding against a customer and is never single-signature.
+
+  transaction.score.override:
+    displayName: Override an AI risk score
+    baseRung: L2                   # overriding the model is dual-control, always
+    baseSigners: 2
+    agentMayPropose: true
+    approvalTtl: ttl_transaction_score_override
+    target:
+      service: ai-service
+      method: POST
+      path: /api/risk/{transactionId}/override
+    hashFields: [transactionId, newScore, rationale]
+    moneyFields: []
+    requiredEvidence: [get_scored_transaction, list_account_transactions]
+    rules: []
+
+  account_opening.application.review:
+    displayName: Decide an account-opening application
+    baseRung: L1
+    baseSigners: 1
+    agentMayPropose: true
+    approvalTtl: ttl_account_opening_review
+    target:
+      service: account-opening-service
+      method: POST
+      path: /api/applications/{applicationId}/decision
+    hashFields: [applicationId, decision, rationale]
+    moneyFields: []
+    requiredEvidence: [get_account_application, get_application_audit]
+    rules:
+      - id: adverse-decision
+        when: { field: decision, op: eq, value: rejected }
+        raiseTo: L2
+        reasonTemplate: >
+          Rejecting an application is an adverse action against a customer and is never solo.
+      - id: high-risk-applicant
+        when: { field: applicant.riskTier, op: in, values: [high, sanctions_hit] }
+        raiseTo: L2
+        reasonTemplate: >
+          The applicant's risk tier is {actual}.
+
+  transfer.reverse:
+    displayName: Reverse a completed transfer
+    baseRung: L1
+    baseSigners: 1
+    agentMayPropose: true
+    approvalTtl: ttl_transfer_reverse
+    target:
+      service: transfer-service
+      method: POST
+      path: /api/transfers/{transferId}/reverse
+    hashFields: [transferId, amount, reason]
+    moneyFields: [amount]
+    requiredEvidence: [get_transfer, list_account_transactions]
+    rules:
+      - id: large-reversal
+        when: { field: amount, op: gte, threshold: transfer_reversal_dual_control_amount, abs: true }
+        raiseTo: L2
+        reasonTemplate: >
+          The reversal is {actual}, at or above the {threshold} dual-control limit.
+      - id: stale-reversal
+        when: { field: ageHours, op: gte, threshold: transfer_reversal_age_hours }
+        raiseTo: L2
+        reasonTemplate: >
+          The transfer is {actual} hours old, past the {threshold}-hour window in which a
+          reversal is routine.
+
+  account.balance.adjust:
+    displayName: Post a balance adjustment
+    baseRung: L1
+    baseSigners: 1
+    agentMayPropose: true
+    approvalTtl: ttl_balance_adjust
+    target:
+      service: account-service
+      method: POST
+      path: /api/accounts/{accountId}/adjustments
+    hashFields: [accountId, amount, direction, reason]
+    moneyFields: [amount]
+    requiredEvidence: [get_account, list_account_transactions]
+    rules:
+      - id: large-adjustment
+        when: { field: amount, op: gte, threshold: balance_adjustment_dual_control_amount, abs: true }
+        raiseTo: L2
+        reasonTemplate: >
+          The adjustment is {actual}, at or above the {threshold} dual-control limit.
+      - id: credit-adjustment
+        when: { field: direction, op: eq, value: credit }
+        raiseTo: L2
+        reasonTemplate: >
+          Crediting an account creates money, which is always dual-control.
+
+  user.lock:
+    displayName: Lock a customer account
+    baseRung: L1                   # tightening a control is not dual-control
+    baseSigners: 1
+    agentMayPropose: true
+    approvalTtl: ttl_user_lock
+    target:
+      service: user-service
+      method: POST
+      path: /api/users/{userId}/lock
+    hashFields: [userId, reason]
+    moneyFields: []
+    requiredEvidence: [get_user, list_login_audits]
+    rules: []
+
+  user.unlock:
+    displayName: Unlock a customer account
+    baseRung: L2                   # relaxing a control IS dual-control
+    baseSigners: 2
+    agentMayPropose: true
+    approvalTtl: ttl_user_unlock
+    target:
+      service: user-service
+      method: POST
+      path: /api/users/{userId}/unlock
+    hashFields: [userId, reason]
+    moneyFields: []
+    requiredEvidence: [get_user, list_login_audits]
+    rules: []
+
+  # ---- Loans (#140). Declared now, inert until loan-origination-service ships. ----------
+  loan.decision.record:
+    displayName: Record an underwriting decision on a loan application
+    baseRung: L1
+    baseSigners: 1
+    agentMayPropose: true
+    approvalTtl: ttl_loan_decision
+    target:
+      service: loan-origination-service
+      method: POST
+      path: /api/loan-applications/{applicationId}/decision
+    hashFields: [applicationId, verdict, amount, rationale]
+    moneyFields: [amount]
+    requiredEvidence: [get_loan_application, get_underwriting_decision, get_policy_evaluation]
+    rules:
+      - id: large-loan
+        when: { field: amount, op: gte, threshold: loan_dual_control_amount }
+        raiseTo: L2
+        reasonTemplate: >
+          The loan is {actual}, at or above the {threshold} dual-control limit.
+      - id: very-large-loan
+        when: { field: amount, op: gte, threshold: loan_out_of_harness_amount }
+        raiseTo: L3
+        reasonTemplate: >
+          The loan is {actual}, at or above the {threshold} ceiling for Copilot involvement.
+      - id: conditional-verdict
+        when: { field: verdict, op: eq, value: CONDITIONAL }
+        raiseTo: L2
+        reasonTemplate: >
+          A CONDITIONAL verdict is never single-signature.
+      - id: decline-verdict
+        when: { field: verdict, op: eq, value: DECLINE }
+        raiseTo: L2
+        reasonTemplate: >
+          Declining an application is an adverse action against a customer.
+
+  # ---- L3 — declared so the UI can EXPLAIN the refusal. Never exposed as a tool. --------
+  user.delete:
+    displayName: Delete a user
+    baseRung: L3
+    agentMayPropose: false
+    hashFields: [userId]
+
+  user.role.promote:
+    displayName: Promote a user to admin
+    baseRung: L3
+    agentMayPropose: false
+    hashFields: [userId, role]
+
+  user.password.reset:
+    displayName: Reset a user password
+    baseRung: L3
+    agentMayPropose: false
+    hashFields: [userId]
+
+  events.replay:
+    displayName: Replay the event stream
+    baseRung: L3
+    agentMayPropose: false
+    hashFields: [streamKey]
+
+  authority.policy.edit:
+    displayName: Modify the authority policy or capability allowlist
+    baseRung: L3
+    agentMayPropose: false
+    hashFields: [policyId]
+    note: The harness may never edit its own leash.
+
+# `admin` was listed on every scope below, which is the same defect one layer down: it made the
+# platform role a superset of banking authority for READ paths too, so an identity with no
+# standing to sign could still pull customer transactions through the harness. Removed. Scopes
+# name banking roles only, and the loader enforces that each carries seniority >= 1.
+capabilityScopes:
+  risk.read: { roles: [banker, supervisor] }
+  risk.write: { roles: [banker, supervisor] }
+  transactions.read: { roles: [banker, supervisor] }
+  identity.read: { roles: [banker, supervisor] }
+  onboarding.write: { roles: [banker, supervisor] }
+  lending.read: { roles: [banker, supervisor] }
+  lending.write: { roles: [supervisor] }

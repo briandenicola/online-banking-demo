@@ -1053,3 +1053,64 @@ Enforce structurally: if the system shows "MFA required to co-sign as yourself" 
 
 ---
 
+
+### 2026-09-04 — Feature flag scaffolding for surface coexistence (#332 Phase 5 revision)
+
+**Context.** Brian overruled Phase 5: admin tabs are not retired, they coexist behind a flag so
+the same task can be run on both surfaces and compared. I built the flag system and the
+comparison instrumentation in `src/ui-app/` ahead of Phase 2, and updated
+`docs/design/banker-copilot-ui.md` (§1.3 rewritten, new §10 and §11).
+
+**CRA inlines `process.env.REACT_APP_*` as literal text.** This is the trap of the day.
+`process.env[someVariable]` is not a lookup at runtime — webpack's DefinePlugin does *textual*
+substitution at build time, so a computed key silently resolves to `undefined` in the production
+bundle while working perfectly in `npm start`. Any dynamic env-var registry in CRA needs a
+hardcoded static-access map. I wrote the workaround with a comment explaining why, because the
+code looks needlessly verbose without it and someone will "clean it up".
+
+**MUI v9 prop breaks that `tsc --noEmit` does NOT catch.** Two of them, both only surfaced by
+`craco build`: `<Switch inputProps={{...}} />` must become `slotProps={{ input: {...} }}`, and
+`<Stack alignItems="center">` is no longer a valid direct prop (goes in `sx`). Lesson: a clean
+standalone typecheck is not sufficient validation for MUI-heavy changes in this repo. Always run
+the actual build.
+
+**Runtime config for a static SPA: a `.js` file, not a `.json` file.** ui-app is a CRA build
+served by nginx with no runtime env vars, and the docker-compose service has no `environment:`
+block at all — so the only honest runtime vector is a mounted file. A fetched `config.json` is
+async and guarantees a flash of the wrong surface on every boot; a synchronous `<script>` in
+`<head>` before the bundle resolves flags before React mounts. Same file mounts identically under
+docker-compose (volume) and kustomize (ConfigMap + `subPath`), which preserves the repo's
+dual-mode convention.
+
+**URL overrides belong in sessionStorage, not localStorage.** A link someone sends you must not
+permanently reconfigure your browser. Corollary I nearly missed: when the user flips the in-app
+toggle, you must *clear the sessionStorage entry first*, otherwise the link-supplied value keeps
+outranking the switch they just flipped and the toggle looks broken.
+
+**Encode metric directionality at the point of definition.** Epic §9 risk 1 says a falling
+time-to-sign is a defect, not adoption — it is what approval fatigue looks like in a chart. That
+inverts how anyone normally reads a latency metric, so I added a `MetricDirection` including
+`lowerIsSuspicious` to the metric definitions themselves and asserted the directions in tests.
+If that knowledge lives only in a chart config or a slide, someone eventually celebrates the wrong
+number and produces a confident false conclusion. Generalises: whenever a metric's obvious reading
+is wrong, the correction has to travel with the metric.
+
+**Pre-register before you can rig it.** Both the metric set and the shared task set are fixed in
+code *before the harness exists* — the one moment I am honestly incapable of choosing measures
+that flatter the thing I designed. I also deliberately included a task (`review-flagged-txn`) that
+is Classic Admin's best case, so the comparison can actually be lost. And
+`exportComparisonData()` embeds `interpretationWarnings` in the payload, because a number in a
+spreadsheet outlives its footnote.
+
+**Say "not a security control" three times or it will be misread once.** Module comment, UI copy,
+and design doc. The refusal screen for a disabled surface is deliberately loud and offers a
+one-click re-enable — an authorisation failure would never hand you a button that fixes it, and
+that asymmetry is what stops anyone leaving the screen thinking the flag protected something.
+
+**Vocabulary drift is a real cost.** Reconciling the design doc to the ratified lifecycle
+(`proposed → pending → signed → executed`, `denied` + `terminalReason`, no `expired`, no `void`)
+touched ten places including an event name I had invented (`approval.voided` → `approval.terminal`)
+and a demo-script beat. Also absorbed the `cosignerId` deletion: the UI must say "awaiting a
+supervisor", never "assigned to you", because naming a co-signer at proposal time lets a banker
+pick their own reviewer — the exact self-dealing L2 exists to prevent. Presentation can
+reintroduce a field the data model deliberately omits; watch for that.

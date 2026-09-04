@@ -1,0 +1,6 @@
+{
+  "supervisor": ["banker"],
+  "banker": [],
+  "admin": [],
+  "user": []
+}

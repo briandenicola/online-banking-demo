@@ -210,17 +210,75 @@ public class UserService : IUserService
 
     public async Task<UserModel> PromoteToAdminAsync(string userId)
     {
+        return await GrantRoleAsync(userId, global::UserService.Constants.Roles.Admin);
+    }
+
+    /// <summary>
+    /// Grants a role to an identity. Role promotion is an L3 action (epic #332
+    /// §4.2) and is therefore never reachable from the Copilot harness — it
+    /// lives here, behind the admin console, and every grant is audited.
+    /// </summary>
+    public async Task<UserModel> GrantRoleAsync(string userId, string role)
+    {
+        if (!IsGrantableRole(role))
+            throw new ArgumentException($"'{role}' is not a grantable role", nameof(role));
+
         var user = await GetUserByIdAsync(userId);
         if (user == null)
             throw new KeyNotFoundException($"User {userId} not found");
 
-        if (user.Role == global::UserService.Constants.Roles.Admin)
-            throw new InvalidOperationException($"User {userId} is already an admin");
+        if (string.Equals(user.Role, role, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"User {userId} already holds role '{role}'");
 
-        user.Role = global::UserService.Constants.Roles.Admin;
+        var previousRole = user.Role;
+        user.Role = role;
         await _userRepository.ReplaceAsync(user);
-        _logger.LogInformation("User {UserId} ({Email}) promoted to admin", user.Id, user.Email);
+
+        _logger.LogInformation(
+            "User {UserId} ({Email}) role changed from {PreviousRole} to {Role}",
+            user.Id, user.Email, previousRole, role);
+
+        await PublishRoleGrantedEvent(user, previousRole);
+
         return user;
+    }
+
+    /// <summary>
+    /// Roles an admin may grant. Deliberately explicit rather than "anything in
+    /// the hierarchy" — a typo must be a 400, not a role nobody can revoke.
+    /// </summary>
+    public static bool IsGrantableRole(string? role) =>
+        role is not null &&
+        (string.Equals(role, global::UserService.Constants.Roles.Admin, StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(role, global::UserService.Constants.Roles.Banker, StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(role, global::UserService.Constants.Roles.Supervisor, StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(role, global::UserService.Constants.Roles.User, StringComparison.OrdinalIgnoreCase));
+
+    private async Task PublishRoleGrantedEvent(UserModel user, string previousRole)
+    {
+        try
+        {
+            var payload = JsonConvert.SerializeObject(new
+            {
+                eventType = global::UserService.Constants.EventTypes.RoleGranted,
+                timestamp = DateTime.UtcNow.ToString("o"),
+                data = new
+                {
+                    userId = user.Id,
+                    username = user.Username,
+                    email = user.Email,
+                    role = user.Role,
+                    previousRole
+                }
+            });
+
+            await _eventPublisher.PublishAsync(global::UserService.Constants.DefaultStreamName, payload);
+            _logger.LogInformation("Published RoleGranted event for user {UserId} ({Role})", user.Id, user.Role);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to publish RoleGranted event for user {UserId} — non-critical", user.Id);
+        }
     }
 
     public async Task<int> GetAdminCountAsync()

@@ -426,11 +426,13 @@ thresholds:
     env: POLICY_HIGH_RISK_CUSTOMER_SCORE
     description: "Customer risk score at or above which the customer counts as high-risk."
 
-  supervisor_seniority_min:
-    kind: count
-    default: "2"
-    env: POLICY_SUPERVISOR_SENIORITY_MIN
-    description: "Minimum seniority level that satisfies an L2 co-signature."
+  # RETIRED. The L2 co-signature bar is DERIVED from `rungs.L2.cosignerRoles` through
+  # user-service's ratified `role-hierarchy.yaml`, and the loader rejects a policy that still
+  # declares this key. As a threshold it was the role model restated a third time, and — being
+  # env-overridable — it let an operator lower dual control to peer level by setting a number,
+  # without touching any role file or failing any test.
+  #
+  #   supervisor_seniority_min: <REMOVED>
 
   batch_max_items_default:
     kind: count
@@ -438,16 +440,23 @@ thresholds:
     env: POLICY_BATCH_MAX_ITEMS_DEFAULT
     description: "Maximum items in a single batch-sign request."
 
+# Signer roles NAME the roles that may sign and the claim spellings that denote them. They do
+# NOT say what a role is worth: banking seniority is stamped in from user-service's ratified
+# `role-hierarchy.yaml` at load, and declaring `seniority:` here is a startup error.
+#
+# An earlier draft of this block mapped "admin"/"Admin" into BOTH `banker` and `supervisor`. That
+# is the defect that shipped: it made one identity able to satisfy both signatures on an L2
+# approval, and it made every claim the token issuer treats as non-banking into a signer. Two
+# rules follow, and both are enforced by the loader:
+#
+#   * a claim_value must be a case variant of its OWN role's name — no cross-role aliases;
+#   * a role admitted to an in-harness rung must carry banking seniority >= 1 in the hierarchy,
+#     which excludes `admin` (seniority 0, implying neither banker nor supervisor).
 signer_roles:
   banker:
-    claim_values: ["banker", "admin", "Admin"]
-    seniority: 1
+    claim_values: ["banker", "Banker"]
   supervisor:
-    claim_values: ["supervisor", "admin", "Admin"]
-    seniority: 2
-  risk_officer:
-    claim_values: ["risk_officer"]
-    seniority: 3
+    claim_values: ["supervisor", "Supervisor"]
 
 evidence:
   agent_rationale:
@@ -947,7 +956,11 @@ def evaluate(ctx: EvaluationContext, policy: Policy, cfg: ResolvedThresholds) ->
     signers = max(signers, 1)                       # a human ALWAYS signs
     if rung == "L2":
         signers          = max(signers, 2)          # dual control is definitional
-        seniority_needed = max(seniority_needed, cfg.int_of("supervisor_seniority_min"))
+        # Derived from the roles L2 says may co-sign, via the ratified hierarchy — never a
+        # tunable number. Seniority has exactly one definition and it is not in this file.
+        seniority_needed = max(seniority_needed,
+                               min(hierarchy.seniority_of(r)
+                                   for r in policy.rung("L2").cosigner_roles))
     if rung == "L3":
         return DENY(rung="L3", fired=fired,
                     reason="Escalated out of the harness: " +
@@ -1245,7 +1258,31 @@ Serverless matters: there is no autoscale to hide sloppy cross-partition queries
 
 **Honest limitation:** "approvals awaiting supervisor" is *inherently* cross-partition, because separation of duties guarantees the co-signer is not the requester, so the supervisor's queue spans many requesters' partitions. This is accepted: L2 volume is low by construction (it is the exception path), and the query is bounded by a composite index and a page size. If it ever becomes hot, the escape hatch is a second lightweight container `copilot-approval-queue` partitioned by `/queueKey` holding pointer documents — explicitly deferred as premature.
 
+> **RATIFIED (Danny, 2026-09-04).** This analysis is the design of record; the epic's competing
+> `cosignerId` pointer document is ruled out (epic §5.2.2). Beyond the dual-write cost, keying a
+> queue on `cosignerId` requires knowing *who* will co-sign at proposal time, which converts "a
+> second qualified human must review this" into "this named person must review this" — letting
+> the requesting banker choose their own reviewer, the exact self-dealing L2 exists to prevent.
+> **Your `/queueKey` escape hatch stays available precisely because it keys on the queue rather
+> than on a person. Any future optimisation here must preserve that property.**
+
 ### 5.3 Document schema
+
+> **AUTHORITATIVE (ruled by Danny, 2026-09-04, `.squad/decisions/inbox/danny-approval-schema-arbitration.md`).**
+> Rusty found that epic §5.2 and this section specified two different `copilot-approvals`
+> documents. **This section wins** — it is the copy with the query patterns and index derivation
+> attached, and `infra/cloud/cosmos.tf` is already built to it. Epic §5.2 has been stripped of its
+> copy and now defines only the container, the partition key, TTL semantics and a field
+> *inventory*; it deliberately no longer states any field path. Do not re-add a schema there.
+>
+> Rulings that affect this block — **two removals, no other changes; keep building**:
+> 1. `policy.policyVersion` **nesting is correct and stays.** The epic's "exactly once, at the
+>    top level" wording constrained *cardinality*, not depth; there is still exactly one copy.
+> 2. `execution.signedUnderPolicyVersion` is **removed** — see the annotation below.
+> 3. `distinctIdentitiesRequired` (an epic-only field) is retired; `signatureSlots[].mustDifferFrom`
+>    subsumes it and is stronger. Nothing to change here — you never carried it.
+> 4. The epic's `cosignerId` pointer document is **ruled out**; your cross-partition query plus
+>    `(status, awaitingSeniority, createdAt)` is the design of record. See the note in §5.2.
 
 Camel-cased throughout. **Under the ratified split-language design this is the highest-risk schema in the epic:** `authority-service` (.NET, `Microsoft.Azure.Cosmos` + Newtonsoft) writes these documents and `banker-copilot-service` (Python, `azure-cosmos`) reads some of them for the trace pane. Cosmos SQL field paths are case-sensitive and a serializer mismatch returns **zero rows rather than an error** — see `.squad/skills/cosmos-casing-audit`. Mitigation is not optional: pin an explicit camelCase contract, generate both sides from one schema definition, and add a round-trip test that writes from .NET and reads from Python.
 
@@ -1253,6 +1290,10 @@ Camel-cased throughout. **Under the ratified split-language design this is the h
 {
   "id": "apr_01JQ8Z3M4W7K",
   "requesterId": "user_9f3a",              // PARTITION KEY — the acting banker
+  "requesterUsername": "b.torres",         // display only; never load-bearing for a decision
+  "requesterRoles": ["banker"],            // the roles AS CLAIMED at proposal time
+  "requesterSeniority": 1,                 // derived from signerRoles, not read from the token
+  "requesterSelfDealing": false,           // input to the self-dealing escalator, frozen here
   "docType": "approval",
 
   "status": "pending",                      // proposed | pending | signed | executed | denied
@@ -1262,19 +1303,29 @@ Camel-cased throughout. **Under the ratified split-language design this is the h
 
   "sessionId": "sess_7c21",
   "agentId": "asst_banker_copilot_v1",
+  "batchId": null,                          // set when the action was proposed as part of a batch
   "correlationId": "0af7651916cd43dd8448eb211c80319c",   // matches X-Correlation-ID convention
 
   "target": {
     "service": "transfer-service",
     "method": "POST",
     "pathTemplate": "/api/transfers",
-    "pathParams": {}
+    "resolvedPath": "/api/transfers"       // template with {placeholders} substituted from the
+                                           // payload. The earlier `pathParams` map is GONE: it
+                                           // was the same fact in a second representation, and
+                                           // the resolved path is the one the executor calls.
   },
 
   "payload": { "fromAccountId": "acc_11", "toAccountId": "acc_42",
                "amount": "7500.00", "currency": "USD", "memo": "wire recall" },
+  "facts": { "priorReversals": 0 },        // caller-supplied inputs the evaluator may read
+  "agentAssessment": null,                  // the agent's own summary/confidence, advisory only
   "payloadHash": "sha256:9f2b…",           // §6 — what the signature binds to
   "hashFields": ["fromAccountId","toAccountId","amount","currency","memo"],
+  "moneyFields": ["amount"],               // rendered as decimal strings at currencyScale
+  "currencyScale": 2,                      // frozen here so a later policy edit cannot make a
+                                           // validly signed payload look tampered with
+  "canonicalization": "jcs",               // RFC 8785
   "canonicalizationVersion": 2,
 
   "policy": {
@@ -1288,11 +1339,11 @@ Camel-cased throughout. **Under the ratified split-language design this is the h
     "firedEscalators": [
       { "key": "transfer_amount_l2", "raisedTo": "L2",
         "thresholdName": "transfer_l2_amount", "thresholdEnv": "POLICY_TRANSFER_L2_AMOUNT",
-        "thresholdValue": "5000.00",
+        "thresholdValue": "5000.00", "scope": "action",
         "reason": "Transfer of 7500.00 is at or above 5000.00; supervisor co-signature required." },
       { "key": "high_risk_customer", "raisedTo": "L2",
         "thresholdName": "high_risk_customer_score", "thresholdEnv": "POLICY_HIGH_RISK_CUSTOMER_SCORE",
-        "thresholdValue": "0.80",
+        "thresholdValue": "0.80", "scope": "global",
         "reason": "Customer risk score 0.86 is at or above 0.80." }
     ],
     "resolvedThresholdSnapshot": { "transfer_l2_amount": "5000.00", "high_risk_customer_score": "0.80" }
@@ -1307,10 +1358,18 @@ Camel-cased throughout. **Under the ratified split-language design this is the h
   "signatureSlots": [
     { "ordinal": 0, "minSeniority": 1, "mustDifferFrom": [],
       "signedBy": "user_9f3a", "signedByUsername": "b.torres", "signedAt": "2026-09-04T13:41:02Z",
-      "signature": "…", "signerTokenJti": "…", "nonce": "…" },
+      "signature": "…", "signerTokenJti": "…", "nonce": "…", "comment": null },
     { "ordinal": 1, "minSeniority": 2, "mustDifferFrom": ["user_9f3a"],
-      "signedBy": null, "signedAt": null, "signature": null }
+      "signedBy": null, "signedByUsername": null, "signedAt": null, "signature": null,
+      "signerTokenJti": null, "nonce": null, "comment": null }
+    // NOTE: a slot carries NO `rungSatisfied` and NO `boundPolicyVersion`. Both were per-slot
+    // copies of policy.requiredRung / policy.policyVersion, and §5.3.2 makes them provably equal
+    // — a change to either VOIDS the signatures. Same removal class as
+    // execution.signedUnderPolicyVersion. Both still appear on the audit events.
   ],
+
+  "awaitingSeniority": 2,                   // WHAT KIND of signer is needed — never WHO (§5.2)
+  "pendingSlotOrdinal": 1,                  // the next slot to fill; denormalised for Q3
 
   "createdAt": "2026-09-04T13:39:00Z",
   "expiresAt": "2026-09-04T13:54:00Z",
@@ -1319,17 +1378,27 @@ Camel-cased throughout. **Under the ratified split-language design this is the h
   "terminalReason": null,                   // closed enum, §5.3.1. Required and non-null
                                             // whenever status == "denied"; null otherwise.
   "terminalDetail": null,                   // free-text (human denials) or structured detail
-  "supersededByApprovalId": null,                     // approval id, when PAYLOAD_SUPERSEDED or
+  "supersededByApprovalId": null,           // approval id, when PAYLOAD_SUPERSEDED or
                                             // POLICY_RUNG_ESCALATED produced a replacement
+  "supersedesApprovalId": null,             // the reverse link, on the replacement
 
   "execution": {
     "state": "not_attempted",              // not_attempted | in_flight | succeeded | failed
     "idempotencyKey": "apr_01JQ8Z3M4W7K",
     "attempts": 0,
+    "startedAtEpoch": null,                // when not_attempted → in_flight was won
     "downstreamStatus": null,
     "downstreamRef": null,
     "lastError": null,                     // shape per .squad/skills/cosmos-workflow-state
-    "signedUnderPolicyVersion": null,      // == policy.policyVersion above; the ruleset SIGNED under
+    // REMOVED (Danny, 2026-09-04): "signedUnderPolicyVersion" was a second copy of
+    // policy.policyVersion in the same document — your own `// ==` comment said so — which
+    // epic §5.3.1 forbids for a value bound into a security hash. It is also provably always
+    // equal: under §3.6/§5.3.2 a policy change VOIDS the signature and creates a replacement
+    // approval, so an executing document's signatures are always bound to its own
+    // policy.policyVersion. The field could only ever be wrong, never informative.
+    // It REMAINS on the ApprovalVoidedByPolicyChange event (§7) — a standalone flat audit
+    // record must be readable without joining back to the document; that denormalisation is
+    // correct. The rule is one copy per document, not one copy per system.
     "evaluatedUnderPolicyVersion": null    // the LIVE ruleset at execute time (§3.6).
                                            // Differing values are an audit annotation ONLY,
                                            // never a branch condition (§6.4).
@@ -1996,7 +2065,7 @@ All must be added to **both** `deploy/kustomize/base/configmap.yaml` and `docker
 | # | Question | My lean |
 |---|---|---|
 | ~~O1~~ | ~~Ratify **Python/FastAPI, single service, two internal planes** (§1.3)?~~ | **CLOSED — overruled by Brian, 2026-09-04.** Two services: `banker-copilot-service` (Python, harness) + **`authority-service` (.NET, policy engine + approval store + sole write path)**. My repo survey (§1.1–§1.2) was accepted and load-bearing; the language conclusion was not. The mandatory mitigation for the config/serializer-drift cost I raised stands — see epic §2.2 and the Cosmos casing hazard in `.squad/skills/cosmos-casing-audit`. |
-| O2 | Is `banker` / `supervisor` / `risk_officer` a **new role model**? Today `user-service` mints a single `role` claim and everything admin-ish is `admin`/`Admin`. Separation of duties needs at least two distinct senior identities to be meaningful — with one `admin` role, "different identity" is enforceable but "more senior" is not. | Add a `seniority` claim to `user-service` tokens, or map roles→seniority in policy config as an interim. Needs a decision before L2 means anything real. |
+| O2 | **RESOLVED (2026-09-04).** `user-service` owns the role model in `config/role-hierarchy.yaml`; this service consumes it and refuses to start on disagreement. The interim answer below — "map roles→seniority in policy config" — was taken, and it is what produced the privilege escalation: a second copy of the ladder that drifted into promoting the customer claim and making `admin` a banking superset. Do not reinstate it. Original question: Is `banker` / `supervisor` / `risk_officer` a **new role model**? Today `user-service` mints a single `role` claim and everything admin-ish is `admin`/`Admin`. Separation of duties needs at least two distinct senior identities to be meaningful — with one `admin` role, "different identity" is enforceable but "more senior" is not. | Add a `seniority` claim to `user-service` tokens, or map roles→seniority in policy config as an interim. Needs a decision before L2 means anything real. |
 | O3 | Should domain services be modified to **require** `apid`/`pah` claims (Layer 2, phase 2)? That touches all seven services and is architecture-level. | Yes eventually, behind `REQUIRE_APPROVAL_CLAIMS`, but not in the first cut — Layer 1 carries the guarantee. Your call on sequencing. |
 | O4 | Is a **server-side signature** (mediator observes an authenticated human action and binds it) sufficient "signature," or does compliance narrative demand per-user asymmetric keys / true non-repudiation? | Server-side + Key Vault ES256 is right for a demo and defensible in a real bank. Worth saying out loud in the epic so nobody over-claims. |
 | O5 | `account.delete` has **no endpoint today**. Do we define the ladder entry now (as I have) or omit until the capability exists? | Define it now. An action with no policy entry is denied by default, but writing it down means nobody adds the endpoint later without a rung. |
