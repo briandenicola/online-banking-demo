@@ -128,13 +128,28 @@ export const FLAG_DEFINITIONS: Record<FeatureFlagName, FeatureFlagDefinition> = 
     label: 'Banker Copilot harness',
     description:
       'The agentic harness at /copilot: task queue, live plan/trace pane, artifact canvas, and the approval surface.',
-    defaultValue: false,
+    /**
+     * Flipped to true in Phase 2 (2026-05-12), as the Phase 1 plan said it
+     * would be. The condition written down then was "when /copilot renders a
+     * real harness rather than a placeholder", and it now does: three panes, a
+     * live trace over SSE, and an approval card that shows the payload hash.
+     *
+     * Flipping it is also what makes the surface comparison possible at all. A
+     * comparison you have to opt into is a comparison nobody runs, and the
+     * whole point of keeping Classic Admin alive is to measure against it.
+     *
+     * This remains a PRESENTATION toggle. Turning it on shows a route; it
+     * grants nothing. Every authority decision behind it is made by
+     * authority-service, which has never heard of this flag and would reject a
+     * signature from an ineligible caller whatever the frontend rendered.
+     */
+    defaultValue: true,
     gatesSurface: true,
     plannedDefaultChange: {
       to: true,
-      when: 'When Phase 2 lands — i.e. when /copilot renders a real harness rather than a placeholder.',
+      when: 'Already flipped in Phase 2. No further change scheduled.',
       rationale:
-        'False today because the harness does not exist, and shipping a nav item to an empty route is worse than shipping nothing. Flips to true with Phase 2 so BOTH surfaces are visible by default: coexistence is the point, and a comparison you have to opt into is a comparison nobody runs.',
+        'Flipped from false to true when Phase 2 landed the real harness, exactly as pre-registered. It stays true: retiring or hiding either surface now requires an explicit ruling supported by comparison data, not the passage of a phase (same standard applied to classicAdminTabs after Phase 5 became coexistence).',
     },
   },
   comparisonInstrumentation: {

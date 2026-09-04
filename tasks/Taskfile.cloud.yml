@@ -371,6 +371,27 @@ tasks:
             azure.workload.identity/use: "true"
             app.kubernetes.io/part-of: banking-demo
         EOF
+      # banker-copilot-service likewise runs under its OWN service account and
+      # its OWN managed identity (#336). This one matters for a different reason
+      # than authority-service's: that identity is narrow so the executor is
+      # isolated, this one is narrow so the AGENT is contained. Its Cosmos grant
+      # is READ ONLY on copilot-approvals — if the harness could obtain
+      # authority-workload-identity's token it could write an approval directly
+      # and the "agents never approve" invariant would be enforced only by
+      # Python.
+      - |
+        cat <<EOF | kubectl apply -f -
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: {{.BANKER_COPILOT_SERVICE_ACCOUNT}}
+          namespace: {{.NAMESPACE}}
+          annotations:
+            azure.workload.identity/client-id: "{{.BANKER_COPILOT_CLIENT_ID}}"
+          labels:
+            azure.workload.identity/use: "true"
+            app.kubernetes.io/part-of: banking-demo
+        EOF
     vars:
       APPINSIGHTS_CONN:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw application_insights_connection_string
@@ -380,6 +401,10 @@ tasks:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw authority_service_client_id
       AUTHORITY_SERVICE_ACCOUNT:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw authority_service_service_account
+      BANKER_COPILOT_CLIENT_ID:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw banker_copilot_service_client_id
+      BANKER_COPILOT_SERVICE_ACCOUNT:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw banker_copilot_service_account
 
   _images:apply:
     internal: true

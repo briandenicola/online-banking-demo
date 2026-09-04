@@ -1679,14 +1679,34 @@ using the ratified lifecycle vocabulary, per-surface medians, JSON export with e
 flag-gated so it collects nothing when off. Privacy-safe by construction — ids, counts, timings,
 and enum values only; no payload contents, customer data, or free-text denial reasons.
 
-**Does not work yet, and should not be claimed:**
+**Wired in Phase 2 (2026-05-12).** Both surfaces are now instrumented, in one pass, as the Phase 1
+deferral promised. The counting rules live in exactly one place —
+`src/ui-app/src/components/comparison/TaskMeasurementBar.tsx` — and both `/admin` and `/copilot` are
+wrapped in that same component. Neither surface contains a single call to the recorder; counting is
+done by delegated DOM events over the wrapped subtree, and regions are declared by a
+`data-comparison-region` attribute (a tab in Classic, a pane in the harness).
 
-- **No call sites.** The recorder is complete and tested but nothing calls it. Instrumenting
-  Classic Admin is straightforward and deliberately deferred: instrumenting one surface before the
-  other exists produces a baseline nobody can check, and I would rather instrument both in one
-  pass with identical counting rules.
-- **No exporter.** Buffered in `sessionStorage`, exported by hand. A backend contract for this is
-  not mine to design.
+That structure is the guarantee. It is not possible to instrument one surface more thoroughly than
+the other, because neither surface contains any counting code to add to or remove from. A test
+(`components/comparison/__tests__/TaskMeasurementBar.test.tsx`) asserts this mechanically rather
+than trusting anyone to remember it.
+
+The rules, stated once so they can be argued with:
+
+- **Interaction** — one activation of an interactive element inside the measured subtree. Scrolling
+  counts on neither surface. Typing counts once per *field*, not per keystroke; otherwise the
+  harness, which has a text command bar, loses by construction on a metric that means nothing.
+- **Context switch** — the interacted element's region differs from the previous one.
+- **Evidence open** — activation of anything carrying `data-comparison-evidence`.
+- **Decision** — reported explicitly by the surface, because only it knows dwell time and whether
+  evidence was opened before signing.
+
+**Still does not work, and should not be claimed:**
+
+- **No backend exporter.** Buffered in `sessionStorage` and exported by hand from a button on either
+  surface. A backend contract for this is not mine to design.
+- **No data yet.** Instrumentation existing is not the same as a result existing. Any claim of the
+  form "the harness is N times better" requires facilitated sessions that have not happened.
 - **`signaturesPerHour` and `reversalRate` are defined but not computed.** The first needs a
   session-duration denominator; the second needs post-hoc joining to reversal events that do not
   exist yet.

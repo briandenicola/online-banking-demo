@@ -48,16 +48,30 @@ public class HmacSignatureService : ISignatureService
         if (string.IsNullOrWhiteSpace(key))
         {
             throw new InvalidOperationException(
-                "Approval__SigningKey is not configured. It must be distinct from Jwt__Key: the JWT " +
-                "key is shared with every service, so reusing it would let any service forge a " +
-                "signature. Refusing to start.");
+                "Approval__SigningKey is not configured. It must be distinct from every other " +
+                "credential this service holds, so that compromising one does not yield the " +
+                "ability to forge approval signatures. Refusing to start.");
         }
 
-        if (string.Equals(key, configuration["Jwt:Key"], StringComparison.Ordinal))
+        // The old comparison was against Jwt__Key, the shared symmetric signing secret. That
+        // setting is retired (issue #334) and its presence now aborts startup, so the check
+        // could never fire again. The credentials this service actually holds today are the
+        // mediator client secret and — if an operator misconfigures it — JWT signing material.
+        // Reusing either as the approval key would collapse two independent controls into one.
+        var neighbours = new (string Name, string? Value)[]
         {
-            throw new InvalidOperationException(
-                "Approval__SigningKey must not equal Jwt__Key. Key separation is the whole control: " +
-                "the JWT key is shared across services and any holder could otherwise mint signatures.");
+            ("Jwt__MediatorClientSecret", configuration["Jwt:MediatorClientSecret"]),
+            ("Jwt__PrivateKeyPem", configuration["Jwt:PrivateKeyPem"])
+        };
+
+        foreach (var (name, value) in neighbours)
+        {
+            if (!string.IsNullOrWhiteSpace(value) && string.Equals(key, value, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Approval__SigningKey must not equal {name}. Key separation is the whole " +
+                    "control: one credential serving two purposes means one leak defeats both.");
+            }
         }
 
         _key = Encoding.UTF8.GetBytes(key);

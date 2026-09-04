@@ -21,6 +21,7 @@ resources:
 - ui-app.yaml
 - prompt-eval-service.yaml
 - authority-service.yaml
+- banker-copilot-service.yaml
 
 # ui-app deployment-level feature-flag defaults. Generated from the single copy
 # of runtime-config.js that lives in this directory and is bind-mounted by
@@ -38,6 +39,9 @@ configMapGenerator:
 images:
 - name: ghcr.io/banking-demo/authority-service
   newName: REPLACE_WITH_ACR_LOGIN_SERVER/authority-service
+  newTag: REPLACE_WITH_TAG
+- name: ghcr.io/banking-demo/banker-copilot-service
+  newName: REPLACE_WITH_ACR_LOGIN_SERVER/banker-copilot-service
   newTag: REPLACE_WITH_TAG
 - name: ghcr.io/banking-demo/account-opening-service
   newName: REPLACE_WITH_ACR_LOGIN_SERVER/account-opening-service

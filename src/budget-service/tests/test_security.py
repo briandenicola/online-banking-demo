@@ -14,35 +14,69 @@ from fastapi.testclient import TestClient
 
 import jwt as pyjwt
 
-# JWT config matching user-service defaults
-JWT_SECRET = "YourSuperSecretKeyForJWTTokenGeneration12345"
-JWT_ALGORITHM = "HS256"
-JWT_ISSUER = "user-service"
-JWT_AUDIENCE = "banking-demo"
+# --- #334: token helpers live in tests/security/ so audiences are stated once ---
+import sys as _sys
+from pathlib import Path as _Path
+
+for _parent in _Path(__file__).resolve().parents:
+    _helpers = _parent / "tests" / "security"
+    if (_helpers / "jwt_test_keys.py").is_file():
+        if str(_helpers) not in _sys.path:
+            _sys.path.insert(0, str(_helpers))
+        break
+else:  # pragma: no cover - the helper is committed; its absence is a broken checkout
+    raise RuntimeError("tests/security/jwt_test_keys.py not found")
+
+from jwt_test_keys import (  # noqa: E402
+    audience_for,
+    foreign_private_key_pem,
+    issuer_name,
+    make_token,
+    public_key_pem,
+)
+
+SERVICE_NAME = "budget-service"
+JWT_ISSUER = issuer_name()
+JWT_AUDIENCE = audience_for(SERVICE_NAME)
 
 
 def _make_token(
     user_id: str = "usr-test-001",
     role: str = "User",
     expires_in: int = 3600,
-    issuer: str = JWT_ISSUER,
-    audience: str = JWT_AUDIENCE,
-    secret: str = JWT_SECRET,
+    issuer: str = None,
+    audience=None,
+    secret: str = None,
 ) -> str:
-    """Create a signed JWT matching user-service format."""
-    now = int(time.time())
-    claims = {
-        "sub": user_id,
-        "userId": user_id,
-        "unique_name": "testuser",
-        "role": role,
-        "iss": issuer,
-        "aud": audience,
-        "iat": now,
-        "exp": now + expires_in,
-        "jti": "test-jti-001",
-    }
-    return pyjwt.encode(claims, secret, algorithm=JWT_ALGORITHM)
+    """Mint a token this service should accept.
+
+    ``secret`` is retained so existing negative tests keep reading naturally, but it now
+    means "sign with this key instead of the issuer's" — under RS256 a wrong key is a
+    different keypair, not a different string.
+    """
+    return make_token(
+        user_id=user_id,
+        role=role,
+        expires_in=expires_in,
+        issuer=issuer if issuer is not None else JWT_ISSUER,
+        audience=audience if audience is not None else JWT_AUDIENCE,
+        signing_key=secret,
+    )
+
+
+def _configure_auth_env() -> None:
+    """Give the service the validating half only. It could not mint if it wanted to."""
+    import os as _os
+
+    for _retired in ("JWT_KEY", "JWT_SECRET", "JWT_PRIVATE_KEY_PEM"):
+        _os.environ.pop(_retired, None)
+    _os.environ["JWT_PUBLIC_KEY_PEM"] = public_key_pem()
+    _os.environ["JWT_ISSUER"] = JWT_ISSUER
+    _os.environ["JWT_AUDIENCE"] = JWT_AUDIENCE
+
+    from app.auth import reset_key_cache
+
+    reset_key_cache()
 
 
 def _expired_token() -> str:
@@ -52,7 +86,7 @@ def _expired_token() -> str:
 
 def _wrong_secret_token() -> str:
     """Create a JWT signed with the wrong secret."""
-    return _make_token(secret="WrongSecretKeyThatDoesNotMatch12345678")
+    return _make_token(secret=foreign_private_key_pem())
 
 
 def _wrong_issuer_token() -> str:
@@ -69,9 +103,7 @@ def _admin_token() -> str:
 def client():
     """Create a test client with JWT_KEY configured."""
     import os
-    os.environ["JWT_KEY"] = JWT_SECRET
-    os.environ["JWT_ISSUER"] = JWT_ISSUER
-    os.environ["JWT_AUDIENCE"] = JWT_AUDIENCE
+    _configure_auth_env()
     from app.main import app
     return TestClient(app, raise_server_exceptions=False)
 

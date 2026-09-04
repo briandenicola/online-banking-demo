@@ -54,7 +54,7 @@ tasks:
         echo "CHAT_MEMORY_LEASE_CONTAINER=AgentMemoryLeases"
         echo "CHAT_MEMORY_EMBEDDING_DEPLOYMENT={{.AZURE_OPENAI_EMBEDDING_MODEL}}"
         echo "APPLICATIONINSIGHTS_CONNECTION_STRING={{.APPLICATIONINSIGHTS_CONNECTION_STRING}}"
-        echo "JWT_KEY={{.JWT_KEY}}"
+        echo "AUTHORITY_MEDIATOR_SECRET={{.AUTHORITY_MEDIATOR_SECRET}}"
     vars:
       AZURE_OPENAI_MODEL: gpt-5.4-mini
       AZURE_OPENAI_EMBEDDING_MODEL: text-embedding-ada-002
@@ -68,8 +68,8 @@ tasks:
         sh: terraform -chdir=./{{.LOCAL_INFRA_DIR}} output -raw chatbot_spn_client_secret
       APPLICATIONINSIGHTS_CONNECTION_STRING:
         sh: terraform -chdir=./{{.LOCAL_INFRA_DIR}} output -raw application_insights_connection_string
-      JWT_KEY:
-        sh: openssl rand -base64 32
+      AUTHORITY_MEDIATOR_SECRET:
+        sh: openssl rand -hex 24
 
   run:
     desc: Run Docker Compose locally
@@ -174,7 +174,7 @@ tasks:
           "CHAT_MEMORY_LEASE_CONTAINER=AgentMemoryLeases" \
           "CHAT_MEMORY_EMBEDDING_DEPLOYMENT={{.AZURE_OPENAI_EMBEDDING_MODEL}}" \
           "APPLICATIONINSIGHTS_CONNECTION_STRING={{.APPLICATIONINSIGHTS_CONNECTION_STRING}}" \
-          "JWT_KEY={{.JWT_KEY}}" \
+          "AUTHORITY_MEDIATOR_SECRET={{.AUTHORITY_MEDIATOR_SECRET}}" \
           > .env
     vars:
       AZURE_OPENAI_MODEL: gpt-5.4-mini
@@ -189,8 +189,8 @@ tasks:
         sh: terraform -chdir=./{{.LOCAL_INFRA_DIR}} output -raw chatbot_spn_client_secret
       APPLICATIONINSIGHTS_CONNECTION_STRING:
         sh: terraform -chdir=./{{.LOCAL_INFRA_DIR}} output -raw application_insights_connection_string
-      JWT_KEY:
-        sh: if [ -f .env ] && grep -q '^JWT_KEY=' .env; then grep '^JWT_KEY=' .env | cut -d= -f2; else openssl rand -base64 32; fi
+      AUTHORITY_MEDIATOR_SECRET:
+        sh: if [ -f .env ] && grep -q '^AUTHORITY_MEDIATOR_SECRET=' .env; then grep '^AUTHORITY_MEDIATOR_SECRET=' .env | cut -d= -f2; else openssl rand -hex 24; fi
 
   _env:set:
     internal: true

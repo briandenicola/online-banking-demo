@@ -39,7 +39,6 @@ public static class TestHarness
         var settings = new Dictionary<string, string?>
         {
             ["Approval:SigningKey"] = "unit-test-authority-signing-key-not-the-jwt-key",
-            ["Jwt:Key"] = "unit-test-jwt-key",
             ["Approval:RetentionSeconds"] = "7776000",
             ["Approval:SweepIntervalSeconds"] = "60",
             ["Approval:SweepBatchSize"] = "100",

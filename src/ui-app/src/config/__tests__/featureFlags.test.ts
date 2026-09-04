@@ -24,12 +24,14 @@ describe('featureFlags resolution', () => {
     expect(values.bankerCopilot).toBe(FLAG_DEFINITIONS.bankerCopilot.defaultValue);
   });
 
-  it('defaults to tabs visible and harness hidden today', () => {
-    // The harness does not exist yet, so this default is load-bearing: it is
-    // what keeps the app usable on a fresh browser with no config mounted.
+  it('defaults to BOTH surfaces visible now that the harness is real', () => {
+    // Phase 2 flipped bankerCopilot to true on the condition written down in
+    // Phase 1: /copilot renders a real harness rather than a placeholder.
+    // Both defaults are load-bearing — coexistence is the point, and a
+    // comparison you have to opt into is a comparison nobody runs.
     const values = flagValues(resolveFlags());
     expect(values.classicAdminTabs).toBe(true);
-    expect(values.bankerCopilot).toBe(false);
+    expect(values.bankerCopilot).toBe(true);
   });
 
   it('lets runtime config override the hardcoded default', () => {
@@ -87,8 +89,11 @@ describe('featureFlags resolution', () => {
   it('ignores unknown flag names and unparseable values', () => {
     ingestUrlOverrides('?ff=notAFlag:on,bankerCopilot:banana');
     const resolved = resolveFlags();
-    expect(resolved.bankerCopilot.value).toBe(false);
+    // An unparseable value must fall through to the deployment default, not be
+    // coerced. The assertion is on the SOURCE for that reason — the value now
+    // happens to be true, and asserting on it alone would pass by accident.
     expect(resolved.bankerCopilot.source).toBe('default');
+    expect(resolved.bankerCopilot.value).toBe(FLAG_DEFINITIONS.bankerCopilot.defaultValue);
   });
 
   it('ignores a malformed runtime config rather than throwing', () => {

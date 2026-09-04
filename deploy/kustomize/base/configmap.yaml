@@ -25,6 +25,53 @@ data:
   # assignments in infra/cloud/identity-authority.tf.
   CosmosDb__ApprovalsContainerName: "copilot-approvals"
   CosmosDb__AuthorityPolicyContainerName: "authority-policy"
+  # Banker Copilot harness stores (epic #332 Phase 2). banker-copilot-service is
+  # Python and reads SCREAMING_SNAKE, matching every other Python service here;
+  # authority-service is .NET and reads the CosmosDb__* form above. Those are two
+  # different containers each named once, NOT one container named twice.
+  #
+  # Each name below is also the `scope` of a Cosmos role assignment in
+  # infra/cloud/identity-copilot.tf. If a name here and a name there ever drift,
+  # the service does not fail — Cosmos returns 403 on a container it can see but
+  # was not granted, or silently reads an empty container it created by accident.
+  # Terraform emits `copilot_container_names` so a deploy can source them from
+  # state instead of from this list.
+  COSMOS_DB_DATABASE: "BankingDemo"
+  COPILOT_SESSIONS_CONTAINER: "copilot-sessions"
+  COPILOT_ARTIFACTS_CONTAINER: "copilot-artifacts"
+  COPILOT_TRACES_CONTAINER: "copilot-traces"
+  # Harness runtime bounds. Configuration, never literals in service code.
+  # COPILOT_SESSION_TTL_SECONDS is an IDLE-STREAM timeout inside the service and
+  # is unrelated to var.copilot_session_retention_seconds, which is the Cosmos
+  # document TTL on copilot-sessions. Two different clocks, deliberately.
+  COPILOT_SSE_HEARTBEAT_SECONDS: "15"
+  COPILOT_SSE_REPLAY_WINDOW: "500"
+  COPILOT_SESSION_TTL_SECONDS: "3600"
+  COPILOT_PLANNER_MAX_ITERATIONS: "12"
+  COPILOT_UPSTREAM_TIMEOUT_MS: "8000"
+  # Read-tool upstreams (epic §3.3). The harness resolves a logical tool target
+  # to a base URL through these; an unlisted service resolves to None and the
+  # tool fails closed rather than defaulting to anything.
+  #
+  # UPPER_SNAKE after the `DOWNSTREAM__` prefix is MANDATORY here, not stylistic.
+  # These reach the pod through `envFrom`, and Kubernetes only injects ConfigMap
+  # keys that are valid C_IDENTIFIERs (`[A-Za-z_][A-Za-z0-9_]*`). A key like
+  # `DOWNSTREAM__account-service` contains a hyphen, so it is silently SKIPPED —
+  # and since kubernetes#130099 not even an event is emitted. The pod would come
+  # up healthy with every read tool unresolvable. The service lowercases and maps
+  # `_` back to `-` when it resolves a logical name, so this form and the compose
+  # form denote the same six services.
+  #
+  # authority-service is deliberately NOT in this map. It is reached through
+  # AUTHORITY_SERVICE_URL above and only by `propose_action` — keeping it out of
+  # the generic downstream table means a mis-registered tool cannot acquire the
+  # one endpoint that executes.
+  DOWNSTREAM__ACCOUNT_SERVICE: "http://account-service.banking-demo.svc.cluster.local"
+  DOWNSTREAM__TRANSACTION_SERVICE: "http://transaction-service.banking-demo.svc.cluster.local"
+  DOWNSTREAM__TRANSFER_SERVICE: "http://transfer-service.banking-demo.svc.cluster.local"
+  DOWNSTREAM__USER_SERVICE: "http://user-service.banking-demo.svc.cluster.local"
+  DOWNSTREAM__ACCOUNT_OPENING_SERVICE: "http://account-opening-service.banking-demo.svc.cluster.local"
+  DOWNSTREAM__AI_SERVICE: "http://ai-service.banking-demo.svc.cluster.local"
   # Bootstrap identities for the role ladder (§5.8.3). Seeding is idempotent and
   # is skipped once an identity already holds the role.
   Authority__BootstrapSupervisorEmail: "REPLACE_WITH_BOOTSTRAP_SUPERVISOR_EMAIL"

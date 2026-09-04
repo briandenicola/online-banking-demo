@@ -38,16 +38,24 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: appinsights-connection-string
-        - name: Jwt__Key
-          valueFrom:
-            secretKeyRef:
-              name: banking-secrets
-              key: jwt-key
         - name: REDIS__CONNECTIONSTRING
           valueFrom:
             secretKeyRef:
               name: banking-secrets
               key: redis-connection-string
+        # The ONLY private key in the platform. Every other service holds the public half
+        # only, fetched from /.well-known/jwks.json, so validating confers no ability to
+        # mint (issue #334). Rotating this secret rotates the whole platform.
+        - name: Jwt__PrivateKeyPem
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: jwt-private-key
+        - name: Jwt__MediatorClients__authority-service
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: mediator-client-secret-authority
         envFrom:
         - configMapRef:
             name: banking-demo-config

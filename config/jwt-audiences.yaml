@@ -1,0 +1,100 @@
+# ---------------------------------------------------------------------------------------
+# CANONICAL JWT AUDIENCE REGISTRY  (issue #334)
+#
+# This file is the ONE place the audience model is stated. Every other place that mentions
+# an audience — appsettings.json, docker-compose.yml, deploy/kustomize/** — is asserted
+# equal to this file by `src/shared/Auth.Tests` / `tests/security/test_audience_agreement.py`
+# rather than being an independent restatement. If you add a service, add it HERE first.
+#
+# WHY PER-SERVICE AUDIENCES
+# Before #334 every service validated the single audience `banking-demo`, so any token was a
+# platform-wide bearer credential. A token obtained for a read path was equally good against
+# money movement, and — because signing was symmetric — any service holding the validation
+# secret could MINT one. Signing is now RS256: `user-service` alone holds the private key and
+# every other service holds only the public half, fetched from the issuer's JWKS endpoint.
+#
+# THE MEDIATOR AUDIENCE IS THE LOAD-BEARING PART
+# `mediator.audience` is the audience `authority-service` presents when it executes an
+# approved, human-signed action against a downstream service. It is deliberately NOT a member
+# of `session.audiences`, so no token a human or an agent can obtain ever carries it.
+# `authority-service` itself REFUSES to accept it (see `mediator.rejectedBy`) — a mediator
+# token cannot be replayed at the mediator, which is what stops an agent from laundering a
+# downstream call back through the approval broker.
+# ---------------------------------------------------------------------------------------
+version: 1
+
+# The only identity permitted to hold JWT signing material. Every other service that finds a
+# private key in its configuration fails closed at startup.
+issuer:
+  name: user-service
+  service: user-service
+
+# Per-service audiences. A token minted for one of these is rejected by every other service.
+audiences:
+  user-service: banking-demo/user
+  account-service: banking-demo/account
+  transaction-service: banking-demo/transaction
+  transfer-service: banking-demo/transfer
+  prompt-eval-service: banking-demo/prompt-eval
+  authority-service: banking-demo/authority
+  ai-service: banking-demo/ai
+  budget-service: banking-demo/budget
+  chatbot-service: banking-demo/chatbot
+  account-opening-service: banking-demo/account-opening
+  banker-copilot-service: banking-demo/copilot
+
+session:
+  # The audience set carried by a token minted at human login. Every entry MUST be a value in
+  # `audiences` above; `mediator.audience` MUST NOT appear here. Both are enforced at load.
+  #
+  # A session token is broad by design — one human login has to reach the whole product. The
+  # narrowing exchange (`POST /api/auth/token/scope`) mints a token restricted to a subset of
+  # this set, which is how a caller that only needs one service stops holding a key to all of
+  # them. Narrowing is MONOTONIC: the exchange can only remove audiences, never add one, so a
+  # scoped token can never be traded back up for a broader one.
+  audiences:
+    - banking-demo/user
+    - banking-demo/account
+    - banking-demo/transaction
+    - banking-demo/transfer
+    - banking-demo/prompt-eval
+    - banking-demo/authority
+    - banking-demo/ai
+    - banking-demo/budget
+    - banking-demo/chatbot
+    - banking-demo/account-opening
+    - banking-demo/copilot
+  tokenUse: session
+
+mediator:
+  audience: banking-demo/mediator
+  tokenUse: mediator
+  # The single client permitted to obtain a mediator token from the issuer's broker endpoint.
+  # `banker-copilot-service` is deliberately absent: the harness registers zero write tools by
+  # design (epic #332 §4.4 layer 1) and must be structurally unable to acquire the credential
+  # that would let it act as the broker.
+  clients:
+    - authority-service
+  # Services that accept a mediator token IN ADDITION to their own audience, because
+  # `authority-service` executes approved actions against them.
+  acceptedBy:
+    - account-service
+    - transaction-service
+    - transfer-service
+    - account-opening-service
+  # Services that MUST refuse a mediator token even though they are otherwise reachable.
+  # Asserted at startup, not merely documented — see BankingJwtAuthExtensions.
+  rejectedBy:
+    - authority-service
+    - banker-copilot-service
+    - user-service
+
+# Configuration keys that were part of the symmetric-key model and are now retired. A service
+# that finds any of these set refuses to start rather than ignoring them: a security toggle
+# that is silently ignored is worse than one that was never added, because the operator who
+# set it believes it took effect.
+retiredConfigKeys:
+  - Jwt:Key
+  - Jwt__Key
+  - JWT_KEY
+  - JWT_SECRET

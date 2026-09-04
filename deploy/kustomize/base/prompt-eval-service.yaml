@@ -36,11 +36,6 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: appinsights-connection-string
-        - name: Jwt__Key
-          valueFrom:
-            secretKeyRef:
-              name: banking-secrets
-              key: jwt-key
         - name: FOUNDRY_PROJECT_ENDPOINT
           valueFrom:
             secretKeyRef:
@@ -50,6 +45,8 @@ spec:
           value: "gpt-5.4-mini"
         - name: AI_SERVICE_URL
           value: "http://ai-service:80"
+        - name: Jwt__JwksUri
+          value: "http://user-service:8080/.well-known/jwks.json"
         envFrom:
         - configMapRef:
             name: banking-demo-config

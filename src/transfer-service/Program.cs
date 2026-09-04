@@ -1,3 +1,4 @@
+using Banking.Auth;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Azure.Cosmos;
@@ -44,34 +45,12 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-// JWT Authentication (always configured)
-var jwtKey = builder.Configuration["Jwt:Key"]
-    ?? throw new InvalidOperationException("Missing required configuration: Jwt:Key");
-var jwtIssuer = builder.Configuration["Jwt:Issuer"]
-    ?? throw new InvalidOperationException("Missing required configuration: Jwt:Issuer");
-var jwtAudience = builder.Configuration["Jwt:Audience"]
-    ?? throw new InvalidOperationException("Missing required configuration: Jwt:Audience");
-
-builder.Services.AddAuthentication(options =>
-{
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-})
-.AddJwtBearer(options =>
-{
-    options.UseSecurityTokenValidators = true;
-    options.TokenValidationParameters = new TokenValidationParameters
-    {
-        ValidateIssuer = true,
-        ValidateAudience = true,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
-        ValidIssuer = jwtIssuer,
-        ValidAudience = jwtAudience,
-        IssuerSigningKey = new SymmetricSecurityKey(
-            Encoding.UTF8.GetBytes(jwtKey))
-    };
-});
+// JWT authentication — issue #334.
+// Audience, issuer, algorithm and key resolution all come from `config/jwt-audiences.yaml`
+// via the shared registry. This service states only its own name; every other service used to
+// restate the same validation policy independently, which is how nine files could agree on a
+// single platform-wide audience with nothing in place to notice when they stopped agreeing.
+builder.AddBankingJwtAuth("transfer-service");
 
 builder.Services.AddAuthorization();
 

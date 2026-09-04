@@ -4,12 +4,11 @@ import json
 import os
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 import structlog
-from jose import jwt
 
 from ..consumer import AgentConsumer
 from ..events import publish_event
@@ -231,7 +230,9 @@ class ProvisioningConsumer(AgentConsumer):
             if not user_id:
                 raise RuntimeError("User registration response missing userId")
 
-            token = _generate_service_token(user_id, user_payload["username"])
+            token = await _obtain_user_token(
+                client, self._user_service_url, user_payload["username"], password
+            )
             headers = {"Authorization": f"Bearer {token}", "X-User-Id": user_id}
 
             account_ids = []
@@ -475,21 +476,31 @@ def _build_user_payload(form_data: dict[str, Any], password: str) -> dict[str, A
     }
 
 
-def _generate_service_token(user_id: str, username: str) -> str:
-    secret = os.getenv("JWT_KEY", "YourSuperSecretKeyForJWTTokenGeneration12345")
-    issuer = os.getenv("JWT_ISSUER", "user-service")
-    audience = os.getenv("JWT_AUDIENCE", "banking-demo")
-    expires_in = int(os.getenv("JWT_EXPIRES_IN_MINUTES", "60"))
+async def _obtain_user_token(client: httpx.AsyncClient, user_service_url: str, username: str, password: str) -> str:
+    """Obtain a real session token for the freshly-provisioned user from `user-service`.
 
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=expires_in)
-    claims = {
-        "sub": user_id,
-        "unique_name": username,
-        "jti": uuid.uuid4().hex,
-        "userId": user_id,
-        "role": "User",
-        "iss": issuer,
-        "aud": audience,
-        "exp": int(expires_at.timestamp()),
-    }
-    return jwt.encode(claims, secret, algorithm="HS256")
+    This service used to MINT this token itself with the shared HS256 secret, impersonating
+    `user-service` as issuer (issue #334). That made it a second, undocumented token issuer:
+    anything that could read the shared secret could forge any role, and nothing in the
+    platform could tell a forged token from a real one. Under RS256 that is no longer possible
+    even in principle — this service holds no private key — so it authenticates as the user
+    whose credentials it just created and receives a token minted by the one issuer.
+    """
+    response = await client.post(
+        f"{user_service_url}/api/auth/login",
+        json={"username": username, "password": password},
+    )
+
+    if response.status_code >= 400:
+        logger.error(
+            "Could not obtain a token for the provisioned user",
+            status=response.status_code,
+            body=response.text[:200],
+        )
+        response.raise_for_status()
+
+    body = response.json() if response.content else {}
+    token = body.get("token") or body.get("Token")
+    if not token:
+        raise RuntimeError("Login response for the provisioned user contained no token")
+    return token

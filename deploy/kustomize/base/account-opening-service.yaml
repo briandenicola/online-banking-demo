@@ -55,11 +55,6 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: content-understanding-endpoint
-        - name: JWT_KEY
-          valueFrom:
-            secretKeyRef:
-              name: banking-secrets
-              key: jwt-key
         - name: JWT_ISSUER
           value: "user-service"
         - name: COSMOS_DB_ENDPOINT
@@ -67,6 +62,14 @@ spec:
             configMapKeyRef:
               name: banking-demo-config
               key: COSMOS_DB_ENDPOINT
+        - name: JWT_JWKS_URI
+          value: "http://user-service:8080/.well-known/jwks.json"
+        - name: JWT_AUDIENCE
+          value: "banking-demo/account-opening"
+        - name: JWT_ADDITIONAL_AUDIENCES
+          value: "banking-demo/mediator"
+        - name: JWT_ISSUER
+          value: "user-service"
         envFrom:
         - configMapRef:
             name: banking-demo-config
@@ -144,6 +147,14 @@ spec:
               key: openai-endpoint
         - name: FOUNDRY_MODEL
           value: "gpt-5.4-mini"
+        - name: JWT_JWKS_URI
+          value: "http://user-service:8080/.well-known/jwks.json"
+        - name: JWT_AUDIENCE
+          value: "banking-demo/account-opening"
+        - name: JWT_ADDITIONAL_AUDIENCES
+          value: "banking-demo/mediator"
+        - name: JWT_ISSUER
+          value: "user-service"
         envFrom:
         - configMapRef:
             name: banking-demo-config
@@ -189,11 +200,6 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: content-understanding-endpoint
-        - name: JWT_KEY
-          valueFrom:
-            secretKeyRef:
-              name: banking-secrets
-              key: jwt-key
         - name: JWT_ISSUER
           value: "user-service"
         - name: COSMOS_DB_ENDPOINT
@@ -201,6 +207,14 @@ spec:
             configMapKeyRef:
               name: banking-demo-config
               key: COSMOS_DB_ENDPOINT
+        - name: JWT_JWKS_URI
+          value: "http://user-service:8080/.well-known/jwks.json"
+        - name: JWT_AUDIENCE
+          value: "banking-demo/account-opening"
+        - name: JWT_ADDITIONAL_AUDIENCES
+          value: "banking-demo/mediator"
+        - name: JWT_ISSUER
+          value: "user-service"
         envFrom:
         - configMapRef:
             name: banking-demo-config

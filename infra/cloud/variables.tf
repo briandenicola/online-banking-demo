@@ -92,3 +92,31 @@ variable "bootstrap_banker_email" {
   type        = string
   default     = "banker@banking-demo.com"
 }
+
+#############################################
+# BANKER COPILOT — harness platform wiring (epic #332, Phase 2)
+#############################################
+
+variable "banker_copilot_service_account" {
+  description = "Kubernetes service account name bound to the dedicated banker-copilot-service workload identity (#336). Distinct from both the shared banking-workload-identity account and the authority-service account: the two-service split of epic §2.1 is only a control if the harness cannot obtain authority-service's token."
+  type        = string
+  default     = "banker-copilot-workload-identity"
+}
+
+variable "copilot_session_retention_seconds" {
+  description = "Cosmos default TTL for copilot-sessions documents. A session is a conversation, not a record of a decision — the decision lives in copilot-approvals, which has its own retention. Configuration, never a literal in code."
+  type        = number
+  default     = 2592000 # 30 days, matching ChatSessions
+}
+
+variable "copilot_artifact_retention_seconds" {
+  description = "Cosmos default TTL for copilot-artifacts documents. Held as long as the trace that references them, so a replayed run can still resolve its artifact ids."
+  type        = number
+  default     = 7776000 # 90 days, matching Approval__RetentionSeconds
+}
+
+variable "copilot_trace_retention_seconds" {
+  description = "Cosmos default TTL for copilot-traces frames. The trace is the eval input for #333, so this is the size of the eval corpus: raise it for a longer regression baseline, lower it to bound demo storage. Deliberately not -1 — an immortal per-frame container in a serverless demo account is a cost surprise, and an unconfigurable retention is a code change waiting to happen."
+  type        = number
+  default     = 7776000 # 90 days
+}

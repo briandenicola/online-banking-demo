@@ -43,11 +43,6 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: appinsights-connection-string
-        - name: Jwt__Key
-          valueFrom:
-            secretKeyRef:
-              name: banking-secrets
-              key: jwt-key
         # The approval signing key MUST be distinct from the JWT key — the service refuses to
         # start if they are equal. A bearer token must never be able to forge a signature.
         - name: Approval__SigningKey
@@ -75,6 +70,15 @@ spec:
         # enforce one.
         - name: ROLE_HIERARCHY_PATH
           value: "/app/shared-config/role-hierarchy.yaml"
+        - name: Jwt__JwksUri
+          value: "http://user-service:8080/.well-known/jwks.json"
+        # The one mediator client. Buys a broker token from user-service and nothing
+        # else; deliberately absent from every other workload, above all the harness.
+        - name: Jwt__MediatorClientSecret
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: mediator-client-secret-authority
         envFrom:
         - configMapRef:
             name: banking-demo-config

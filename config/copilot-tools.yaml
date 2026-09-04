@@ -1,0 +1,302 @@
+# Banker Copilot tool manifest — READ TOOLS ONLY
+#
+# Contract of record: docs/epics/banker-copilot.md §3.1–§3.3.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+#  There is no way to spell a write in this file.
+#
+#  No `mode`, no `actionId`, no `authority`, no `idempotencyKeyFrom`. `method` is
+#  constrained to the read allowlist, and `capabilityScope` must end in `.read`.
+#  A tool that mutates state is not merely absent from this manifest — it is not
+#  expressible in this schema, and the loader rejects every one of those keys BY
+#  NAME rather than ignoring it.
+#
+#  The harness's only write affordance is `propose_action`, which is built in and
+#  hands a proposal to authority-service. authority-service is the sole executor
+#  of agent-originated writes. That service split IS the enforcement mechanism
+#  for epic #332; if a write tool ever appears here, the epic is broken.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Deliberately NOT restated here, because each already has exactly one owner:
+#   - `requiredEvidence`  → config/authority-policy.yaml, per action type
+#   - rung / policyRef    → config/authority-policy.yaml
+#   - upstream base URLs  → DOWNSTREAM__<service> environment configuration
+#
+# The paths below were taken from the real controllers and routers, not from the
+# epic's worked example. Where the two disagree, reality won — see
+# src/banker-copilot-service/README.md for the three divergences found.
+
+apiVersion: copilot-tools/v1
+
+metadata:
+  manifestId: banker-copilot-read-tools
+
+tools:
+  # ---------------------------------------------------------------- risk ----
+  - toolId: list_flagged_transactions
+    displayName: List flagged transactions
+    description: >-
+      List the transactions the anomaly model has flagged for review. Use this to find the
+      case to work on when the banker has not named one.
+    target:
+      service: ai-service
+      method: GET
+      path: /api/admin/flagged-transactions
+      timeoutMs: 8000
+    parameters:
+      type: object
+      properties: {}
+      required: []
+      additionalProperties: false
+    capabilityScope: risk.read
+    redaction:
+      - $[*].customer.ssn
+      - $[*].customer.dateOfBirth
+
+  - toolId: get_flagged_transaction
+    displayName: Get flagged transaction
+    description: >-
+      Retrieve one flagged transaction with its AI risk score and contributing factors.
+    target:
+      service: ai-service
+      method: GET
+      path: /api/admin/flagged-transactions/{txId}
+      timeoutMs: 8000
+    parameters:
+      type: object
+      properties:
+        txId:
+          type: string
+          description: The flagged transaction id.
+          # Anchored to one path segment: the declared path is this tool's capability scope.
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+      required: [txId]
+      additionalProperties: false
+    capabilityScope: risk.read
+    redaction:
+      - $.customer.ssn
+      - $.customer.dateOfBirth
+
+  - toolId: get_scored_transaction
+    displayName: Get scored transaction
+    description: >-
+      Retrieve a transaction together with the model-assigned risk score that would be
+      overridden. Required evidence before proposing transaction.score.override.
+    target:
+      service: ai-service
+      method: GET
+      path: /api/admin/scored-transactions/{txId}
+      timeoutMs: 8000
+    parameters:
+      type: object
+      properties:
+        txId:
+          type: string
+          description: The scored transaction id.
+          # Anchored to one path segment: the declared path is this tool's capability scope.
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+      required: [txId]
+      additionalProperties: false
+    capabilityScope: risk.read
+    redaction:
+      - $.customer.ssn
+      - $.customer.dateOfBirth
+
+  # -------------------------------------------------------- transactions ----
+  - toolId: get_transaction
+    displayName: Get transaction
+    description: Retrieve a single transaction record by id.
+    target:
+      service: transaction-service
+      method: GET
+      path: /api/transactions/{transactionId}
+      timeoutMs: 8000
+    parameters:
+      type: object
+      properties:
+        transactionId:
+          type: string
+          # Anchored to one path segment: the declared path is this tool's capability scope.
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+      required: [transactionId]
+      additionalProperties: false
+    capabilityScope: transactions.read
+    redaction: []
+
+  - toolId: list_account_transactions
+    displayName: List account transactions
+    description: >-
+      List transaction history for one account, for baseline and pattern comparison.
+    target:
+      service: transaction-service
+      method: GET
+      path: /api/transactions/account/{accountId}
+      timeoutMs: 8000
+    parameters:
+      type: object
+      properties:
+        accountId:
+          type: string
+          # Anchored to one path segment: the declared path is this tool's capability scope.
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+      required: [accountId]
+      additionalProperties: false
+    capabilityScope: transactions.read
+    redaction: []
+
+  # ------------------------------------------------------------ accounts ----
+  - toolId: get_account
+    displayName: Get account
+    description: Retrieve one account, including its current balance and owner.
+    target:
+      service: account-service
+      method: GET
+      path: /api/accounts/{accountId}
+      timeoutMs: 8000
+    parameters:
+      type: object
+      properties:
+        accountId:
+          type: string
+          # Anchored to one path segment: the declared path is this tool's capability scope.
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+      required: [accountId]
+      additionalProperties: false
+    capabilityScope: accounts.read
+    redaction: []
+
+  # ----------------------------------------------------------- transfers ----
+  - toolId: get_transfer
+    displayName: Get transfer
+    description: >-
+      Retrieve a completed transfer, including amount and timestamps. Required evidence
+      before proposing transfer.reverse.
+    target:
+      service: transfer-service
+      method: GET
+      path: /api/transfers/{transferId}
+      timeoutMs: 8000
+    parameters:
+      type: object
+      properties:
+        transferId:
+          type: string
+          # Anchored to one path segment: the declared path is this tool's capability scope.
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+      required: [transferId]
+      additionalProperties: false
+    capabilityScope: transfers.read
+    redaction: []
+
+  # ------------------------------------------------------------ identity ----
+  - toolId: get_user
+    displayName: Get user
+    description: Retrieve the customer record for the identity involved in the case.
+    target:
+      service: user-service
+      method: GET
+      path: /api/users/{userId}
+      timeoutMs: 8000
+    parameters:
+      type: object
+      properties:
+        userId:
+          type: string
+          # Anchored to one path segment: the declared path is this tool's capability scope.
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+      required: [userId]
+      additionalProperties: false
+    capabilityScope: identity.read
+    redaction:
+      - $.email
+
+  - toolId: list_login_audits
+    displayName: List login audit events
+    description: >-
+      Retrieve recent login audit records to assess whether the initiating session was
+      anomalous. NOTE: the upstream endpoint filters by recency only, not by user — filter
+      the returned records yourself.
+    target:
+      service: user-service
+      method: GET
+      path: /api/admin/login-audits
+      timeoutMs: 8000
+    parameters:
+      type: object
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+      required: []
+      additionalProperties: false
+    capabilityScope: identity.read
+    redaction:
+      - $[*].ipAddress
+
+  # ---------------------------------------------------------- onboarding ----
+  - toolId: list_account_applications
+    displayName: List account-opening applications
+    description: List account-opening applications, optionally filtered by status.
+    target:
+      service: account-opening-service
+      method: GET
+      path: /api/account-opening/applications
+      timeoutMs: 10000
+    parameters:
+      type: object
+      properties:
+        status:
+          type: string
+      required: []
+      additionalProperties: false
+    capabilityScope: onboarding.read
+    redaction:
+      - $[*].formData.ssn
+      - $[*].formData.dateOfBirth
+
+  - toolId: get_account_application
+    displayName: Get account-opening application
+    description: >-
+      Retrieve one account-opening application with its agent results. Required evidence
+      before proposing account_opening.application.review.
+    target:
+      service: account-opening-service
+      method: GET
+      path: /api/account-opening/applications/{applicationId}
+      timeoutMs: 10000
+    parameters:
+      type: object
+      properties:
+        applicationId:
+          type: string
+          # Anchored to one path segment: the declared path is this tool's capability scope.
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+      required: [applicationId]
+      additionalProperties: false
+    capabilityScope: onboarding.read
+    redaction:
+      - $.formData.ssn
+      - $.formData.dateOfBirth
+
+  - toolId: get_application_audit
+    displayName: Get application audit trail
+    description: >-
+      Retrieve the audit trail for an account-opening application. Required evidence before
+      proposing account_opening.application.review.
+    target:
+      service: account-opening-service
+      method: GET
+      path: /api/account-opening/applications/{applicationId}/audit
+      timeoutMs: 10000
+    parameters:
+      type: object
+      properties:
+        applicationId:
+          type: string
+          # Anchored to one path segment: the declared path is this tool's capability scope.
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+      required: [applicationId]
+      additionalProperties: false
+    capabilityScope: onboarding.read
+    redaction: []

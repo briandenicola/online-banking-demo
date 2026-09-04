@@ -17,6 +17,8 @@ tasks:
       - task: budget-service
       - task: ai-service
       - task: event-processor
+      - task: authority-service
+      - task: banker-copilot-service
       - task: ui-app
 
   user-service:
@@ -72,6 +74,27 @@ tasks:
     dir: '{{.ROOT_DIR}}'
     cmds:
       - az acr build --registry {{.ACR_NAME}} --image ai-service:{{.DOCKER_TAG}} ./src/ai-service/
+
+  # Epic #332. Both Copilot images take the REPOSITORY ROOT as build context, not
+  # their own directory: each copies shared configuration from outside its
+  # service folder (config/authority-policy.yaml, config/copilot-tools.yaml, and
+  # src/user-service/config/role-hierarchy.yaml). A service-directory context
+  # would fail to find them, or worse, silently bake a stale copy.
+  #
+  # authority-service was missing from this file after Phase 1 — the manifests
+  # and the identity landed but nothing ever built the image, so a cloud deploy
+  # would have reached ImagePullBackOff. Added here with its Phase 2 sibling.
+  authority-service:
+    desc: Build authority-service container image (Banker Copilot approval executor)
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - az acr build --registry {{.ACR_NAME}} --image authority-service:{{.DOCKER_TAG}} -f ./src/authority-service/Dockerfile .
+
+  banker-copilot-service:
+    desc: Build banker-copilot-service container image (Banker Copilot agent harness)
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - az acr build --registry {{.ACR_NAME}} --image banker-copilot-service:{{.DOCKER_TAG}} -f ./src/banker-copilot-service/Dockerfile .
 
   eval-debug:
     desc: Build eval-debug container image (ai-service code + az CLI for in-cluster eval debugging — issue #145)

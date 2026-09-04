@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Banking.Auth</RootNamespace>
+    <AssemblyName>Banking.Auth</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <!--
+    The audience registry is EMBEDDED rather than mounted.
+
+    Every .NET service needs it and none of them had a config mount, so mounting would have
+    meant six Dockerfile copies and six compose volumes — six independent statements of where
+    the file lives, which is the same duplication #334 was filed about, moved one layer down.
+    Embedding compiles the single source file into the one assembly they all reference. A
+    file on disk still wins when JWT_AUDIENCE_REGISTRY_PATH is set, for operators who want to
+    override without a rebuild.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\..\config\jwt-audiences.yaml">
+      <LogicalName>Banking.Auth.jwt-audiences.yaml</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="Microsoft.IdentityModel.Tokens" />
+    <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+
+</Project>

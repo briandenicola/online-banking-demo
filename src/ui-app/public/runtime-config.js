@@ -31,19 +31,21 @@
 window.__RUNTIME_CONFIG__ = {
   featureFlags: {
     // Show the legacy 8-tab admin console at /admin.
-    // Default TRUE: the Copilot harness (Phase 2) does not exist yet, and
-    // retiring the tabs was explicitly overruled in favour of coexistence so
-    // the two surfaces can be compared honestly (Brian, 2026-09-04).
+    // Default TRUE: retiring the tabs was explicitly overruled in favour of
+    // coexistence so the two surfaces can be compared honestly
+    // (Brian, 2026-09-04). Now instrumented for that comparison.
     classicAdminTabs: true,
 
     // Show the Banker Copilot harness at /copilot.
-    // Default FALSE until Phase 2 lands. See featureFlags.ts for the
-    // scheduled default change — it is written down precisely because a
-    // deferred default change is the kind of decision that gets forgotten.
-    bankerCopilot: false,
+    // Flipped to TRUE in Phase 2, on the condition written down in Phase 1:
+    // the route now renders the real harness. Both surfaces are visible by
+    // default because a comparison you have to opt into is one nobody runs.
+    // This is a presentation toggle. It grants no authority — every signature
+    // is checked by authority-service, which has never heard of this flag.
+    bankerCopilot: true,
 
     // Collect the side-by-side comparison measurements (§11). Local-buffer
-    // only today; no data leaves the browser until an exporter is wired.
+    // only; export is manual, from the strip at the top of either surface.
     comparisonInstrumentation: true,
   },
 };

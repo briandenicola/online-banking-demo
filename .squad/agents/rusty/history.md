@@ -96,3 +96,102 @@ touch `src/authority-service/`.
     have broken local dev the moment I added a route for a service Turk had not finished. The
     variable form defers resolution to request time, so an unrouted prefix is a 502 rather
     than a dead gateway. Follow it for every new route.
+
+### 2026-09-04 — Phase 2 platform slice for epic #332 (Banker Copilot harness)
+
+Branch `squad/332-banker-copilot`. Turk built `banker-copilot-service` in parallel; I did not
+touch `src/banker-copilot-service/`, `src/ui-app/` or `src/authority-service/`.
+
+**Reading the implementation beat reading the documents again — three times.**
+
+15. **`Artifact.to_document()` uses a bare `asdict()`, so it persists snake_case, while
+    `list_artifacts` queries `c.runId`.** `Session` and `Run` explicitly re-add the camelCase
+    keys after their `asdict()`; `Artifact` only adds `artifactId`. So the artifact documents
+    have `run_id`/`session_id`, the query reads `runId`, and the container's declared
+    partition-key path `/sessionId` is *absent from the document entirely* — every artifact
+    would land in the undefined partition and every read return zero rows. Neither the epic
+    nor the design doc could have told me this; only the store code did. Lesson 5 generalises:
+    **when a doc lists "the schema", read the serializer.**
+
+16. **Composite index DIRECTIONS have to line up, not just the paths.** Phase 1 taught me that
+    Cosmos ignores a composite index unless every filter and ORDER BY path appears in it, in
+    order. The half I did not know: a composite index serves an ORDER BY only when the
+    directions match exactly *or are exactly reversed for every path*. I had declared
+    `(runId ASC, revision DESC)` against a service issuing `ORDER BY c.revision` **ASC** — that
+    index does not apply. Same silent signature as a wrong path: correct rows, full scan, looks
+    healthy. `copilot-artifacts` now declares both directions.
+
+17. **`copilot-sessions` PK: the epic said `/id`, the code said `/sessionId`, and the code was
+    right.** §2.4 was written when the container held only sessions; the service also stores
+    RUN documents there, whose `id` is the run id, so `/id` would put every run in its own
+    partition and destroy the co-location the single container exists for. Changed to
+    `/sessionId` and filed the deviation rather than following the older document — same basis
+    on which Danny made design §5.3 authoritative over the epic. Nothing regressed because
+    `Session.to_document()` sets `sessionId = id`.
+
+18. **My own Phase 1 `chunked_transfer_encoding off` was a bug, and a subtle one.** The design
+    doc says `on`; I shipped `off`. With no `Content-Length` and no chunking, nginx delimits the
+    response by *closing the connection*, which makes a mid-run network drop byte-for-byte
+    indistinguishable from a clean end of stream. `fetch()` reports normal completion, the §4.5
+    reconnect never fires, and the UI sits on a frozen trace that still says "live" — the exact
+    thing §4.6 forbids, defeated *below* the layer any client-side guard operates at. Removed at
+    both hops. **Verifying my own previous phase against the design doc found this; nothing else
+    would have.**
+
+19. **`authority-service` was never added to `tasks/Taskfile.build.yml`.** Phase 1 shipped its
+    manifests, its identity, its ConfigMap keys and its gateway route — and nothing that builds
+    the image. A cloud deploy would have reached `ImagePullBackOff`. The kustomize `images:`
+    block listing an image is not evidence that anything produces it; those are two independent
+    lists and only one of them is exercised by `kubectl kustomize`. Added both Copilot images.
+    **Lesson: "it validates" and "it deploys" are different claims.** Everything I validated in
+    Phase 1 was true and the service still could not have run.
+
+20. **Two names for one value, three times over, in one service.** Turk's `config.py` reads
+    `CosmosDb__Copilot*ContainerName` OR `COPILOT_*_CONTAINER`; the repo uses
+    `FOUNDRY_PROJECT_ENDPOINT`/`FOUNDRY_MODEL` while this service reads
+    `AZURE_AI_PROJECT_ENDPOINT`/`AZURE_AI_MODEL_DEPLOYMENT`. I set exactly one name per value in
+    the ConfigMap and compose, and supplied the names the code actually *reads* rather than the
+    ones convention prefers — a manifest that is conventionally correct and unread is a service
+    with no model access. Reported both for convergence. The Phase 1 rule holds: **if config
+    restates something, bind it or assert agreement; never restate.**
+
+21. **Least privilege for an agent runtime is mostly about what you leave OUT, and the omission
+    that mattered was Redis.** The reflex is to grant it "like the other services". But
+    `banking-events` is the audit bus: granting it to the harness would give the one component
+    defined by its inability to act the ability to forge an `ApprovalSigned` event. Containing a
+    component in the data plane and then handing it the audit trail undoes the containment
+    through the record rather than through the data. `authority-service` owns publishing (§5.7);
+    the harness gets nothing. Same reasoning produced Cosmos Data **Reader** (`…0001`) rather
+    than Contributor on `copilot-approvals` — one character, and it is the invariant.
+
+22. **The Key Vault grant is an honest hole and I said so in the file.** The harness must read
+    the JWT signing key to verify banker tokens, but #334 makes that key symmetric, so verify
+    implies mint. Every other grant narrows the harness; this one hands it a supervisor token
+    generator. It cannot be closed at the platform layer. **Consequence for how we talk about
+    Phase 2:** we may not claim the harness cannot authorise its own actions — it cannot via
+    Cosmos, the manifest or the gateway, but it can by minting. #334 now blocks two claims.
+
+23. **A Terraform variable nothing consumes is a duplicate waiting to drift.** I wrote
+    `banker_copilot_port` to "document the contract" with nginx, then deleted it: nginx cannot
+    read Terraform, so it was a second statement of `8005` with nothing comparing the two.
+
+24. **Environment verification limits, stated rather than glossed:** no Docker daemon and no
+    nginx binary here, so `nginx -t` and any real SSE exercise were impossible. `terraform
+    validate`/`fmt`, `docker compose config` and `kubectl kustomize` all pass; the nginx files
+    were only checked structurally. The streaming path is unproven and needs one `curl -N`
+    through both hops before the demo.
+
+25. **Hyphenated ConfigMap keys are silently dropped by `envFrom`.** I first wrote the harness's
+    read-tool upstreams as `DOWNSTREAM__account-service`, matching the hyphenated form
+    `authority-service` uses in docker-compose. Compose is fine with it; Kubernetes is not.
+    `envFrom` only injects keys that are valid C_IDENTIFIERs (`[A-Za-z_][A-Za-z0-9_]*`), so every
+    hyphenated key is skipped — and since kubernetes#130099 **without even an event**. The pod
+    would have come up healthy, passed both probes, and had every single read tool unresolvable,
+    with the failure appearing only as "the agent can't find anything". Fixed to
+    `DOWNSTREAM__ACCOUNT_SERVICE`, in compose too so the two modes cannot diverge; the service
+    already lowercases and maps `_`→`-`. **Then I proved it** rather than reasoning about it:
+    replayed Turk's `_collect_downstream()` against the real ConfigMap and the real compose file
+    and asserted the resolved set equals the six `service:` values in `config/copilot-tools.yaml`.
+    6/6 both modes, 0 keys dropped. Worth keeping as a standing check — the general rule is that
+    **docker-compose is more permissive than Kubernetes about env var names, so compose passing
+    proves nothing about the cluster.**

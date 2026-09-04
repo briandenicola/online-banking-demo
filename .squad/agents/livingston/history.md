@@ -891,3 +891,128 @@ still pass. The authority service's guarantees are conditional on those two issu
 
 **No CI runs any of this.** Three §10 criteria say "verified by a grep gate in CI"; no workflow in
 this repo builds or tests any .NET project. A suite outside a gate is a suggestion.
+
+---
+
+## Phase 2 — Banker Copilot, the service split (`squad/332-banker-copilot`)
+
+**Suite:** `src/banker-copilot-service.Tests/` — 215 passing, 2 strict-xfail defects, 0 skipped.
+**Tamper:** `tamper-test.py`, 13 guards, 13 PROVEN.
+**Plan:** `docs/design/banker-copilot-phase2-test-plan.md`. **Findings:** `.squad/decisions/inbox/livingston-phase2-qa.md`.
+
+**11. Tamper-testing found three false passes in my own tests, not in production.** Four guards
+came back REDUNDANT; three of those were my assertions failing to observe a perfectly good guard.
+`"/runId" in block` was satisfied by the *indexing* paths in the same Terraform block. Grepping
+`copilotStream.ts` for `Authorization` was satisfied by the comment explaining why `EventSource`
+cannot send that header. Asserting a field was "rejected" was satisfied by the unknown-field
+allowlist, so deleting the reasoned by-name refusal was unobservable. Three of thirteen
+assertions were decorative and reading them would never have told me which three. **A REDUNDANT
+verdict is a hypothesis about my test first, and about production second.** That is the inverted
+default from Phase 1 and it is the right one.
+
+**12. Equality is the wrong assertion for a replay contract.** F2-6 — the stream re-subscribed and
+replayed the whole backlog twice — was *invisible* to `live == replayed`, because both sides
+duplicated identically. It fell out of asserting strict monotonicity of the resumed sequence.
+Where two representations must agree, also assert each is internally well-formed; agreement
+between two equally-corrupted views is not fidelity.
+
+**13. Strict xfail is the honest way to record a defect I am not allowed to fix.** Three defects
+went in as `xfail(strict=True)` naming the finding. Turk fixed F2-6 mid-session and the marker
+turned RED (XPASS), which told me within one run. A skip would have said nothing, forever. Strict
+xfail cannot outlive the defect — that is the whole property.
+
+**14. Read expectations out of the spec at runtime; do not transcribe them.** `conftest.py` parses
+the §3.3 manifest and the §4.2 kind union straight out of the documents. This is the mechanical
+answer to my Phase 1 `ProductionRoleModelTests` failure, where I hand-wrote the vulnerable model
+into a passing test. Transcription is where the drift enters; parsing cannot drift. It also
+produced F2-1 and F2-4 for free — the spec's own example does not load, and the epic schema and
+the shipping loader refuse each other by name.
+
+**15. When spec and implementation disagree, pin the disagreement.** F2-4 is the epic's tool
+schema versus the loader's, mutually incompatible. The tempting move is to test what runs. The
+correct move is a test that asserts they conflict, and a request for arbitration. Testing what
+runs is how a suite comes to defend a defect.
+
+**16. A gate must not fail on its own rationale.** My cosigner gate fired on Turk's rejection map
+and Linus's "NOTE THE ABSENCE" comment. A gate that punishes the refusal teaches people to delete
+the refusal — which is the only thing enforcing the rule. Exempted comments and by-name refusals,
+and moved the behavioural proof to a separate test. Same lesson as #9, second time around, so it
+is not situational.
+
+**17. A hang is not a pass.** The first tamper run blocked for eight minutes: a broken ownership
+check let a request wait out the session TTL instead of returning 404. The harness now bounds each
+run and reports a hang as PROVEN-by-hang. Any harness that waits on tampered code needs a timeout,
+or the tamper silently becomes a skip.
+
+**Findings raised (not fixed):** F2-7 (path-parameter traversal — model-controlled arguments
+escape the declared path; **medium-high**), F2-5 (no invoke-time read-method guard), F2-6
+(duplicate backlog — **fixed by Turk this session**), F2-4 (epic vs loader schema, needs Danny),
+F2-2/F2-3 (envelope drift: `approval.voided` vs `approval.terminal`; no model-call kind for §8.0's
+token counts), F2-1 (§3.3's worked manifest does not load).
+
+**Largest untested assumption, and I cannot close it from here:** a read tool whose GET has a side
+effect. The manifest guarantees the method, not the downstream's honesty about it. Twelve routes
+across six services need a side-effect-free assertion in *their* suites.
+
+**Still no CI.** Same refusal as Phase 1, same reason: no workflow in this repo builds or tests any
+service. Five Phase 2 criteria are ledgered rather than ticked.
+
+### Phase 2 follow-up round — epic #332
+
+**18. JSON Schema `pattern` is a search, not a full match.** `[A-Za-z0-9_-]+`
+matches `../../admin` — it finds `admin` inside — and reads in code review as
+exactly the right fix for a traversal bug. The obvious repair would have been a
+silent no-op. Never assert that a pattern *exists*; compile it and require it to
+**refuse** a hostile corpus. And keep my corpus independent of the
+implementation's own: a shared corpus makes a hole in it invisible from both
+sides.
+
+**19. A test that cannot pass proves as little as one that cannot fail.** Mine
+reached into `registry._by_id`, an attribute the class does not have. It raised
+`AttributeError` identically whether the guard worked or was broken. The tell is
+that the failure output never changes — if I have never watched a test go red for
+the *right* reason, I have not tested anything. Third instance this epic, twice
+mine.
+
+**20. Do not transcribe production types into tests.** Hand-building a `ReadTool`
+broke the moment `display_name` was added. Deriving the adversarial object from a
+real shipping one with `dataclasses.replace` is both robust to drift and makes
+the rogue maximally plausible — valid in every respect except the property under
+test, which is what an actual mistake looks like.
+
+**21. Test scaffolding drifts from the spec too, and nothing checks it.** My
+fixtures were still exporting `JWT_KEY` and minting HS256 long after RS256
+landed. I caught it only because the service **refuses to start** when it finds a
+retired variable. Had it been ignored, my suite would have gone on passing
+against a configuration that no longer ships. Fail-closed is worth more than
+fail-safe precisely because it catches the people holding the safety net. I now
+assert the suite's own environment is clean.
+
+**22. Also: never export a key to make a fixture convenient.** The property under
+test was "the harness holds no signing material". Putting a private key in the
+environment to mint tokens would have switched that property off for the whole
+run while everything downstream stayed green. The private half lives in a module
+variable; only the public half reaches the environment.
+
+**23. `CosmosSDKVersionTests` — the purest specimen this epic.** It hardcoded the
+author's repo path *and returned success when the audited file was missing*, so
+the Issue #35 security audit either errored or passed vacuously on every machine
+but one. All three of us dismissed those four failures as environmental noise for
+an entire session. Two lessons: a security check must fail closed when its
+subject is absent, and **persistent "known environmental" failures deserve one
+real look** — they are excellent camouflage.
+
+**24. Watch how a test fails, not just whether.** F2-9 surfaced as a *collection*
+error in CI, which reads as a broken build rather than a finding. A security
+suite that fails in a way that looks like infrastructure noise is a suite someone
+will eventually switch off. Also: `session-ownership` tampering makes the request
+**hang** rather than answer wrongly. It still counts as proven, but a hang is a
+less crisp red than an assertion and I recorded that rather than letting the
+PROVEN column imply more than it does.
+
+**25. A guard reached by a glob is a guard with an ordering dependency.** CI's
+`src/*/tests` put my test project before the service it tests, because `.` sorts
+before `/`. I verified it by running the shell, not by reasoning — and good
+thing, since `sorted(Path.glob(...))` disagrees with bash and would have had me
+assert against a machine that does not exist. **When a test encodes a fact about
+another tool's behaviour, get the fact from that tool.**

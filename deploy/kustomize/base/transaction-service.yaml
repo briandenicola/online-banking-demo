@@ -43,11 +43,8 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: redis-connection-string
-        - name: Jwt__Key
-          valueFrom:
-            secretKeyRef:
-              name: banking-secrets
-              key: jwt-key
+        - name: Jwt__JwksUri
+          value: "http://user-service:8080/.well-known/jwks.json"
         envFrom:
         - configMapRef:
             name: banking-demo-config

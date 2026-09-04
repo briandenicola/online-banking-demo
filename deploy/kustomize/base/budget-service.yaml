@@ -31,11 +31,12 @@ spec:
         - containerPort: 8003
           protocol: TCP
         env:
-        - name: JWT_KEY
-          valueFrom:
-            secretKeyRef:
-              name: banking-secrets
-              key: jwt-key
+        - name: JWT_JWKS_URI
+          value: "http://user-service:8080/.well-known/jwks.json"
+        - name: JWT_AUDIENCE
+          value: "banking-demo/budget"
+        - name: JWT_ISSUER
+          value: "user-service"
         envFrom:
         - configMapRef:
             name: banking-demo-config

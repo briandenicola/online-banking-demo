@@ -62,6 +62,7 @@ resource "azurerm_role_assignment" "csi_keyvault_secrets_user" {
 #   setup-keyvault-secrets.sh <app-name>
 #
 # The script derives every value from the app name via the Azure control plane.
-# Secrets created: jwt-key, openai-endpoint, content-understanding-endpoint,
+# Secrets created: jwt-private-key, mediator-client-secret-authority,
+# openai-endpoint, content-understanding-endpoint,
 # redis-connection-string, appinsights-connection-string.
 #############################################

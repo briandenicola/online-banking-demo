@@ -1,0 +1,175 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: banker-copilot-service
+  namespace: banking-demo
+  labels:
+    app: banker-copilot-service
+    app.kubernetes.io/part-of: banking-demo
+spec:
+  # Single replica in Phase 2, and not only for cost. The SSE resume window is
+  # served from copilot-traces, but an in-flight run's planner state is in
+  # process memory; a second replica would answer a reconnect with a stream it
+  # knows nothing about. Phase 3 fan-out is where this gets revisited.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: banker-copilot-service
+  template:
+    metadata:
+      annotations:
+        traffic.sidecar.istio.io/excludeOutboundPorts: "10000"
+      labels:
+        app: banker-copilot-service
+        azure.workload.identity/use: "true"
+    spec:
+      # Dedicated identity (#336) — NOT banking-workload-identity and NOT
+      # authority-workload-identity. See infra/cloud/identity-copilot.tf: this
+      # identity holds Cosmos WRITE on the three harness containers, Cosmos READ
+      # ONLY on copilot-approvals, and no data-plane role at all on Accounts,
+      # Transactions, Transfers, Users or authority-policy.
+      #
+      # That is the epic §2.1 service split expressed where it cannot be
+      # refactored away: "the harness registers zero write tools" is a property
+      # of Python source, but "the harness cannot write an approval" is a
+      # property of an Entra role assignment. If a future change re-introduced a
+      # write tool by accident, this identity still returns 403.
+      serviceAccountName: banker-copilot-workload-identity
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: banker-copilot-service
+        image: ghcr.io/banking-demo/banker-copilot-service:1.0.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8005
+          protocol: TCP
+        env:
+        - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: appinsights-connection-string
+        # Verifies the banker's bearer token. Under #334 this is a symmetric
+        # HMAC secret shared by every service, so holding it also confers the
+        # ability to MINT tokens — see the Key Vault comment in
+        # infra/cloud/identity-copilot.tf. Required, and honestly the weakest
+        # point in the harness's containment until #334 lands.
+        - name: JWT_ISSUER
+          value: "user-service"
+        # Model access for the planner loop. NOTE the naming: every other
+        # service here uses FOUNDRY_PROJECT_ENDPOINT / FOUNDRY_MODEL, but
+        # banker-copilot-service reads AZURE_AI_PROJECT_ENDPOINT /
+        # AZURE_AI_MODEL_DEPLOYMENT. The platform layer supplies what the code
+        # actually reads rather than what the convention says, because a
+        # manifest that is "correct" and unread is just a service with no model
+        # access. Both names refer to the same two values and should converge on
+        # one — filed as a follow-up rather than papered over by setting all four.
+        - name: AZURE_AI_PROJECT_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: openai-endpoint
+        - name: AZURE_AI_MODEL_DEPLOYMENT
+          value: "gpt-5.4-mini"
+        - name: COSMOS_DB_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: banking-demo-config
+              key: COSMOS_DB_ENDPOINT
+        # Fail-closed tool manifest. Baked into the image so the container is
+        # self-consistent in docker-compose and CI; repoint this at a ConfigMap
+        # mount to change the tool surface without a rebuild. The loader refuses
+        # to start on a missing or invalid manifest — a harness that cannot
+        # prove which tools it registered must not register any.
+        - name: TOOL_MANIFEST_PATH
+          value: "/app/config/copilot-tools.yaml"
+        # The SHARED role model, not the copy baked into this image.
+        # Identical treatment to authority-service and user-service: one
+        # ConfigMap object mounted into every pod that derives banking authority
+        # from it. Three images built at three different commits cannot disagree
+        # about who outranks whom if they are all reading the same object, and a
+        # disagreement in this file is a privilege-escalation bug that no single
+        # service can detect on its own.
+        - name: ROLE_HIERARCHY_PATH
+          value: "/app/shared-config/role-hierarchy.yaml"
+        - name: JWT_JWKS_URI
+          value: "http://user-service:8080/.well-known/jwks.json"
+        - name: JWT_AUDIENCE
+          value: "banking-demo/copilot"
+        - name: JWT_ISSUER
+          value: "user-service"
+        envFrom:
+        - configMapRef:
+            name: banking-demo-config
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8005
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          # /readyz reports the loaded tool manifest and whether any write tool
+          # was registered. A pod that somehow came up with a write affordance
+          # is visible here rather than discovered during a demo.
+          httpGet:
+            path: /readyz
+            port: 8005
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        volumeMounts:
+        - name: secrets-store
+          mountPath: "/mnt/secrets-store"
+          readOnly: true
+        # Directory mount at a path of its own — not subPath, and not over
+        # /app/config, which would hide the baked copilot-tools.yaml. A directory
+        # mount also observes in-place ConfigMap updates, so the role model can
+        # be corrected without a rollout.
+        - name: role-hierarchy
+          mountPath: "/app/shared-config"
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+      volumes:
+      # Created from src/user-service/config/role-hierarchy.yaml by
+      # tasks/Taskfile.cloud.yml (_configmap:apply) and mounted identically into
+      # user-service and authority-service. optional: true so a missing
+      # ConfigMap is an application-level failure with a log line rather than a
+      # pod wedged in ContainerCreating with no signal.
+      - name: role-hierarchy
+        configMap:
+          name: role-hierarchy
+          optional: true
+      - name: secrets-store
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: banking-secrets-provider
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: banker-copilot-service
+  namespace: banking-demo
+  labels:
+    app: banker-copilot-service
+spec:
+  type: ClusterIP
+  selector:
+    app: banker-copilot-service
+  ports:
+  - port: 80
+    targetPort: 8005
+    protocol: TCP

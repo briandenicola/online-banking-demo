@@ -95,10 +95,8 @@ public class RoleHierarchyTests
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Jwt:Key"] = "ThisIsATestSecretKeyThatIsAtLeast32Chars!!",
                 ["Jwt:ExpiresInMinutes"] = "60",
-                ["Jwt:Issuer"] = "test-issuer",
-                ["Jwt:Audience"] = "test-audience"
+                ["Jwt:Issuer"] = "test-issuer"
             })
             .Build();
 
@@ -125,10 +123,8 @@ public class RoleHierarchyTests
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Jwt:Key"] = "ThisIsATestSecretKeyThatIsAtLeast32Chars!!",
                 ["Jwt:ExpiresInMinutes"] = "60",
-                ["Jwt:Issuer"] = "test-issuer",
-                ["Jwt:Audience"] = "test-audience"
+                ["Jwt:Issuer"] = "test-issuer"
             })
             .Build();
 

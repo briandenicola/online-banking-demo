@@ -1,46 +1,82 @@
 /**
- * Placeholder for the Banker Copilot harness (Phase 2, not yet built).
+ * The Banker Copilot route.
  *
- * This exists so the `bankerCopilot` feature flag has a real route to gate and
- * the flag plumbing can be exercised end to end today. It deliberately does NOT
- * pre-empt the Phase 2 design — the harness layout, trace pane, and approval
- * surface are specified in docs/design/banker-copilot-ui.md and will replace
- * this file wholesale.
+ * Three things happen here and nowhere else:
  *
- * Being visibly unfinished is the point: a placeholder that looked plausible
- * would be mistaken for progress.
+ *  1. The provider is mounted, so the store and the SSE connection live for
+ *     exactly as long as the route does.
+ *  2. The surface is wrapped in the shared measurement bar — the SAME component
+ *     that wraps Classic Admin, so the two are counted by identical rules.
+ *  3. Demo mode. When the harness service is unreachable, this replays a
+ *     recorded envelope array through the real reducer rather than rendering
+ *     mock components. A demo that runs on a different code path from the
+ *     product is a demo of something that does not exist.
+ *
+ * The feature flag that gates this route is a PRESENTATION toggle. Every
+ * authority decision on this surface is made by authority-service, which has
+ * never heard of the flag. Turning the flag on cannot grant anyone the ability
+ * to approve anything.
  */
-import React from 'react';
-import { Alert, AlertTitle, Box, Link, Typography } from '@mui/material';
 
-const BankerCopilotPage: React.FC = () => (
-  <Box>
-    <Typography variant="h4" gutterBottom>
-      Banker Copilot
-    </Typography>
-    <Typography variant="subtitle1" color="text.secondary" sx={{ mb: 3 }}>
-      Agentic harness — task queue, live plan/trace, artifact canvas
-    </Typography>
+import React, { useEffect, useState } from 'react';
+import { Alert, Box, Button, Stack, Typography } from '@mui/material';
+import { CopilotProvider, useCopilot } from '../components/copilot/CopilotContext';
+import CopilotHarness from '../components/copilot/CopilotHarness';
+import TaskMeasurementBar from '../components/comparison/TaskMeasurementBar';
+import { demoEvents } from '../components/copilot/demoFixture';
+import { getCopilotConfig } from '../config/copilotConfig';
+import { useFullBleedSurface } from '../components/AppShell';
 
-    <Alert severity="info">
-      <AlertTitle>Not built yet — Phase 2</AlertTitle>
-      The harness surface is designed but not implemented. This route exists so the{' '}
-      <code>bankerCopilot</code> feature flag can be exercised now, before the UI lands.
-      <br />
-      <br />
-      Design:{' '}
-      <Link
-        href="https://github.com/briandenicola/online-banking-demo/blob/main/docs/design/banker-copilot-ui.md"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        docs/design/banker-copilot-ui.md
-      </Link>
-      <br />
-      Meanwhile, the Classic Admin console remains available at <code>/admin</code>. Both surfaces
-      are kept deliberately so the same task can be run on each and compared.
+const DemoModeBanner: React.FC = () => {
+  const { replay, streamStatus } = useCopilot();
+  const config = getCopilotConfig();
+  const [played, setPlayed] = useState(false);
+
+  useEffect(() => {
+    if (config.demoAutoplay && !played) {
+      replay(demoEvents);
+      setPlayed(true);
+    }
+  }, [config.demoAutoplay, played, replay]);
+
+  if (!config.demoModeEnabled) return null;
+
+  return (
+    <Alert severity="info" sx={{ borderRadius: 0, py: 0 }}>
+      <Stack direction="row" spacing={2} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+        <Typography variant="caption">
+          Demo mode available. The recording replays through the same reducer the live stream uses —
+          nothing here is a mock component.
+        </Typography>
+        <Button
+          size="small"
+          onClick={() => {
+            replay(demoEvents);
+            setPlayed(true);
+          }}
+          disabled={streamStatus === 'live'}
+        >
+          Replay recorded run
+        </Button>
+      </Stack>
     </Alert>
-  </Box>
-);
+  );
+};
+
+const BankerCopilotPage: React.FC = () => {
+  // The three-pane surface manages its own scrolling and needs the viewport.
+  useFullBleedSurface();
+
+  return (
+    <CopilotProvider>
+      <TaskMeasurementBar surface="copilot">
+        <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <DemoModeBanner />
+          <CopilotHarness />
+        </Box>
+      </TaskMeasurementBar>
+    </CopilotProvider>
+  );
+};
 
 export default BankerCopilotPage;

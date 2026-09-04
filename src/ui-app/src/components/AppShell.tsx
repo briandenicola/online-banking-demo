@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   AppBar,
@@ -40,6 +40,28 @@ interface AppShellProps {
   children: React.ReactNode;
 }
 
+/**
+ * Full-bleed opt-out.
+ *
+ * Every page in this app lives inside a centred `maxWidth="lg"` container, and
+ * that is right for a form or a table. It is wrong for a three-pane work
+ * surface, which needs the whole viewport and manages its own scrolling.
+ *
+ * A page OPTS IN via `useFullBleedSurface()` rather than the shell matching on
+ * route paths, because a route-path list here would have to be kept in sync
+ * with App.tsx by hand, and that kind of duplication is exactly what bit us in
+ * Phase 1.
+ */
+const FullBleedContext = createContext<(value: boolean) => void>(() => undefined);
+
+export function useFullBleedSurface(): void {
+  const setFullBleed = useContext(FullBleedContext);
+  useEffect(() => {
+    setFullBleed(true);
+    return () => setFullBleed(false);
+  }, [setFullBleed]);
+}
+
 const navItems = [
   { label: 'Dashboard', path: '/', icon: <DashboardIcon /> },
   { label: 'Accounts', path: '/accounts', icon: <AccountBalanceWalletIcon /> },
@@ -57,6 +79,7 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [fullBleed, setFullBleed] = useState(false);
   const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
   const [flagPanelOpen, setFlagPanelOpen] = useState(false);
 
@@ -224,10 +247,16 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
       </AppBar>
 
       {/* Main Content */}
-      <Box component="main" sx={{ flexGrow: 1, pb: isMobile ? 8 : 0 }}>
-        <Container maxWidth="lg" sx={{ py: 4 }}>
-          {children}
-        </Container>
+      <Box component="main" sx={{ flexGrow: 1, pb: isMobile ? 8 : 0, minHeight: 0 }}>
+        <FullBleedContext.Provider value={setFullBleed}>
+          {fullBleed ? (
+            children
+          ) : (
+            <Container maxWidth="lg" sx={{ py: 4 }}>
+              {children}
+            </Container>
+          )}
+        </FullBleedContext.Provider>
       </Box>
 
       {/* Mobile Bottom Navigation */}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+
 import os
 import uuid
 
@@ -12,6 +14,7 @@ from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from app.config import CorrelationIdMiddleware, configure_logging, init_telemetry
 from app.routes import router as account_opening_router
 from app.routes.health import router as health_router
+from app.auth import assert_token_configuration
 from app.services.lifecycle import lifespan
 from app.state_machine import ApplicationStateMachine
 
@@ -19,7 +22,18 @@ configure_logging()
 logger = structlog.get_logger("account-opening-service")
 init_telemetry()
 
-app = FastAPI(title="Account Opening Service", version="1.0.0", lifespan=lifespan)
+# Token posture is checked before anything else can serve a request (issue #334). Fail closed:
+# a service that boots holding a retired symmetric secret, or holding signing material it has
+# no business having, looks healthy while misrepresenting its own security posture.
+@contextlib.asynccontextmanager
+async def _guarded_lifespan(_app: FastAPI):
+    assert_token_configuration("account-opening-service")
+    async with lifespan(_app):
+        yield
+
+
+app = FastAPI(title="Account Opening Service", version="1.0.0", lifespan=_guarded_lifespan)
+
 app.state.repository = None
 app.state.redis = None
 app.state.blob_service_client = None

@@ -1,3 +1,4 @@
+using Banking.Auth;
 using System;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
@@ -46,27 +47,12 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-// JWT Authentication (always configured)
-builder.Services.AddAuthentication(options =>
-{
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-})
-.AddJwtBearer(options =>
-{
-    options.UseSecurityTokenValidators = true;
-    options.TokenValidationParameters = new TokenValidationParameters
-    {
-        ValidateIssuer = true,
-        ValidateAudience = true,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
-        ValidIssuer = builder.Configuration["Jwt:Issuer"],
-        ValidAudience = builder.Configuration["Jwt:Audience"],
-        IssuerSigningKey = new SymmetricSecurityKey(
-            Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("Jwt:Key is not configured")))
-    };
-});
+// JWT authentication — issue #334.
+// Audience, issuer, algorithm and key resolution all come from `config/jwt-audiences.yaml`
+// via the shared registry. This service states only its own name; every other service used to
+// restate the same validation policy independently, which is how nine files could agree on a
+// single platform-wide audience with nothing in place to notice when they stopped agreeing.
+builder.AddBankingJwtAuth("user-service");
 
 builder.Services.AddAuthorization();
 

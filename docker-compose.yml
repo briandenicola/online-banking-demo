@@ -46,8 +46,13 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - UseInMemoryDatabase=true
-      - Jwt__Key=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
       - Jwt__Issuer=${JWT_ISSUER:-user-service}
+      # No private key configured locally: user-service generates an ephemeral RSA keypair at
+      # startup and publishes the public half at /.well-known/jwks.json. That keeps
+      # `docker compose up` working with no key material generated, mounted or committed —
+      # and no private key is ever baked into an image. In cloud mode (AZURE_CLIENT_ID set)
+      # the ephemeral path is refused and a Key Vault key is required.
+      - Jwt__MediatorClients__authority-service=${AUTHORITY_MEDIATOR_SECRET:-LocalDevMediatorClientSecret-NotASigningKey}
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - OTEL_SERVICE_NAME=user-service
@@ -72,7 +77,6 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - UseInMemoryDatabase=true
-      - Jwt__Key=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - OTEL_SERVICE_NAME=account-service
@@ -91,8 +95,8 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - UseInMemoryDatabase=true
-      - Jwt__Key=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
       - Jwt__Issuer=${JWT_ISSUER:-user-service}
+      - Jwt__JwksUri=${JWT_JWKS_URI:-http://user-service:8080/.well-known/jwks.json}
       - Redis__ConnectionString=redis:6379
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
@@ -113,8 +117,8 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - UseInMemoryDatabase=true
-      - Jwt__Key=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
       - Jwt__Issuer=${JWT_ISSUER:-user-service}
+      - Jwt__JwksUri=${JWT_JWKS_URI:-http://user-service:8080/.well-known/jwks.json}
       - Redis__ConnectionString=redis:6379
       - Services__AccountService=http://account-service:8080
       - Services__TransactionService=http://transaction-service:8080
@@ -143,9 +147,9 @@ services:
       - AZURE_TENANT_ID=${AZURE_TENANT_ID}
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
       - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}
-      - JWT_KEY=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
       - JWT_ISSUER=${JWT_ISSUER:-user-service}
-      - JWT_AUDIENCE=${JWT_AUDIENCE:-banking-demo}
+      - JWT_JWKS_URI=${JWT_JWKS_URI:-http://user-service:8080/.well-known/jwks.json}
+      - JWT_AUDIENCE=banking-demo/chatbot
       - COSMOS_DB_ENDPOINT=${COSMOS_DB_ENDPOINT:-}
       - CHAT_MEMORY_ENABLED=${CHAT_MEMORY_ENABLED:-false}
       - CHAT_MEMORY_DATABASE=${CHAT_MEMORY_DATABASE:-BankingDemo}
@@ -183,9 +187,9 @@ services:
       - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
       - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
       - REDIS_CONNECTION_STRING=redis:6379
-      - JWT_KEY=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
       - JWT_ISSUER=${JWT_ISSUER:-user-service}
-      - JWT_AUDIENCE=${JWT_AUDIENCE:-banking-demo}
+      - JWT_JWKS_URI=${JWT_JWKS_URI:-http://user-service:8080/.well-known/jwks.json}
+      - JWT_AUDIENCE=banking-demo/ai
       - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - OTEL_SERVICE_NAME=ai-service
@@ -205,9 +209,10 @@ services:
       - "6005:8004"
     environment:
       - USE_IN_MEMORY_DB=true
-      - JWT_KEY=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
       - JWT_ISSUER=${JWT_ISSUER:-user-service}
-      - JWT_AUDIENCE=${JWT_AUDIENCE:-banking-demo}
+      - JWT_JWKS_URI=${JWT_JWKS_URI:-http://user-service:8080/.well-known/jwks.json}
+      - JWT_AUDIENCE=banking-demo/account-opening
+      - JWT_ADDITIONAL_AUDIENCES=banking-demo/mediator
       - REDIS_CONNECTION_STRING=redis:6379
       - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
@@ -224,9 +229,10 @@ services:
     command: ["python", "-m", "app.worker"]
     environment:
       - USE_IN_MEMORY_DB=true
-      - JWT_KEY=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
       - JWT_ISSUER=${JWT_ISSUER:-user-service}
-      - JWT_AUDIENCE=${JWT_AUDIENCE:-banking-demo}
+      - JWT_JWKS_URI=${JWT_JWKS_URI:-http://user-service:8080/.well-known/jwks.json}
+      - JWT_AUDIENCE=banking-demo/account-opening
+      - JWT_ADDITIONAL_AUDIENCES=banking-demo/mediator
       - REDIS_CONNECTION_STRING=redis:6379
       - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
@@ -248,9 +254,9 @@ services:
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
       - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
       - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
-      - JWT_KEY=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
       - JWT_ISSUER=${JWT_ISSUER:-user-service}
-      - JWT_AUDIENCE=${JWT_AUDIENCE:-banking-demo}
+      - JWT_JWKS_URI=${JWT_JWKS_URI:-http://user-service:8080/.well-known/jwks.json}
+      - JWT_AUDIENCE=banking-demo/budget
       - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - OTEL_SERVICE_NAME=budget-service
@@ -271,10 +277,13 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - UseInMemoryDatabase=true
-      - Jwt__Key=${JWT_KEY:-YourSuperSecretKeyForJWTTokenGeneration12345}
       - Jwt__Issuer=${JWT_ISSUER:-user-service}
-      - Jwt__Audience=${JWT_AUDIENCE:-banking-demo}
-      # Distinct from the JWT key on purpose: the service refuses to start if they match.
+      - Jwt__JwksUri=${JWT_JWKS_URI:-http://user-service:8080/.well-known/jwks.json}
+      # The one mediator client (config/jwt-audiences.yaml). This credential buys a broker
+      # token from user-service and nothing else; the harness is deliberately not given it.
+      - Jwt__MediatorClientSecret=${AUTHORITY_MEDIATOR_SECRET:-LocalDevMediatorClientSecret-NotASigningKey}
+      # Distinct from the approval signing key on purpose: the service refuses to start if
+      # they match.
       - Approval__SigningKey=${AUTHORITY_SIGNING_KEY:-LocalDevAuthorityApprovalSigningKey-NotTheJwtKey}
       - POLICY_FILE_PATH=/app/config/authority-policy.yaml
       - ROLE_HIERARCHY_PATH=/app/config/role-hierarchy.yaml
@@ -296,6 +305,85 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+
+  # Banker Copilot harness (agent loop). Epic #332 Phase 2.
+  #
+  # The invariant is that this service registers ZERO write tools: its only write
+  # affordance is `propose_action`, an HTTP call to authority-service. In the
+  # cloud that is additionally enforced by IAM (infra/cloud/identity-copilot.tf
+  # grants it Cosmos READ ONLY on copilot-approvals). Locally there is no IAM, so
+  # the enforcement here is entirely the fail-closed tool manifest — which is
+  # exactly why the manifest is mounted read-only and the service refuses to
+  # start without it.
+  banker-copilot-service:
+    build:
+      # Repository root, not the service directory: the Dockerfile copies the
+      # tool manifest and the shared role hierarchy from outside src/banker-copilot-service.
+      context: .
+      dockerfile: src/banker-copilot-service/Dockerfile
+    container_name: banking-banker-copilot-service
+    ports:
+      - "8005:8005"
+    environment:
+      # No AZURE_CLIENT_ID here on purpose — its ABSENCE is what selects simple
+      # auth mode. The service logs which mode it chose at startup, because in
+      # Phase 1 an ambient AZURE_CLIENT_ID silently flipped a service onto Entra
+      # and the resulting 500 named neither the mode nor the missing dependency.
+      - JWT_ISSUER=${JWT_ISSUER:-user-service}
+      - JWT_JWKS_URI=${JWT_JWKS_URI:-http://user-service:8080/.well-known/jwks.json}
+      - JWT_AUDIENCE=banking-demo/copilot
+      - TOOL_MANIFEST_PATH=/app/config/copilot-tools.yaml
+      - ROLE_HIERARCHY_PATH=/app/config/role-hierarchy.yaml
+      # The sole write path. Everything below it is read-only.
+      - AUTHORITY_SERVICE_URL=http://authority-service:8080
+      # Read-tool upstreams (epic §3.3). UPPER_SNAKE after the prefix, matching
+      # the AKS ConfigMap exactly — there, hyphenated keys are silently dropped
+      # by envFrom, so the two modes must not diverge on this. The service maps
+      # `_` back to `-` when resolving a logical service name.
+      - DOWNSTREAM__ACCOUNT_SERVICE=http://account-service:8080
+      - DOWNSTREAM__TRANSACTION_SERVICE=http://transaction-service:8080
+      - DOWNSTREAM__TRANSFER_SERVICE=http://transfer-service:8080
+      - DOWNSTREAM__USER_SERVICE=http://user-service:8080
+      - DOWNSTREAM__ACCOUNT_OPENING_SERVICE=http://account-opening-service:8004
+      - DOWNSTREAM__AI_SERVICE=http://ai-service:8002
+      # Harness runtime bounds — configuration, never literals in service code.
+      - COPILOT_SSE_HEARTBEAT_SECONDS=${COPILOT_SSE_HEARTBEAT_SECONDS:-15}
+      - COPILOT_SSE_REPLAY_WINDOW=${COPILOT_SSE_REPLAY_WINDOW:-500}
+      - COPILOT_SESSION_TTL_SECONDS=${COPILOT_SESSION_TTL_SECONDS:-3600}
+      - COPILOT_PLANNER_MAX_ITERATIONS=${COPILOT_PLANNER_MAX_ITERATIONS:-12}
+      - COPILOT_UPSTREAM_TIMEOUT_MS=${COPILOT_UPSTREAM_TIMEOUT_MS:-8000}
+      # Unset locally: the service falls back to in-memory session/trace stores.
+      # Container names are still supplied so the same env contract holds in both
+      # modes and a name change is made in one place.
+      - COSMOS_DB_ENDPOINT=${COSMOS_DB_ENDPOINT:-}
+      - COSMOS_DB_DATABASE=${COSMOS_DB_DATABASE:-BankingDemo}
+      - COPILOT_SESSIONS_CONTAINER=copilot-sessions
+      - COPILOT_ARTIFACTS_CONTAINER=copilot-artifacts
+      - COPILOT_TRACES_CONTAINER=copilot-traces
+      # Model access for the planner loop. banker-copilot-service reads
+      # AZURE_AI_* where the rest of the repo uses FOUNDRY_*; supplying the names
+      # the code actually reads, and defaulting from the existing repo variables
+      # so an operator's existing .env keeps working.
+      - AZURE_AI_PROJECT_ENDPOINT=${AZURE_AI_PROJECT_ENDPOINT:-${FOUNDRY_PROJECT_ENDPOINT:-${AZURE_OPENAI_ENDPOINT:-}}}
+      - AZURE_AI_MODEL_DEPLOYMENT=${AZURE_AI_MODEL_DEPLOYMENT:-${FOUNDRY_MODEL:-gpt-5.4-mini}}
+      - APPLICATIONINSIGHTS_CONNECTION_STRING=
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_SERVICE_NAME=banker-copilot-service
+    volumes:
+      # Edit config/copilot-tools.yaml locally and restart to change the tool
+      # surface. Read-only: a harness that could rewrite its own manifest could
+      # grant itself a write tool.
+      - ./config/copilot-tools.yaml:/app/config/copilot-tools.yaml:ro
+      # user-service owns this file; the harness reads it and may not diverge
+      # from it. Same mount authority-service takes, from the same source path —
+      # three services, one role model, no copies.
+      - ./src/user-service/config/role-hierarchy.yaml:/app/config/role-hierarchy.yaml:ro
+    # No Redis dependency, deliberately. authority-service owns audit publishing
+    # (epic §5.7); giving the harness the banking-events stream would give it the
+    # ability to forge an audit event, which is a strange privilege for the one
+    # service defined by its inability to act.
+    depends_on:
+      - authority-service
 
   # Event Processor (audit/routing consumer)
   event-processor:

@@ -162,3 +162,88 @@ harness, not later · gateway `/api/copilot/` with buffering off.
 Carry-over into Phase 2: Linus's comparison recorder has **no call sites and no exporter** yet —
 deliberately deferred so both surfaces get identical counting rules in one pass. Instrument Classic
 Admin and the harness together, never separately.
+
+---
+
+## Phase 2 — COMPLETE (in PR, not yet merged)
+
+Brian: **PR always — never merge directly.** Phase 2 ships as a pull request from
+`squad/332-banker-copilot`.
+
+| Lane | Owner | Landed |
+|---|---|---|
+| `banker-copilot-service` (FastAPI): tool manifest, read tools, `propose_action`, planner loop + SSE, `CopilotEventEnvelope` | Turk | yes |
+| Cosmos `copilot-sessions`/`artifacts`/`traces`, workload identity, `/api/copilot/` gateway, compose+kustomize | Rusty | yes |
+| `/copilot` three-pane UI, live trace pane, approval card with payload hash | Linus | yes |
+| Phase 2 test plan, zero-write-tools proof, envelope replay fidelity, adversarial review | Livingston | yes |
+
+**#334 (RS256/asymmetric tokens) was pulled forward into Phase 2** at Brian's direction and has
+landed — confirmed the hard way, when QA's own fixtures were still minting HS256 and the service
+refused to start. The fail-closed design caught QA.
+
+### Verified test state
+
+| Suite | Result |
+|---|---|
+| `authority-service` build | clean, 0 warnings |
+| `authority-service.UnitTests` | 121/121 |
+| `authority-service.Tests` | 199/199 |
+| `banker-copilot-service` | 162 passing |
+| `banker-copilot-service.Tests` | 266 passing, 0 skips, 17/17 tamper cases proven |
+| `user-service.Tests` | 50/50 |
+| `account-service.Tests` | 29/29 |
+| `event-processor` | builds, vets, tests pass |
+| `ui-app` | 18 suites / 181 tests; 2 pre-existing suites quarantined |
+
+**Not verifiable on this machine:** `transfer-`, `transaction-`, `prompt-eval-service.Tests` have
+root-owned `obj/` directories from an old containerised build. Needs `sudo rm -rf`. CI is
+unaffected (gitignored, fresh checkout). The `obj.root2` workaround directory has itself become
+root-owned — do not add a ninth alias, delete the originals.
+
+### Security defects found and fixed in Phase 2
+
+- **F2-7 / F2-8 path traversal** — a tool's declared path could be escaped (`../../admin/...`),
+  reachable by prompt injection. The obvious fix would have been a silent no-op: **JSON Schema
+  `pattern` is a search, not a full match**, so `[A-Za-z0-9_-]+` happily matches `../../admin`.
+  The loader now compiles patterns and proves they reject an escape corpus.
+- **F2-10 CI quarantine no-op** — `--testPathIgnorePatterns` takes regexes, not paths. Same shape
+  as F2-7, one layer up: a string that looks like a path, evaluated as a pattern, failing open.
+- **Vacuously-passing security audit** — `CosmosSDKVersionTests` hardcoded an absolute path *and*
+  returned success when the file was missing. Issue #35's audit had passed on every machine but
+  its author's. Four of us dismissed it as environmental for hours.
+- **`authority-service` was never in the image build task** — undeployable, and 320 passing tests
+  never noticed.
+
+### Testing policy (Brian's ruling)
+
+**Mutation testing only. Coverage metrics are not tracked at all.** Coverage was green across every
+one of the five tests that could not fail for the right reason. Nightly Stryker/mutmut on the
+security-critical paths; no break threshold yet, by design.
+
+Mutation testing catches only tests that *cannot* fail. A test asserting the **wrong thing**
+survives it cleanly — that class needs spec-derivation discipline and is not automatable.
+
+---
+
+## Next: Phase 3 — Supervisor agent and co-signature
+
+Supervisor agent with **blind construction** (it must not see the proposing agent's reasoning) ·
+fan-out engine · co-signature flow · supervisor queue (cross-partition, **no pointer doc** — the
+`cosignerId` pointer was deleted because it let a banker choose their own reviewer) ·
+payload-mutation void path · L1-only batch approval.
+
+#334 is no longer a blocker; it landed in Phase 2.
+
+Carry-over, still open: Linus's comparison recorder has **no call sites and no exporter**.
+Instrument Classic Admin and the harness together in one pass, never separately, or the two
+surfaces get different counting rules and the comparison Phase 5 exists to enable is worthless.
+
+---
+
+## Standing notes
+
+- Background agents do NOT survive a CLI crash; work on disk does. Recovery is: read this file,
+  run the builds/tests, re-spawn lanes with full context.
+- Unproven and honestly flagged: Cosmos trace durability, workload-identity RBAC, authority
+  round-trip, UI e2e, real-model tool choice, deployed gateway, and the SSE path (needs one
+  `curl -N` at MVP). Docker images have never been built — no daemon in this environment.
