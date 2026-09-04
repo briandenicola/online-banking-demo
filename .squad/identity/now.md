@@ -47,17 +47,18 @@ Danny (Lead/arbiter) · Turk (Backend) · **Rusty (Platform/Infra — hired 2026
 Basher left)** · Linus (Frontend) · Livingston (QA) · Scribe (commits) · Ralph (monitor).
 Ocean's Eleven casting universe. Scribe owns ALL commits — agents must not commit or push.
 
-## Phase 1 — in flight right now
+## Phase 1 — COMPLETE (committed `c0389be`, pushed)
 
 Exit criteria: curl an approval → watch it evaluate to L2 → sign twice from two distinct identities
 → watch the broker execute the downstream call. **Zero LLM involved.**
 
 | Lane | Owner | State |
 |---|---|---|
-| `authority-service` core (policy engine, approval store, JCS hashing, §5.3.2 gate, sweeper, API) | Turk | in flight |
+| `authority-service` core (policy engine, approval store, JCS hashing, §5.3.2 gate, sweeper, API) | Turk | **done** |
 | Cosmos containers, workload identity (#336), banker/supervisor roles, event-processor audit (#335), gateway route | Rusty | **done** |
-| Test plan, property-based rung tests, adversarial review, tamper-testing | Livingston | in flight |
-| Approval-schema arbitration (epic §5.2 vs design §5.3) | Danny | in flight |
+| Test plan, property-based rung tests, adversarial review, tamper-testing | Livingston | **done** |
+| Approval-schema arbitration; Phase 5 coexistence | Danny | **done** |
+| Feature-flag scaffolding + comparison methodology | Linus | **done** |
 
 ## Open items
 
@@ -102,3 +103,62 @@ high-value domain; Phase 2 UI boundary amendment proposed in a comment there)
 - Test both directions or you have tested neither.
 - Commit and push completed work after each feature or issue.
 - Don't overengineer.
+
+---
+
+## Phase 1 verified state (as of commit `c0389be`)
+
+- `authority-service` builds clean, **0 warnings / 0 errors** (.NET 10)
+- `authority-service.UnitTests` (Turk): **121/121 pass**
+- `authority-service.Tests` (Livingston): **199/199 pass**
+- `user-service.Tests`: 46 pass, **4 pre-existing failures** in `CosmosSDKVersionTests` —
+  it hardcodes `RepositoryRoot = "/home/brian/code/online-banking-demo"` but this checkout is
+  `foundry-online-banking`. Unrelated to this epic; do not "fix" by editing our code.
+- `event-processor`: builds and tests pass
+- `docker compose config` and `kubectl kustomize` validate
+
+### Security fixes that landed in Phase 1 (found by testing services TOGETHER)
+
+Each file was internally coherent; the bugs only existed in the seam between them.
+- `banker.claimValues` included `user`/`User` → a retail customer's token satisfied an L1 slot
+- `admin` at seniority 3 (above supervisor) and in `L2.cosignerRoles` → one admin identity could
+  satisfy BOTH L2 signatures
+- Cross-role claim aliases (`manager`→supervisor, `administrator`→admin)
+- `admin` on all seven capability scopes
+- Env-overridable `supervisor_seniority` → an operator could lower dual control to peer level
+  without touching a role file
+- No proposal floor → a customer could seed a supervisor's queue
+
+**Root cause:** one `seniority` integer carried two different meanings (platform power vs banking
+authority). Now split into `outOfHarness` + `platformRoles` vs banking `seniority`.
+**Durable fix:** `authority-service` consumes `role-hierarchy.yaml` and **fails closed at startup**
+on divergence. The role model is no longer stated in two places.
+
+## Phase 5 — CHANGED (Brian, 2026-09-04)
+
+No longer "admin tab retirement." The tabs **stay**, behind a runtime feature flag, so the two
+experiences can be compared. This makes the "harness is better" claim falsifiable rather than
+rhetorical, and gives a control group for §9 risk #1 (approval fatigue).
+
+- The flag is a **presentation toggle, NOT a security control.** No compensating control behind it.
+- Accepted caveat (#337, closed as accepted): admin tabs are a write path that does not traverse
+  the ladder. Does NOT violate the invariant — a human at a tab is a human acting directly.
+  **Audit parity is deliberately out of scope. Brian: "since this is demo, i'm okay with that gap."**
+- We may therefore NOT claim "every mutating action is audited" — it is false. The comparison is
+  about **experience, not governance**.
+- Admin tabs' entire mutating surface is 3 call sites in `AdminUserManagementTab.tsx`
+  (delete, lock/unlock, reset-password). All 4 writes are **never-published**, a different class
+  from the published-but-unaudited events Rusty fixed.
+
+## Next: Phase 2 — Harness shell, single-threaded
+
+`banker-copilot-service` (FastAPI) scaffold · tool manifest registry, fail-closed · read tools only
+· `propose_action` as the SOLE write affordance · planner loop + SSE · `/copilot` three-pane UI ·
+`CopilotEventEnvelope` persisted to `copilot-traces` (§8.0) — the eval contract lands WITH the
+harness, not later · gateway `/api/copilot/` with buffering off.
+
+**Exit:** the flagged-wire narrative §1.3 steps 1–5 end to end.
+
+Carry-over into Phase 2: Linus's comparison recorder has **no call sites and no exporter** yet —
+deliberately deferred so both surfaces get identical counting rules in one pass. Instrument Classic
+Admin and the harness together, never separately.
