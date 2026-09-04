@@ -1666,3 +1666,281 @@ Executed the "ruling round 2" orchestration with Brian ratifying five major arch
 
 **Orchestration logs:** `.squad/orchestration-log/2026-09-04T14-20-00Z-danny.md`
 
+
+### Session: O9 — terminal states and `terminalReason` — 2026-09-04
+
+**The ruling (Brian).** Policy-voided approvals persist as `denied` + `terminalReason`. No
+first-class `voided` state. **Turk's choice stood; my counter-recommendation was overruled.**
+The reason that actually changed my mind was the third one Brian gave: it keeps re-plan
+supersede and policy void the *same shape*. Two near-identical terminal paths do not stay
+near-identical — the first bug fix or extra field on one of them diverges them, and the
+divergence is invisible until an audit asks a question only one path can answer.
+
+**The pattern worth reusing: a ruling that reduces structure must be paid for by making the
+remaining discriminator load-bearing.** Collapsing `voided` into `denied` is only safe if
+`terminalReason` cannot be omitted, cannot be free text, and cannot be aggregated away. So I
+ratified it with four conditions — mandatory/non-nullable (required constructor parameter, so
+there is no object-initializer path that omits it, plus a write guard), a closed enum, a
+normative "no consumer aggregates across reasons," and full recording of the discarded
+signature. Without those, the ruling silently becomes "we lost the distinction."
+
+**Best find of the session — a data shape that quietly defeats a requirement.** Turk's
+`terminalReason = "superseded_by:<newId>"` embeds an id *inside the enum value*. Looks harmless;
+means the reason has cardinality equal to the number of supersedes, so "group by
+`terminalReason`" degenerates into thousands of one-row buckets and the anti-aggregation
+requirement dies without anyone noticing. Split into `PAYLOAD_SUPERSEDED` + a separate
+`supersededByProposalId`. **Generalize: when a rule depends on grouping by a field, check that
+the field's value space is actually small and closed.**
+
+**The metric argument is the one to lead with when defending this.** A "denial rate" that blends
+`HUMAN_DENIED`, `POLICY_RUNG_ESCALATED` and `TTL_EXPIRED` is not merely imprecise — it is wrong
+in the most damaging direction: a burst of policy edits renders as bankers rejecting the agent's
+work, and the team goes and "fixes" agent quality that was never the problem. The three measure
+unrelated things (agent judgement / policy churn / banker responsiveness + notification latency).
+Concrete misdiagnosis beats abstract purity when arguing for a constraint.
+
+**I was wrong twice more, both corrected in favour of Turk:**
+1. My §5.1 lifecycle rewound policy voids and payload mutations to `proposed` with signatures
+   cleared. Turk's supersede-by-new-document is right and is what O9 ratifies. **There is now no
+   `denied → proposed` edge — terminal documents are immutable.** A mutable terminal record lets
+   a document's history be silently rewritten, which is precisely what an audit trail exists to
+   prevent. Fixed in §5.1, §5.3, §5.3.2 pseudocode, the $40k example, and acceptance criteria.
+2. My audit event names were dotted lowercase (`authority.proposal.created`) and matched
+   **nothing in the repo** — `src/event-processor/main.go` switches on `TransactionCreated`,
+   `TransferInitiated`. Adopted Turk's PascalCase. **Lesson: I invented a naming convention for
+   a stream that already had one. Check the consumer before naming the producer's events.**
+
+**Composition checks are earning their keep.** Third session running where "confirm this composes
+with X" surfaced a real defect (previously: duplicate `policyVersion`). Here: because all
+negative outcomes now share a state, #333 replay loses the distinction *entirely* unless
+`terminalReason` rides on the terminal trace frame — otherwise offline eval scores a
+policy-driven void as the banker rejecting the agent, making a policy rollout look like a model
+regression. **Make the composition check a standing step after any ruling that merges states.**
+
+**Residual I flagged rather than fixed.** O9's own logic would also collapse `expired` into
+`denied` + `TTL_EXPIRED` (I-6 already says expiry *is* a denial). I defaulted to keeping
+`expired` and said so out loud: **do not unilaterally edit a ratified state machine to win a
+consistency argument** — flag it, default safely, keep moving. Told Brian it is nearly free now
+and expensive once dashboards and UI branches are written against the state.
+
+**Recurring theme across all three ruling sessions:** every void path needs *specific*
+banker-facing copy, never a generic error. A banker whose signature was voided by a policy
+change must not see a screen that reads as though a colleague rejected their work. This is the
+third time I have had to re-add a variant of that requirement — it belongs in the UI contract
+permanently, not as per-feature flags to Linus.
+
+**Key paths:** `docs/epics/banker-copilot.md` §5.1.1 (new, the ruling + four conditions), §5.7
+(event shapes reconciled with Turk's §7), §8.0 (terminalReason on terminal frames + Linus
+requirement), §9 (O9 closed + residual), §10 · `.squad/decisions/inbox/danny-o9-terminal-reason.md`
+· epic #332 body · Turk's O9 raised in `docs/design/banker-copilot-policy-engine.md` §11.
+
+### Session: final rulings — `expired` collapse, Q2, Q3, Q4 — 2026-09-04
+
+**Brian accepted every standing recommendation. The epic now has ZERO open questions.**
+
+**Flagging-with-a-default worked, and is now my house style.** Last session I refused to collapse
+`expired` unilaterally — it was in a ratified state machine — but I said out loud that O9's own
+logic demanded it, defaulted safely, and noted the cost curve ("nearly free today, expensive once
+dashboards and UI branches are written against it"). Brian ruled to collapse it one session later.
+**Pattern: when you spot an inconsistency outside your authority, don't silently fix it and don't
+just raise it — raise it, default safely, and state the cost of delay. It gets ruled on quickly
+and nothing blocks in the meantime.** Same shape worked for Q2/Q3/Q4: every one had a standing
+recommendation in the spec, and all four were accepted as written.
+
+**The best insight of the session — a state collapse trades one failure mode for a subtler one.**
+Old failure: a denial metric that *forgot* `expired` and under-reported. New failure, worse
+because it is quiet: every timed-out proposal is now literally a `denied` row, so a naïve
+`COUNT(*) WHERE status='denied'` **over-reports agent rejection**, absorbing every proposal a busy
+banker never got to. A slow afternoon, a broken notification sink, or a too-short TTL all read as
+*"the agent is getting worse."* **Generalize: whenever you merge two states, find the query that
+was correct before the merge and ask what it now returns.** The grouping rule is what pays for the
+collapse; without it the collapse is a net loss. Wrote it up as the reason `TTL_EXPIRED` is named
+explicitly in the anti-aggregation rule. *A timeout is a statement about us, not about the agent.*
+
+**Collapse the state machine, never collapse the explanation.** Kept `ApprovalExpired` as its own
+audit event even though the state merged into `denied`. Events and states answer different
+questions; merging states for simplicity does not license merging the audit vocabulary. Same
+principle that justified `terminalReason` in the first place.
+
+**When you remove a word, the invariant it reminded people of has to carry itself.** Collapsing
+`expired` deletes the only place in the state machine that made a reader think about timeouts, so
+I added a loud call-out box in §5.1 restating I-6 (*expiry means denied; silence is not consent*).
+Brian asked for this explicitly and he was right — the risk of a simplification is that it removes
+the scaffolding a future reader was relying on. **Check what a deleted name was teaching before
+deleting it.**
+
+**Q3 — "minimum 20 characters" is not a validation rule.** 20 spaces and 20 copies of one
+character both pass `length >= 20`. **A required field that can be defeated by holding down a key
+is a required field in name only.** Trim, then length, then reject degenerate input — and
+server-side, because the UI is never the enforcement point. Acceptance criteria name both
+degenerate inputs so the test cannot be written lazily.
+
+**Q4 — the argument to keep in my pocket, because it recurs.** MFA vs. separation of duties is a
+category confusion between controls that *feel* similar: MFA answers **who** is signing and
+defends against a stolen credential; SoD answers **how many people reviewed** and defends against
+a legitimate user making a bad or self-interested decision. A banker who is mistaken, pressured or
+self-dealing is fully authenticated the whole time, so re-proving identity adds *zero* information
+about the decision. **"The moment step-up auth substitutes for a second human, L2 becomes L1
+wearing a hat"** — that sentence did the work; keep it.
+
+**Recorded a prediction rather than a question, which I think is a useful artifact type.** The
+first sustained pressure on this design will be a request to make L2 cheaper — batched
+co-signatures, standing supervisor delegation, or step-up auth under a new name. Q4 answers the
+third. Writing the prediction down now means that when it arrives it gets recognized as the same
+argument rather than relitigated as a fresh one.
+
+**"Zero open questions" needed qualifying, not just asserting.** Distinguished decisions (all
+closed) from conditions to manage during delivery (risks 1–16, still live). Two kept deliberately
+visible so nobody reads "zero open questions" as "nothing to worry about": risk 15 (the four-layer
+defence is one-and-a-half layers until #334/#336 land) and risk 5 (policy-edit blast radius).
+
+**Key paths:** `docs/epics/banker-copilot.md` §5.1 (lifecycle + I-6 call-out), §5.1.1 (collapse
+ruling + 4-value enum), §5.3 item 4 (Q2), §5.4.1 (Q4, new), §5.4.2 (Q3, new), §5.5 (sweeper),
+§9 (zero-open-questions statement), §10 · `.squad/decisions/inbox/danny-final-rulings.md` · #332.
+
+### 2026-09-04 — Cross-document naming drift: 17 mismatches, and why "everyone being careful" isn't a control
+
+Brian grepped all three Banker Copilot docs after Turk's pass and found two drifts. A systematic
+audit found **17 across four classes**. The two that surfaced by accident were the smallest.
+
+**The pattern worth remembering:** Turk and I independently reached the *correct* design (lift the
+supersede id out of the `terminalReason` value so the closed enum stays closed) — and then named
+the result differently. Two people reasoning well, converging on the same idea, still produced a
+broken contract. Shared vocabulary is not a product of care; it is a product of something checking.
+Whenever N documents describe one system, assume the identifiers have drifted and grep before
+claiming they haven't.
+
+**The dangerous class was not the one that got noticed.** 5 of 13 **action-type ids** disagreed
+between the epic and the policy design. Those strings are the **primary keys of the policy file** —
+a mismatch is not a compile error and not a 404, it is a *silent policy miss* where the fallback
+becomes the security behaviour. General lesson: rank identifier drift by **what happens when the
+lookup misses**. Drift in a field name breaks loudly; drift in a *key* fails quiet, and quiet
+failure inside a security component is the worst available outcome.
+
+**Not all "drift" is drift.** `session` (Turk) vs `run` (Linus) turned out to be **two real
+entities neither doc defined**. Renaming them together would have created a data-model bug. Always
+check whether two names are one concept before unifying — the audit's job is to find *undefined*
+concepts as much as duplicated ones.
+
+**Arbitration outcome** (epic §0.1 is now normative): entity noun **`approval`**; `proposal`
+retired as a noun, surviving only as the `proposed` status and `propose` verb — *the agent
+proposes; the object is an approval; its first state is proposed*. Then
+`supersededByApprovalId`, `PAYLOAD_SUPERSEDED`, `requesterId`, `requiredRung`, `requiredSigners`,
+`actionId`, `firedEscalators`, `expiresAt`/`terminalAt`, container `copilot-approvals` PK
+`/requesterId`, id prefix `apr_`, `/api/authority/*` + `/api/copilot/*`. Action ids follow
+`<domain>.<entity>.<verb>` where domain = **owning service**; applying the rule split the
+adjudication instead of letting either author win wholesale, which is the sign the rule is real
+and not a post-hoc justification for my own names.
+
+**Generalized the §5.3.1 `policyVersion` contract test into §5.3.1a**, covering the whole closed
+enum, the supersede link, approval field names, the eleven audit event names, trace kinds, action
+ids and endpoint paths — **including a CI grep gate over the three markdown files**, because every
+one of these drifted in the documents before it could drift in code. One test, both failure modes.
+
+**Two corrections to my own spec, both from Turk and both accepted:**
+- §5.1.1(b) over-claimed: **Cosmos cannot enforce a closed enum** (schemaless, no CHECK). The real
+  mechanism is a single-writer repository type + an architecture test + **readers failing closed**
+  on unknown values. Say "persistence *layer*", never imply the datastore.
+- I had invented an `execution_failed` terminal status. There isn't one: a failed execution stays
+  `status = signed` with `execution.state = failed`, so **a retry needs no new human signature**.
+  I added the half that makes that safe — a retry re-enters the §5.3.2 re-evaluation gate, so
+  signatures survive a downstream failure but not a policy escalation.
+
+**Tooling gotchas (cost me real time):**
+- The shell tool **refuses grep patterns containing backticks** (reads as dangerous expansion).
+  Use Python for any markdown-identifier search, which is most of them.
+- A global `\bproposal\b → approval` regex **mangled the very section defining the retired noun**
+  ("Why `approval` won over `approval`") and three "Rejected variants" cells, and broke articles
+  across all three docs ("a approval"). Always exclude the glossary/decision section from a
+  vocabulary sweep, then fix articles (`a approval` → `an approval`) and **re-read the
+  historical/quoted passages** — it also silently rewrote Turk's quotation of the old value, which
+  turned his rationale into nonsense.
+- `proposal` and `approval` are both 8 characters: **a byte-delta of zero does not mean the sweep
+  no-opped.** Verify renames by count, never by file size.
+
+**Key paths:** `docs/epics/banker-copilot.md` §0.1 (vocabulary), §5.3.1a (contract test), §11.1
+(17-row audit table), §11.2 (Turk's findings) · `docs/design/banker-copilot-policy-engine.md` ·
+`docs/design/banker-copilot-ui.md` §4.2 (`CopilotEventEnvelope` — the ratified trace contract).
+
+---
+
+## 2026-09-04: Banker Copilot Final Rulings Round — Arbitration & Vocabulary Reconciliation
+
+**Session:** Banker Copilot epic #332 final ruling round + vocabulary reconciliation  
+**Status:** COMPLETE — Epic now has ZERO OPEN QUESTIONS
+
+This round completed the final architectural decisions and conducted cross-document vocabulary reconciliation.
+
+### Four Final Rulings (Ratified by Brian)
+
+**Q1 (Lifecycle Collapse):** No `expired` state. Lifecycle: `proposed → pending → signed → executed`. `denied` as single terminal rejection state, differentiated by mandatory four-value `terminalReason` enum.
+
+**Q2 (payloadHash Display):** PERMANENT, not demo-only. Required on all approval representations (list, detail, sign, SSE). Visible hash explains re-sign requests after policy escalations.
+
+**Q3 (Denial Reason):** REQUIRED for `HUMAN_DENIED` only, ≥20 characters, server-side validated in `authority-service`. Degenerate input rejected (whitespace, repeated chars). Six-layered validation with config keys for all thresholds.
+
+**Q4 (Step-up Auth at L2):** **NO.** Banker's own second signature never suffices at L2, MFA included. SoD means separation of people, not proofs. Enforced structurally in policy evaluator.
+
+**O9 (Ratified):** Policy-voided approvals persist as `denied` + `terminalReason`. No `voided` state. Four safety conditions: mandatory, closed enum, normative grouping, full signature recording.
+
+### Canonical Vocabulary (Ratified & Enforced)
+
+**Entity & Field Names:**
+
+| Concept | Canonical | Notes |
+|---------|-----------|-------|
+| Core entity | `approval` | Noun only. `proposal` retired (except `proposed` status, `propose` verb). |
+| Requester identity | `requesterId` | Over `actorId` (ambiguous once co-signers exist). |
+| Supersede link | `supersededByApprovalId` | Over `supersededBy`. Holds id, points to approval. |
+| Terminal reasons | `PAYLOAD_SUPERSEDED`, `HUMAN_DENIED`, `POLICY_RUNG_ESCALATED`, `TTL_EXPIRED` | Closed enum. No interpolated values. |
+| Banker's conversation | `session` | SSE stream scoped. |
+| One intent→plan→tools cycle | `run` | Multiple per session. Every envelope carries `runId`. |
+| Action identifier format | `<domain>.<entity>.<verb>` | E.g., `account_opening.account.create`, `transaction.flag.review`. |
+| Endpoint prefixes | `/api/authority/*` or `/api/copilot/*` | One per service, legible routing boundary. |
+
+**Additional Canonical Names:**
+- Primary key: `copilot-approvals`, partitioned by `/requesterId`
+- Stream prefix: `apr_`
+- Timestamps: `expiresAt`, `terminalAt` (not `expiredAt`)
+- Config: `requiredRung`, `requiredSigners`, `actionId`, `firedEscalators`
+- Audit prefix: `Approval*` (not `proposal*`)
+- Audit events: PascalCase (`ApprovalDenied`, `PolicyReloaded`, `ApprovalExpired`)
+- No `ApprovalCosigned` event (folded into `ApprovalSigned` with `slotOrdinal`)
+
+### Reconciliation Results
+
+**Found 17 identifier mismatches across three documents** (epic, policy engine, UI design). Most dangerous: **5 of 13 action-type ids disagreed** — these are policy file primary keys, so a mismatch is a silent policy miss, not a crash.
+
+**On second pass after believing sweep complete, found three more:**
+1. Linus's `ApprovalState` union carried deleted states `'expired'` and `'void'` — ratified decisions never propagated to type
+2. `requiredSignatureCount` had fourth spelling
+3. `voidedReason` free text where closed `terminalReason` enum belongs
+
+**Three Corrections to Own Specification (Accepted from Turk):**
+1. **Cosmos enum enforcement:** Cosmos is schemaless (no CHECK). Real enforcement is application-side: single-writer repository type + architecture test + readers failing closed on unknown values. §5.1.1(b) wording corrected from "database" to "layer".
+2. **Execution failure:** No `execution_failed` terminal state. Failed execution stays `status = signed` / `execution.state = failed`. Retry needs no new signature but DOES re-enter policy re-evaluation gate (guarantees signature doesn't survive policy escalation).
+3. **Composite Cosmos index:** New query `status='denied' AND terminalReason=?` requires `(status, terminalReason, terminalAt)` index. Without it, degrades to cross-partition scan. `terminalAt` must now be reliably populated (was nullable-and-ignored).
+
+### Shared-Identifier Contract Test (§5.3.1a)
+
+Generalized `policyVersion` single-field test into comprehensive contract test covering:
+- Full `terminalReason` enum (4 values, exact)
+- Supersede link field & type
+- 8 critical approval fields
+- 11 audit event names
+- Trace frame kinds
+- 13 action-type ids
+- 2 endpoint prefixes
+
+**CI grep gate scans three markdown files** — every vocabulary mismatch drifted in docs before code.
+
+**Key Insight:** Two people reasoning well, converging on same idea, still produced broken contract. Shared vocabulary is not product of everyone being careful; it is product of something checking.
+
+### Open Conditions (Not Questions)
+
+**Risk 15:** Four-layer defence is currently 1.5 layers. #334 (JWT signing) and #336 (workload identity) must land before full delivery.
+
+**Risk 5:** Policy-edit blast radius (lazy voiding + eager notification operational shape) is Turk's to design, Linus's to render.
+
+---
+

@@ -529,12 +529,155 @@ One KSA for all 11 pods. Layer 1 "no domain Cosmos assignment" not achievable; L
 
 **§4.4 Defense:** Currently one-and-a-half layers, not four. Documented honestly, not implied.
 
-## Outstanding Open Items
+## RULING O9 — Policy-voided approvals: `denied` + terminalReason (Closes O9)
 
-- **Q2** `payloadHash` display permanent or demo-only? *Recommend: permanent.*
-- **Q3** Require denial reason? *Recommend: yes, ≥20 chars.*
-- **Q4** Step-up auth/MFA at L2? *Recommend: **no**.*
-- **O9** Policy-voided approvals: first-class `voided` state or `denied` + terminalReason? Turk chose latter. **AWAITING DANNY RATIFICATION.**
-- **O10** Wire `/policy/impact` into CI gate? Defer until approval store seeded.
+**By:** Brian Denicola (ruling) / Danny (Lead/Architect, recording)
+
+**Decision:** Policy-voided approvals persist as `denied` carrying a `terminalReason`. There is no first-class `voided` lifecycle state.
+
+**Rationale:**
+- **Fewer lifecycle states means fewer places the state machine can be wrong.** Every added state multiplies the transition matrix, and this state machine guards money.
+- **`terminalReason` already carries the distinguishing semantics.** Auditors can separate policy voided from human denied without a new state.
+- **It keeps re-plan supersede and policy void the same shape**, rather than two similar-but-different terminal paths that inevitably diverge (one gets a bug fix or extra field first, then they're different and the divergence is invisible until audit questions it).
+
+**The condition that makes it safe:** Ruling holds *only if the reason is genuinely load-bearing.*
+
+**Four Requirements (All in §5.1.1):**
+1. **Mandatory on every negative terminal transition** — not nullable, not defaulted. `denied` record with no reason must be impossible to write (non-nullable on C# record, required constructor parameter, rejected by write guard before Cosmos upsert).
+2. **Closed enum, not free text** — `HUMAN_DENIED`, `POLICY_RUNG_ESCALATED`, `PAYLOAD_SUPERSEDED`, `TTL_EXPIRED`. Adding a member requires spec change, not string literal. Free text cannot be grouped.
+3. **No consumer may treat `denied` as undifferentiated outcome — normative.** Any audit query, report, metric, dashboard or UI surface that counts denials **must group by `terminalReason`.** Bare "denial rate" blending human rejections with policy voids and TTL expiries is actively misleading in worst direction: burst of policy edits renders as bankers rejecting more agent work, and we'd "fix" agent quality that was never the problem.
+4. **Discarded signature recorded in full.** `ApprovalVoidedByPolicyChange` carries `discardedSignatures[] {signerId, slotOrdinal, signedAt, rungSatisfied, boundPolicyVersion}`, both policy versions, both rungs, `newEscalators[]`, and `supersededByApprovalId`. Best-effort-with-retry tier.
+
+**TTL expiry included and no longer implicit:** I-6 already makes expiry a denial; it now carries `TTL_EXPIRED` like every other terminal negative.
+
+**Three Things Corrected After Initial Ratification:**
+1. Supersede reason was encoded in value (`superseded_by:<newId>`) — not a closed set, cardinality equals number of supersedes. Moved id to own field `supersededByProposalId`. **This is the find: the requirement that makes a ruling safe can be defeated by a data shape that looks harmless.**
+2. Audit event names normalized to `PascalCase` (`ApprovalDenied`, `PolicyReloaded`…) matching repo patterns, not dotted lowercase.
+3. Own §5.1 contradicted the ruling (rewinding document to `proposed`) — corrected to immutable terminal record pattern: original goes terminal and immutable, new proposal created and linked via `supersededByApprovalId`. No `denied → proposed` edge.
+
+**Composition with #333 Replay:** Because policy voids, supersedes, expiries and human denials now share terminal states, **trace loses distinction entirely unless `terminalReason` rides on terminal frame.** Offline, replay seeing only "this approval ended negative" scores policy void as banker rejecting agent — scoring agent quality on event agent had no part in, in direction that makes policy rollout look like model regression.
+
+**For Linus (UI Implementation):** Banker whose signature voided by policy change must never see screen reading as colleague rejected work. Different identity did nothing wrong; ground moved. Copy should name cause and link replacement proposal via `supersededByApprovalId` so path forward obvious.
+
+**Reference:** Epic #332 §5.1.1, §5.2, §5.3, §5.3.2; Turk's policy engine design §7, §8.8.
 
 ---
+
+## RULING Q1 (Final) — Lifecycle Collapse: No `expired` State
+
+**By:** Brian Denicola (ruling) / Danny (Lead/Architect, recording)
+
+**Decision:** Apply principle uniformly. **There is no `expired` lifecycle state.**
+
+**Lifecycle:** `proposed → pending → signed → executed`, with **`denied` as the single terminal rejection state**, differentiated by a mandatory `terminalReason` from a closed enum of exactly four values: `HUMAN_DENIED`, `POLICY_RUNG_ESCALATED`, `TTL_EXPIRED`, `PAYLOAD_SUPERSEDED`.
+
+**Principle Applied Uniformly:** O9 rejected `voided` as a state, applying "fewer states, fewer places to be wrong" principle. **Same principle applies to `expired`.** I-6 already declares expiry to *be* a denial. Keeping `expired` as its own state meant carrying a distinction `terminalReason` already carries — the exact redundancy O9 rejected for `voided`. Applying rule to `voided` but not to its twin leaves principle half-applied, which is worst outcome: cost of a rule with none of consistency. Nearly free today; expensive once dashboards, queries, UI branches written against state.
+
+**What Does NOT Change:** TTL sweeper still exists, still runs. **It writes a different value, not different behaviour. Expiry still means denied, never auto-approved.** Added call-out box in §5.1 explicitly because collapsing state removes word `expired` from state machine — reminder a reader would have had is now gone. Invariant must carry itself, stated where it cannot be missed: *silence is not consent.*
+
+**The Subtle Cost of Collapse (Which I Do Not Think Was Obvious Going In):** Old failure mode: denial metric that forgot `expired` and under-reported. **New failure mode is worse and quieter.** Every timed-out proposal is now literally a `denied` row, so naïve `COUNT(*) WHERE status = 'denied'` **over-reports agent rejection** by absorbing every proposal a busy banker never got to. Slow afternoon, broken notification sink, TTL set too short — all read as *"agent is getting worse."* Collapse traded one failure mode for a subtler one, and **§5.1.1(c) grouping rule is what pays for it** — which is exactly why I asked that `TTL_EXPIRED` be named explicitly. A timeout is a statement about us, not about the agent.
+
+**Audit Events:** Stay differentiated even though states merged — `ApprovalExpired` remains its own event type. Same principle: collapse state machine, never collapse explanation.
+
+**Reference:** Epic #332 §5.1, §5.1.1(c); O9 reasoning.
+
+---
+
+## RULING Q2 (Final) — `payloadHash` Display is PERMANENT
+
+**By:** Brian Denicola (ruling) / Danny (Lead/Architect, recording)
+
+**Decision:** Not a demo affordance. **Most legible security property in the system, costs one line, and under §5.3.2 the hash also changes on a policy escalation** — which makes it load-bearing rather than decorative.
+
+**Justification:** A visible hash is the thing that *explains* a re-sign request to a banker who would otherwise experience it as the system arbitrarily discarding their signature. *"The figure you signed is not the figure being executed"* is an abstract claim; a changed hash next to a changed number is a demonstration.
+
+**Requirement:** `payloadHash` must be on the approval **read model the UI consumes**, not merely stored server-side. Server provides `payloadHashShort` for truncation safety.
+
+**Display Scope:** Every approval representation — list, detail, sign response, SSE events.
+
+**Reference:** Epic #332 §5.3.2, §8.0; Turk's policy engine design §8.5.1.
+
+---
+
+## RULING Q3 (Final) — Denial Reasons REQUIRED, ≥20 Characters, Server-side
+
+**By:** Brian Denicola (ruling) / Danny (Lead/Architect, recording)
+
+**Decision:** Denial reasons REQUIRED, minimum 20 characters, validated server-side (not merely UI).
+
+**Applies To:** `HUMAN_DENIED` only. The other three `terminalReason` values (`POLICY_RUNG_ESCALATED`, `TTL_EXPIRED`, `PAYLOAD_SUPERSEDED`) are machine-generated and carry structured explanation instead.
+
+**Validation Layer:** `authority-service`, not UI. Client-side may mirror for responsiveness but is never enforcement point. API returns 400 regardless of what UI did.
+
+**Degenerate Input Prevention:** Must not be satisfiable by whitespace or repeated character.
+- `"        "` (20 spaces) — REJECTED
+- `"aaaaaaaaaaaaaaaaaaaa"` (20 'a's) — REJECTED
+- Naïve `length >= 20` loses both. Required rule: **trim first, then length, then reject degenerate input.**
+
+**Why Worth the Friction:** Denial is the only moment a human tells us the agent was wrong. Cheapest and only corpus of labelled agent misjudgement we will ever have. #333 needs real labels, and it is the last remaining input to *"why was the agent wrong?"* that §5.1.1's structured reasons do not already answer.
+
+**Implementation (Turk's 6-layer validation):**
+1. NFC-normalize
+2. Trim whitespace
+3. Collapse internal whitespace for measurement only
+4. Measure in grapheme clusters (not bytes/UTF-16) — so Japanese or Arabic reasons don't need triple the substance to clear the bar
+5. Repeated-unit check — kills `asdfasdfasdf` (which length-plus-distinctness alone lets through)
+6. Minimum letter count — kills digit and punctuation padding
+
+**Config Keys (All Env-overrideable):**
+- `DENIAL_REASON_MIN_LENGTH` (default: 20)
+- `DENIAL_REASON_MAX_LENGTH`
+- `DENIAL_REASON_MIN_DISTINCT_CHARS`
+- `DENIAL_REASON_MAX_REPEAT_UNIT`
+- `DENIAL_REASON_MIN_LETTERS`
+
+**Stated Limit:** This stops lazy input, not determined garbage. A fluent fabricated sentence passes and no regex separates it from a real one. If #333 needs trustworthy labels, that is a sampling/review problem.
+
+**Reference:** Epic #332 §5.1, §5.4.2; Turk's policy engine design §8.7.1.
+
+---
+
+## RULING Q4 (Final) — Step-up Auth Never Substitutes for L2 Co-signer
+
+**By:** Brian Denicola (ruling) / Danny (Lead/Architect, recording)
+
+**Decision:** **NO. Step-up auth never substitutes for a second human.** The acting banker's own second signature never suffices at L2, MFA included. **Separation of duties means separation of people.**
+
+**On the Record With Reasoning Because It Will Be Asked Again:** Most natural "efficiency" suggestion anyone will make about this system, and it arrives sounding reasonable.
+
+**The Moment Step-up Auth Substitutes for a Second Human:** **L2 becomes L1 wearing a hat and the ladder collapses to a single signature.** Every threshold above L1 becomes theatre.
+
+**The Precise Error: Category Confusion Between Two Controls That Feel Similar and Are Not:**
+
+| Control | Answers | Defends Against |
+|---------|---------|-----------------|
+| **MFA / Step-up Auth** | **Who** is signing | A stolen session or credential |
+| **Separation of Duties** | **How many people** reviewed | A *legitimate* user making a bad or self-interested decision |
+
+**Why the Distinction Matters:** Banker who is mistaken, pressured, or self-interested is **fully authenticated the entire time** — re-proving they are themselves adds no information whatsoever about the decision. Same principle as §5.8.2's decision to keep `admin` outside the banking ladder: **both prevent one identity from filling two signature slots.**
+
+**Enforcement:** Structural, not documented. `mustDifferFrom` is built by the evaluator and **no policy verb can empty it** — same shape as the no-lowering-verb rule in policy engine §3.4.
+
+**One Prediction, Not a Question:** First sustained pressure on this design will be a request to **make L2 cheaper** — batching co-signatures, a standing supervisor delegation, or step-up auth again under a new name. §5.4.1 answers the last of those. Other two have no answer yet because nobody asked, but they will. Recording now so when it arrives it is recognized as same argument rather than fresh one.
+
+**Reference:** Epic #332 §5.4.1, §5.8.2, §5.8.4; Turk's policy engine design §3.4, §8.6.1.
+
+---
+
+## Epic #332 Status Update
+
+**ALL QUESTIONS RESOLVED. ZERO OPEN ITEMS.**
+
+Every question raised in the epic has been ruled on. Nothing is under-specified, nothing awaits a decision, no phase is gated on an answer. What remains is open in a different sense — risks 1–7 and not-yet-considered items 8–16 are conditions to manage during delivery, not decisions to make before it.
+
+**Two Remain Visible:**
+- **Risk 15** — four-layer defence is currently 1.5 layers. #334 and #336 are filed, verified, sequenced, but until they land, layers 2 and 3 of §4.4 cannot be built as specified. Delivery dependency; most important honest caveat in document.
+- **Risk 5** — policy-edit blast radius. Correctness settled; operational shape (lazy voiding + eager notification, bulk "these were invalidated" surface) is Turk's to design, Linus's to render.
+
+---
+
+## Outstanding Open Items
+
+*None — all questions on epic #332 have been ruled. See Q1–Q4 rulings above and O9 ruling above.*
+
+- **O10** Wire `/policy/impact` into CI gate? Defer until approval store seeded.

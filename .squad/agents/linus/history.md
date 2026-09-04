@@ -994,3 +994,62 @@ From Round 2 verified-findings pass (Coordinator's work):
 - #336 — shared KSA for 11 pods blocks Layer 1 isolation.
 
 ---
+
+---
+
+## 2026-09-04: Banker Copilot Final Rulings — Canonical Vocabulary & Implementation
+
+**CRITICAL UI UPDATE REQUIRED:**
+
+Your `ApprovalState` TypeScript union previously carried `'expired'` and `'void'` states — **both now deleted by ratified rulings.** These states were removed from the specification, but the propagation to your type definition failed silently. This is the kind of decision-propagation failure that contract tests exist to catch.
+
+**Before any UI implementation, re-read the approval lifecycle section in `docs/epics/banker-copilot.md` §5.1.**
+
+The lifecycle is now: `proposed → pending → signed → executed`, with `denied` as the **single terminal rejection state**, differentiated by a mandatory closed four-value `terminalReason` enum:
+- `HUMAN_DENIED`
+- `POLICY_RUNG_ESCALATED`
+- `TTL_EXPIRED`
+- `PAYLOAD_SUPERSEDED`
+
+**All four reasons now share `status = "denied"`.** Branching on `status` alone is a bug. The four must be **visually distinct on every UI surface** — especially the case where a banker's signature was voided by a policy change. That banker did nothing wrong; the ground moved. Copy must name the cause and link the replacement proposal via `supersededByApprovalId`.
+
+**Canonical Vocabulary (Use These Names in All UI Code):**
+
+| Concept | Canonical | Notes |
+|---------|-----------|-------|
+| Core entity | `approval` | Never `proposal` (noun). Use `proposed` (state) and `propose` (verb) only. |
+| Requester identity | `requesterId` | Never `actorId`. |
+| Supersede link | `supersededByApprovalId` | Holds an id; points to an approval. |
+| Terminal reasons | `PAYLOAD_SUPERSEDED`, `HUMAN_DENIED`, `POLICY_RUNG_ESCALATED`, `TTL_EXPIRED` | Closed enum, all four required branches in UI. |
+| Banker's conversation | `session` | One SSE stream. Multiple `run`s per session. UI watches sessions, not turns. |
+| One cycle (intent→plan→tools) | `run` | Every envelope carries `runId`. |
+
+**Requirement: `payloadHash` Display (Q2 Ruling)**
+
+The `payloadHash` is PERMANENT and mandatory on every approval card:
+- List views
+- Detail views  
+- Sign response confirmations
+- SSE events
+
+Server provides `payloadHashShort` for safe truncation. **Most legible security property in the system.** When re-sign is requested after a policy escalation, the changed hash next to the changed number *explains* the request rather than appearing arbitrary.
+
+**Requirement: Denial Reason Validation (Q3 Ruling)**
+
+When a banker denies a proposal with `HUMAN_DENIED`, they must provide a reason ≥20 characters, validated server-side (via `authority-service`). UI mirrors for responsiveness but never for enforcement (API always returns 400 on invalid input).
+
+Degenerate inputs are rejected: `"        "` (20 spaces), `"aaaaaaaaaaaaaaaaaaaa"` (repeated char). The rule is trimmed + length + distinctness + letter count, stopping lazy input but not determined garbage.
+
+**Requirement: Step-up Auth at L2 (Q4 Ruling)**
+
+**The banker's own second signature never suffices at L2, MFA included.** SoD means different people, not different proofs. A fully-authenticated banker making a bad or self-interested decision is not solved by re-proving their identity. The distinction:
+
+| Control | Defends Against | Question |
+|---------|-----------------|----------|
+| MFA/step-up | Stolen session/credential | Who is signing? |
+| Separation of Duties | Legitimate user making bad decision | How many people reviewed? |
+
+Enforce structurally: if the system shows "MFA required to co-sign as yourself" it becomes L1 wearing a hat, and every threshold above L1 becomes theatre. This is not a recommendation; it is a structural requirement — no policy verb can empty the "different signer" constraint.
+
+---
+

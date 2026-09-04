@@ -248,3 +248,132 @@ that actually cross a newly-tightened value, and makes loosening and cosmetic ch
 - [ ] Dry-run impact endpoint exists and warns rather than blocks
 - [ ] Discard event carries every discarded signature and both versions
 - [ ] No bulk re-sign anywhere in the API shape
+
+---
+
+## 5. Terminal-state design — collapse redundant states, but pay the debts
+
+Approval records accumulate terminal states: denied, expired, superseded, voided-by-policy. The
+instinct is one state per outcome. **Prefer one terminal state plus a closed discriminator enum.**
+
+```
+proposed -> pending -> signed -> executed
+                  \-> denied  (+ mandatory terminalReason from a closed enum)
+```
+
+A state and an adjacent discriminator that encode the same fact are redundant, and the redundancy
+is nearly free to remove *before* queries, dashboards and UI branches are written against it — and
+a migration afterwards. **Collapse everywhere at once:** a principle applied to one case but not its
+identical twin is worse than not applying it, because the next reader cannot tell which rule is real.
+
+This buys a uniform vocabulary and one place the distinction lives. It also incurs four debts that
+must be paid explicitly, or the collapse is a net loss.
+
+### Debt 1 — the removed structure was carrying a meaning
+
+When "expired" was its own state, *expiry means denied, never auto-approved* was self-evident.
+Folded into `denied + TTL_EXPIRED`, it becomes an invariant a future reader can lose track of.
+**Where you removed a structure that carried a meaning, write the meaning down louder, in the place
+the structure used to be.**
+
+### Debt 2 — the surviving field is now a much weaker filter
+
+`status='denied'` used to be one of five meaningful buckets; now it is one large bucket that means
+nothing without the discriminator. Any query, metric, or alert filtering on it alone is probably a
+bug — blending timeouts into a "denial rate" makes an operational problem look like human judgement.
+Audit for this after the collapse; do not merely document it.
+
+### Debt 3 — index shape changes
+
+One predicate on a default-indexed field becomes two predicates plus a sort. Cosmos (and most
+document stores) will not use a composite index unless **every filter and ORDER BY path appears in
+it, in order** — so `(status, discriminator, terminalAt)` becomes newly required. Missing it means a
+cross-partition scan: free at demo volume, expensive later, and only visible in production.
+**Any time a filter goes from one predicate to two, re-derive the composite index.** Also ensure the
+sort field is now reliably populated — it was probably nullable-and-ignored before.
+
+### Debt 4 — retain event names
+
+If an append-only audit stream already emits `SomethingExpired`, **keep the event name** even though
+the state is gone. Renaming an event type is a breaking change for consumers, for zero benefit. The
+event name records *what happened*; the reason field records *what it means*. They may diverge.
+
+### Two traps in the enum itself
+
+**A value containing an id, timestamp, or count is not an enum value.** `"superseded_by:<newId>"`
+defeats the enum, defeats indexing, and defeats aggregation. Split it: constant in the reason field,
+variable data in its own field (`supersededBy`). Grep for interpolation whenever someone declares an
+enum "closed."
+
+**Document stores cannot enforce enums — say so instead of writing "enforced at the persistence
+layer."** No CHECK constraints, no column types, no server-side schema. What works, in descending
+order of weight:
+
+1. **Funnel all writes through one repository type**, with an architecture test forbidding raw
+   container writes anywhere else. This is the layer doing the real work.
+2. A typed enum with a serializer that **throws on unknown values in both directions**.
+3. A guard query that alerts and **deliberately does not self-heal** — a silent repair erases the
+   evidence of whatever wrote the bad value.
+4. **Readers fail closed:** an unrecognised value means "refuse to act," never "proceed."
+
+Being honest about what a datastore cannot do is more useful than a reassuring sentence that will
+be believed.
+
+### Two status-ish fields will collide
+
+Adding `executed` as a lifecycle state next to an existing `execution.state` needs an explicit
+mapping table. The load-bearing call: **a failed execution does not advance the lifecycle.** It
+stays `signed`; signatures remain valid and a retry needs no new human. Making failure terminal
+either strands valid signatures or forces a "reopen" transition — and reopening a terminal state is
+the exact edge a closed enum exists to prevent.
+
+---
+
+## 6. Two recurring arguments, and the answers that hold
+
+### "Can step-up auth / MFA count as the second approval?"
+
+**No.** Separation of duties means separation of *people*.
+
+- **MFA proves *who* is signing. It says nothing about *how many* people reviewed.** Different
+  controls, different questions; neither substitutes for the other.
+- **The failure is total, not local.** The moment step-up can stand in for a second human, the
+  second rung becomes the first rung wearing a hat — for every action, not just the one where the
+  exception was granted.
+- **It defeats exactly the attacks the rung exists to stop.** In self-dealing, coercion, and session
+  compromise, the attacker holds the identity and can satisfy step-up by definition.
+
+Enforce it structurally: the evaluator builds `mustDifferFrom`, and no policy verb can empty it —
+same shape as having no rung-lowering verb.
+
+### "Should we show the payload hash in the UI, or is that developer clutter?"
+
+**Show it, permanently.** It costs one line and it is the most legible security property in the
+system: everything else is policy the user must trust, and the hash is the one thing they can *see*
+is the same on the card they read and the action that executed. The decisive reason is usually the
+third one, though: if the hash changes when authority is re-evaluated, a user asked to sign the
+"same" thing twice sees an arbitrary demand — unless they can see two different values. Remove the
+hash and the re-sign flow looks like a bug. Compute the truncated display form **server-side**; the
+client should never be in the business of truncating a security value.
+
+## 7. Free-text justification fields (denial reasons, override rationales)
+
+If the text feeds downstream labelling or review, require it and validate **server-side**. Naive
+"minimum N characters" is under-specified in three ways that matter:
+
+1. **Normalize before measuring.** NFC, trim, then collapse internal whitespace runs *for
+   measurement only* (store the original). Otherwise `"a" + 19 spaces + "b"` passes.
+2. **Measure grapheme clusters**, not bytes or UTF-16 code units — or a reason in Japanese or Arabic
+   needs three times the substance, and one emoji counts as five characters.
+3. **Add a repeated-unit check.** Length + distinct-character rules are both satisfied by
+   `asdfasdfasdfasdfasdf`. "Is the string a whole-number repetition of a unit of length ≤ N?" is the
+   rule that actually stops keyboard mashing.
+
+Plus a minimum count of Unicode-letter characters to kill digit/punctuation padding. Every one of
+these numbers is a named config value with an env override — the specified minimum is a *default*,
+not a literal in the validator.
+
+**State the limit.** This stops *lazy* input, never *determined* garbage: a fluent, plausible,
+entirely fabricated sentence passes every rule and no regex will separate it from a real one. If the
+data must be trustworthy rather than merely non-empty, that is a sampling/review problem. Say so, or
+someone will assume the data is clean because the endpoint has rules.

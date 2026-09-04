@@ -399,7 +399,7 @@ export interface PlanStep {
   toolCalls: ToolCall[];
   subagents: SubagentRun[];
   /** Set when a re-plan superseded this step. */
-  supersededBy?: string;
+  supersededByApprovalId?: string;
   supersededReason?: string;
 }
 
@@ -417,8 +417,15 @@ export interface PlanRevision {
 ### 3.3 Approval types
 
 ```ts
+// Canonical lifecycle — epic §5.1. There is no 'expired' and no 'void' state:
+// both are 'denied' differentiated by terminalReason (epic §5.1.1).
 export type ApprovalState =
-  | 'proposed' | 'pending' | 'signed' | 'denied' | 'expired' | 'void';
+  | 'proposed' | 'pending' | 'signed' | 'executed' | 'denied';
+
+// Closed set — epic §5.1.1. Mandatory whenever state === 'denied'.
+// Never aggregate a denial count across these; see §5.1.1(c).
+export type TerminalReason =
+  | 'HUMAN_DENIED' | 'POLICY_RUNG_ESCALATED' | 'TTL_EXPIRED' | 'PAYLOAD_SUPERSEDED';
 
 export interface PayloadField {
   path: string;                       // 'amount' | 'terms.rate'
@@ -459,11 +466,13 @@ export interface ApprovalRequest {
   requestedBy: ActorRef;              // the banker whose identity the agent acted under
   /** Populated as signatures land. L2 requires two, from DIFFERENT actors. */
   signatures: Signature[];
-  requiredSignatureCount: 1 | 2;
+  requiredSigners: 1 | 2;
   expiresAt: string;                  // ISO. Expiry === DENIED.
   createdAt: string;
-  /** Present when state === 'void'. */
-  voidedReason?: string;
+  /** MANDATORY when state === 'denied'. Never render a bare "Denied". */
+  terminalReason?: TerminalReason;
+  /** Free-text detail. For HUMAN_DENIED this is the banker's reason (min 20 chars). */
+  terminalDetail?: string;
   supersededByApprovalId?: string;
   previousPayload?: PayloadField[];   // drives PayloadDiffView
 }
@@ -512,7 +521,7 @@ interface ApprovalCardProps {
   currentActor: ActorRef;
   /** False when currentActor already signed (separation of duties) or lacks the rung. */
   canSign: boolean;
-  blockedReason?: 'separation_of_duties' | 'insufficient_authority' | 'expired' | 'void';
+  blockedReason?: 'separation_of_duties' | 'insufficient_authority' | 'terminal';
   onSign: (note?: string, dwellMs?: number) => Promise<void>;
   onDeny: (reason: string) => Promise<void>;
 }
@@ -1030,7 +1039,7 @@ does **not** quietly update. That would be the TOCTOU attack the hash design exi
 ║                                                                          ║
 ║   3 material changes · 1 addition · review before signing again.         ║
 ║  ─────────────────────────────────────────────────────────────────────── ║
-║   [ Review the new proposal ]     [ Deny ]                               ║
+║   [ Review the new approval ]     [ Deny ]                               ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 ```
 
@@ -1038,7 +1047,7 @@ does **not** quietly update. That would be the TOCTOU attack the hash design exi
   disappear — the audit story requires the void be visible.
 - `PayloadDiffView` renders **field-level** diffs, not a text diff. Material changes get the
   warning treatment; cosmetic ones are muted. Additions/removals are explicit.
-- **The new proposal's dwell gate resets to full.** You do not get credit for having read the old
+- **The new approval's dwell gate resets to full.** You do not get credit for having read the old
   one. That is exactly the shortcut an attacker (or a sloppy re-plan) would exploit.
 - Copy is unambiguous: *"Nothing was executed."* The banker's first fear on seeing "void" is
   "did something half-happen?" Answer it in the first two lines.
@@ -1335,7 +1344,7 @@ A. Reyes) — separation of duties is only convincing if you can see two people.
 | **0:52–1:00** | **The supervisor wakes** | The `SupervisorAgentRail` — visually separate from the plan tree — goes from `forming opinion…` to running. Caption reads: *does NOT see the primary agent's recommendation.* | Independence is structural and visible, not claimed. |
 | **1:00–1:12** | **DISAGREEMENT** ⭐⭐ | Dual-control card renders both opinions. The full-width red banner slams in: **"THE TWO AGENTS DISAGREE. A HUMAN MUST DECIDE."** Primary `CONDITIONAL 0.62` vs supervisor `DECLINE 0.81`. Two factors marked `← DIVERGENT`. Countdown: `expires in 04:12 → DENIED`. | The peak. Say: "The supervisor is *more* confident, in the opposite direction. No system should resolve this. A person should." |
 | **1:12–1:20** | **The human acts** | Banker window: reads both, clicks `Sign` — button shows `enabled in 0:14`, ticking down. Signs. Roster updates: `1. B. Denicola ✓ signed`, `2. Supervisor — must be a different person ◷ awaiting`. He tries to sign again; disabled, tooltip explains separation of duties. | Friction is deliberate. One human is not enough. |
-| **1:20–1:30** | **The twist, then the close** | Supervisor window (A. Reyes): the item is already in her queue. As she opens it, `approval.voided` lands — **SIGNATURE VOID — THE PROPOSAL CHANGED**, with a field-level diff: rate `6.875% → 7.250%`, down payment `25% → 30%`. Copy: *"Nothing was executed."* She reviews the new proposal, dwell resets, writes her override justification, co-signs. Artifact canvas renders the commitment letter. | The closing line: **"At no point did an agent approve anything. The agent proposed. Policy escalated. Two humans signed — and when the proposal changed, the first signature became worthless."** |
+| **1:20–1:30** | **The twist, then the close** | Supervisor window (A. Reyes): the item is already in her queue. As she opens it, `approval.voided` lands — **SIGNATURE VOID — THE PROPOSAL CHANGED**, with a field-level diff: rate `6.875% → 7.250%`, down payment `25% → 30%`. Copy: *"Nothing was executed."* She reviews the new approval, dwell resets, writes her override justification, co-signs. Artifact canvas renders the commitment letter. | The closing line: **"At no point did an agent approve anything. The agent proposed. Policy escalated. Two humans signed — and when the approval changed, the first signature became worthless."** |
 
 **Backup plan:** run from recorded event fixtures (§7.3) via `?demo=ln-3391`. The reducer is
 pure, so the fixture player produces a pixel-identical run with real timing. Never demo an

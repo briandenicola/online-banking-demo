@@ -1583,3 +1583,168 @@ All 9 services validate audience `banking-demo` with one shared symmetric key (H
 ## Verified Finding: Shared workload identity blocks Layer 1 isolation
 
 One KSA (`banking-workload-identity` → `banking_services` UAMI) for all 11 pods. Layer 1 "no domain Cosmos role assignment" not achievable; tool-shape isolation degrades to ConfigMap convention. → **#336**, Phase 1 takes smallest slice (dedicated identity for `authority-service`).
+
+## 2026-09-04 — Final rulings: lifecycle collapse, hash display, denial reasons, self-cosign (amendment)
+
+### Learnings
+
+**Collapsing a redundant state is cheap before the queries exist and expensive after.** `expired`
+carried a distinction `terminalReason` already carried. The fix was nearly free today; once
+dashboards, Cosmos queries, and UI branches are written against a state value, it is a migration.
+When a state and an adjacent discriminator field encode the same fact, collapse *immediately* — and
+collapse it **everywhere at once**, because a principle applied to one case and not its identical
+twin is worse than not applying it: the next reader cannot tell which rule is real.
+
+**Collapsing a state makes its semantics less visible — compensate deliberately.** "Expiry means
+denied, never auto-approved" was self-evident when `expired` was its own state. Folded into
+`denied` + `TTL_EXPIRED`, it becomes an invariant a reader can lose. I gave it its own call-out
+box. General rule: when you remove a structure that was *carrying* a meaning, write the meaning
+down louder, in the place the structure used to be.
+
+**Watch for the discriminator that isn't a constant.** The supersede reason was
+`"superseded_by:<newId>"` — an interpolated string masquerading as an enum value. It defeats the
+enum, defeats indexing, and defeats aggregation. **Any "enum" value containing an id, a timestamp,
+or a count is not an enum.** Split it: constant in the reason field, variable data in its own field.
+Cheap to spot, and a good thing to grep for whenever someone declares an enum "closed."
+
+**Cosmos NoSQL cannot enforce an enum, and you should say so rather than write "enforced at the
+persistence layer."** No CHECK constraints, no column types, no server-side schema. What actually
+works, in descending order of weight: (1) **funnel all writes through one repository type** and add
+an architecture test forbidding raw container writes elsewhere — this is the layer doing the real
+work; (2) a typed enum with a serializer that throws on unknown values in *both* directions;
+(3) a guard query that alerts and **deliberately does not self-heal**, because a silent repair
+erases the evidence of whatever wrote the bad value; (4) readers fail closed, so an unknown value
+means "refuse to act," never "proceed." Being honest about what a datastore cannot do is more useful
+than a reassuring sentence that will be believed.
+
+**Collapsing states changes index shape — check it, don't assume.** `status = 'expired'` was one
+predicate on a default-indexed field. `status='denied' AND terminalReason='TTL_EXPIRED' ORDER BY
+terminalAt` is two predicates plus a sort, and **Cosmos will not use a composite index unless every
+filter and ORDER BY path appears in it, in order.** Missing it means a cross-partition scan that is
+free at demo volume and expensive in production. Any time a filter goes from one predicate to two,
+re-derive the composite index rather than assuming the old one still serves.
+
+**A collapsed state weakens the field it collapsed into.** `status='denied'` used to be one of five
+meaningful buckets; it is now one large bucket that means nothing without `terminalReason`. Every
+query, metric, or alert filtering on it alone is now probably a bug — blending timeouts into a
+denial-rate metric makes an operational problem look like human judgement. Worth auditing for
+explicitly after any state collapse, not just documenting.
+
+**Two status-ish fields will collide; define the mapping before someone infers it.** Adding
+`executed` as a lifecycle state next to an existing `execution.state` needed an explicit table. The
+load-bearing call: **a failed execution does not advance the lifecycle** — signatures stay valid, a
+retry needs no new human. Making failure terminal would either strand valid signatures or require a
+"reopen" transition, and reopening a terminal state is the exact edge a closed enum exists to
+prevent.
+
+**Minimum-length text validation is under-specified in three ways that matter.** (1) Normalize NFC,
+trim, and collapse internal whitespace *for measurement only* — otherwise `"a" + 19 spaces + "b"`
+passes. (2) Measure **grapheme clusters**, not bytes or UTF-16 code units, or a reason written in
+Japanese or Arabic needs three times the substance and an emoji counts as five characters. (3) Add a
+**repeated-unit check** — length plus distinct-character rules are both satisfied by
+`asdfasdfasdfasdfasdf`, and the repetition check is the rule that actually stops keyboard mashing.
+And say the limit out loud: validation stops *lazy* input, never *determined* garbage. A fluent
+fabricated sentence passes every rule. If the data needs to be trustworthy rather than non-empty,
+that is a sampling/review problem, and someone will otherwise assume the data is clean because the
+endpoint has rules.
+
+**"MFA proves who, not how many."** The cleanest one-line refusal I have for the recurring request
+to let step-up auth substitute for a second approver. Identity assurance and multi-party review are
+different controls answering different questions. The failure is total rather than local: the moment
+step-up can stand in for a second human, the second rung becomes the first rung wearing a hat, for
+every action — not just the one where the exception was granted. Keep enforcing it structurally
+(the "different signer" constraint has no policy verb that can empty it) rather than by rule, same
+as the no-lowering-verb principle.
+
+**Retain event names when collapsing states.** `ApprovalExpired` stays, even though the state is now
+`denied`. The audit stream is append-only and renaming an event type is a breaking change for
+consumers. The event name records *what happened*; the reason field records *what it means*. Those
+are allowed to diverge, and pretending otherwise costs a consumer migration for zero benefit.
+
+---
+
+## 2026-09-04: Banker Copilot Final Rulings Implementation — Four Rulings Applied to Policy Engine
+
+**Session:** Banker Copilot epic #332 final ruling round + vocabulary reconciliation  
+**Task:** Apply four final rulings (Q2, Q3, Q4, expired collapse) to policy engine design  
+**Status:** COMPLETE
+
+Applied all four final rulings to `docs/design/banker-copilot-policy-engine.md` with three important corrections to own earlier specifications.
+
+### Canonical Vocabulary (Ratified for Implementation)
+
+Use these names consistently in code, config, and schema:
+
+| Concept | Canonical | Notes |
+|---------|-----------|-------|
+| Core entity | `approval` | Never `proposal` (noun). `proposed` status, `propose` verb only. |
+| Requester identity | `requesterId` | Over `actorId`. |
+| Supersede link | `supersededByApprovalId` | Holds id, points to approval. Never interpolate id in reason. |
+| Terminal reasons | `PAYLOAD_SUPERSEDED`, `HUMAN_DENIED`, `POLICY_RUNG_ESCALATED`, `TTL_EXPIRED` | Closed enum. No additions without spec change. |
+| Action identifier format | `<domain>.<entity>.<verb>` | E.g., `account_opening.account.create`, `transaction.flag.review`. |
+| Endpoint prefixes | `/api/authority/*` or `/api/copilot/*` | One per service. |
+
+### Four Rules Applied
+
+**1. Lifecycle Collapse (§5.3.1, §5.4)**  
+No `expired` state. `proposed → pending → signed → executed`, `denied` single terminal with four-value enum. Sweeper unchanged in mechanism (still runs), now writes `denied + TTL_EXPIRED`. Expiry still means denied, never auto-approved (explicit call-out because visibility loss when state collapsed).
+
+**2. Q2: payloadHash Permanent (§8.5.1)**  
+Every approval representation: list, detail, sign response, SSE events. Marked non-removable. Server computes `payloadHashShort` for safe truncation (UI never truncates security value).
+
+**3. Q3: Denial Reason Required (§8.7.1)**  
+Applied to `HUMAN_DENIED` only. Server validates in `authority-service`. Six-layer validation:
+1. NFC-normalize
+2. Trim whitespace
+3. Collapse internal for measurement only
+4. Measure in grapheme clusters (not bytes/UTF-16)
+5. Repeated-unit check
+6. Minimum letter count
+
+All six config keys with env overrides (no literals):
+- `DENIAL_REASON_MIN_LENGTH` (default: 20)
+- `DENIAL_REASON_MAX_LENGTH`
+- `DENIAL_REASON_MIN_DISTINCT_CHARS`
+- `DENIAL_REASON_MAX_REPEAT_UNIT`
+- `DENIAL_REASON_MIN_LETTERS`
+
+**4. Q4: Step-up Auth Cannot Substitute (§8.6.1)**  
+**NO** at L2. Banker's own second signature never suffices, MFA included. SoD means different people. Enforced structurally: `mustDifferFrom` built by evaluator, no policy verb can empty it.
+
+### Three Things That Did Not Hang Together (All Corrected)
+
+**(a) Supersede Reason Was Encoded in Value**  
+Wrote `superseded_by:<newId>` — not a closed constant, cardinality = number of supersedes. Reason becomes thousands of one-row buckets and grouping rule silently dies. **Corrected: reason is `PAYLOAD_SUPERSEDED`; id moves to `supersededByApprovalId`.** This find is worth remembering: the requirement making a ruling safe can be defeated by a data shape that looks harmless.
+
+**(b) "Enforce Enum at Persistence Layer" Unachievable in Cosmos**  
+Cosmos is schemaless, no CHECK constraints, no server-side schema. Will store `terminalReason: "banana"`. **Corrected to four-layer application-side enforcement:**
+1. C# `enum` with converter throwing on unknown (both directions)
+2. Single-writer repository type (no raw `Container.ReplaceItemAsync` elsewhere); architecture test enforces
+3. Guard query alerts on unknown (no self-heal; evidence preservation)
+4. Readers fail closed — unknown reason = "denied and not executable" (never implicit proceed)
+
+**(c) `executed` as Lifecycle Status Collides With `execution.state` Field**  
+Failed execution does NOT move `status`. Stays `signed` with `execution.state = failed`. **Retry needs no new human signature but DOES re-enter policy re-evaluation gate (§5.3.2),** so signatures survive downstream failure but not policy escalation.
+
+### Technical Implementations
+
+**Cosmos Index:** Query `status='denied' AND terminalReason=? ORDER BY terminalAt` needs composite index `(status, terminalReason, terminalAt)`. Without it, cross-partition scan (cheap at demo, expensive later). `terminalAt` must be reliably populated on every terminal transition (was nullable-and-ignored).
+
+**Config Keys Added (Both Manifests):**  
+`deploy/kustomize/base/configmap.yaml` and `docker-compose.yml`:
+- `DENIAL_REASON_MIN_LENGTH`
+- `DENIAL_REASON_MAX_LENGTH`
+- `DENIAL_REASON_MIN_DISTINCT_CHARS`
+- `DENIAL_REASON_MAX_REPEAT_UNIT`
+- `DENIAL_REASON_MIN_LETTERS`
+
+**Event Names:** Retained `ApprovalExpired` even though state collapsed to `denied` (append-only stream, renaming breaks consumers). Event says what happened; reason says what it means.
+
+### For Linus (UI Implementation)
+
+**Requirement got stronger, not weaker.** All four terminal reasons now share `status = "denied"`, so branching on `status` alone is a bug — **the four must be visually distinct.**
+
+Plus permanent `payloadHash` display on every approval card. When policy escalation causes a re-sign, the changed hash explains it rather than appearing arbitrary.
+
+---
+

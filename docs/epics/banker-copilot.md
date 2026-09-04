@@ -28,6 +28,73 @@ rejected on sight.
 | **I-9** | The agent loop runs **server-side**. The browser is a thin streaming client. |
 | **I-10** | No blanket "Approve All". Batch only within one action type, under threshold, never L2. |
 
+## 0.1 Canonical vocabulary — NORMATIVE
+
+Three documents describe this system: this epic, `docs/design/banker-copilot-policy-engine.md`
+(Turk), and `docs/design/banker-copilot-ui.md` (Linus). **Where they name the same thing they
+must spell it identically.** A cross-document audit on 2026-09-04 found four independent naming
+drifts (§11.1); these are the arbitrated results. I own the contract, so these are decided, not
+proposed. §5.3.1a makes them testable.
+
+### The three entities
+
+| Entity | Definition | Not to be confused with |
+|---|---|---|
+| **approval** | The durable record of a **request for human authorization** — created by the agent, signed or refused by humans, and immutable once terminal. Shorthand for *approval request*: it names the object, never the outcome. A `denied` approval is still an approval. | The *act* of approving |
+| **session** | A banker's Copilot conversation. Durable, spans many turns, holds Foundry thread state. Keyed `sessionId`, container `copilot-sessions`. | A run |
+| **run** | **One intent → plan → tools → artifact cycle** inside a session. Bracketed by `run.started` / `run.done`. Keyed `runId`; every trace frame carries it. A session contains many runs. | A session |
+
+**`proposal` is not an entity.** It was one in an earlier draft of this document; it is now
+retired as a noun. The word survives in exactly two places, both correct: **`proposed`**, the
+approval's initial status, and **`propose_action` / `propose`**, the agent's tool and the verb
+for what the agent does. Each word now does one job:
+
+> **The agent *proposes*; the object is an *approval*; its first state is *proposed*.**
+
+Why `approval` won over `proposal` as the entity: `proposal` describes only how the document was
+born, and goes stale the moment it is signed and executed. `approval` names what the document
+*is for* across its whole life, and it was already the dominant noun in the two design documents
+and the API surface both were written against — choosing it left the fewest stragglers, which
+matters most in a fix whose whole purpose is eliminating stragglers. The obvious objection — that
+I-1 says *agents never approve*, so the agent should not create a thing called an approval — is
+answered by the entity being an approval **request**: the agent requests, humans grant or refuse.
+`proposed` as the initial status keeps that visible in the state machine.
+
+**Session and run are genuinely two entities, not a naming drift.** This is worth stating
+explicitly because the documents did not, and a reader could not tell. The SSE stream stays
+**session-scoped** (a banker watches a conversation, not a turn) while every envelope carries
+`runId`, so the UI and #333 replay can partition by run. Both properties already exist in the
+design; only the definition was missing.
+
+### The decided names
+
+| Concept | Canonical | Rejected variants | Why |
+|---|---|---|---|
+| Supersede link | **`supersededByApprovalId`** | `supersededBy`, `supersededByProposalId` | Says *what it holds* (an id) and *what it points at* (an approval). `supersededBy` says neither and reads like it might hold an object. |
+| Re-plan terminal reason | **`PAYLOAD_SUPERSEDED`** | `SUPERSEDED_BY_REPLAN` | The other three members are `<subject>_<participle>` (`HUMAN_DENIED`, `TTL_EXPIRED`, `POLICY_RUNG_ESCALATED`). `SUPERSEDED_BY_REPLAN` is the only one that would need a preposition. It also names the right subject: the payload is what changed, and the payload is what the hash binds. |
+| Requester / partition key | **`requesterId`** | `actorId` | "Actor" is ambiguous once signers exist — a co-signer is also an actor. "Requester" can only mean one party. |
+| Approval id prefix | **`apr_`** | `prop_` | Follows the entity. |
+| Cosmos container | **`copilot-approvals`**, PK `/requesterId` | `authority-proposals`, PK `/actorId` | Follows the entity; Turk's partition-key analysis is the load-bearing part and is unchanged. |
+| Timestamps | **`expiresAt`, `terminalAt`** | `expiresAtUtc`, `resolvedAtUtc` | `terminalAt` pairs with `terminalReason`; `…Utc` suffixes are noise when everything is UTC by convention. |
+| Rung on the record | **`requiredRung`** (+ `baseRung`) | bare `rung` | Bare `rung` is ambiguous next to `baseRung` and the rung a signature satisfied. |
+| Signature count | **`requiredSigners`** (+ `distinctIdentitiesRequired`) | `signaturesRequired` | Counts people, and the distinction between signatures and identities is the whole of separation of duties. |
+| Action-type id | **`actionId`** | `actionTypeId` | Shorter, already dominant, unambiguous in context. |
+| Escalators on the record | **`firedEscalators`** | `matchedEscalators` | An escalator *fires*; "matched" suggests it might have matched and not applied. |
+| Browser-facing prefixes | **`/api/authority/*`** (approvals, policy, evaluate) and **`/api/copilot/*`** (sessions, runs, stream, messages) | everything under `/api/copilot` | One prefix per service = one nginx `location` block per service, matching the existing gateway pattern, and the enforcement boundary is legible in the URL. Routing `/api/copilot/approvals` to a different service than `/api/copilot/sessions` needs a more-specific location block whose ordering, if disturbed, silently sends approval writes to the harness. |
+
+### Action-type id naming rule
+
+Action ids are **policy lookup keys**, so a mismatch is a silent policy miss rather than a
+compile error. Format is `<domain>.<entity>.<verb>` or `<domain>.<verb>`, where `<domain>` is the
+**owning service's domain**, not the surface a banker sees it on. Applying that rule split the
+adjudication between both documents rather than either winning wholesale: `transaction.flag.review`
+and `loan.decision.record` from this epic; `account_opening.application.review` /
+`.resubmit` and `user.lock` / `user.unlock` from Turk's (`account.application.review` wrongly
+implied account-service, and `user.account.lock` invented an `account` entity inside the user
+domain).
+
+---
+
 **Trajectory/agentic evaluation** is tracked separately in **#333**. It is not built here — but it
 imposes one hard requirement on this epic that cannot be retrofitted cheaply: **the harness must
 emit structured, replayable traces from day one.** See §8.0.
@@ -177,7 +244,7 @@ constrain.
 > **Turk's cost objection is real and is accepted, not waved away.** A split does mean a second
 > ConfigMap contract and a second Cosmos serializer to keep casing-aligned. Mitigations are
 > mandatory, not optional: `authority-service` owns its containers exclusively (no Python
-> service reads or writes `authority-proposals`), so the casing-drift surface is *within* one
+> service reads or writes `copilot-approvals`), so the casing-drift surface is *within* one
 > service rather than across two; and the harness↔authority contract is REST with a published
 > schema, not a shared document format. See `.squad/skills/cosmos-casing-audit`.
 >
@@ -229,19 +296,19 @@ enforceable property. Adding one is a rejectable PR.
 - Planner loop, subagent orchestration, artifact assembly
 - Cosmos: `copilot-sessions` (PK `/id`), `copilot-artifacts` (PK `/sessionId`)
 
-**`banker-copilot-service` calls** — `authority-service` (proposals, approval status),
+**`banker-copilot-service` calls** — `authority-service` (approvals, approval status),
 `ai-service`, `account-service`, `transaction-service`, `transfer-service`, `user-service`,
 `account-opening-service`, and later `loan-origination-service`. All over HTTP, all
 forwarding the banker's JWT.
 
 **`authority-service` owns**
 - `POST /api/authority/evaluate` — dry-run rung evaluation (no side effect)
-- `POST /api/authority/proposals` — create durable approval request
-- `GET /api/authority/proposals`, `GET /api/authority/proposals/{id}`
-- `POST /api/authority/proposals/{id}/sign`, `.../deny`
+- `POST /api/authority/approvals` — create durable approval request
+- `GET /api/authority/approvals`, `GET /api/authority/approvals/{id}`
+- `POST /api/authority/approvals/{id}/sign`, `.../deny`
 - `GET /api/authority/policy` — the effective, resolved policy (for the UI to render "why L2")
 - The action broker: on final signature, executes the downstream REST call
-- Cosmos: `authority-proposals` (PK `/actorId`), `authority-policy` (PK `/id`)
+- Cosmos: `copilot-approvals` (PK `/requesterId`), `authority-policy` (PK `/id`)
 - Publishes audit events onto the existing Redis Stream consumed by `event-processor`
 
 **`authority-service` explicitly does NOT own** — any model call, any planning, any UI state,
@@ -269,7 +336,7 @@ fallback, then the tabs collapse into Copilot-sourced saved views.
 3. **Read tools execute directly. Write tools do not exist.** There is exactly one
    write-shaped tool — `propose_action` — and it targets `authority-service`. See §4.4.
 4. Every tool declares its manifest fields below. A tool with a missing or unknown
-   `actionTypeId` fails registration at service start. Fail closed, loudly.
+   `actionId` fails registration at service start. Fail closed, loudly.
 
 ### 3.2 Manifest schema
 
@@ -280,7 +347,7 @@ fallback, then the tabs collapse into Copilot-sourced saved views.
   "displayName": "string",
   "description": "string",            // becomes the model-facing tool description
   "mode": "read" | "write",           // 'write' tools are ALWAYS routed via propose_action
-  "actionTypeId": "string | null",    // null iff mode == 'read'
+  "actionId": "string | null",    // null iff mode == 'read'
   "authority": {
     "declaredRung": "L1" | "L2" | "L3",   // static floor; policy engine may raise, never lower
     "policyRef": "string"                  // key into the policy file; source of truth
@@ -302,7 +369,7 @@ fallback, then the tabs collapse into Copilot-sourced saved views.
 ```
 
 `requiredEvidence` is the teeth behind "agents gather evidence". `authority-service`
-re-validates it server-side against the submitted trace; a proposal whose trace lacks a
+re-validates it server-side against the submitted trace; an approval whose trace lacks a
 required evidence tool call is rejected with `422 EVIDENCE_INCOMPLETE`. A model that decides
 to skip its homework cannot get a card in front of a human.
 
@@ -316,7 +383,7 @@ to skip its homework cannot get a card in front of a human.
     "displayName": "Get flagged transaction",
     "description": "Retrieve one flagged transaction with its AI risk score and contributing factors.",
     "mode": "read",
-    "actionTypeId": null,
+    "actionId": null,
     "authority": { "declaredRung": "L1", "policyRef": "read.any" },
     "target": { "service": "ai-service", "method": "GET",
                 "path": "/api/admin/flagged-transactions/{txId}", "timeoutMs": 8000 },
@@ -334,7 +401,7 @@ to skip its homework cannot get a card in front of a human.
     "displayName": "List account transactions",
     "description": "List transaction history for one account, for baseline and pattern comparison.",
     "mode": "read",
-    "actionTypeId": null,
+    "actionId": null,
     "authority": { "declaredRung": "L1", "policyRef": "read.any" },
     "target": { "service": "transaction-service", "method": "GET",
                 "path": "/api/transactions/account/{accountId}", "timeoutMs": 8000 },
@@ -355,7 +422,7 @@ to skip its homework cannot get a card in front of a human.
     "displayName": "List login audit events",
     "description": "Retrieve login audit history to assess whether the initiating session was anomalous.",
     "mode": "read",
-    "actionTypeId": null,
+    "actionId": null,
     "authority": { "declaredRung": "L1", "policyRef": "read.any" },
     "target": { "service": "user-service", "method": "GET",
                 "path": "/api/admin/login-audits", "timeoutMs": 8000 },
@@ -378,7 +445,7 @@ to skip its homework cannot get a card in front of a human.
     "displayName": "Clear or confirm a flagged transaction",
     "description": "Record a review decision (clear / confirm-fraud) on a flagged transaction. Requires human signature.",
     "mode": "write",
-    "actionTypeId": "transaction.flag.review",
+    "actionId": "transaction.flag.review",
     "authority": { "declaredRung": "L1", "policyRef": "transaction.flag.review" },
     "target": { "service": "ai-service", "method": "PUT",
                 "path": "/api/admin/flagged-transactions/{txId}/review", "timeoutMs": 8000 },
@@ -401,7 +468,7 @@ to skip its homework cannot get a card in front of a human.
     "displayName": "Override an AI risk score",
     "description": "Override the model-assigned risk score on a scored transaction. Requires human signature; overriding the model is dual-control by default.",
     "mode": "write",
-    "actionTypeId": "transaction.score.override",
+    "actionId": "transaction.score.override",
     "authority": { "declaredRung": "L2", "policyRef": "transaction.score.override" },
     "target": { "service": "ai-service", "method": "PUT",
                 "path": "/api/admin/scored-transactions/{txId}/override", "timeoutMs": 8000 },
@@ -424,8 +491,8 @@ to skip its homework cannot get a card in front of a human.
     "displayName": "Decide an account-opening application",
     "description": "Approve, reject, or request-more-info on a pending account-opening application. Requires human signature.",
     "mode": "write",
-    "actionTypeId": "account.application.review",
-    "authority": { "declaredRung": "L1", "policyRef": "account.application.review" },
+    "actionId": "account_opening.application.review",
+    "authority": { "declaredRung": "L1", "policyRef": "account_opening.application.review" },
     "target": { "service": "account-opening-service", "method": "PATCH",
                 "path": "/api/account-opening/applications/{applicationId}/review", "timeoutMs": 10000 },
     "parameters": {
@@ -487,11 +554,11 @@ defaults:
 
 rungs:
   L1:
-    signaturesRequired: 1
+    requiredSigners: 1
     signerRoles: [banker, admin]
     distinctIdentities: 1
   L2:
-    signaturesRequired: 2
+    requiredSigners: 2
     signerRoles: [banker, admin]
     cosignerRoles: [supervisor, admin]
     distinctIdentities: 2           # separation of duties
@@ -520,7 +587,7 @@ actionTypes:
     thresholds: []
     requiredEvidence: [get_scored_transaction, list_account_transactions]
 
-  account.application.review:
+  account_opening.application.review:
     displayName: Decide an account-opening application
     baseRung: L1
     ttlMinutes: 120
@@ -553,14 +620,14 @@ actionTypes:
         rung: L2                    # creating money is always dual-control
     requiredEvidence: [get_account, list_account_transactions]
 
-  user.account.lock:
+  user.lock:
     displayName: Lock a customer account
     baseRung: L1
     ttlMinutes: 15
     thresholds: []
     requiredEvidence: [get_user, list_login_audits]
 
-  user.account.unlock:
+  user.unlock:
     displayName: Unlock a customer account
     baseRung: L2                    # relaxing a control is dual-control; tightening is not
     ttlMinutes: 30
@@ -597,13 +664,13 @@ actionTypes:
 escalators:
   # Every escalator can only raise. `raiseBy: 1` moves L1->L2, L2->L3. Never negative.
   - id: self-dealing
-    description: Proposal touches an account or user related to the acting banker.
+    description: Approval touches an account or user related to the acting banker.
     when: { field: context.selfDealing, op: eq, value: true }
     raiseBy: 1
     minRung: L2
 
   - id: bulk-fan-out
-    description: More than N proposals of the same action type in one session.
+    description: More than N approvals of the same action type in one session.
     when: { field: session.proposalCountForActionType, op: gt, value: 10 }
     raiseBy: 1
 
@@ -681,7 +748,7 @@ the same inputs must yield the same rung whether evaluated at propose time or ex
 Four layers, defence in depth:
 
 1. **Tool shape.** `banker-copilot-service` registers *no* write tool with the Foundry agent.
-   The only write-shaped affordance is `propose_action(actionTypeId, payload, evidenceRefs)`,
+   The only write-shaped affordance is `propose_action(actionId, payload, evidenceRefs)`,
    whose target is `authority-service`. There is no tool the model can call whose target is a
    mutating domain endpoint.
 2. **Identity.** The downstream mutating endpoints require a JWT bearing an
@@ -694,7 +761,7 @@ Four layers, defence in depth:
    `authority-service`'s pod identity.
 4. **Server-side re-validation.** `authority-service` never trusts the rung the caller claims.
    It recomputes from policy, re-verifies `requiredEvidence` against the submitted trace, and
-   recomputes the payload hash. The proposal body's `declaredRung` is advisory telemetry only.
+   recomputes the payload hash. The approval body's `declaredRung` is advisory telemetry only.
 
 Layer 1 alone is a prompt-injection away from failing. Layers 2 and 3 mean that failing layer 1
 is not a security incident. **Turk: layer 2 is not optional and is not a stretch goal.**
@@ -736,11 +803,16 @@ propose_action → └──────┬───────┘
                  │   pending    │  TTL clock running; out-of-band notification fired
                  └──┬───┬───┬───┘
     signature(s)    │   │   │   TTL elapses
-    complete        │   │   └──────────────► expired  ── treated as ── ► DENIED (I-6)
-                    │   │                    TTL_EXPIRED
-                    │   │ human denies
-                    │   └──────────────────► denied
-                    │                        HUMAN_DENIED
+    complete        │   │   └───────────────┐
+                    │   │ human denies      │
+                    │   └───────────────────┤
+                    │                       ▼
+                    │                 ┌───────────┐
+                    │                 │  denied   │  SINGLE terminal rejection state.
+                    │                 └───────────┘  terminalReason says which:
+                    │                                HUMAN_DENIED | TTL_EXPIRED
+                    │                                POLICY_RUNG_ESCALATED
+                    │                                PAYLOAD_SUPERSEDED
                     │
               ┌─────▼──────┐
               │   signed   │
@@ -752,18 +824,58 @@ propose_action → └──────┬───────┘
                     │          ▼                          ▼
                     │   denied                       broker executes
                     │   POLICY_RUNG_ESCALATED        downstream REST call
-                    │   + NEW proposal at            │
+                    │   + NEW approval at            │
                     │     the new rung  ─────────────┤
                     │                                ▼
-                    └───────────────────────►  executed | execution_failed
+                    └───────────────────────►  executed  (failure keeps `signed`;
+                                                        see execution.state below)
 ```
 
 **Every execution passes through the re-evaluation gate.** There is no path from `signed` to
 `executed` that skips it. A signature is a claim about a policy version, and that claim is
 re-checked at the moment it is spent.
 
-`executed` and `execution_failed` are terminal and distinct — a failed downstream call must
-never look like a denial, and must never silently auto-retry under the old signature.
+**The full lifecycle is `proposed → pending → signed → executed`, with `denied` as the single
+terminal rejection state** (RATIFIED — see §5.1.1). **There is no `expired` state.**
+
+> ### ⚠️ Expiry means DENIED. It has always meant denied, and collapsing the state does not
+> soften it.
+>
+> Invariant **I-6** is untouched: **a TTL that runs out is a denial, never an approval, never a
+> silent retry.** This is restated loudly here precisely *because* the state was collapsed — the
+> word `expired` no longer appears in the state machine to remind a future reader, so the
+> invariant has to carry itself. If you are ever tempted to make an un-signed, timed-out approval
+> execute "because nobody objected", that is the single worst bug this system could have.
+> **Silence is not consent.**
+
+#### `status` vs `execution.state` — a failed execution does NOT move `status`
+
+**There is no `execution_failed` lifecycle status.** An earlier draft of this document had one;
+Turk's model (`docs/design/banker-copilot-policy-engine.md` §8.8) is correct and this section is
+restated to match it **identically**, because a retry needing no new human signature is a
+security-relevant claim and it must read the same in both documents or in neither:
+
+| Situation | `status` | `execution.state` |
+|---|---|---|
+| Quorum met, not yet attempted | `signed` | `not_attempted` |
+| Downstream call in flight | `signed` | `in_flight` |
+| Downstream returned 2xx | **`executed`** | `succeeded` |
+| Downstream failed / refused / hash mismatch | **`signed`** | `failed` |
+
+**A failed execution leaves `status = signed`, because the signatures remain valid and the action
+remains legitimately executable — a retry needs no new human.** Only a *successful* downstream
+call advances the lifecycle to `executed`. Making failure terminal would either strand valid
+signatures or force a "reopen" transition, and reopening a terminal state is exactly the edge the
+four-value enum exists to avoid.
+
+**This is safe only because retry re-enters the gate.** A retry is a fresh `execute` call and
+therefore passes through §5.3.2's re-evaluation *again* — so a retry attempted after a policy
+tightening is voided exactly like a first attempt. The signatures survive a downstream failure;
+they do not survive a policy escalation. `ApprovalExecutionFailed` remains an audit *event*
+(§5.7); events and states answer different questions.
+
+A failed downstream call must never look like a denial, and must never silently auto-retry
+without passing the gate.
 
 #### 5.1.1 Terminal states and `terminalReason` — RATIFIED (O9)
 
@@ -781,6 +893,21 @@ never look like a denial, and must never silently auto-retry under the old signa
 >
 > *"Voided" is a presentation label, not a state.*
 
+> **Follow-on ruling (Brian, 2026-09-04) — `expired` is collapsed too.** I raised the leftover
+> asymmetry as a residual and declined to act on it unilaterally; Brian has now ruled to **apply
+> the principle uniformly. There is no `expired` lifecycle state.** TTL expiry writes `denied`
+> with `terminalReason = TTL_EXPIRED`.
+>
+> Reasoning: **I-6 already declares expiry to BE a denial.** Keeping `expired` as its own state
+> meant carrying a distinction `terminalReason` already carries — *the exact redundancy O9
+> rejected for `voided`.* Applying the rule to `voided` but not to its twin would have left the
+> principle half-applied, which is the worst of both: the cost of a rule and none of the
+> consistency. It is nearly free today and expensive once dashboards, queries and UI branches
+> are written against the state.
+>
+> **What does NOT change:** the TTL sweeper still exists and still runs (§5.5). It writes a
+> different value, not a different behaviour. **Expiry still means denied, never auto-approved.**
+
 **This ruling is only safe if the reason is genuinely load-bearing.** A `terminalReason` that is
 nullable, defaulted, or free-text collapses `denied` back into an undifferentiated bucket and we
 lose the distinction the ruling assumes we keep. Four conditions make it load-bearing:
@@ -791,17 +918,20 @@ enforced in the model, not by convention: non-nullable on the C# record, a requi
 parameter (so there is no object-initializer path that omits it), and rejected by the write
 guard before the Cosmos upsert. The field is nullable *only* while `status` is non-terminal.
 
-**(b) The reasons are a closed enum, not free text.** Free text cannot be grouped, so free text
-silently defeats (c):
+**(b) The reasons are a closed enum of exactly four values, not free text.** Free text cannot be
+grouped, so free text silently defeats (c). **All four resolve to the same state, `denied`** —
+that is the point of the collapse:
 
-| `terminalReason` | State | Meaning |
-|---|---|---|
-| `HUMAN_DENIED` | `denied` | An eligible human signer rejected it. The only reason that represents a human judgement about the *action*. |
-| `POLICY_RUNG_ESCALATED` | `denied` | Re-evaluation at the execution gate returned a higher rung than the signature satisfied (§5.3.2). A machine discarded a human's signature. |
-| `PAYLOAD_SUPERSEDED` | `denied` | The agent re-planned; a replacement proposal carries the changed payload. |
-| `TTL_EXPIRED` | `expired` | The signature window closed unsigned. Semantically a denial (I-6) — never an approval. |
+| `terminalReason` | State | Meaning | What it measures |
+|---|---|---|---|
+| `HUMAN_DENIED` | `denied` | An eligible human signer rejected it. The only reason representing a human judgement about the *action*. | Agent judgement |
+| `POLICY_RUNG_ESCALATED` | `denied` | Re-evaluation at the execution gate returned a higher rung than the signature satisfied (§5.3.2). A machine discarded a human's signature. | Policy churn |
+| `PAYLOAD_SUPERSEDED` | `denied` | The agent re-planned; a replacement approval carries the changed payload. | Agent plan stability |
+| `TTL_EXPIRED` | `denied` | The signature window closed unsigned. A denial by I-6 — **never an approval.** | Banker responsiveness, notification latency |
 
-Adding a member requires a spec change, not just a string literal.
+Exactly four. Adding a member requires a spec change, not just a string literal, and the enum is
+enforced at the persistence layer rather than only at the API surface — an unrecognized value
+must fail the write.
 
 > **Two reconciliations with Turk's `docs/design/banker-copilot-policy-engine.md`, both of which
 > he should take as corrections to shape only — his model is the ratified one:**
@@ -810,9 +940,9 @@ Adding a member requires a spec change, not just a string literal.
 >    embeds a unique identifier is not a closed set — it has cardinality equal to the number of
 >    supersedes, so the "group by `terminalReason`" requirement in (c) degenerates into thousands
 >    of one-row buckets and the denial dashboard becomes unreadable. The reason is
->    `PAYLOAD_SUPERSEDED`; the id moves to its own field, `supersededByProposalId`. Same for the
+>    `PAYLOAD_SUPERSEDED`; the id moves to its own field, `supersededByApprovalId`. Same for the
 >    policy-void path, which reuses supersede: reason `POLICY_RUNG_ESCALATED`, pointer in
->    `supersededByProposalId`.
+>    `supersededByApprovalId`.
 > 2. **Casing is normalized to `SCREAMING_SNAKE_CASE`** (`policy_change` → `POLICY_RUNG_ESCALATED`,
 >    `ttl_expired_denied` → `TTL_EXPIRED`, `human_denied` → `HUMAN_DENIED`). Brian named
 >    `POLICY_RUNG_ESCALATED` in the ruling; enum-shaped values also read as an enum at a glance,
@@ -826,23 +956,30 @@ a burst of policy edits would render as bankers rejecting more of the agent's wo
 "fix" agent quality that was never the problem. The three have nothing to do with one another —
 `HUMAN_DENIED` measures agent judgement, `POLICY_RUNG_ESCALATED` measures policy churn,
 `TTL_EXPIRED` measures banker responsiveness and notification latency. Only the first belongs in
-anything called agent accuracy. **`TTL_EXPIRED` is explicitly included**: because I-6 makes
-expiry a denial, a consumer that counts denials and forgets `expired` under-reports; one that
-counts it without grouping mis-attributes it. Neither is acceptable.
+anything called agent accuracy.
+
+> **`TTL_EXPIRED` is the most likely version of this mistake, so it is called out by name.**
+> Now that the state is collapsed, every timed-out approval *is* a `denied` row. A naive
+> `COUNT(*) WHERE status = 'denied'` no longer under-reports (the old failure) — it now silently
+> **over-reports agent rejection** by absorbing every approval a busy banker simply never got to.
+> A slow afternoon, a broken notification sink, or a TTL set too short would all read as *"the
+> agent is getting worse."* The collapse traded one failure mode for a subtler one, and the
+> grouping rule is what pays for it. **No metric labelled as agent or human denial rate may
+> include `TTL_EXPIRED`.** A timeout is a statement about us, not about the agent.
 
 **(d) A discarded signature must be recorded in full.** See §5.7 — a policy void is the only
 event in the system where a machine throws away a human's signature, and the audit record must
 name whose signature it was, which rung it satisfied, and the policy version it was bound to.
 
 **Transitions restated under this ruling.** Both re-proposal paths now have **one shape** — the
-original document reaches a terminal `denied`, and a *new* proposal document is created. There
-is no in-place mutation of a signed proposal, and specifically **no `denied → proposed` edge**;
+original document reaches a terminal `denied`, and a *new* approval document is created. There
+is no in-place mutation of a signed approval, and specifically **no `denied → proposed` edge**;
 an approval document, once terminal, is immutable:
 
 | Trigger | Original document | Replacement |
 |---|---|---|
-| Agent re-plans / payload mutates | `denied` + `PAYLOAD_SUPERSEDED` | new proposal, new `id`, new hash |
-| Policy escalation at the gate (§5.3.2) | `denied` + `POLICY_RUNG_ESCALATED` | new proposal at the **new** rung, new slots |
+| Agent re-plans / payload mutates | `denied` + `PAYLOAD_SUPERSEDED` | new approval, new `id`, new hash |
+| Policy escalation at the gate (§5.3.2) | `denied` + `POLICY_RUNG_ESCALATED` | new approval at the **new** rung, new slots |
 
 *(This supersedes an earlier draft of this section in which both paths returned the existing
 document to `proposed` with signatures cleared. Turk's supersede-by-new-document shape is
@@ -851,7 +988,7 @@ rely on, and a mutable one lets a document's history be silently rewritten.)*
 
 ### 5.2 Cosmos design
 
-**Container `authority-proposals`, PK `/actorId`.**
+**Container `copilot-approvals`, PK `/requesterId`.**
 
 PK justification: the dominant query is *"what is waiting for me?"* — a single-partition read
 by the signed-in banker on every harness poll and every UI refresh. `/id` (the repo default)
@@ -867,18 +1004,18 @@ Losing the record is not the same as denying the request.
 
 ```jsonc
 {
-  "id": "prop_01JQ...",
-  "actorId": "user:banker-mchen",       // PARTITION KEY
+  "id": "apr_01JQ...",
+  "requesterId": "user:banker-mchen",       // PARTITION KEY
   "cosignerId": null,
   "sessionId": "sess_01JQ...",
-  "actionTypeId": "transaction.flag.review",
+  "actionId": "transaction.flag.review",
   "toolId": "review_flagged_transaction",
   "status": "pending",
-  "rung": "L2",
+  "requiredRung": "L2",
   "rungExplanation": {
     "baseRung": "L1",
     "matchedThresholds": ["transaction.amount >= 25000"],
-    "matchedEscalators": ["low-agent-confidence"]
+    "firedEscalators": ["low-agent-confidence"]
   },
   "payload": { "txId": "tx_884", "decision": "cleared", "note": "..." },
   "payloadHash": "sha256:9f2c...",
@@ -903,13 +1040,13 @@ Losing the record is not the same as denying the request.
       "signedAtUtc": "2026-09-04T14:02:11Z", "payloadHash": "sha256:9f2c...",
       "authMethod": "jwt", "jti": "...", "ipHash": "sha256:..." }
   ],
-  "signaturesRequired": 2,
+  "requiredSigners": 2,
   "distinctIdentitiesRequired": 2,
   "proposedAtUtc": "2026-09-04T13:58:02Z",
-  "expiresAtUtc": "2026-09-04T14:28:02Z",
-  "resolvedAtUtc": null,
+  "expiresAt": "2026-09-04T14:28:02Z",
+  "terminalAt": null,
   "terminalReason": null,                  // MANDATORY once status is terminal (§5.1.1)
-  "supersededByProposalId": null,          // set with PAYLOAD_SUPERSEDED / POLICY_RUNG_ESCALATED
+  "supersededByApprovalId": null,          // set with PAYLOAD_SUPERSEDED / POLICY_RUNG_ESCALATED
   "batchId": null,
   "policyVersion": "sha256:4a1f...",
   "ttl": 7776000
@@ -922,7 +1059,7 @@ Losing the record is not the same as denying the request.
 > drift bug waiting to happen, and it would have shipped.
 
 **Container `authority-policy`, PK `/id`.** Doc `active` plus immutable versioned history docs,
-keyed by `policyVersion`. Every proposal stamps `policyVersion`, so a decision can always be
+keyed by `policyVersion`. Every approval stamps `policyVersion`, so a decision can always be
 re-explained under the policy in force at the time — not today's policy. Auditors ask this
 question, and "we changed the YAML" is not an answer.
 
@@ -930,16 +1067,24 @@ question, and "we changed the YAML" is not an answer.
 
 1. Canonicalize the payload with **JCS (RFC 8785)** — deterministic key ordering, no
    whitespace ambiguity. Hand-rolled `JSON.stringify` ordering is a rejectable shortcut.
-2. `payloadHash = SHA-256(JCS(payload) || "\n" || actionTypeId || "\n" || policyVersion)`.
+2. `payloadHash = SHA-256(JCS(payload) || "\n" || actionId || "\n" || policyVersion)`.
    **`policyVersion` is bound into the hash** (RATIFIED — §5.3.2). A signature is therefore
    valid only for the exact policy version under which it was produced; it cannot be replayed
    under a different policy.
 3. The signature record stores the hash the human actually saw. On execution the broker
    recomputes the hash from the stored payload and compares to **every** signature. Any
-   mismatch ⇒ abort, void all signatures, revert to `proposed`, emit
-   `authority.signature.voided`.
-4. The UI renders the hash's first 8 hex chars next to the payload preview so the demo can
-   show it changing.
+   mismatch ⇒ abort, do not execute, take the approval terminal as `denied` +
+   `PAYLOAD_SUPERSEDED` (§5.1.1), and emit `ApprovalDenied`. Re-proposal creates a new
+   document; the mismatched one is never repaired in place.
+4. **The UI renders the hash's first 8 hex chars next to the payload preview — permanently, not
+   as a demo affordance (RATIFIED, Q2).** It is the most legible security property in the
+   system and it costs one line. Under §5.3.2 the hash also changes on a **policy escalation**,
+   which is what makes it load-bearing rather than decorative: a visible hash is the thing that
+   *explains* a re-sign request to a banker who would otherwise experience it as the system
+   arbitrarily discarding their signature. "The figure you signed is not the figure being
+   executed" is an abstract claim; a changed hash next to a changed number is a demonstration.
+   `payloadHash` must therefore be present on the approval read model the UI consumes, not
+   merely stored server-side.
 
 This is the concrete answer to the $5k→$50k TOCTOU attack, and it is demoable in ten seconds.
 
@@ -951,12 +1096,12 @@ It must never be independently computed, defaulted, or re-derived at any of its 
 | Site | Field | Relationship |
 |---|---|---|
 | Policy document | `authority-policy` doc identity | **Authoritative source.** The value IS the identity of the resolved policy. |
-| Approval record (§5.2) | `proposal.policyVersion` | Copied once at `proposed`, then **immutable for the life of the proposal**. |
-| Payload hash (§5.3) | hash input | Reads `proposal.policyVersion`. Never re-reads the live policy. |
-| Trace envelope (§8.0) | `approval.required` payload | Copied from `proposal.policyVersion` at emit. |
-| Audit events (§5.7) | `authority.proposal.*` | Copied from `proposal.policyVersion`. |
+| Approval record (§5.2) | `approval.policyVersion` | Copied once at `proposed`, then **immutable for the life of the approval**. |
+| Payload hash (§5.3) | hash input | Reads `approval.policyVersion`. Never re-reads the live policy. |
+| Trace envelope (§8.0) | `approval.required` payload | Copied from `approval.policyVersion` at emit. |
+| Audit events (§5.7) | `Approval*` / `PolicyReloaded` | Copied from `approval.policyVersion`. |
 
-**Invariant (testable):** for any proposal, the `policyVersion` in the approval record, the
+**Invariant (testable):** for any approval, the `policyVersion` in the approval record, the
 value bound into every signature's `payloadHash`, the value on the `approval.required` trace
 frame, and the value on every audit event **are byte-identical**. A contract test asserts this;
 `rungExplanation` deliberately carries no copy.
@@ -964,6 +1109,45 @@ frame, and the value on every audit event **are byte-identical**. A contract tes
 The failure this prevents is specific and quiet: the envelope's copy drifts (say it gets
 defaulted to "current" at emit time), #333 replays a run and judges the rung against the wrong
 policy, and the eval reports a ladder failure that never happened — or worse, misses a real one.
+
+#### 5.3.1a The shared-identifier contract test — normative, and it covers more than `policyVersion`
+
+**`policyVersion` was never the only value at risk.** The same failure mode — one concept, N
+spellings, drifting independently across documents and then across code — produced three further
+mismatches found in a cross-document audit on 2026-09-04 (§11.1). The test that catches one must
+catch all of them, so it is generalized here from a `policyVersion` check into a **shared
+identifier contract test**.
+
+**Scope — every identifier that appears in more than one of the three Banker Copilot documents:**
+
+| Class | Covered identifiers |
+|---|---|
+| Closed enum | The **full** `terminalReason` set: `HUMAN_DENIED`, `POLICY_RUNG_ESCALATED`, `PAYLOAD_SUPERSEDED`, `TTL_EXPIRED` — exactly four, no more, no other spelling |
+| Supersede link | `supersededByApprovalId` — one name, on the approval record, the audit event, and the UI read model |
+| Approval fields | `requesterId`, `requiredRung`, `baseRung`, `requiredSigners`, `payloadHash`, `policyVersion`, `expiresAt`, `terminalAt`, `terminalReason`, `actionId` |
+| Audit event names | The eleven of §5.7 |
+| Trace frame kinds | The envelope kinds of `docs/design/banker-copilot-ui.md` §4.2 |
+| Action-type ids | Every key of the §4.2 policy file — **these are policy lookup keys; a mismatch is a silent policy miss, not a compile error** |
+| Endpoint paths | `/api/authority/*`, `/api/copilot/*` |
+
+**Mechanism.** A single generated `SharedIdentifiers` constant set is the authoritative home;
+`authority-service`, `banker-copilot-service` and the UI all reference it rather than restating
+literals. The test asserts (a) no string literal in any of the three codebases duplicates a
+member of the set, and (b) the member list matches the spec. **The docs are checked too** — a CI
+grep gate scans all three markdown files for known-bad variants, because these drifted *in the
+documents first* and the documents are where the next one will start.
+
+> **Why this is worth a test rather than care.** Turk and I independently reached the *correct*
+> design — lift the id out of the reason value so the enum stays closed — and then named the
+> result differently (`supersededBy` vs `supersededByProposalId`, `SUPERSEDED_BY_REPLAN` vs
+> `PAYLOAD_SUPERSEDED`). Good instincts converged on the same idea and still produced a broken
+> contract. **A shared vocabulary is not an outcome of everyone being careful; it is an outcome
+> of something checking.** That is the entire argument for this test, and it is the same argument
+> as §5.1.1(c): the rule only holds if something enforces it.
+
+The specific way this one would have surfaced: someone writes the `GROUP BY terminalReason`
+query the anti-aggregation rule (§5.1.1c) depends on, and gets two buckets for one reason —
+discovered late, in the artifact whose correctness the rule exists to guarantee.
 
 Turk owns the derivation rule for the value itself (content hash vs. semver) in
 `docs/design/banker-copilot-policy-engine.md`. **My constraint on that choice:** whatever is
@@ -1005,17 +1189,24 @@ asymmetric because the underlying principle is.
 
 ```
 executeProposal(p):
-    rungSigned := p.rung                            # rung the signatures actually satisfied
-    rungNow    := evaluate(p.actionTypeId, p.payload, currentContext, activePolicy)
+    rungSigned := p.requiredRung                            # rung the signatures actually satisfied
+    rungNow    := evaluate(p.actionId, p.payload, currentContext, activePolicy)
 
     if rungNow > rungSigned:                        # SAME max/total-order comparison as §4.3
-        voidSignatures(p, reason = POLICY_RUNG_ESCALATED)
-        p.rung          := rungNow
-        p.policyVersion := activePolicy.version     # new version ⇒ new payloadHash ⇒ new signatures
-        p.status        := 'proposed'
-        emit('authority.signatures_voided', {from: rungSigned, to: rungNow,
-                                             fromPolicy: …, toPolicy: …})
-        notify(p.actorId, POLICY_CHANGED_WHILE_PENDING)
+        # O9 (§5.1.1): the ORIGINAL document goes terminal and immutable — it is never
+        # rewound to `proposed`. A replacement approval carries the new rung.
+        p.status         := 'denied'
+        p.terminalReason := POLICY_RUNG_ESCALATED   # mandatory, closed enum
+        p.terminalAt  := now()
+        emit('ApprovalVoidedByPolicyChange', {           # see §5.7 for the full shape
+            signedRung: rungSigned, newRung: rungNow,
+            signedUnderPolicyVersion:     p.policyVersion,
+            evaluatedUnderPolicyVersion:  activePolicy.version,
+            discardedSignatures: p.signatures })         # WHOSE signature was thrown away
+        q := propose(p.actionId, p.payload, rung = rungNow,
+                     policyVersion = activePolicy.version)   # new id, new hash, new slots
+        p.supersededByApprovalId := q.id
+        notify(p.requesterId, POLICY_CHANGED_WHILE_PENDING, q.id)
         return                                      # do NOT execute
 
     # rungNow <= rungSigned  →  honor and execute. No downgrade of p.rung is recorded;
@@ -1032,11 +1223,13 @@ executeProposal(p):
 decision at L1**. While it sits pending, the policy is updated to drop the L1 ceiling from
 $50,000 to **$25,000**. At execution, re-evaluation returns **L2**. `L2 > L1`, so:
 
-1. The banker's signature is **void**.
-2. The proposal returns to `proposed` under the new `policyVersion`, producing a new
-   `payloadHash`.
-3. It is re-proposed at **L2**: the supervisor agent produces its independent second opinion
-   (§6.4), and a **human supervisor co-signs** alongside the banker.
+1. The banker's signature is **void**, and the discarded signature is recorded in full (§5.7).
+2. The original approval goes **terminal**: `denied` with `terminalReason =
+   POLICY_RUNG_ESCALATED` (O9, §5.1.1). It is not rewound; terminal documents are immutable.
+3. A **new** approval is created at **L2** under the new `policyVersion` — new id, new
+   `payloadHash`, new signature slots — linked from the original by `supersededByApprovalId`.
+   The supervisor agent produces its independent second opinion (§6.4), and a **human
+   supervisor co-signs** alongside the banker.
 
 **The banker must be told why, specifically.** The UI shows *"The approval policy changed while
 this was pending — your signature was invalidated because this action now requires supervisor
@@ -1059,19 +1252,76 @@ Enforced in `authority-service`, not in the UI:
 - Distinct-identity count must reach `distinctIdentitiesRequired`. The same human with two
   sessions or two tokens counts once.
 - Co-signer's role must appear in `rungs.L2.cosignerRoles`.
-- Co-signer must not be the proposal's `actorId`, and must not be a subject of the payload —
+- Co-signer must not be the approval's `requesterId`, and must not be a subject of the payload —
   the self-dealing check runs a second time at signing, against the co-signer.
 - If the co-signer is the acting banker's direct report, escalate rather than accept.
   (Requires an org-graph stub; see §9.)
 
+#### 5.4.1 Step-up auth is not a substitute for a second human — RATIFIED (Q4)
+
+> **Ruling (Brian, 2026-09-04). NO.** The acting banker's own second signature **never** suffices
+> at L2 — step-up auth and MFA included. **Separation of duties means separation of people.**
+
+On the record with the reasoning, because **this will be asked again** — it is the most natural
+"efficiency" suggestion anyone will make about this system, and it arrives sounding reasonable:
+
+**The moment step-up auth substitutes for a second human, L2 becomes L1 wearing a hat, and the
+ladder collapses to a single signature.** Every threshold above L1 would then be theatre.
+
+The precise error is a category confusion between two controls that feel similar and are not:
+
+| Control | Answers | Defends against |
+|---|---|---|
+| MFA / step-up auth | **Who** is signing | A stolen session or credential |
+| Separation of duties | **How many people** reviewed | A *legitimate* user making a bad or self-interested decision |
+
+MFA proves identity; it does nothing about *count of independent judgements*. A banker who is
+mistaken, pressured, or acting in their own interest is **fully authenticated the entire time**
+— re-proving they are themselves adds no information whatsoever about the decision. The two are
+orthogonal, and one can never stand in for the other.
+
+This rests on the same principle as §5.8.2's decision to keep `admin` outside the banking ladder:
+both prevent one identity from satisfying two signature slots.
+
+#### 5.4.2 Denial reasons are required — RATIFIED (Q3)
+
+> **Ruling (Brian, 2026-09-04).** A human denial **requires a reason, minimum 20 characters**,
+> validated **server-side in `authority-service`** — not only in the UI.
+
+Applies to `HUMAN_DENIED` only. The other three `terminalReason` values are machine-generated
+and carry structured explanation instead (§5.7).
+
+**It must not be satisfiable by whitespace or a single repeated character.** `"                    "`
+and `"aaaaaaaaaaaaaaaaaaaa"` both clear a naïve `length >= 20` check, and a required field that
+can be defeated by holding down a key is a required field in name only. Turk owns the precise
+rule; the requirement is that the check operates on *meaningful* content — trim first, then
+apply the length test, and reject degenerate input. Client-side validation may mirror it for
+responsiveness but **is never the enforcement point**; the API rejects a bad reason with 400
+regardless of what the UI did.
+
+**Why this is worth the friction.** A denial is the only moment a human tells us the agent was
+wrong. We currently capture *that* it was denied, never *why* — and denial reasons are the
+cheapest and only corpus of labelled agent misjudgement we will ever have. #333 needs real
+labels, so the text has to be real. This is also the last remaining input to *"why was the agent
+wrong?"* that §5.1.1's structured reasons do not already answer.
+
 ### 5.5 TTL and the sweeper
 
 A hosted `BackgroundService` in `authority-service` (same shape as
-`prompt-eval-service/Services/EvaluationBackgroundService.cs`) polls for `pending` proposals
-past `expiresAtUtc` and transitions them to `expired`, emitting `authority.proposal.expired`.
-Explicit and observable — an expired proposal is a *visible event*, not a document quietly
-vanishing. `expired` is rendered in the UI as **Denied (timed out)** so nobody can read
-silence as consent.
+`prompt-eval-service/Services/EvaluationBackgroundService.cs`) polls for `pending` approvals
+past `expiresAt` and transitions them to **`denied` with `terminalReason = TTL_EXPIRED`**,
+emitting `ApprovalExpired`.
+
+**The sweeper is unchanged in behaviour by the state collapse — it writes a different value, not
+a different outcome.** It must keep existing: expiry has to be an *explicit, observable
+transition*, never a document quietly vanishing or a status inferred lazily at read time from a
+clock. A approval that times out is rendered in the UI as **Denied (timed out)**, so nobody can
+read silence as consent. The event name stays `ApprovalExpired` — **audit events remain
+differentiated even though the states merged**, which is the same principle as `terminalReason`:
+collapse the state machine, never collapse the explanation.
+
+Cosmos TTL deletion must never be the mechanism (§5.2). Losing the record is not the same as
+denying the request.
 
 ### 5.6 Out-of-band notification hooks
 
@@ -1088,15 +1338,48 @@ or auto-approve anything. Notification failures are logged and surfaced in Syste
 ### 5.7 Audit into event-processor
 
 `authority-service` publishes to the existing Redis Stream (`BankingEvent{eventType, data}`,
-consumed by `src/event-processor/main.go`) for:
-`authority.proposal.created`, `.signed`, `.cosigned`, `.denied`, `.expired`, `.executed`,
-`.execution_failed`, `.signatures_voided`, `authority.policy.changed`.
+consumed by `src/event-processor/main.go`). **Event names use `PascalCase`, matching the
+existing stream vocabulary** (`TransactionCreated`, `TransferInitiated`) and Turk's design doc —
+an earlier draft of this section used dotted lowercase names, which matched nothing in the repo:
 
-`.signatures_voided` carries a **reason code** — `PAYLOAD_MUTATED` or `POLICY_RUNG_ESCALATED`
-(§5.3.2) — plus, for the latter, both the old and new `policyVersion` and both rungs. An
-auditor asking *"why was this re-signed?"* must be able to answer it from the event alone.
-`authority.policy.changed` should carry the count of proposals the change affects, which is the
-audit-side half of risk 5's blast-radius question.
+`CopilotSessionStarted`, `ApprovalProposed`, `ActionProposalRejected`, `PolicyEscalated`,
+`ApprovalSigned`, `ApprovalDenied`, `ApprovalExpired`, `ApprovalExecuted`,
+`ApprovalExecutionFailed`, `ApprovalVoidedByPolicyChange`, `PolicyReloaded` — **eleven**.
+
+Two naming rules, both reconciled with Turk's §7:
+
+- **Events about a persisted approval document use `Approval*`; an action that never became one
+  uses `Action*`.** `ActionProposalRejected` (policy refuses at propose time — L3, unknown
+  action, under-evidenced) is correctly `Action*`, because no approval document exists to name.
+- **There is no `ApprovalCosigned`.** A co-signature is an `ApprovalSigned` with `slotOrdinal: 2`
+  — Turk's shape, and better than mine: a consumer counting signatures handles one case instead
+  of two, and "was this the second signature?" is a field lookup rather than an event-type test.
+
+**Every terminal-state event carries `terminalReason`** from the closed enum in §5.1.1 —
+`ApprovalDenied` with `HUMAN_DENIED` or `PAYLOAD_SUPERSEDED`, `ApprovalExpired` with
+`TTL_EXPIRED`, `ApprovalVoidedByPolicyChange` with `POLICY_RUNG_ESCALATED`. All four write
+`status = denied`; the event and the reason carry the distinction the state no longer does.
+Consumers group by reason and never aggregate across it (§5.1.1c).
+
+`ApprovalDenied` with `HUMAN_DENIED` additionally carries the **required denial reason text**
+(§5.4.1) — the only human-authored explanation in the audit trail, and the training corpus #333
+needs.
+
+**`ApprovalVoidedByPolicyChange` is the audit-critical event of this epic.** It is the *only*
+record in the system that **a machine discarded a human's signature**, and it is the fact an
+incident review or a regulator will ask about first. Shape agreed with Turk's §7:
+
+| Field | Why it must be there |
+|---|---|
+| `discardedSignatures[] {signerId, slotOrdinal, signedAt, rungSatisfied, boundPolicyVersion}` | Names *whose* signature was thrown away. Must not be reconstructible only by inference from the superseded document — inference is not an audit trail. |
+| `signedUnderPolicyVersion` / `evaluatedUnderPolicyVersion` | Both endpoints of the drift. With only one, replay cannot tell a correct escalation from a mis-resolution (§8.0). |
+| `signedRung` / `newRung` | The ladder movement, without re-deriving it from policy documents. |
+| `newEscalators[]` | *Which* rule fired. "It escalated" is not an explanation. |
+| `terminalReason: POLICY_RUNG_ESCALATED`, `supersededByApprovalId` | Links the discarded signature to the work that replaced it. |
+
+Emitted at the **best-effort-with-retry** tier, never fire-and-forget. `PolicyReloaded` carries
+`previousPolicyVersion`, `newPolicyVersion`, `affectedApprovalCount`, `voidedApprovalIds[]` —
+the audit-side half of risk 5's blast-radius question.
 
 `event-processor` needs new cases added to its `switch evt.EventType` — currently it warns
 `Audit Unknown event type` on anything unrecognized, which would make the audit trail
@@ -1104,7 +1387,7 @@ technically present but operationally invisible. Small change; do not skip it.
 
 **This is not hypothetical — it is already happening.** See **#335**: `UserRegistered` and
 `InsufficientFundsAttempt` are published to `banking-events` today and both fall through to the
-`default:` branch. Our nine authority event types would inherit exactly that fate. The durable
+`default:` branch. Our eleven authority event types would inherit exactly that fate. The durable
 fix requested in #335 (make the `default:` branch emit an alertable metric) is what stops this
 recurring; the nine `case` handlers are the local fix.
 
@@ -1140,7 +1423,7 @@ Justification, and the second half matters more than the first:
 - **`admin` ⊅ `banker`/`supervisor`, deliberately.** The tempting shortcut is
   "admin is a superset of everything." **That is how authority ladders get quietly defeated.**
   If `admin` implied `supervisor`, then a single admin identity could satisfy both signatures
-  on an L2 proposal — the requester and the co-signer — and separation of duties evaporates
+  on an L2 approval — the requester and the co-signer — and separation of duties evaporates
   while every test still passes. An admin who genuinely needs to co-sign must hold an explicit
   `supervisor` grant. Platform authority and banking authority are different axes and must not
   be modelled as one ladder.
@@ -1184,19 +1467,19 @@ may hide a disabled button; that is a courtesy, not a control. Restating §5.4 w
 model attached:
 
 ```
-POST /api/authority/proposals/{id}/sign
+POST /api/authority/approvals/{id}/sign
   1. Verify JWT (issuer, audience, lifetime, signature).
   2. signerId := sub claim.                     // never from the request body
   3. Reject if signerId already present in signatures[].
   4. Reject if role/effectiveRoles lacks the rung's required signerRole/cosignerRole.
-  5. Reject if this is a co-signature AND signerId == proposal.actorId.   ← the core check
+  5. Reject if this is a co-signature AND signerId == approval.requesterId.   ← the core check
   6. Re-run the self-dealing escalator against THIS signer (not just the requester).
   7. Accept only if distinct(signerIds) would reach distinctIdentitiesRequired.
   8. Recompute payloadHash; reject on mismatch (§5.3).
 ```
 
 Step 5 is the one that must never be conditional on anything. An `admin` who is also the
-requester cannot co-sign their own proposal — which is precisely why `admin` does not imply
+requester cannot co-sign their own approval — which is precisely why `admin` does not imply
 `supervisor` (§5.8.2).
 
 #### 5.8.5 Migration impact
@@ -1374,7 +1657,17 @@ after:
 | **Model, deployment, token counts on model-call frames** | Cost and regression attribution per run | ➕ **add** |
 | **`parentRunId` on subagent frames** | Reconstruct the fan-out tree offline | ➕ **add** (`subagent.spawned` carries it) |
 | **Redaction applied at emit, not at render** | Persisted traces outlive the session; PII must never be written | ➕ **add** — reuse the manifest `redaction` JSONPaths (§3.2) |
-| **`policyVersion` + resolved rung on `approval.required`** | Eval must judge *"was the rung correct?"* | ➕ **add** — value copied from `proposal.policyVersion`, never re-derived (§5.3.1) |
+| **`policyVersion` + resolved rung on `approval.required`** | Eval must judge *"was the rung correct?"* | ➕ **add** — value copied from `approval.policyVersion`, never re-derived (§5.3.1) |
+| **`terminalReason` on every terminal approval frame** | *"Did the ladder resolve correctly?"* is unanswerable in replay if a policy void and a human denial look identical | ➕ **add** (O9, §5.1.1) — closed enum, mandatory |
+
+**Composition with O9 (§5.1.1).** Because policy voids, supersedes, TTL expiries and human
+denials now share the single terminal state `denied`, **the trace loses the distinction
+entirely unless `terminalReason` rides on the terminal frame.** Offline, a replay that sees only
+"this approval ended negative" would score a policy-driven void as the banker rejecting the
+agent's recommendation — scoring agent quality on an event the agent had no part in, and doing
+it in the direction that makes a policy rollout look like a model regression. Same grouping rule
+as §5.1.1(c) applies to every eval metric #333 builds: **group by `terminalReason`, never
+aggregate across it.** Only `HUMAN_DENIED` is evidence about the agent.
 
 The last row is the one that matters most for #333 and is easy to miss: the highest-value eval
 question for this system is not *"was the recommendation good?"* but **"did the authority
@@ -1388,7 +1681,7 @@ audit events. **These are one value with one authoritative home, not four fields
 agree** — the normative rule and the contract test are in §5.3.1. Two consequences for the
 trace schema specifically:
 
-- The `approval.required` frame **copies** `proposal.policyVersion`. It must never default to
+- The `approval.required` frame **copies** `approval.policyVersion`. It must never default to
   "whatever policy is active at emit time." That default would be invisible in normal operation
   and wrong exactly when it matters — during a policy change, which is precisely the scenario
   #333 most needs to replay correctly.
@@ -1403,6 +1696,18 @@ contract of record. Additions above go into that document, not into a parallel s
 divergence between what the UI consumes and what we persist is a bug, not a design choice.
 Cross-reference #333 when the schema lands.
 
+> **Frontend requirement for Linus (flagged, not designed here — O9).** Because policy voids and
+> human denials now share the `denied` state, the UI must key off `terminalReason` and give the
+> four outcomes visibly different treatment. **A banker whose signature was voided by a policy
+> change must never see a screen that reads as though a colleague rejected their work.** They
+> did nothing wrong; the ground moved. The copy should name the cause — *"the approval policy
+> changed while this was pending; this action now requires supervisor co-approval (L1 → L2)"* —
+> and link to the replacement approval via `supersededByApprovalId` so the path forward is
+> obvious rather than a dead end. Getting this wrong is not cosmetic: an approval card that
+> blames the banker for a policy edit teaches people to distrust the card, and the card is the
+> one artifact this entire epic rests on. Same rule for any denial *count* the UI renders —
+> group by reason (§5.1.1c).
+
 ### Phase 1 — Authority engine + role model (no agent)
 **Ships against:** flagged transactions, account-opening applications.
 **Depends on:** nothing.
@@ -1410,8 +1715,8 @@ Cross-reference #333 when the schema lands.
 - `authority-service` scaffold (.NET 10, JWT, `Banking.Observability`, Cosmos client), modelled
   on `prompt-eval-service`.
 - Policy loader + evaluator + property-based rung tests.
-- `authority-proposals` / `authority-policy` containers in `infra/cloud/cosmos.tf`.
-- Proposal CRUD, JCS payload hashing, signature verification, separation of duties.
+- `copilot-approvals` / `authority-policy` containers in `infra/cloud/cosmos.tf`.
+- Approval CRUD, JCS payload hashing, signature verification, separation of duties.
 - **Execution-time re-evaluation gate (§5.3.2)** — `policyVersion` bound into the hash, void on
   escalation, honor on relaxation. Both directions tested.
 - Expiry sweeper `BackgroundService`.
@@ -1423,7 +1728,7 @@ Cross-reference #333 when the schema lands.
 - **Dedicated workload identity for `authority-service`** (see #336) — without it, §4.4
   layer 1 is a configuration convention rather than a control.
 
-**Exit:** curl a proposal, watch it evaluate to L2, sign twice from two identities, watch the
+**Exit:** curl an approval, watch it evaluate to L2, sign twice from two identities, watch the
 broker execute the downstream review call. Zero LLM involved. **This phase is independently
 valuable and independently demoable.**
 
@@ -1483,7 +1788,7 @@ two sessions by design, per §1.3).
 1. **Approval fatigue is the real threat model, not prompt injection.** If a banker signs 40
    cards an hour, "human in the loop" is theatre and we have built a slower autonomous system
    with a liability shield. The `velocity` escalator is a partial answer. The honest answer is
-   that the harness must produce *fewer, better* proposals. We should track signatures-per-hour
+   that the harness must produce *fewer, better* approvals. We should track signatures-per-hour
    and time-to-sign, and treat a falling time-to-sign as a **defect**, not adoption.
 2. **Independence of the second opinion is probably weaker than we want.** Same model family,
    same underlying data, same tool set ⇒ correlated errors. Blind construction and adversarial
@@ -1495,15 +1800,19 @@ two sessions by design, per §1.3).
    counts, evidence-to-payload relevance checks) is real work and is not in Phase 1.
 4. **Distributed-transaction gap in the broker.** Between `signed` and `executed` the broker
    makes a network call that can fail ambiguously. Idempotency keys cover retry; they do not
-   cover "did it land?". `execution_failed` requires human re-proposal — deliberately
-   conservative, and it will be annoying in a demo when a pod restarts.
+   cover "did it land?". A failure leaves `status = signed` / `execution.state = failed`, so a
+   retry needs no new signature (§5.1) — but an *ambiguous* failure is the genuinely hard case:
+   we cannot distinguish "never landed" from "landed, response lost". `Idempotency-Key:
+   <approvalId>` on the downstream call is what makes the retry safe, which means **every
+   mutating endpoint the broker calls must honour it** — several in this repo do not today.
+   That is the real work hiding in this risk.
 5. **Policy edits invalidate pending approvals in bulk — RULED, but the operational shape is
    still real work.** The correctness question is closed (§5.3.2: re-evaluate at execution;
    void only on escalation). What remains is operational: a single policy edit can invalidate
    **N pending approvals at once**, and the people who signed them find out asynchronously.
    Open sub-questions, owned by Turk with a UI requirement for Linus:
    - **Blast radius** — is escalation detected eagerly on policy change (sweep all pending
-     proposals, void immediately) or lazily at execution? Lazy is simpler and is what §5.3.2's
+     approvals, void immediately) or lazily at execution? Lazy is simpler and is what §5.3.2's
      pseudocode specifies, but it means a banker's card can look validly signed for hours
      before failing at the moment of execution. Eager is kinder to humans and more expensive.
      My lean: **lazy for correctness, plus an eager notification sweep** — void lazily, but tell
@@ -1514,7 +1823,7 @@ two sessions by design, per §1.3).
      `approval.voided` event kind already exists; this needs a distinct `POLICY_RUNG_ESCALATED`
      reason code rendering differently from a payload-mutation void.
    - **Rollout discipline** — a careless threshold edit during a demo voids everything pending.
-     Worth a confirmation step on policy writes that reports the count of affected proposals
+     Worth a confirmation step on policy writes that reports the count of affected approvals
      *before* the change lands.
 6. **SSE through the nginx gateway and Istio.** `proxy_buffering off` handles nginx. Istio
    sidecars and idle-timeout defaults have bitten this repo before. Budget real time; a
@@ -1541,15 +1850,15 @@ two sessions by design, per §1.3).
     (§5.8.5) so the check has a substrate. If we choose not to populate it, **delete the check
     rather than shipping it unenforced** — a control that exists only in the spec is worse than
     no control, because it gets counted in the security story.
-11. **Denial has no learning loop.** When a banker denies a proposal we capture *that* it was
+11. **Denial has no learning loop.** When a banker denies an approval we capture *that* it was
     denied, not *why the agent was wrong*. A required short denial reason, stored on the
-    proposal, costs almost nothing now and is the only corpus we will ever have. **This gains
+    approval, costs almost nothing now and is the only corpus we will ever have. **This gains
     urgency now that #333 exists:** trajectory eval needs labelled examples of agent
     misjudgement, and denial reasons are the cheapest possible source. Still awaiting a ruling
     (Q3 below).
 12. **`GET /api/authority/policy` leaks the bank's control map.** Exposing exact thresholds to
     every authenticated banker tells an insider precisely how to structure activity to stay at
-    L1. Recommendation: return the *matched* rationale for a specific proposal, not the whole
+    L1. Recommendation: return the *matched* rationale for a specific approval, not the whole
     threshold table.
 13. **The read surface is itself a privacy event.** Today a banker manually opens five tabs and
     that friction is an implicit control. The Copilot dissolves it — one sentence pulls a
@@ -1573,7 +1882,31 @@ two sessions by design, per §1.3).
 **Resolved 2026-09-04:** service split (two services, .NET `authority-service` — §2.2) ·
 role provisioning in Phase 1 and the role hierarchy (§5.8) · two-session L2 demo (§1.3) ·
 trajectory eval → #333 with the trace-schema requirement (§8.0) · **Q1 — policy version bound
-into the payload hash, execution-time re-evaluation, void only on escalation (§5.3.2)**.
+into the payload hash, execution-time re-evaluation, void only on escalation (§5.3.2)** ·
+**O9 — policy voids persist as `denied` + mandatory `terminalReason`; no `voided` state
+(§5.1.1)** · **`expired` collapsed into `denied` + `TTL_EXPIRED` (§5.1.1)** · **Q2 —
+`payloadHash` display is permanent (§5.3)** · **Q3 — denial reasons required, 20 chars,
+server-side (§5.4.2)** · **Q4 — step-up auth never substitutes for a second human (§5.4.1)**.
+
+**Everything is closed. See the ZERO-open-questions statement below.**
+
+**O9 is closed.** ✅ Policy-voided approvals persist as `denied` with a `terminalReason`; there
+is no first-class `voided` lifecycle state. **Turk's choice stands and my counter-recommendation
+was overruled** — correctly, I think, on the strongest of the three reasons Brian gave: it keeps
+re-plan supersede and policy void the *same shape*, and two similar-but-different terminal paths
+would have drifted apart the first time one of them got a bug fix. The ruling comes with four
+conditions that make the reason load-bearing rather than decorative — mandatory non-nullable
+`terminalReason`, a closed enum, a normative "never aggregate across reasons" rule for every
+consumer, and full recording of the discarded signature. All four are in §5.1.1.
+
+**O9's residual is closed too — `expired` is collapsed.** ✅ I flagged that O9's own logic
+(*fewer states, fewer places to be wrong*) applied equally to `expired`, and declined to act on
+it unilaterally. **Brian ruled: apply the principle uniformly. There is no `expired` state.** TTL
+expiry writes `denied` + `TTL_EXPIRED`. Keeping it would have left the principle half-applied —
+the cost of a rule with none of the consistency — since I-6 already declares expiry to *be* a
+denial. The sweeper is unchanged in behaviour; it writes a different value, not a different
+outcome, and **expiry still means denied, never auto-approved** (§5.1, §5.5). Full ruling in
+§5.1.1.
 
 **Q1 is closed.** ✅ `policyVersion` is bound into the payload hash; the action is re-evaluated
 under the current policy at execution; a higher rung voids the signature, an unchanged or lower
@@ -1582,21 +1915,46 @@ monotonic escalator rule (I-4) applied over time rather than over context — on
 axes. **My original recommendation was symmetric ("void if the rung would change") and was
 wrong**: voiding on a downward change punishes a banker for a policy relaxation and creates
 re-signing churn, when the signature they gave was for strictly more scrutiny than is now
-required. Full ruling, worked example, and pseudocode in §5.3.2. **This was the last unresolved
-correctness question in the approval lifecycle — Turk's Phase 1 signature path is unblocked.**
+required. Full ruling, worked example, and pseudocode in §5.3.2.
 
-**Still open:**
+**Q2 is closed.** ✅ `payloadHash` display in the UI is **permanent**, not a demo affordance. It
+is the most legible security property in the system, it costs one line, and because the hash
+also changes on a policy escalation (§5.3.2) it is what *explains* a re-sign request that would
+otherwise look arbitrary to the banker. §5.3 item 4.
 
-- **Q2.** Is `payloadHash` display in the UI a demo feature or a permanent one? Recommendation:
-  permanent. It is the most legible security property we have and it costs one line. *(Now
-  slightly more load-bearing: under §5.3.2 the hash also changes on a policy escalation, so a
-  visible hash explains a re-sign request that would otherwise look arbitrary.)*
-- **Q3.** Do we require a denial reason? (Risk 11) Recommendation: yes, minimum 20 characters.
-  Now more load-bearing than when first asked, because #333 will want the labels.
-- **Q4.** Does the acting banker's *own* second signature ever suffice at L2 with step-up auth
-  (re-auth / MFA) instead of a second human? Recommendation: **no.** Separation of duties means
-  separation of people — and §5.8.2's decision to keep `admin` outside the banking ladder rests
-  on the same principle. It will be asked; the answer should be on record.
+**Q3 is closed.** ✅ Human denials **require a reason, minimum 20 characters, validated
+server-side** in `authority-service` — and not satisfiable by whitespace or a repeated
+character. The labels feed #333, so they have to be real. §5.4.2.
+
+**Q4 is closed.** ✅ **No.** The acting banker's own second signature never suffices at L2, step-up
+auth and MFA included. The moment step-up auth substitutes for a second human, L2 becomes L1
+wearing a hat and the ladder collapses to a single signature. MFA proves *who* is signing; it
+says nothing about *how many people reviewed*. Those are different controls and one cannot stand
+in for the other. Recorded with reasoning in §5.4.1 **because it will be asked again** — it is
+the most natural efficiency suggestion anyone will make about this system, and it arrives
+sounding reasonable.
+
+### ✅ The epic has ZERO open questions.
+
+Every question raised in this document has been ruled on. Nothing in the design is
+under-specified, nothing is awaiting a decision, and no phase is gated on an answer. What
+remains is genuinely open in a different sense — the **risks** above (1–7) and the **things not
+yet considered** (8–16) are conditions to manage during delivery, not decisions to make before
+it. Two deserve to stay visible rather than being mistaken for closed:
+
+- **Risk 15 — the four-layer defence is currently one-and-a-half layers.** #334 and #336 are
+  filed, verified, and sequenced, but until they land, layers 2 and 3 of §4.4 cannot be built as
+  specified. This is a delivery dependency, not an open question, and it is the most important
+  honest caveat in the document.
+- **Risk 5 — policy-edit blast radius.** The correctness rule is settled (§5.3.2); the
+  operational shape (lazy voiding + eager notification, and the bulk "these were invalidated"
+  surface) is Turk's to design and Linus's to render.
+
+The one thing I would still put in front of Brian is not a question but a **prediction**: the
+first sustained pressure on this design will be a request to make L2 cheaper — batching
+co-signatures, a standing supervisor delegation, or step-up auth again under a new name. §5.4.1
+answers the last of those. The other two do not have answers yet because nobody has asked, and
+they will.
 
 ---
 
@@ -1609,8 +1967,9 @@ correctness question in the approval lifecycle — Turk's Phase 1 signature path
 - [ ] Property-based test proving no escalator combination can lower a rung.
 - [ ] Payload mutation after signature voids the signature; demonstrated in an e2e test.
 - [ ] **Policy escalation while pending voids the signature**: sign at L1, raise the policy so
-      the action requires L2, confirm execution is refused and the proposal returns to
-      `proposed` at L2 with a `POLICY_RUNG_ESCALATED` reason (§5.3.2).
+      the action requires L2, confirm execution is refused, the original goes terminal as
+      `denied` + `POLICY_RUNG_ESCALATED`, and a new L2 approval is linked via
+      `supersededByApprovalId` (§5.3.2, §5.1.1).
 - [ ] **Policy relaxation while pending does NOT void**: sign at L2, lower the policy so the
       action requires L1, confirm the existing signature is honored and the action executes.
       The asymmetry is the ruling; test both directions or you have tested neither.
@@ -1618,15 +1977,39 @@ correctness question in the approval lifecycle — Turk's Phase 1 signature path
       approval record, every signature's hash input, the `approval.required` trace frame, and
       the audit events (§5.3.1).
 - [ ] No path from `signed` to `executed` bypasses the re-evaluation gate (§5.1).
-- [ ] TTL expiry produces `expired`, renders as **Denied (timed out)**, never executes.
+- [ ] TTL expiry produces **`denied` + `TTL_EXPIRED`**, renders as **Denied (timed out)**, and
+      **never executes** — no path exists by which an unsigned, timed-out approval is acted on
+      (I-6). There is no `expired` state anywhere in the codebase; a grep gate enforces it.
+- [ ] **`terminalReason` is mandatory**: a persistence-layer test proves a `denied`
+      record with a null/empty reason **cannot be written** — rejected by the model, not caught
+      by a code review (§5.1.1a).
+- [ ] **`terminalReason` is a closed enum**: no free text, no id embedded in the value.
+      `supersededByApprovalId` is a separate field (§5.1.1b).
+- [ ] **No consumer aggregates across `terminalReason`**: every denial count in audit queries,
+      metrics and UI groups by reason. Test the misleading case explicitly — a burst of policy
+      voids must **not** move a metric labelled as human/agent denial rate (§5.1.1c).
+- [ ] **A policy void records the discarded signature in full** — signer, slot, rung satisfied,
+      and bound policy version present on `ApprovalVoidedByPolicyChange` (§5.7).
+- [ ] A terminal approval document is **immutable**: no `denied → proposed` edge exists;
+      re-proposal always creates a new document linked by `supersededByApprovalId` (§5.1.1).
+- [ ] **No metric labelled as agent or human denial rate includes `TTL_EXPIRED`** — tested
+      explicitly, because a slow afternoon or a broken notification sink must never read as
+      "the agent is getting worse" (§5.1.1c).
+- [ ] **`payloadHash` is on the approval read model the UI consumes** and rendered next to the
+      payload preview as a permanent feature, not behind a demo flag (Q2, §5.3).
+- [ ] **A human denial without a valid reason is rejected with 400 by `authority-service`** —
+      server-side, and not satisfiable by 20 spaces or 20 copies of one character. Tested with
+      both degenerate inputs (Q3, §5.4.2).
+- [ ] **Step-up auth / MFA does not satisfy the second L2 signature** — a negative test proves
+      the acting banker cannot complete their own L2 approval by re-authenticating (Q4, §5.4.1).
 - [ ] L2 requires two distinct identities; same-human double-sign is rejected.
 - [ ] Supervisor prompt-construction test proves no primary-agent output reaches the supervisor.
 - [ ] An agent cannot reach a mutating endpoint without a broker-issued token — proven by a
       negative test that attempts the direct call with the banker JWT and gets 403.
-- [ ] All nine authority event types land in `event-processor` without hitting the
+- [ ] All eleven authority event types land in `event-processor` without hitting the
       `Audit Unknown event type` branch (see #335)
 - [ ] `banker` and `supervisor` roles exist; seed data contains two distinct identities; an
-      `admin` who is the requester **cannot** co-sign their own L2 proposal
+      `admin` who is the requester **cannot** co-sign their own L2 approval
 - [ ] `CopilotEventEnvelope` frames are persisted to `copilot-traces` with redaction applied at
       emit, and a historical run can be replayed offline from them (#333 precondition)
 - [ ] `authority-service` runs under its own workload identity, distinct from the harness (#336)
@@ -1636,7 +2019,87 @@ correctness question in the approval lifecycle — Turk's Phase 1 signature path
 
 ---
 
-## 11. References
+## 11. Cross-document contract
+
+### 11.1 Naming audit, 2026-09-04 — findings
+
+Brian found two naming drifts by grep; a systematic pass over all three documents found **four
+classes**, of which the two flagged were the *smallest*. All are now swept and covered by
+§5.3.1a. Recorded because the pattern matters more than any individual rename.
+
+| # | Drift | Epic (Danny) | Policy engine (Turk) | UI (Linus) | Canonical |
+|---|---|---|---|---|---|
+| 1 | Supersede link | `supersededByProposalId` | `supersededBy` | `supersededBy` **and** `supersededByApprovalId` (self-inconsistent) | **`supersededByApprovalId`** |
+| 2 | Re-plan reason | `PAYLOAD_SUPERSEDED` | `SUPERSEDED_BY_REPLAN` | — | **`PAYLOAD_SUPERSEDED`** |
+| 3 | **Entity noun** | proposal | approval | approval | **approval** (§0.1) |
+| 4 | **Action-type ids** — 5 of 13 disagreed | `account.application.review`, `user.account.lock/unlock`, `transaction.flag.review`, `loan.decision.record` | `account_opening.application.review`, `user.lock/unlock`, `flagged_transaction.review`, `loan.decision` | — | Split by the `<domain>` rule in §0.1 |
+| 5 | Requester field / PK | `actorId` | `requesterId` | — | **`requesterId`** |
+| 6 | Container | `authority-proposals` | `copilot-approvals` | — | **`copilot-approvals`** |
+| 7 | Id prefix | `prop_` | `apr_` | — | **`apr_`** |
+| 8 | Timestamps | `expiresAtUtc`, `resolvedAtUtc` | `expiresAt`, `terminalAt` | `expiresAt` | **`expiresAt`, `terminalAt`** |
+| 9 | Rung / signer fields | `rung`, `signaturesRequired` | `requiredRung`, `requiredSigners` | `requiredRung` | **`requiredRung`, `requiredSigners`** |
+| 10 | Action id field | `actionId` (was `actionTypeId`) | `actionId` | — | **`actionId`** |
+| 11 | Escalators | `matchedEscalators` | `firedEscalators` | `firedEscalators` | **`firedEscalators`** |
+| 12 | Audit event prefix | `ApprovalProposed/Executed/ExecutionFailed` | `ActionProposed/Executed/ExecutionFailed` | — | **`Approval*`** for persisted approvals; `Action*` only where no approval exists |
+| 13 | Co-signature event | `ApprovalCosigned` | folded into `ApprovalSigned` + `slotOrdinal` | — | **Turk's** — no `ApprovalCosigned` |
+| 14 | Trace frame kinds | `tool.started/completed` | `tool.call` / `tool.result` | `tool.started/completed/failed` | **Linus's envelope** (§8.0 already declared it the contract of record) |
+| 15 | Approval SSE frame | `approval.required` | `approval.created` | `approval.required` | **`approval.required`** |
+| 16 | Endpoint prefix | `/api/authority/approvals` | `/api/copilot/approvals` | — | **`/api/authority/*`** (§0.1) |
+| 17 | **session vs run** | both, undefined | `sessionId` only | `runId` only | **Two distinct entities** — defined in §0.1 |
+| 18 | **Lifecycle state union** | 5 states | 5 states | `proposed/pending/signed/denied/`**`expired`**`/`**`void`** | **Four + `executed`** — Linus's `ApprovalState` still carried both states the O9 and TTL rulings collapsed. Corrected in place. |
+| 19 | Signer count field | `requiredSigners` | `signaturesRequired` | **`requiredSignatureCount`** | **`requiredSigners`** — a *fourth* spelling of one concept, found only on the second pass |
+| 20 | Void reason field | `terminalReason` | `terminalReason` | **`voidedReason`** (+ `blockedReason: 'void'`) | **`terminalReason`** (closed enum) + `terminalDetail` (free text) |
+
+**Findings 18–20 are the argument for the contract test, not just for this audit.** They were not
+in the set Brian grepped and they were not in my first pass either — they surfaced only when I
+re-ran the straggler check *after* believing the sweep was complete. #18 is the sharpest: Linus's
+`ApprovalState` union still contained `'expired'` and `'void'`, the two states the TTL and O9
+rulings deleted. **A ruling was ratified in the epic and never propagated to the type that the UI
+would have been built against.** That is not naming drift — that is a ratified decision failing to
+land, and nothing except a mechanical check was ever going to catch it.
+
+**Two of these were materially worse than the naming drift Brian caught:**
+
+- **#4, the action-type ids, is the most dangerous thing in this table.** Those strings are the
+  **primary keys of the policy file**. A mismatch is not a compile error and not a 404 — it is a
+  *silent policy miss*: the lookup fails, and whatever the fallback does becomes the security
+  behaviour. Five of thirteen disagreed. This is the one that would have shipped.
+- **#17, session vs run, was not a drift at all** — they are genuinely two entities and neither
+  document said so, so a reader could not tell whether one concept had two names or two concepts
+  shared one. Left alone, this becomes a data-model bug rather than a rename.
+
+**What I take from it.** Turk and I independently made the *correct* call on the supersede id —
+lift it out of the reason value so the enum stays closed — and then named the result differently.
+**Two people reasoning well, converging on the same design, still produced a broken contract.**
+Shared vocabulary is not a product of everyone being careful; it is a product of something
+checking. Hence §5.3.1a, and hence the docs being grep-gated too — every one of these drifted in
+the documents *first*.
+
+### 11.2 Turk's three findings — confirmed
+
+1. **Supersede id as its own field — agreed**, and independently reached. Naming arbitrated to
+   `supersededByApprovalId` (§0.1). His reasoning is the same as mine: an interpolated value
+   cannot be a member of a closed set, and the anti-aggregation rule (§5.1.1c) depends on the
+   set being closed.
+2. **Persistence-layer enum enforcement is not achievable in Cosmos — accepted, and my §5.1.1(b)
+   wording was too strong.** Cosmos is schemaless; there is no CHECK constraint to lean on. Turk's
+   substitute is the right shape: a repository type that is the **single writer** (no raw
+   `Container.ReplaceItemAsync` anywhere else, enforced by an architecture test), a strongly-typed
+   enum at the boundary, and **readers that fail closed** on an unrecognized value rather than
+   defaulting. The last part is what actually matters — *"unknown reason"* must never silently
+   become *"treat as human denial"*. The guarantee is preserved; the mechanism is application-side
+   because the datastore cannot provide it. I should have written "enforced by the persistence
+   *layer*", not "by the datastore".
+3. **`executed` vs `execution.state` — confirmed, and my document was wrong.** I had
+   `execution_failed` as a terminal lifecycle status; it is not one. A failed execution leaves
+   `status = signed` / `execution.state = failed`, and **a retry needs no new human signature**.
+   That is a security-relevant claim, so §5.1 now states it in the same words as his §8.8 with
+   the same table. I added the half that makes it safe: **a retry re-enters the §5.3.2 gate**, so
+   signatures survive a downstream failure but not a policy escalation.
+
+---
+
+## 12. References
 
 - `.squad/decisions/inbox/copilot-directive-banker-copilot-*.md` — source directives
 - `.squad/decisions/inbox/danny-banker-copilot-decisions-ratified.md` — **Brian's rulings,
