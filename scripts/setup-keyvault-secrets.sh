@@ -20,17 +20,24 @@
 #   terraform -chdir=infra/cloud output -raw resource_group_name   # <app-name>-rg
 #
 # Environment overrides:
-#   JWT_KEY          Raw 32-char JWT signing key (base64-encoded before storing).
-#                    Defaults to a freshly generated value.
-#                    Use `terraform -chdir=infra/cloud output -raw jwt_key` to
-#                    reuse the value Terraform holds in state.
+#   JWT_PRIVATE_KEY_PEM
+#                    RSA private key (PEM) that signs every JWT. Only user-service
+#                    receives it; every other service fetches the public half from
+#                    /.well-known/jwks.json, so validating confers no ability to mint
+#                    (issue #334). Defaults to a freshly generated 2048-bit key.
+#                    Use `terraform -chdir=infra/cloud output -raw jwt_private_key`
+#                    to reuse the value Terraform holds in state.
+#   MEDIATOR_CLIENT_SECRET_AUTHORITY
+#                    Broker client credential for authority-service, the only mediator
+#                    client. Defaults to a freshly generated value.
 #   AZURE_CLIENT_ID  Client ID of a user-assigned managed identity to log in as.
 #                    Pre-set on the jumpbox via /etc/profile.d/banking-demo.sh.
 
 set -euo pipefail
 
 readonly SECRET_NAMES=(
-  jwt-key
+  jwt-private-key
+  mediator-client-secret-authority
   openai-endpoint
   content-understanding-endpoint
   redis-connection-string
@@ -141,19 +148,27 @@ appinsights_conn="$(arm_property "Microsoft.Insights/components" "${APPINSIGHTS_
 cus_endpoint="$(arm_property "Microsoft.CognitiveServices/accounts" "${CUS_NAME}" "2024-10-01" "properties.endpoint")"
 [[ -n "${cus_endpoint}" ]] || die "Could not read the endpoint of Content Understanding account ${CUS_NAME}."
 
-# Matches the value Terraform used to compute (base64 of a 32-char alphanumeric).
-# `cut` rather than `head -c` on purpose: `head` closes the pipe early, which
-# raises SIGPIPE in the upstream process and aborts the script under pipefail.
-if [[ -n "${JWT_KEY:-}" ]]; then
-  jwt_raw="${JWT_KEY}"
+# The signing key is now an RSA private key (issue #334), not a shared secret. It is stored
+# as PEM rather than base64 so that `az keyvault secret show` yields something a human can
+# recognise as a private key and treat accordingly.
+if [[ -n "${JWT_PRIVATE_KEY_PEM:-}" ]]; then
+  jwt_value="${JWT_PRIVATE_KEY_PEM}"
 else
-  jwt_raw="$(LC_ALL=C head -c 512 /dev/urandom | tr -dc 'A-Za-z0-9' | cut -c1-32)"
+  jwt_value="$(openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null)"
 fi
-[[ ${#jwt_raw} -eq 32 ]] || die "Generated JWT key is ${#jwt_raw} chars, expected 32."
-jwt_value="$(printf '%s' "${jwt_raw}" | base64 | tr -d '\n')"
+grep -q 'PRIVATE KEY' <<<"${jwt_value}" || die "JWT signing key is not a PEM private key."
+
+if [[ -n "${MEDIATOR_CLIENT_SECRET_AUTHORITY:-}" ]]; then
+  mediator_value="${MEDIATOR_CLIENT_SECRET_AUTHORITY}"
+else
+  mediator_value="$(LC_ALL=C head -c 1024 /dev/urandom | tr -dc 'A-Za-z0-9' | cut -c1-48)"
+fi
+[[ ${#mediator_value} -eq 48 ]] || die "Generated mediator secret is ${#mediator_value} chars, expected 48."
+
 
 declare -A SECRET_VALUES=(
-  [jwt-key]="${jwt_value}"
+  [jwt-private-key]="${jwt_value}"
+  [mediator-client-secret-authority]="${mediator_value}"
   [openai-endpoint]="https://${FOUNDRY_NAME}.services.ai.azure.com/api/projects/${PROJECT_NAME}"
   [content-understanding-endpoint]="${cus_endpoint}"
   [redis-connection-string]="${redis_host}:10000,ssl=True,abortConnect=False"

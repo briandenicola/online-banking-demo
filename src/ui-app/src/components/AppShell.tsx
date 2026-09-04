@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   AppBar,
@@ -27,13 +27,39 @@ import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import ChatIcon from '@mui/icons-material/Chat';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import TuneIcon from '@mui/icons-material/Tune';
 import LogoutIcon from '@mui/icons-material/Logout';
 import PersonIcon from '@mui/icons-material/Person';
 import AddBusinessIcon from '@mui/icons-material/AddBusiness';
 import { useAuthContext } from '../contexts/AuthContext';
+import { useFeatureFlags } from '../contexts/FeatureFlagContext';
+import FeatureFlagPanel from './FeatureFlagPanel';
 
 interface AppShellProps {
   children: React.ReactNode;
+}
+
+/**
+ * Full-bleed opt-out.
+ *
+ * Every page in this app lives inside a centred `maxWidth="lg"` container, and
+ * that is right for a form or a table. It is wrong for a three-pane work
+ * surface, which needs the whole viewport and manages its own scrolling.
+ *
+ * A page OPTS IN via `useFullBleedSurface()` rather than the shell matching on
+ * route paths, because a route-path list here would have to be kept in sync
+ * with App.tsx by hand, and that kind of duplication is exactly what bit us in
+ * Phase 1.
+ */
+const FullBleedContext = createContext<(value: boolean) => void>(() => undefined);
+
+export function useFullBleedSurface(): void {
+  const setFullBleed = useContext(FullBleedContext);
+  useEffect(() => {
+    setFullBleed(true);
+    return () => setFullBleed(false);
+  }, [setFullBleed]);
 }
 
 const navItems = [
@@ -47,12 +73,22 @@ const navItems = [
 
 const AppShell: React.FC<AppShellProps> = ({ children }) => {
   const { user, logout, isAdmin } = useAuthContext();
+  const { isEnabled } = useFeatureFlags();
   const navigate = useNavigate();
   const location = useLocation();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [fullBleed, setFullBleed] = useState(false);
   const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
+  const [flagPanelOpen, setFlagPanelOpen] = useState(false);
+
+  // Both admin surfaces are shown when both flags are on — that coexistence is
+  // deliberate, not a transitional accident. Running the same task on each is
+  // the only way the "the harness is better" claim can be checked rather than
+  // asserted. See docs/design/banker-copilot-ui.md §11.
+  const showClassicAdmin = isAdmin && isEnabled('classicAdminTabs');
+  const showCopilot = isAdmin && isEnabled('bankerCopilot');
 
   React.useEffect(() => {
     const loadAvatar = async () => {
@@ -135,15 +171,26 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
           {isMobile && <Box sx={{ flexGrow: 1 }} />}
 
-          {/* Admin Button — only for admin role */}
-          {isAdmin && (
+          {/* Admin surfaces — role-gated AND flag-gated. During coexistence both
+              can be visible at once; that is the comparison, not a bug. */}
+          {showCopilot && (
+            <Button
+              color="inherit"
+              startIcon={<AutoAwesomeIcon />}
+              onClick={() => navigate('/copilot')}
+              sx={{ mr: 1, opacity: 0.9, '&:hover': { opacity: 1 } }}
+            >
+              {!isMobile && 'Copilot'}
+            </Button>
+          )}
+          {showClassicAdmin && (
             <Button
               color="inherit"
               startIcon={<AdminPanelSettingsIcon />}
               onClick={() => navigate('/admin')}
               sx={{ mr: 1, opacity: 0.9, '&:hover': { opacity: 1 } }}
             >
-              {!isMobile && 'Admin'}
+              {!isMobile && (showCopilot ? 'Classic Admin' : 'Admin')}
             </Button>
           )}
 
@@ -183,19 +230,33 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
               <ListItemIcon><PersonIcon fontSize="small" /></ListItemIcon>
               <ListItemText>Settings</ListItemText>
             </MenuItem>
+            {isAdmin && (
+              <MenuItem onClick={() => { handleMenuClose(); setFlagPanelOpen(true); }}>
+                <ListItemIcon><TuneIcon fontSize="small" /></ListItemIcon>
+                <ListItemText>Surfaces &amp; flags</ListItemText>
+              </MenuItem>
+            )}
             <MenuItem onClick={handleLogout}>
               <ListItemIcon><LogoutIcon fontSize="small" /></ListItemIcon>
               <ListItemText>Sign Out</ListItemText>
             </MenuItem>
           </Menu>
+
+          <FeatureFlagPanel open={flagPanelOpen} onClose={() => setFlagPanelOpen(false)} />
         </Toolbar>
       </AppBar>
 
       {/* Main Content */}
-      <Box component="main" sx={{ flexGrow: 1, pb: isMobile ? 8 : 0 }}>
-        <Container maxWidth="lg" sx={{ py: 4 }}>
-          {children}
-        </Container>
+      <Box component="main" sx={{ flexGrow: 1, pb: isMobile ? 8 : 0, minHeight: 0 }}>
+        <FullBleedContext.Provider value={setFullBleed}>
+          {fullBleed ? (
+            children
+          ) : (
+            <Container maxWidth="lg" sx={{ py: 4 }}>
+              {children}
+            </Container>
+          )}
+        </FullBleedContext.Provider>
       </Box>
 
       {/* Mobile Bottom Navigation */}

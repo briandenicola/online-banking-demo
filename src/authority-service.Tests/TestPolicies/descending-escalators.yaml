@@ -1,0 +1,140 @@
+apiVersion: authority/v1
+
+# =========================================================================================
+# TEST FIXTURE — a deliberately adversarial policy, loaded through the REAL PolicyLoader and
+# evaluated by the REAL PolicyEvaluator.
+#
+# Why this file exists.
+#
+# The monotonicity property test over config/authority-policy.yaml passed even when I
+# deliberately replaced the combinator `rung = RungOrder.Max(rung, raised)` with
+# `rung = raised` (last-writer-wins). It passed because EVERY escalator in the shipping policy
+# uses `raiseBy: 1` — under a purely relative, always-ascending rule set, last-wins and max are
+# numerically identical. The test was not wrong; it was blind, because the production data could
+# not express the failure.
+#
+# That is the textbook false pass: a property test whose generator cannot reach the counter-
+# example. The fix is not a better assertion, it is better inputs — so this fixture supplies the
+# descending pairs the real policy happens not to contain. If someone later adds an absolute
+# `raiseTo` escalator to production (which the grammar allows), this fixture is what will have
+# been guarding the combinator all along.
+# =========================================================================================
+
+metadata:
+  policyId: tamper-fixture-descending-escalators
+  effectiveFrom: "2026-01-01T00:00:00Z"
+  owner: livingston-qa
+  description: >
+    Fixture policy exercising rung combination order. Not deployed anywhere.
+
+defaults:
+  approvalTtl: fixture_ttl
+  unknownAction: deny
+  ttlExpiryOutcome: denied
+  currencyScale: 2
+  retentionSeconds: fixture_retention
+  evidenceRequired: []
+  batchApproval:
+    enabled: false
+    maxItems: fixture_batch_max
+    sameActionTypeOnly: true
+    maxRung: L1
+
+thresholds:
+  fixture_ttl:
+    kind: duration_seconds
+    default: "1800"
+    env: FIXTURE_TTL
+    description: TTL for the fixture action.
+
+  fixture_retention:
+    kind: duration_seconds
+    default: "7776000"
+    env: FIXTURE_RETENTION
+    description: Retention for the fixture.
+
+  fixture_batch_max:
+    kind: count
+    default: "25"
+    env: FIXTURE_BATCH_MAX
+    description: Unused; batch is disabled.
+
+evidence: {}
+
+# Seniority is CONSUMED from the ratified role-hierarchy.yaml, never declared here, and a claim
+# may only be a spelling of its own role's name. Both rules are startup errors, not ignored keys.
+# `admin` is absent: it carries banking seniority 0, so the loader would refuse to admit it to an
+# in-harness rung.
+signerRoles:
+  banker:
+    claimValues: [banker, Banker]
+  supervisor:
+    claimValues: [supervisor, Supervisor]
+
+rungs:
+  L1:
+    requiredSigners: 1
+    signerRoles: [banker, supervisor]
+    proposable: true
+
+  L2:
+    requiredSigners: 2
+    signerRoles: [banker, supervisor]
+    cosignerRoles: [supervisor]
+    requiresIndependentSecondOpinion: true
+    proposable: true
+
+  # Off the ladder, not further up it. Platform authority, not banking seniority.
+  L3:
+    requiredSigners: 2
+    outOfHarness: true
+    platformRoles: [admin]
+    signerRoles: []
+    cosignerRoles: []
+    proposable: false
+    reason: Out-of-harness action.
+
+# The escalators are ordered so that the LAST one to fire is the WEAKEST. Under a correct
+# max-combinator the outcome is L3 regardless of order; under last-writer-wins it collapses to
+# the final escalator's rung.
+escalators:
+  - id: zz-strong-first
+    description: Fires first and demands the highest rung.
+    when: { field: context.selfDealing, op: isTrue }
+    raiseTo: L3
+    reasonTemplate: >
+      Strong escalator fired.
+
+  - id: zz-weak-second
+    description: Fires second and asks for less. Must not be able to undo the first.
+    when: { field: customer.riskTier, op: in, values: [high] }
+    raiseTo: L2
+    reasonTemplate: >
+      Weak escalator fired.
+
+actionTypes:
+  fixture.action:
+    displayName: Fixture action
+    baseRung: L1
+    baseSigners: 1
+    agentMayPropose: true
+    approvalTtl: fixture_ttl
+    target:
+      service: fixture-service
+      method: POST
+      path: /api/fixture
+    hashFields: [subject, decision]
+    moneyFields: []
+    requiredEvidence: []
+    # Same trap at the action-rule level: strong rule declared before the weak one.
+    rules:
+      - id: strong-rule-first
+        when: { field: decision, op: eq, value: severe }
+        raiseTo: L3
+        reasonTemplate: >
+          Strong rule fired.
+      - id: weak-rule-second
+        when: { field: decision, op: eq, value: severe }
+        raiseTo: L2
+        reasonTemplate: >
+          Weak rule fired, and must not lower the outcome.

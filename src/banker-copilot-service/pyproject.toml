@@ -1,0 +1,42 @@
+[tool.poetry]
+name = "banker-copilot-service"
+version = "1.0.0"
+description = "Banker Copilot agentic harness — registers ZERO write tools; propose_action is the sole write affordance"
+authors = ["Online Banking Demo"]
+packages = [{include = "app"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = ">=0.115,<0.140"
+uvicorn = ">=0.32,<0.52"
+pydantic = "^2.9.0"
+python-dotenv = "^1.0.0"
+structlog = ">=24.1,<27.0"
+PyJWT = {version = "^2.8.0", extras = ["crypto"]}
+httpx = ">=0.27,<0.29"
+PyYAML = "^6.0"
+jsonschema = "^4.23.0"
+opentelemetry-api = "^1.27.0"
+opentelemetry-sdk = "^1.27.0"
+opentelemetry-exporter-otlp = "^1.27.0"
+opentelemetry-instrumentation-fastapi = ">=0.46b0"
+opentelemetry-instrumentation-httpx = ">=0.46b0"
+azure-identity = "^1.17.0"
+azure-cosmos = "^4.7.0"
+azure-core = "^1.32.0"
+# Pinned to match src/ai-service/pyproject.toml exactly. Two services running different
+# Agent Framework versions is a difference nobody notices until a trace shape diverges.
+agent-framework-core = "1.16.0"
+agent-framework-foundry = "1.10.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.3,<10.0"
+pytest-asyncio = ">=0.24,<2.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

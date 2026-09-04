@@ -64,3 +64,59 @@ variable "jumpbox_ssh_public_key_path" {
   type        = string
   default     = "~/.ssh/id_rsa.pub"
 }
+
+#############################################
+# BANKER COPILOT — authority-service platform wiring (epic #332, Phase 1)
+#############################################
+
+variable "kubernetes_namespace" {
+  description = "Kubernetes namespace the banking workloads are deployed into. Used to build workload-identity federated credential subjects."
+  type        = string
+  default     = "banking-demo"
+}
+
+variable "authority_service_service_account" {
+  description = "Kubernetes service account name bound to the dedicated authority-service workload identity (#336). Deliberately NOT the shared banking-workload-identity account — a distinct service account is what makes the isolation a control rather than a naming convention."
+  type        = string
+  default     = "authority-workload-identity"
+}
+
+variable "bootstrap_supervisor_email" {
+  description = "Email address of the identity seeded with the `supervisor` role at user-service startup. Role promotion to supervisor is itself an L3 action and therefore cannot be performed through the Copilot harness, so the first supervisor must be provisioned out of band. Seeding is idempotent and is skipped entirely once any supervisor exists."
+  type        = string
+  default     = "supervisor@banking-demo.com"
+}
+
+variable "bootstrap_banker_email" {
+  description = "Email address of the identity seeded with the `banker` role. Separation of duties needs two DISTINCT real identities to be demonstrable, so the banker is seeded alongside the supervisor rather than reusing one account."
+  type        = string
+  default     = "banker@banking-demo.com"
+}
+
+#############################################
+# BANKER COPILOT — harness platform wiring (epic #332, Phase 2)
+#############################################
+
+variable "banker_copilot_service_account" {
+  description = "Kubernetes service account name bound to the dedicated banker-copilot-service workload identity (#336). Distinct from both the shared banking-workload-identity account and the authority-service account: the two-service split of epic §2.1 is only a control if the harness cannot obtain authority-service's token."
+  type        = string
+  default     = "banker-copilot-workload-identity"
+}
+
+variable "copilot_session_retention_seconds" {
+  description = "Cosmos default TTL for copilot-sessions documents. A session is a conversation, not a record of a decision — the decision lives in copilot-approvals, which has its own retention. Configuration, never a literal in code."
+  type        = number
+  default     = 2592000 # 30 days, matching ChatSessions
+}
+
+variable "copilot_artifact_retention_seconds" {
+  description = "Cosmos default TTL for copilot-artifacts documents. Held as long as the trace that references them, so a replayed run can still resolve its artifact ids."
+  type        = number
+  default     = 7776000 # 90 days, matching Approval__RetentionSeconds
+}
+
+variable "copilot_trace_retention_seconds" {
+  description = "Cosmos default TTL for copilot-traces frames. The trace is the eval input for #333, so this is the size of the eval corpus: raise it for a longer regression baseline, lower it to bound demo storage. Deliberately not -1 — an immortal per-frame container in a serverless demo account is a cost surprise, and an unconfigurable retention is a code change waiting to happen."
+  type        = number
+  default     = 7776000 # 90 days
+}

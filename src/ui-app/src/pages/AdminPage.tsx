@@ -29,6 +29,7 @@ import FlaggedTransactionsTab, {
   FlaggedTransaction,
 } from '../components/FlaggedTransactionsTab';
 import AllTransactionsTab, { ScoredTransaction } from '../components/AllTransactionsTab';
+import TaskMeasurementBar from '../components/comparison/TaskMeasurementBar';
 
 interface AdminStats {
   totalFlagged: number;
@@ -51,6 +52,25 @@ function formatRiskScore(value: number | null | undefined): string {
   }
   return value.toFixed(2);
 }
+
+/**
+ * Tab identity for the surface comparison.
+ *
+ * A "region" is a place the user must move their attention to. In Classic Admin
+ * that is a tab; in the Copilot harness it is a pane. Moving between two of them
+ * is one context switch on either surface — the same rule, applied to whatever
+ * each surface actually makes you traverse.
+ */
+const ADMIN_TABS: { label: string; regionId: string }[] = [
+  { label: 'Account Applications', regionId: 'admin-applications' },
+  { label: 'User Management', regionId: 'admin-users' },
+  { label: 'All Transactions', regionId: 'admin-transactions' },
+  { label: 'Flagged Transactions', regionId: 'admin-flagged' },
+  { label: 'Chatbot Prompt', regionId: 'admin-prompt' },
+  { label: 'AI Evaluation', regionId: 'admin-eval' },
+  { label: 'Login Audit', regionId: 'admin-audit' },
+  { label: 'System Health', regionId: 'admin-health' },
+];
 
 const AdminPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState(0);
@@ -205,45 +225,65 @@ const AdminPage: React.FC = () => {
         </Grid>
       )}
 
-      {/* Tab Navigation */}
+      {/*
+        Tab Navigation.
+
+        Each tab declares itself a `data-comparison-region`, and so does the
+        panel it reveals. That attribute is the ONLY instrumentation in this
+        file: the counting rules live in TaskMeasurementBar and are shared
+        verbatim with the Copilot harness. Classic Admin is not counted more
+        coarsely than the harness, and it is not counted more finely either —
+        which is the whole reason the recorder sat unused through Phase 1.
+      */}
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
         <Tabs value={activeTab} onChange={(_, newValue) => setActiveTab(newValue)}>
-          <Tab label="Account Applications" />
-          <Tab label="User Management" />
-          <Tab label="All Transactions" />
-          <Tab label="Flagged Transactions" />
-          <Tab label="Chatbot Prompt" />
-          <Tab label="AI Evaluation" />
-          <Tab label="Login Audit" />
-          <Tab label="System Health" />
+          {ADMIN_TABS.map((tab) => (
+            <Tab key={tab.regionId} label={tab.label} data-comparison-region={tab.regionId} />
+          ))}
         </Tabs>
       </Box>
 
-      {activeTab === 0 && <AdminApplicationsTab />}
-      {activeTab === 1 && <AdminUserManagementTab />}
+      <Box data-comparison-region={ADMIN_TABS[activeTab]?.regionId || 'admin'}>
+        {activeTab === 0 && <AdminApplicationsTab />}
+        {activeTab === 1 && <AdminUserManagementTab />}
 
-      {activeTab === 2 && (
-        <AllTransactionsTab
-          transactions={allTransactions}
-          onRefresh={fetchData}
-          onError={setError}
-        />
-      )}
+        {activeTab === 2 && (
+          <AllTransactionsTab
+            transactions={allTransactions}
+            onRefresh={fetchData}
+            onError={setError}
+          />
+        )}
 
-      {activeTab === 3 && (
-        <FlaggedTransactionsTab
-          transactions={flaggedTransactions}
-          onRefresh={fetchData}
-          onError={setError}
-        />
-      )}
+        {activeTab === 3 && (
+          <FlaggedTransactionsTab
+            transactions={flaggedTransactions}
+            onRefresh={fetchData}
+            onError={setError}
+          />
+        )}
 
-      {activeTab === 4 && <AdminChatbotPromptTab />}
-      {activeTab === 5 && <AdminEvalTab />}
-      {activeTab === 6 && <AdminLoginAuditTab />}
-      {activeTab === 7 && <AdminFoundryStatusTab />}
+        {activeTab === 4 && <AdminChatbotPromptTab />}
+        {activeTab === 5 && <AdminEvalTab />}
+        {activeTab === 6 && <AdminLoginAuditTab />}
+        {activeTab === 7 && <AdminFoundryStatusTab />}
+      </Box>
     </Box>
   );
 };
 
-export default AdminPage;
+/**
+ * Classic Admin, wrapped in the shared measurement harness.
+ *
+ * Same component, same props, same rules as the Copilot surface. Wrapping at
+ * the page boundary rather than sprinkling callbacks through the eight tabs is
+ * deliberate: there is no place in this file where someone could quietly add or
+ * drop a count on one surface only.
+ */
+const InstrumentedAdminPage: React.FC = () => (
+  <TaskMeasurementBar surface="classic">
+    <AdminPage />
+  </TaskMeasurementBar>
+);
+
+export default InstrumentedAdminPage;

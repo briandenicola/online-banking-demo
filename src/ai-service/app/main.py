@@ -1,6 +1,7 @@
 """
 AI-powered Anomaly Detection Service using Azure AI Foundry.
 """
+import contextlib
 import uuid
 
 import structlog
@@ -9,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
+from app.auth import assert_token_configuration
 from app.config import CorrelationIdMiddleware, configure_logging, init_telemetry
 from app.routes import router as api_router
 from app.services.anomaly_service import lifespan
@@ -17,7 +19,18 @@ configure_logging()
 logger = structlog.get_logger("ai-service")
 init_telemetry()
 
-app = FastAPI(title="Anomaly Detection Service", version="2.0.0", lifespan=lifespan)
+# Token posture is checked before anything else can serve a request (issue #334). Fail closed:
+# a service that boots holding a retired symmetric secret, or holding signing material it has
+# no business having, looks healthy while misrepresenting its own security posture.
+@contextlib.asynccontextmanager
+async def _guarded_lifespan(_app: FastAPI):
+    assert_token_configuration("ai-service")
+    async with lifespan(_app):
+        yield
+
+
+app = FastAPI(title="Anomaly Detection Service", version="2.0.0", lifespan=_guarded_lifespan)
+
 
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(

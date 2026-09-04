@@ -799,3 +799,220 @@ Issues #137 (eval failures) and #130 ("AI Calls Today" counter stuck at 0) are n
 - **Why:** MUI v9 .mjs modules import react-transition-group without extensions, hitting webpack 5's fullySpecified enforcement in react-scripts 5.0.1. CRACO disables fullySpecified for .m?js files.
 - **Cloud build impact:** Azure ACR builds now succeed. Docker multi-stage build flow unchanged (craco.config.js included in COPY).
 - **Decision recorded:** See `.squad/decisions.md` (2026-06-18) "UI Build Fix — CRACO Webpack Override for MUI v9 ESM Resolution".
+
+---
+
+## 2026-09-04 — Banker Copilot Phase 1 test suite and adversarial review (epic #332)
+
+**Branch:** `squad/332-banker-copilot` · **Delivered:** 209 tests, 17 tamper cases, test plan doc
+**Deliverables:** `src/authority-service.Tests/` · `docs/design/banker-copilot-phase1-test-plan.md` · `tamper-test.py`
+
+### Learnings
+
+**1. Write the specification as an executable oracle when the code does not exist yet.**
+Turk's service did not exist when I started. Instead of pseudocode or `[Fact(Skip=...)]`, I built
+a spec-derived reference implementation in `Spec/` — lifecycle, canonicalisation, hashing,
+execution gate, store — behind an `IPolicyEvaluator` seam. It found three specification defects
+before any production code existed. But keep the boundary brutally clear: a green oracle test
+proves the *spec* is coherent, never that anyone implemented it. I kept `Production/` in a
+separate directory so nobody can mistake one for the other.
+
+**2. `[Fact(Skip=...)]` is the most dangerous artefact in a test repo.** It is invisible in a
+green run and it stays skipped long after its blocker clears. Replacement: a
+`pending-integration.manifest.json` ledger that tests RUN against and FAIL when a claim stops
+being true. It fired exactly as designed when Turk's and Rusty's code landed mid-session. I then
+made it two-directional — `status: landed` entries flip from tripwire into regression guard — so
+the ledger keeps earning its keep instead of decaying into a to-do list.
+
+**3. Three false passes, each caught only by a redundant guard.** Worth memorising the shapes:
+- *Empty-loop vacuum*: "every admissible action needs a human" iterated over zero actions,
+  because the evaluator returns `UnderEvidenced` before any policy maths and my contexts had no
+  evidence. Only `admissible.Should().BeGreaterThan(0)` exposed it. **Always assert your loop
+  had something in it.**
+- *Unreachable counter-example*: the monotonicity property over the real policy stayed green when
+  I replaced the combinator with last-writer-wins — because every shipping escalator uses
+  `raiseBy: 1`, under which "max" and "last" are the same number. The property was true of the
+  data, not of the code. Fix was better inputs, not a better assertion: a fixture policy with
+  descending absolute `raiseTo` escalators.
+- *Unobserved guard*: disabling the negative-`raiseBy` check changed nothing in a 184-test run.
+  The guard was correct, load-bearing and completely untested. A monotonicity suite that asserts
+  the theorem while ignoring its hypothesis is half a suite.
+
+**4. Tamper-testing is the only thing that distinguishes a guard from a hope.** 17 guards, 15
+proven. Two were shown **REDUNDANT** rather than unproven — production protects monotonicity
+twice (outer `Max` fold and inner `var result = current`), so breaking either alone is
+undetectable. That is real defence in depth, but it means a single-point regression there is
+silent. Automate the loop (`tamper-test.py`): mutate → run one named test → require red → restore
+→ assert SHA-256. Never do it by hand; a manual revert eventually misses one.
+
+**5. Prefer unrepresentable over rejected.** Making `Approval.Status` *derived* means a reasonless
+`denied` cannot be constructed, rather than being validated away. Making `ExecutionAuthorization`'s
+constructor private with only a nested gate able to mint one means a bypass fails to **compile**.
+This is the real answer to "assert the absence of a path, not the presence of a check" — and two
+of my tamper cases came back PROVEN_BY_COMPILER, which is a stronger result than a red test.
+
+**6. The best control is sometimes the absence of a parameter.** I raised `VerifyStoredHash`
+re-hashing the stored payload as a tautology (F-2), then looked for what actually holds the line:
+`ExecuteAsync` takes **no payload**, so there is no attacker-controlled input. That makes the
+parameter list a load-bearing security property, and it now has a test that fails if someone adds
+a helpful `updatedPayload` overload.
+
+**7. Cross-artifact defects are invisible from inside either artifact.** F-7b: user-service says
+the `user` role has seniority 0; `authority-policy.yaml` maps the `user` claim into the `banker`
+signer role at seniority 1. Both files are locally defensible. The composition means an ordinary
+customer's token satisfies an L1 signature. Nothing errors, nothing logs, and no single-service
+test could ever see it. **Test the seams, not just the components.**
+
+**8. Production moved under me twice mid-session** — `PolicyDecision.DistinctIdentitiesRequired`
+was removed and rung-level `distinctIdentities` was retired in favour of per-slot
+`mustDifferFrom`. Both were improvements, and my tests failing was the correct outcome. Lesson:
+when a test breaks because a mechanism was replaced, re-express the *property* against the new
+mechanism rather than restoring the old assertion. The rewritten version is stronger — distinct
+identity is now *derived* from emitted slots, so an empty `mustDifferFrom` fails immediately,
+where a config head-count could not have detected it.
+
+**9. Narrow gates with documented blind spots beat broad gates that get muted.** My "no hardcoded
+thresholds" scan initially flagged a validation *error message* explaining there is no `expired`
+state. A gate that flags the code explaining the rule is a gate people delete. I narrowed it and
+recorded both exemptions in comments with reasons, rather than widening the regex silently.
+
+**10. Two test projects now exist against one service** — mine (`authority-service.Tests`, 209,
+spec oracle + production/differential) and Turk's (`authority-service.UnitTests`, 99, unit). Both
+green. They should be folded together, but neither of us should do it to the other mid-flight.
+
+**Findings raised (not fixed):** F-7/F-7b (customer claim → banker signer role — **High**),
+F-2 (stored-payload hash tautology), F-9 (`RaiseBy` integer overflow into a negative rung),
+F-1 (escalator grammar drift), F-4 (repeat-unit bound escape), F-5, F-6, F-3, F-10.
+
+**Biggest gap that is nobody's bug:** #334 (one shared HS256 key across eleven pods) and #336
+(one shared workload identity) mean §4.4's four-layer defence is one-and-a-half layers. Anything
+that can reach Cosmos can forge a signed approval document, and every test in my suite would
+still pass. The authority service's guarantees are conditional on those two issues.
+
+**No CI runs any of this.** Three §10 criteria say "verified by a grep gate in CI"; no workflow in
+this repo builds or tests any .NET project. A suite outside a gate is a suggestion.
+
+---
+
+## Phase 2 — Banker Copilot, the service split (`squad/332-banker-copilot`)
+
+**Suite:** `src/banker-copilot-service.Tests/` — 215 passing, 2 strict-xfail defects, 0 skipped.
+**Tamper:** `tamper-test.py`, 13 guards, 13 PROVEN.
+**Plan:** `docs/design/banker-copilot-phase2-test-plan.md`. **Findings:** `.squad/decisions/inbox/livingston-phase2-qa.md`.
+
+**11. Tamper-testing found three false passes in my own tests, not in production.** Four guards
+came back REDUNDANT; three of those were my assertions failing to observe a perfectly good guard.
+`"/runId" in block` was satisfied by the *indexing* paths in the same Terraform block. Grepping
+`copilotStream.ts` for `Authorization` was satisfied by the comment explaining why `EventSource`
+cannot send that header. Asserting a field was "rejected" was satisfied by the unknown-field
+allowlist, so deleting the reasoned by-name refusal was unobservable. Three of thirteen
+assertions were decorative and reading them would never have told me which three. **A REDUNDANT
+verdict is a hypothesis about my test first, and about production second.** That is the inverted
+default from Phase 1 and it is the right one.
+
+**12. Equality is the wrong assertion for a replay contract.** F2-6 — the stream re-subscribed and
+replayed the whole backlog twice — was *invisible* to `live == replayed`, because both sides
+duplicated identically. It fell out of asserting strict monotonicity of the resumed sequence.
+Where two representations must agree, also assert each is internally well-formed; agreement
+between two equally-corrupted views is not fidelity.
+
+**13. Strict xfail is the honest way to record a defect I am not allowed to fix.** Three defects
+went in as `xfail(strict=True)` naming the finding. Turk fixed F2-6 mid-session and the marker
+turned RED (XPASS), which told me within one run. A skip would have said nothing, forever. Strict
+xfail cannot outlive the defect — that is the whole property.
+
+**14. Read expectations out of the spec at runtime; do not transcribe them.** `conftest.py` parses
+the §3.3 manifest and the §4.2 kind union straight out of the documents. This is the mechanical
+answer to my Phase 1 `ProductionRoleModelTests` failure, where I hand-wrote the vulnerable model
+into a passing test. Transcription is where the drift enters; parsing cannot drift. It also
+produced F2-1 and F2-4 for free — the spec's own example does not load, and the epic schema and
+the shipping loader refuse each other by name.
+
+**15. When spec and implementation disagree, pin the disagreement.** F2-4 is the epic's tool
+schema versus the loader's, mutually incompatible. The tempting move is to test what runs. The
+correct move is a test that asserts they conflict, and a request for arbitration. Testing what
+runs is how a suite comes to defend a defect.
+
+**16. A gate must not fail on its own rationale.** My cosigner gate fired on Turk's rejection map
+and Linus's "NOTE THE ABSENCE" comment. A gate that punishes the refusal teaches people to delete
+the refusal — which is the only thing enforcing the rule. Exempted comments and by-name refusals,
+and moved the behavioural proof to a separate test. Same lesson as #9, second time around, so it
+is not situational.
+
+**17. A hang is not a pass.** The first tamper run blocked for eight minutes: a broken ownership
+check let a request wait out the session TTL instead of returning 404. The harness now bounds each
+run and reports a hang as PROVEN-by-hang. Any harness that waits on tampered code needs a timeout,
+or the tamper silently becomes a skip.
+
+**Findings raised (not fixed):** F2-7 (path-parameter traversal — model-controlled arguments
+escape the declared path; **medium-high**), F2-5 (no invoke-time read-method guard), F2-6
+(duplicate backlog — **fixed by Turk this session**), F2-4 (epic vs loader schema, needs Danny),
+F2-2/F2-3 (envelope drift: `approval.voided` vs `approval.terminal`; no model-call kind for §8.0's
+token counts), F2-1 (§3.3's worked manifest does not load).
+
+**Largest untested assumption, and I cannot close it from here:** a read tool whose GET has a side
+effect. The manifest guarantees the method, not the downstream's honesty about it. Twelve routes
+across six services need a side-effect-free assertion in *their* suites.
+
+**Still no CI.** Same refusal as Phase 1, same reason: no workflow in this repo builds or tests any
+service. Five Phase 2 criteria are ledgered rather than ticked.
+
+### Phase 2 follow-up round — epic #332
+
+**18. JSON Schema `pattern` is a search, not a full match.** `[A-Za-z0-9_-]+`
+matches `../../admin` — it finds `admin` inside — and reads in code review as
+exactly the right fix for a traversal bug. The obvious repair would have been a
+silent no-op. Never assert that a pattern *exists*; compile it and require it to
+**refuse** a hostile corpus. And keep my corpus independent of the
+implementation's own: a shared corpus makes a hole in it invisible from both
+sides.
+
+**19. A test that cannot pass proves as little as one that cannot fail.** Mine
+reached into `registry._by_id`, an attribute the class does not have. It raised
+`AttributeError` identically whether the guard worked or was broken. The tell is
+that the failure output never changes — if I have never watched a test go red for
+the *right* reason, I have not tested anything. Third instance this epic, twice
+mine.
+
+**20. Do not transcribe production types into tests.** Hand-building a `ReadTool`
+broke the moment `display_name` was added. Deriving the adversarial object from a
+real shipping one with `dataclasses.replace` is both robust to drift and makes
+the rogue maximally plausible — valid in every respect except the property under
+test, which is what an actual mistake looks like.
+
+**21. Test scaffolding drifts from the spec too, and nothing checks it.** My
+fixtures were still exporting `JWT_KEY` and minting HS256 long after RS256
+landed. I caught it only because the service **refuses to start** when it finds a
+retired variable. Had it been ignored, my suite would have gone on passing
+against a configuration that no longer ships. Fail-closed is worth more than
+fail-safe precisely because it catches the people holding the safety net. I now
+assert the suite's own environment is clean.
+
+**22. Also: never export a key to make a fixture convenient.** The property under
+test was "the harness holds no signing material". Putting a private key in the
+environment to mint tokens would have switched that property off for the whole
+run while everything downstream stayed green. The private half lives in a module
+variable; only the public half reaches the environment.
+
+**23. `CosmosSDKVersionTests` — the purest specimen this epic.** It hardcoded the
+author's repo path *and returned success when the audited file was missing*, so
+the Issue #35 security audit either errored or passed vacuously on every machine
+but one. All three of us dismissed those four failures as environmental noise for
+an entire session. Two lessons: a security check must fail closed when its
+subject is absent, and **persistent "known environmental" failures deserve one
+real look** — they are excellent camouflage.
+
+**24. Watch how a test fails, not just whether.** F2-9 surfaced as a *collection*
+error in CI, which reads as a broken build rather than a finding. A security
+suite that fails in a way that looks like infrastructure noise is a suite someone
+will eventually switch off. Also: `session-ownership` tampering makes the request
+**hang** rather than answer wrongly. It still counts as proven, but a hang is a
+less crisp red than an assertion and I recorded that rather than letting the
+PROVEN column imply more than it does.
+
+**25. A guard reached by a glob is a guard with an ordering dependency.** CI's
+`src/*/tests` put my test project before the service it tests, because `.` sorts
+before `/`. I verified it by running the shell, not by reasoning — and good
+thing, since `sorted(Path.glob(...))` disagrees with bash and would have had me
+assert against a machine that does not exist. **When a test encodes a fact about
+another tool's behaviour, get the fact from that tool.**

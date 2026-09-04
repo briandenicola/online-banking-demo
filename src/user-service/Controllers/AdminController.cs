@@ -22,14 +22,38 @@ public class AdminController : ControllerBase
     }
 
     /// <summary>
-    /// Promotes a user to admin by email or userId.
+    /// Grants a role to a user identified by email or userId. Defaults to
+    /// <c>admin</c> when no role is supplied, preserving the original
+    /// promote-to-admin behaviour.
     /// Requires an existing admin's JWT. For initial bootstrap, set the
     /// Admin__BootstrapEmail environment variable — the matching user is
-    /// auto-promoted at startup.
+    /// auto-promoted at startup. The first `supervisor` is seeded the same way
+    /// via Authority__BootstrapSupervisorEmail, because promotion to supervisor
+    /// is itself an L3 action and cannot be performed through the harness
+    /// (epic #332 §5.8.3).
     /// </summary>
     [HttpPost("promote")]
     public async Task<IActionResult> PromoteToAdmin([FromBody] PromoteRequest request)
     {
+        var role = string.IsNullOrWhiteSpace(request.Role)
+            ? global::UserService.Constants.Roles.Admin
+            : request.Role.Trim().ToLowerInvariant();
+
+        if (!UserService.Services.UserService.IsGrantableRole(role))
+        {
+            return BadRequest(new
+            {
+                error = $"'{request.Role}' is not a grantable role",
+                grantableRoles = new[]
+                {
+                    global::UserService.Constants.Roles.Admin,
+                    global::UserService.Constants.Roles.Supervisor,
+                    global::UserService.Constants.Roles.Banker,
+                    global::UserService.Constants.Roles.User
+                }
+            });
+        }
+
         // Resolve target user by email or userId
         UserService.Models.User? targetUser = null;
         if (!string.IsNullOrWhiteSpace(request.Email))
@@ -50,13 +74,15 @@ public class AdminController : ControllerBase
 
         try
         {
-            var promoted = await _userService.PromoteToAdminAsync(targetUser.Id);
+            var promoted = role == global::UserService.Constants.Roles.Admin
+                ? await _userService.PromoteToAdminAsync(targetUser.Id)
+                : await _userService.GrantRoleAsync(targetUser.Id, role);
 
             var promotedBy = User.FindFirst(global::UserService.Constants.ClaimNames.UserId)?.Value ?? "unknown";
 
             _logger.LogWarning(
-                "ADMIN PROMOTION: User {TargetUserId} ({TargetEmail}) promoted to admin by {PromotedBy}",
-                promoted.Id, promoted.Email, promotedBy);
+                "ROLE GRANT: User {TargetUserId} ({TargetEmail}) granted role {Role} by {PromotedBy}",
+                promoted.Id, promoted.Email, promoted.Role, promotedBy);
 
             return Ok(new
             {
@@ -69,7 +95,7 @@ public class AdminController : ControllerBase
         }
         catch (InvalidOperationException)
         {
-            return Conflict(new { error = $"User '{targetUser.Email}' is already an admin" });
+            return Conflict(new { error = $"User '{targetUser.Email}' already holds role '{role}'" });
         }
     }
 
@@ -172,4 +198,11 @@ public class PromoteRequest
 
     [StringLength(128)]
     public string? UserId { get; set; }
+
+    /// <summary>
+    /// Role to grant. Omitted means <c>admin</c>, which is what this endpoint
+    /// did before the banking authority ladder existed.
+    /// </summary>
+    [StringLength(32)]
+    public string? Role { get; set; }
 }

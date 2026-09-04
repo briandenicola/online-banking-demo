@@ -1,0 +1,121 @@
+[
+  {
+    "guard": "Rung combination is monotone (BOTH folds broken together)",
+    "owner": "Turk",
+    "test": "RungCombinatorTests",
+    "verdict": "PROVEN",
+    "detail": "guard broken -> named test went red"
+  },
+  {
+    "guard": "Rung combination is a max fold, not an assignment (outer only \u2014 redundant)",
+    "owner": "Turk",
+    "test": "RungCombinatorTests",
+    "verdict": "REDUNDANT",
+    "detail": "breaking this half alone is invisible because the other half independently prevents the descent \u2014 see the combined case above"
+  },
+  {
+    "guard": "Raised() folds from the CURRENT rung (inner only \u2014 redundant)",
+    "owner": "Turk",
+    "test": "RungCombinatorTests",
+    "verdict": "REDUNDANT",
+    "detail": "breaking this half alone is invisible because the other half independently prevents the descent \u2014 see the combined case above"
+  },
+  {
+    "guard": "The co-signer slot excludes the requester (separation of duties)",
+    "owner": "Turk",
+    "test": "L2_requires_two_distinct_identities_so_no_single_person_can_satisfy_it",
+    "verdict": "PROVEN",
+    "detail": "guard broken -> named test went red"
+  },
+  {
+    "guard": "L3 is not proposable by the agent",
+    "owner": "Turk",
+    "test": "L3_is_outside_the_harness_entirely",
+    "verdict": "PROVEN",
+    "detail": "guard broken -> named test went red"
+  },
+  {
+    "guard": "An unknown action is denied, not defaulted",
+    "owner": "Turk",
+    "test": "An_unknown_action_is_refused_rather_than_defaulted",
+    "verdict": "PROVEN",
+    "detail": "guard broken -> named test went red"
+  },
+  {
+    "guard": "The lifecycle has exactly five states",
+    "owner": "Turk",
+    "test": "The_lifecycle_has_exactly_five_states_and_no_expired_state",
+    "verdict": "PROVEN",
+    "detail": "guard broken -> named test went red"
+  },
+  {
+    "guard": "Re-evaluation runs BEFORE the downstream call",
+    "owner": "Turk",
+    "test": "The_re_evaluation_call_precedes_the_downstream_call_in_the_execute_path",
+    "verdict": "PROVEN",
+    "detail": "guard broken -> named test went red"
+  },
+  {
+    "guard": "Denial reasons must be non-degenerate",
+    "owner": "Turk",
+    "test": "Degenerate_denial_reasons_are_rejected",
+    "verdict": "PROVEN",
+    "detail": "guard broken -> named test went red"
+  },
+  {
+    "guard": "The denial validator has no code-level defaults",
+    "owner": "Turk",
+    "test": "The_validator_refuses_to_start_without_configuration",
+    "verdict": "PROVEN",
+    "detail": "guard broken -> named test went red"
+  },
+  {
+    "guard": "admin does not map into the banker signer role",
+    "owner": "Turk",
+    "test": "An_admin_claim_does_not_map_into_the_banker_or_supervisor_signer_roles",
+    "verdict": "PROVEN",
+    "detail": "guard broken -> named test went red"
+  },
+  {
+    "guard": "The L2 co-signer must outrank a second banker",
+    "owner": "Turk",
+    "test": "The_L2_cosigner_set_is_narrower_than_the_L2_signer_set",
+    "verdict": "PROVEN",
+    "detail": "guard broken -> named test went red"
+  },
+  {
+    "guard": "Only the re-evaluation gate can mint an execution authorization",
+    "owner": "Livingston",
+    "test": "ExecutionAuthorization_has_no_publicly_reachable_constructor",
+    "verdict": "PROVEN",
+    "detail": "guard broken -> named test went red"
+  },
+  {
+    "guard": "A denied approval cannot exist without a terminal reason",
+    "owner": "Livingston",
+    "test": "A_terminal_transition_cannot_be_constructed_without_a_reason",
+    "verdict": "PROVEN_BY_COMPILER",
+    "detail": "the bypass does not even compile"
+  },
+  {
+    "guard": "Money fields are NOT exempt from the missing-field hard error",
+    "owner": "Livingston",
+    "test": "Removing_a_hashed_field_voids_the_signature_rather_than_matching_it",
+    "verdict": "PROVEN",
+    "detail": "guard broken -> named test went red"
+  },
+  {
+    "guard": "raiseBy cannot be negative",
+    "owner": "Livingston",
+    "test": "PolicyGrammarValidationTests",
+    "verdict": "PROVEN",
+    "detail": "guard broken -> named test went red"
+  },
+  {
+    "guard": "Load-time grammar rejects a negative raiseBy",
+    "owner": "Livingston",
+    "test": "A_negative_adjustment_on_a_global_escalator_is_rejected_at_load_time",
+    "verdict": "PROVEN",
+    "detail": "guard broken -> named test went red"
+  }
+]

@@ -41,6 +41,14 @@
       "created_at": "2026-05-07T19:41:00Z",
       "legacy_named": false,
       "status": "active"
+    },
+    {
+      "persistent_name": "Rusty",
+      "universe": "oceans-eleven",
+      "role": "Platform/Infra Engineer",
+      "created_at": "2026-09-04T14:55:00Z",
+      "legacy_named": false,
+      "status": "active"
     }
   ]
 }

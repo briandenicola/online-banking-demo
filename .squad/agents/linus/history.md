@@ -1053,3 +1053,168 @@ Enforce structurally: if the system shows "MFA required to co-sign as yourself" 
 
 ---
 
+
+### 2026-09-04 — Feature flag scaffolding for surface coexistence (#332 Phase 5 revision)
+
+**Context.** Brian overruled Phase 5: admin tabs are not retired, they coexist behind a flag so
+the same task can be run on both surfaces and compared. I built the flag system and the
+comparison instrumentation in `src/ui-app/` ahead of Phase 2, and updated
+`docs/design/banker-copilot-ui.md` (§1.3 rewritten, new §10 and §11).
+
+**CRA inlines `process.env.REACT_APP_*` as literal text.** This is the trap of the day.
+`process.env[someVariable]` is not a lookup at runtime — webpack's DefinePlugin does *textual*
+substitution at build time, so a computed key silently resolves to `undefined` in the production
+bundle while working perfectly in `npm start`. Any dynamic env-var registry in CRA needs a
+hardcoded static-access map. I wrote the workaround with a comment explaining why, because the
+code looks needlessly verbose without it and someone will "clean it up".
+
+**MUI v9 prop breaks that `tsc --noEmit` does NOT catch.** Two of them, both only surfaced by
+`craco build`: `<Switch inputProps={{...}} />` must become `slotProps={{ input: {...} }}`, and
+`<Stack alignItems="center">` is no longer a valid direct prop (goes in `sx`). Lesson: a clean
+standalone typecheck is not sufficient validation for MUI-heavy changes in this repo. Always run
+the actual build.
+
+**Runtime config for a static SPA: a `.js` file, not a `.json` file.** ui-app is a CRA build
+served by nginx with no runtime env vars, and the docker-compose service has no `environment:`
+block at all — so the only honest runtime vector is a mounted file. A fetched `config.json` is
+async and guarantees a flash of the wrong surface on every boot; a synchronous `<script>` in
+`<head>` before the bundle resolves flags before React mounts. Same file mounts identically under
+docker-compose (volume) and kustomize (ConfigMap + `subPath`), which preserves the repo's
+dual-mode convention.
+
+**URL overrides belong in sessionStorage, not localStorage.** A link someone sends you must not
+permanently reconfigure your browser. Corollary I nearly missed: when the user flips the in-app
+toggle, you must *clear the sessionStorage entry first*, otherwise the link-supplied value keeps
+outranking the switch they just flipped and the toggle looks broken.
+
+**Encode metric directionality at the point of definition.** Epic §9 risk 1 says a falling
+time-to-sign is a defect, not adoption — it is what approval fatigue looks like in a chart. That
+inverts how anyone normally reads a latency metric, so I added a `MetricDirection` including
+`lowerIsSuspicious` to the metric definitions themselves and asserted the directions in tests.
+If that knowledge lives only in a chart config or a slide, someone eventually celebrates the wrong
+number and produces a confident false conclusion. Generalises: whenever a metric's obvious reading
+is wrong, the correction has to travel with the metric.
+
+**Pre-register before you can rig it.** Both the metric set and the shared task set are fixed in
+code *before the harness exists* — the one moment I am honestly incapable of choosing measures
+that flatter the thing I designed. I also deliberately included a task (`review-flagged-txn`) that
+is Classic Admin's best case, so the comparison can actually be lost. And
+`exportComparisonData()` embeds `interpretationWarnings` in the payload, because a number in a
+spreadsheet outlives its footnote.
+
+**Say "not a security control" three times or it will be misread once.** Module comment, UI copy,
+and design doc. The refusal screen for a disabled surface is deliberately loud and offers a
+one-click re-enable — an authorisation failure would never hand you a button that fixes it, and
+that asymmetry is what stops anyone leaving the screen thinking the flag protected something.
+
+**Vocabulary drift is a real cost.** Reconciling the design doc to the ratified lifecycle
+(`proposed → pending → signed → executed`, `denied` + `terminalReason`, no `expired`, no `void`)
+touched ten places including an event name I had invented (`approval.voided` → `approval.terminal`)
+and a demo-script beat. Also absorbed the `cosignerId` deletion: the UI must say "awaiting a
+supervisor", never "assigned to you", because naming a co-signer at proposal time lets a banker
+pick their own reviewer — the exact self-dealing L2 exists to prevent. Presentation can
+reintroduce a field the data model deliberately omits; watch for that.
+
+---
+
+## Phase 2 — building the real `/copilot` harness (2026-05-12, issue #332)
+
+Replaced the placeholder wholesale: three panes, live trace over SSE-over-`fetch`, artifact canvas
+with a docked approval card, and the surface-comparison instrumentation finally wired to both
+surfaces. 52 new tests, all passing; the pre-existing 13 failures and one eslint warning are
+untouched and still exactly where they were.
+
+**`npx tsc --noEmit` was lying to me, and I nearly believed it.** It reported clean — twice — while
+`craco build` immediately found three real type errors (`ArtifactKind` vs a `'table'` literal, a
+`PayloadFormat` that was `accountRef` not `account`, an `ActorRef` with `role` not `kind`). The
+cause is the two pre-existing `TS5107` deprecation errors in `tsconfig.json`: they abort the program
+check before any code is examined. Running `npx tsc --noEmit --ignoreDeprecations 6.0` gives a
+genuine clean. So in this repo **`tsc` alone is not a typecheck**, and a "typechecks fine" report
+based on it is worthless. Same family as last phase's lesson that only `craco build` catches MUI v9
+prop breaks — the difference is that this time the *typechecker itself* was the silent one. Always
+run the build.
+
+**Instrument both surfaces with one component, not two sets of call sites.** The Phase 1 carry-over
+was to instrument Classic Admin and the harness in one pass with identical counting rules. The
+version of that I almost wrote — add `recordInteraction` calls to both — would have satisfied the
+letter and failed within a month, because the two call-site sets drift and the drift is invisible in
+a diff that touches only one of them. What I built instead: one `TaskMeasurementBar` wrapping both
+surfaces, counting via delegated DOM events, with regions declared by a `data-comparison-region`
+attribute. **Neither surface contains a single recorder call.** That converts "we promise to count
+both the same" into "it is not possible to count them differently", and a test greps both surfaces
+to assert it. Generalises: when fairness between two things is the requirement, put the logic in the
+thing they share, not in both of them.
+
+**Typing must count per field, not per keystroke.** Almost shipped a counting rule that would have
+made the harness lose by construction on a metric that means nothing — the harness has a text
+command bar, Classic has forms. Worth noticing that the *obvious* rule was the biased one, and in
+the direction that flattered Classic. Bias in a measurement rule does not announce which way it
+points.
+
+**`useMediaQuery(up('md'))` hides your primary content before it can measure.** It returns `false`
+on first render, so the task queue — the banker's inbox — collapsed into a closed drawer whenever
+the viewport was not yet known. Caught only because a jsdom smoke test could not find the queue.
+Fixed by asking `down('md')` instead: render the inbox unless we *positively know* the screen is
+narrow. The general rule is that a responsive default should fail toward showing the important
+thing, and `up()` fails toward hiding it.
+
+**Render by content shape, not by a kind whitelist.** The artifact renderer keyed off
+`kind === 'table'`, which does not exist. Rewrote it to render any array of rows as a table. A kind
+whitelist means a new artifact kind renders as raw JSON in front of someone about to sign against
+it — the failure lands on the highest-stakes screen we have.
+
+**MUI's `Tooltip` steals the accessible name.** A wrapped `<Button>Export comparison data</Button>`
+was exposed to screen readers (and to `getByRole`) as the tooltip's descriptive sentence. Needed an
+explicit `aria-label`. Worth remembering that a helpful tooltip can silently *replace* a control's
+name rather than supplement it.
+
+**Read the controller, not the doc — and they disagreed.** As instructed, and it mattered: the real
+`ApprovalResponse` emits `agentAssessment`, `signatureSlots`, `callerMaySign`, `payloadHashShort`
+and structured `firedEscalators`, not the doc's `opinions[]`/`signatures[]`. Mapped it in exactly
+one place so there is a single seam when the doc catches up. `callerMaySign` is mirrored, never
+inferred — separation of duties is decided by the service holding the signing key, and a client that
+computes it has quietly become a second, weaker policy engine.
+
+**Assert the absence, not just the presence.** The tests I trust most here assert things that must
+*not* appear: no button whose name starts with "Approve", no identity on an unfilled signature slot,
+no bare "Denied" for a non-human terminal reason, `aria-live="off"` on the streaming tree. Absences
+are what regress silently, because nothing renders to remind you they were a decision.
+
+**Flipped the `bankerCopilot` default to `true`, deliberately and on the record.** The Phase 1
+`plannedDefaultChange` stated its condition; the condition is met. The real argument was not "is the
+harness done" but "who does the comparison sample" — a flag you must opt into collects data from
+people who went looking, which is a fan club rather than a sample. Also confirmed the surface
+degrades honestly with no backend: stream reads *Disconnected*, and **signing is disabled**, which
+is the behaviour I would want anyway.
+
+**Deferred honestly: post-signature undo.** Config knob exists, UI does not. Undo needs a
+service-side cancellation contract that does not exist, and an Undo button that cannot stop
+execution is a lie told at the worst possible moment.
+
+### A run is not a session (late Phase 2 correction)
+
+I built the resync path against an endpoint I made up — `GET /sessions/{id}/events` — because the
+policy doc did not specify one. Turk's service landed while I was still working, so I read it
+instead of shipping the guess, and the real endpoint is `GET /runs/{runId}/trace`.
+
+The interesting part is not that I got the URL wrong. It is that **`seq` is run-scoped, not
+session-scoped.** A session with three runs has three independent trace streams. My session-keyed
+resync would have rebuilt one run's trace out of another run's frames — and the failure mode is the
+dangerous kind, not the loud kind: you get a trace, it is in order, it renders, and it is about a
+different piece of work than the approval card sitting next to it. Someone signs against it.
+
+Two habits I want to keep from this:
+
+1. **When I invent a contract, isolate it to one function and go read the real thing the moment it
+   exists.** The invention cost me twenty minutes because it lived in `api/copilot.ts` and nowhere
+   else. Had I threaded a `sessionId` cursor through the store and the stream, it would have cost a
+   day and I might have kept the wrong mental model.
+2. **Check what the identifier is scoped to, not just what it is named.** `seq` looked like a
+   session cursor because it sat next to `sessionId` in every example payload. Adjacency is not
+   scope. This is the same class of mistake as the Phase 1 privilege escalation that lived in the
+   seam between two role models — I keep learning it in different costumes.
+
+Also carried over: `traceDegraded` from the server is propagated, never swallowed. A resync that
+"succeeds" against an incompletely-persisted trace still leaves the trace flagged INCOMPLETE. The
+one thing this surface must not do is present a holed record as a complete one to a person deciding
+whether to sign.

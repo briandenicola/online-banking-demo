@@ -24,7 +24,7 @@ opentelemetry-instrumentation-requests = ">=0.46b0"
 azure-core-tracing-opentelemetry = ">=1.0.0b12"
 azure-core = "^1.32.0"
 structlog = ">=24.1,<27.0"
-PyJWT = "^2.8.0"
+PyJWT = {version = "^2.8.0", extras = ["crypto"]}
 aiohttp = "^3.11.0"
 agent-framework-core = "1.16.0"
 agent-framework-foundry = "1.10.0"

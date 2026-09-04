@@ -1,0 +1,67 @@
+{
+  "$comment": [
+    "Phase 2 integration ledger. Every entry is something this suite CANNOT verify",
+    "in-process, together with the observable condition that will make it verifiable.",
+    "",
+    "The enforcing test (test_integration_ledger.py) fails in BOTH directions:",
+    "  - an entry whose precondition is now satisfied must be promoted to a real test",
+    "    and removed from here (otherwise the ledger is a place coverage goes to die);",
+    "  - an entry whose precondition regressed is a broken dependency.",
+    "",
+    "It is deliberately not a skip list. pytest.mark.skip is invisible in a green run,",
+    "and invisible non-coverage is the failure mode this whole plan exists to catch.",
+    "PROMOTED 2026-09-04: 'ci-runs-any-of-this' is gone. A workflow now exists (.github/workflows/build-and-test.yml) and this suite runs in it, so the entry's premise was false and the ledger fails it deliberately. Coverage moved to tests/production/test_ci_runs_this_suite.py. Everything still listed below is blocked on something that does not exist in this environment, not on someone not having written it."
+  ],
+  "phase": 2,
+  "epic": "docs/epics/banker-copilot.md",
+  "entries": [
+    {
+      "id": "cosmos-trace-durability",
+      "claim": "A persisted trace survives process restart and replays identically from Cosmos.",
+      "why_pending": "COSMOS_DB_ENDPOINT is unset in this environment, so the service falls back to an in-memory sink. Replay fidelity is proven against that sink, which is the same object the live stream reads \u2014 durability across processes is NOT proven.",
+      "detects": "path_exists:infra/cloud/cosmos.tf#copilot-traces",
+      "promote_when": "A Cosmos emulator or a deployed account is reachable from the test environment.",
+      "would_be_covered_by": "tests/production/test_envelope_replay_fidelity.py, re-run with COSMOS_DB_ENDPOINT set"
+    },
+    {
+      "id": "workload-identity-federation",
+      "claim": "The copilot identity can read its containers and cannot write copilot-approvals.",
+      "why_pending": "Terraform is asserted as text. The actual RBAC grant is only observable against a deployed subscription.",
+      "detects": "path_exists:infra/cloud/identity-copilot.tf",
+      "promote_when": "terraform plan/apply runs against a real subscription in CI.",
+      "would_be_covered_by": "tests/production/test_cross_lane_gates.py (text form today)"
+    },
+    {
+      "id": "authority-service-round-trip",
+      "claim": "propose_action creates an approval in status 'proposed' in the real authority-service and cannot advance it.",
+      "why_pending": "authority-service is a separate .NET process, not running here. The transport is proven with a recording double; the far end is not.",
+      "detects": "path_exists:src/authority-service",
+      "promote_when": "docker compose or the local stack can bring both services up in the test job.",
+      "would_be_covered_by": "tests/production/test_propose_cannot_execute.py"
+    },
+    {
+      "id": "real-model-tool-choice",
+      "claim": "A real model in the agent loop cannot name a write tool, because none is offered to it.",
+      "why_pending": "No Foundry endpoint is configured; the loop under test is the scripted one. The tool LIST offered to the model is proven; the model's behaviour when given adversarial input is not.",
+      "detects": "path_exists:src/banker-copilot-service/app/planner",
+      "promote_when": "An evaluation environment with a model endpoint exists (#333).",
+      "would_be_covered_by": "the eval harness, not this suite"
+    },
+    {
+      "id": "gateway-applied",
+      "claim": "nginx does not buffer /api/copilot/ in a running stack.",
+      "why_pending": "The config is asserted as text. A running nginx is what proves it.",
+      "detects": "path_exists:infra/local/gateway.nginx.conf",
+      "promote_when": "The local stack is started as part of the test job.",
+      "would_be_covered_by": "tests/production/test_cross_lane_gates.py (text form today)"
+    },
+    {
+      "id": "ui-three-pane-e2e",
+      "claim": "The /copilot page renders the stream, the evidence pane and the approval card from real frames.",
+      "why_pending": "Playwright e2e needs both the UI dev server and the service. This suite is Python-side only.",
+      "detects": "path_exists:src/ui-app/src/api/copilotStream.ts",
+      "promote_when": "tests/e2e gains a copilot spec and the stack runs in CI.",
+      "would_be_covered_by": "tests/e2e"
+    }
+  ]
+}

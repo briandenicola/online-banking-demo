@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>AuthorityService.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="FluentAssertions" />
+  </ItemGroup>
+
+  <!--
+    Turk's service landed mid-way through this work, so the reference is now live. The tests in
+    Spec/ still exist and still run: that model is an ORACLE derived independently from the
+    specification, and keeping both lets a disagreement between them show up as a test failure
+    rather than as a shared assumption nobody ever wrote down.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\authority-service\authority-service.csproj" />
+  </ItemGroup>
+
+
+  <ItemGroup>
+    <None Include="TestPolicies\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="TestPolicies\**\*.yaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="pending-integration.manifest.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

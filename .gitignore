@@ -68,6 +68,17 @@ Thumbs.db
 **/build-intermediate/
 
 # Stale build artifacts
+#
+# These are workaround directories created when the real obj/ or bin/ is owned
+# by root (left behind by an old containerised build) and cannot be written or
+# deleted without sudo. Each one is a scar, not a design: the actual fix is to
+# remove the root-owned directories. Keep this list in sync with
+# DefaultItemExcludes in src/Directory.Build.props, or the compiler will happily
+# pick up a stale duplicate of every source file it finds here.
 obj.old/
 bin.old/
+**/obj.root*/
+**/bin.root*/
+**/obj.basher/
+**/bin.basher/
 *.old

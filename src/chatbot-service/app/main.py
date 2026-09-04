@@ -1,6 +1,7 @@
 """
 AI-powered financial advice chatbot using Microsoft Agent Framework.
 """
+import contextlib
 import uuid
 
 import structlog
@@ -10,6 +11,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.auth import assert_token_configuration
 from app.config import configure_logging, init_telemetry
 from app.routes.chat import router as chat_router
 from app.routes.health import router as health_router
@@ -31,7 +33,18 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
         return response
 
 
-app = FastAPI(title="Chatbot Service", version="2.0.0", lifespan=lifespan)
+# Token posture is checked before anything else can serve a request (issue #334). Fail closed:
+# a service that boots holding a retired symmetric secret, or holding signing material it has
+# no business having, looks healthy while misrepresenting its own security posture.
+@contextlib.asynccontextmanager
+async def _guarded_lifespan(_app: FastAPI):
+    assert_token_configuration("chatbot-service")
+    async with lifespan(_app):
+        yield
+
+
+app = FastAPI(title="Chatbot Service", version="2.0.0", lifespan=_guarded_lifespan)
+
 
 app.add_middleware(CorrelationIdMiddleware)
 

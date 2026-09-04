@@ -15,12 +15,12 @@ import time
 import jwt as pyjwt
 import pytest
 
-from tests.conftest import (
-    JWT_ALGORITHM,
+from tests.conftest import (  # noqa: F401
     JWT_AUDIENCE,
     JWT_ISSUER,
-    JWT_SECRET,
     _make_token,
+    audience_for,
+    foreign_private_key_pem,
 )
 
 
@@ -29,7 +29,12 @@ def _expired_token() -> str:
 
 
 def _wrong_secret_token() -> str:
-    return _make_token(secret="WrongSecretKeyThatDoesNotMatch12345678")
+    """Signed by a keypair the platform has never seen — an attacker's, in other words.
+
+    Under #334 "the wrong key" is no longer a different string: nobody but user-service
+    holds a signing key at all, so the realistic forgery is a foreign keypair.
+    """
+    return _make_token(secret=foreign_private_key_pem())
 
 
 def _admin_token() -> str:

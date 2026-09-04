@@ -1,0 +1,57 @@
+# Role hierarchy — banking authority ladder
+#
+# Contract of record: docs/epics/banker-copilot.md §5.8.2 (RATIFIED).
+#
+# This file is a POLICY STATEMENT, not a constant. It lives in config precisely
+# so that changing who implies whom is a reviewable configuration change rather
+# than a code edit buried in a token issuer.
+#
+# `effectiveRoles` is computed from this file once, at token issuance, in
+# AuthService. Nothing downstream re-implements the expansion — a second
+# implementation is a second place for the ladder to be subtly wrong.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+#  admin implies NEITHER banker NOR supervisor. This is deliberate.
+#
+#  The tempting shortcut is "admin is a superset of everything". That is how
+#  authority ladders get quietly defeated: if admin implied supervisor, a single
+#  admin identity could satisfy BOTH signatures on an L2 approval — the
+#  requester and the co-signer — and separation of duties would evaporate while
+#  every test still passed.
+#
+#  Platform authority (admin) and banking authority (banker/supervisor) are
+#  different axes. An admin who genuinely needs to co-sign must hold an explicit
+#  supervisor grant. Do not "helpfully" make admin a superset.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# seniority is the BANKING seniority used by approval signature slots
+# (minSeniority in the approval document). admin sits at 0 for the same reason
+# it implies nothing: platform power is not banking seniority.
+
+version: 1
+
+roles:
+  user:
+    description: Customer. No harness access at all.
+    seniority: 0
+    implies: []
+
+  banker:
+    description: The harness operator. L1 signing and read tools.
+    seniority: 1
+    implies: []
+
+  supervisor:
+    description: >-
+      Banker plus co-signature authority. Implies every banker capability so a
+      supervisor doing ordinary case work does not need a second account.
+    seniority: 2
+    implies:
+      - banker
+
+  admin:
+    description: >-
+      Platform operator. Break-glass console, L3 actions, user lifecycle.
+      Implies no banking role — see the warning above.
+    seniority: 0
+    implies: []

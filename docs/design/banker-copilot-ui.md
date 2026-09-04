@@ -43,7 +43,7 @@ world are `Sign` and `Deny`, and only a human can press them.
 | **Tool call** | A leaf invocation against an allowlisted capability. |
 | **Subagent** | A nested run spawned by the primary agent (e.g. an underwriting specialist, or the L2 supervisor agent). |
 | **Artifact** | A durable output: memo, decision packet, comparison table, proposed payload. |
-| **Approval request** | A durable object: `proposed → pending → signed | denied | expired`. Carries a payload hash. |
+| **Approval request** | A durable object: `proposed → pending → signed → executed`, with `denied` the single terminal rejection state. Carries a payload hash and, when denied, a mandatory `terminalReason`. |
 | **Rung** | L1 / L2 / L3 authority level required. |
 | **Escalator** | A named reason a rung went up. Never down. |
 
@@ -125,22 +125,28 @@ Current `AdminPage.tsx` ships 8 tabs (the brief says 7; the code has 8 — Accou
 User Management, All Transactions, Flagged Transactions, Chatbot Prompt, AI Evaluation, Login
 Audit, System Health).
 
-**Recommendation: three-bucket split, phased, keep `/admin` alive.**
+**Recommendation, superseded by ruling — see below.** The original recommendation here was a
+phased demotion ending in candidate removal. **Brian overruled that on 2026-09-04: Phase 5
+changes from "admin tab retirement" to COEXISTENCE.** The tabs stay, behind a feature flag, so
+the same banker task can be run on both surfaces and compared honestly. The buckets below are
+still the right way to think about what each tab *is*; only the "fate" column changed.
 
 | Bucket | Tabs | Fate |
 |---|---|---|
-| **Subsumed** — work the harness does better | Flagged Transactions, All Transactions, Account Applications | Become **task sources** feeding the queue and **tool surfaces** for the agent. The tabs stay in `/admin` as a read-only "classic" view for Phase 1–2, are demoted behind an "Classic Admin" affordance in Phase 3, and are candidates for removal only once the harness demonstrably covers their workflows. |
+| **Subsumed** — work the harness does better | Flagged Transactions, All Transactions, Account Applications | Become **task sources** feeding the queue and **tool surfaces** for the agent, *and* remain fully functional in `/admin`. These three are the comparison set: they are the only tabs where the same task genuinely exists on both surfaces, so they carry the entire measurement (§11). Retirement requires an explicit ruling backed by comparison data — it is no longer a scheduled phase. |
 | **Retained, unchanged** — config/ops, not decision work | Chatbot Prompt, AI Evaluation, Login Audit, System Health | Stay in `/admin` permanently. These are operator/config surfaces with no per-item decision loop. Shoving them into an agent harness would be cargo-culting. |
 | **Explicitly L3** | User Management (role promotion, deletes) | Stays in `/admin` **and** is on the harness's L3 deny-list. The agent may not even propose here. Worth a visible affordance in the harness: if a banker types "promote Ortega to admin", the harness responds with a **refusal card** naming L3 and linking to `/admin`. That refusal is a great demo beat — it proves the boundary is real. |
 
-Rationale for keeping `/admin`: a "classic" fallback de-risks the rollout, gives us an honest
-A/B story, and — this matters — the harness's credibility depends on the banker being able to
-verify what the agent claims. Ripping out the ground-truth tables on day one makes the agent
-unfalsifiable. Trust is built by leaving the verification path open.
+Rationale, which the ruling strengthens rather than changes: a "classic" surface de-risks the
+rollout and — this matters — the harness's credibility depends on the banker being able to verify
+what the agent claims. Ripping out the ground-truth tables makes the agent unfalsifiable. Keeping
+both surfaces turns "the harness is a better experience" from a claim we assert into a hypothesis
+we can lose. That is worth more than the claim was.
 
 Nav: `AppShell` gets a second gated button. `Banker Copilot` (primary, `AutoAwesomeIcon`) and
-`Admin` demoted to a secondary/overflow entry labelled **Classic Admin**. Both remain
-`isAdmin`-gated with the existing pattern.
+`Admin`, relabelled **Classic Admin** whenever both surfaces are visible so the comparison is
+legible in the chrome itself. Both remain `isAdmin`-gated with the existing pattern, and both are
+additionally gated by a feature flag (§10).
 
 ### 1.4 Full-bleed without forking AppShell
 
@@ -409,8 +415,8 @@ export interface PlanRevision {
   reason: string;
   addedStepIds: string[];
   removedStepIds: string[];
-  /** True when this revision voided an outstanding signature request. */
-  voidedApprovalId?: string;
+  /** Set when this revision superseded an outstanding approval, stopping its signature counting. */
+  supersededApprovalId?: string;
 }
 ```
 
@@ -455,22 +461,34 @@ export interface ApprovalRequest {
   actionType: string;                 // 'loan.decision' | 'transaction.clear' | ...
   title: string;
   state: ApprovalState;
-  rung: AuthorityRung;
-  escalators: Escalator[];
+  /** Rung the signature must satisfy, and the rung before escalators fired. */
+  requiredRung: AuthorityRung;
+  baseRung: AuthorityRung;
+  firedEscalators: Escalator[];
   /** The signature binds to THIS hash. Server-computed. */
   payloadHash: string;
   payload: PayloadField[];
   evidence: EvidenceRef[];
-  /** Primary agent opinion always present; supervisor present iff rung === 'L2'. */
+  /** Primary agent opinion always present; supervisor present iff requiredRung === 'L2'. */
   opinions: AgentOpinion[];
-  requestedBy: ActorRef;              // the banker whose identity the agent acted under
-  /** Populated as signatures land. L2 requires two, from DIFFERENT actors. */
+  /** Identity the agent acted under. Also the Cosmos partition key. */
+  requesterId: string;
+  /**
+   * Populated as signatures land. L2 requires two, from DIFFERENT identities.
+   *
+   * There is deliberately NO `cosignerId` field. Naming a prospective co-signer
+   * at proposal time would let a banker choose their own reviewer, which is the
+   * exact self-dealing pattern L2 exists to prevent. The UI therefore renders
+   * "awaiting a supervisor" and NEVER a named prospective co-signer. See §5.3.
+   */
   signatures: Signature[];
   requiredSigners: 1 | 2;
-  expiresAt: string;                  // ISO. Expiry === DENIED.
+  expiresAt: string;                  // ISO. Expiry === denied/TTL_EXPIRED.
   createdAt: string;
   /** MANDATORY when state === 'denied'. Never render a bare "Denied". */
   terminalReason?: TerminalReason;
+  /** Set together with terminalReason. */
+  terminalAt?: string;
   /** Free-text detail. For HUMAN_DENIED this is the banker's reason (min 20 chars). */
   terminalDetail?: string;
   supersededByApprovalId?: string;
@@ -538,9 +556,9 @@ interface DualControlApprovalCardProps extends ApprovalCardProps {
 }
 
 interface EscalatorExplainerProps {
-  escalators: Escalator[];
+  firedEscalators: Escalator[];
   baseRung: AuthorityRung;
-  finalRung: AuthorityRung;
+  requiredRung: AuthorityRung;
   variant?: 'inline' | 'expanded';
 }
 
@@ -646,7 +664,7 @@ export type CopilotEventKind =
   | 'subagent.completed'
   | 'approval.required'
   | 'approval.updated'
-  | 'approval.voided'
+  | 'approval.terminal'
   | 'artifact.created'
   | 'artifact.updated'
   | 'run.error'
@@ -704,9 +722,23 @@ export interface SubagentCompletedPayload {
 
 export interface ApprovalRequiredPayload  { request: ApprovalRequest; }
 export interface ApprovalUpdatedPayload   { request: ApprovalRequest; }
-export interface ApprovalVoidedPayload {
+
+/**
+ * Fired when an approval reaches ANY terminal state — the four denial reasons
+ * and `executed` alike.
+ *
+ * Renamed from the earlier `approval.voided`: there is no `void` lifecycle
+ * state, so an event named for one would reintroduce in the client exactly the
+ * distinction epic §5.1.1 collapsed into `terminalReason`. The UI's dramatic
+ * "signature void" treatment (§5.4) is a RENDERING of
+ * `terminalReason === 'PAYLOAD_SUPERSEDED'`, not a separate state.
+ */
+export interface ApprovalTerminalPayload {
   approvalId: string;
-  reason: 'payload_changed' | 'replanned' | 'policy_changed' | 'superseded';
+  state: 'denied' | 'executed';
+  terminalReason?: TerminalReason;    // mandatory when state === 'denied'
+  terminalDetail?: string;
+  terminalAt: string;
   previousPayloadHash: string;
   supersededByApprovalId?: string;
 }
@@ -747,7 +779,7 @@ export type CopilotEvent =
   | CopilotEventEnvelope<'subagent.completed', SubagentCompletedPayload>
   | CopilotEventEnvelope<'approval.required', ApprovalRequiredPayload>
   | CopilotEventEnvelope<'approval.updated', ApprovalUpdatedPayload>
-  | CopilotEventEnvelope<'approval.voided', ApprovalVoidedPayload>
+  | CopilotEventEnvelope<'approval.terminal', ApprovalTerminalPayload>
   | CopilotEventEnvelope<'artifact.created', ArtifactPayload>
   | CopilotEventEnvelope<'artifact.updated', ArtifactPayload>
   | CopilotEventEnvelope<'run.error', RunErrorPayload>
@@ -833,8 +865,8 @@ Graduated, and honest. The rule: **never let a dead stream look like a working o
 tooltip `Reconnecting — cannot verify this is still the current payload.` We must not let a
 banker sign against a stale payload during a network partition. That is the entire TOCTOU threat
 the payload-hash design exists to prevent, and the UI must not undo it. The TTL countdown keeps
-running (it's server-clock-anchored) and, if it expires while disconnected, renders `EXPIRED —
-DENIED` on reconnect like any other expiry.
+running (it's server-clock-anchored) and, if it lapses while disconnected, renders `DENIED —
+SIGNATURE WINDOW CLOSED` (`terminalReason = TTL_EXPIRED`) on reconnect like any other lapse.
 
 ---
 
@@ -1011,17 +1043,30 @@ Design decisions worth defending:
   Prevents forced binary choices under time pressure, which is how bad decisions get made.
 - **Signature roster is explicit** about separation of duties, with the self-co-sign path
   disabled and *explained* rather than merely absent. Invisible constraints teach nobody.
+- **The second slot is never a name.** It reads *"Supervisor — required, must be a different
+  person"*, never *"assigned to A. Reyes"*. There is no `cosignerId` on the record, by design:
+  naming a prospective co-signer at proposal time would let a banker choose their own reviewer,
+  which is precisely the self-dealing L2 exists to prevent. The UI must not reintroduce through
+  presentation a field the data model deliberately omits — so no "assigned to you" language, no
+  prospective-signer avatar, and no co-signer picker anywhere in this flow.
 - **`Reversible: No`** gets a warning glyph and drives a longer dwell gate (§6.2).
 
-### 5.4 Payload changed → signature void
+### 5.4 Payload changed → the prior signature stops counting
 
-When `approval.voided` arrives (agent re-planned, payload hash changed), the outstanding card
-does **not** quietly update. That would be the TOCTOU attack the hash design exists to stop.
+When `approval.terminal` arrives with `terminalReason === 'PAYLOAD_SUPERSEDED'` (the agent
+re-planned and the payload hash changed), the outstanding card does **not** quietly update. That
+would be the TOCTOU attack the hash design exists to stop.
+
+A note on vocabulary, because the screen below is the place it is most tempting to get wrong:
+there is **no `void` lifecycle state**. The record goes to `denied` with
+`terminalReason = PAYLOAD_SUPERSEDED` and a `supersededByApprovalId` pointer. "Void" survives
+here only as a *description of what happened to the signature* — the signature stopped counting —
+never as a status we store, filter on, or badge as a distinct state.
 
 ```
 ╔══════════════════════════════════════════════════════════════════════════╗
-║  ⊘  SIGNATURE VOID — THE PROPOSAL CHANGED                                ║
-║  Your signature at 09:14:22 no longer applies and has NOT been applied.  ║
+║  ⊘  YOUR SIGNATURE NO LONGER COUNTS — THE PROPOSAL CHANGED               ║
+║  Your signature at 09:14:22 does not apply and has NOT been applied.     ║
 ║  Nothing was executed. A new signature is required.                      ║
 ║  ─────────────────────────────────────────────────────────────────────── ║
 ║  Why: the agent revised its plan after the bonus-income re-verification  ║
@@ -1043,20 +1088,22 @@ does **not** quietly update. That would be the TOCTOU attack the hash design exi
 ╚══════════════════════════════════════════════════════════════════════════╝
 ```
 
-- The old card **freezes and greys**, stamped `VOID`, and remains in the run history. It does not
-  disappear — the audit story requires the void be visible.
+- The old card **freezes and greys**, stamped `SUPERSEDED`, and remains in the run history. It
+  does not disappear — the audit story requires that it stay visible.
 - `PayloadDiffView` renders **field-level** diffs, not a text diff. Material changes get the
   warning treatment; cosmetic ones are muted. Additions/removals are explicit.
 - **The new approval's dwell gate resets to full.** You do not get credit for having read the old
   one. That is exactly the shortcut an attacker (or a sloppy re-plan) would exploit.
-- Copy is unambiguous: *"Nothing was executed."* The banker's first fear on seeing "void" is
+- Copy is unambiguous: *"Nothing was executed."* The banker's first fear on seeing this card is
   "did something half-happen?" Answer it in the first two lines.
 
 ### 5.5 Expiry
 
 `ApprovalCountdown` turns amber under 25% remaining, red under 10%, and never uses ambiguous
 phrasing. Copy is always `expires in MM:SS → DENIED`. On expiry, the card converts in place to a
-grey `EXPIRED — TREATED AS DENIED · nothing was executed` state with a `Re-run` affordance.
+grey `DENIED — SIGNATURE WINDOW CLOSED · nothing was executed` state with a `Re-run` affordance.
+Expiry is not its own state: the record is `denied` with `terminalReason = TTL_EXPIRED`, and the
+card renders that reason rather than inventing an `EXPIRED` badge.
 
 There is no configuration, anywhere, in which the countdown reaching zero causes an action to
 occur. If a future PR proposes "auto-approve low-risk items on expiry," that is a
@@ -1228,7 +1275,8 @@ turns it off, which is strictly worse than never having it.
    - **Never announce timer ticks.** Elapsed timers are `aria-hidden`; the duration is announced
      once on completion.
 3. **Assertive is reserved for exactly three things:** an approval becoming required, an approval
-   being **voided**, and an **agent disagreement**. These interrupt. Nothing else earns it.
+   reaching a terminal state (notably `PAYLOAD_SUPERSEDED`), and an **agent disagreement**. These
+   interrupt. Nothing else earns it.
 4. **`aria-busy="false"` + a single polite summary on `run.done`:** *"Run complete in 47 seconds.
    12 steps. One signature required."* — the "it's over, here's the shape of it" moment.
 5. **Countdown timers** are `role="timer"` `aria-live="off"` with `aria-hidden` on the ticking
@@ -1344,14 +1392,15 @@ A. Reyes) — separation of duties is only convincing if you can see two people.
 | **0:52–1:00** | **The supervisor wakes** | The `SupervisorAgentRail` — visually separate from the plan tree — goes from `forming opinion…` to running. Caption reads: *does NOT see the primary agent's recommendation.* | Independence is structural and visible, not claimed. |
 | **1:00–1:12** | **DISAGREEMENT** ⭐⭐ | Dual-control card renders both opinions. The full-width red banner slams in: **"THE TWO AGENTS DISAGREE. A HUMAN MUST DECIDE."** Primary `CONDITIONAL 0.62` vs supervisor `DECLINE 0.81`. Two factors marked `← DIVERGENT`. Countdown: `expires in 04:12 → DENIED`. | The peak. Say: "The supervisor is *more* confident, in the opposite direction. No system should resolve this. A person should." |
 | **1:12–1:20** | **The human acts** | Banker window: reads both, clicks `Sign` — button shows `enabled in 0:14`, ticking down. Signs. Roster updates: `1. B. Denicola ✓ signed`, `2. Supervisor — must be a different person ◷ awaiting`. He tries to sign again; disabled, tooltip explains separation of duties. | Friction is deliberate. One human is not enough. |
-| **1:20–1:30** | **The twist, then the close** | Supervisor window (A. Reyes): the item is already in her queue. As she opens it, `approval.voided` lands — **SIGNATURE VOID — THE PROPOSAL CHANGED**, with a field-level diff: rate `6.875% → 7.250%`, down payment `25% → 30%`. Copy: *"Nothing was executed."* She reviews the new approval, dwell resets, writes her override justification, co-signs. Artifact canvas renders the commitment letter. | The closing line: **"At no point did an agent approve anything. The agent proposed. Policy escalated. Two humans signed — and when the approval changed, the first signature became worthless."** |
+| **1:20–1:30** | **The twist, then the close** | Supervisor window (A. Reyes): the item is in the supervisor queue — it was never *assigned* to her, because nobody gets to pick their own reviewer. As she opens it, `approval.terminal` lands with `PAYLOAD_SUPERSEDED` — **YOUR SIGNATURE NO LONGER COUNTS — THE PROPOSAL CHANGED**, with a field-level diff: rate `6.875% → 7.250%`, down payment `25% → 30%`. Copy: *"Nothing was executed."* She reviews the new approval, dwell resets, writes her override justification, co-signs. Artifact canvas renders the commitment letter. | The closing line: **"At no point did an agent approve anything. The agent proposed. Policy escalated. Two humans signed — and when the payload changed, the first signature stopped counting."** |
 
 **Backup plan:** run from recorded event fixtures (§7.3) via `?demo=ln-3391`. The reducer is
 pure, so the fixture player produces a pixel-identical run with real timing. Never demo an
 agentic system on a live conference network without this.
 
 **Beats to cut if short on time:** the Classic Admin opener (0:00–0:08) and the Gantt toggle. Never
-cut the disagreement banner or the void diff — they are the two moments that carry the argument.
+cut the disagreement banner or the superseded-payload diff — they are the two moments that carry
+the argument.
 
 ---
 
@@ -1378,3 +1427,288 @@ cut the disagreement banner or the void diff — they are the two moments that c
    The demo script assumes loans. I'd build the harness against **flagged transactions** first
    (simplest payload, real L1 flow) and light up loans for the L2 disagreement story.
 
+
+---
+
+## 10. Feature Flags & Surface Coexistence — IMPLEMENTED
+
+**Status:** built and merged into `src/ui-app/` ahead of Phase 2. This section documents what
+exists in code, not a proposal.
+
+**Ruling this implements (Brian, 2026-09-04):** Phase 5 changes from *admin tab retirement* to
+*coexistence*. Both surfaces stay, behind a flag, so the same task can be run on each and
+compared. Retiring the tabs is no longer a scheduled phase — it now requires an explicit ruling
+supported by the data in §11.
+
+### 10.1 Mechanism — five layers, first match wins
+
+The repo already had exactly one frontend config idiom: `REACT_APP_DEMO_MODE` in `pages/Login.tsx`,
+a CRA build-time env var. That is sufficient for a flag you set once per image and never touch,
+and insufficient for this one, which must be flippable **mid-demo without a rebuild**. So the
+build-time idiom is kept as a layer rather than replaced, and two runtime layers are added above
+it.
+
+| # | Layer | Scope | Changed by | Survives |
+|---|---|---|---|---|
+| 1 | URL param `?ff=name:on,other:off` | one tab | sharing a link | tab close |
+| 2 | `localStorage` | one browser | the in-app toggle | reload |
+| 3 | `window.__RUNTIME_CONFIG__` from `public/runtime-config.js` | deployment | remounting the file | redeploy |
+| 4 | `REACT_APP_FF_<UPPER_SNAKE>` | image | rebuild | rebuild |
+| 5 | `FLAG_DEFINITIONS[].defaultValue` | code | a PR | — |
+
+Files:
+
+```
+src/ui-app/public/runtime-config.js              deployment defaults (mount over this)
+src/ui-app/src/config/featureFlags.ts            registry + resolution + provenance
+src/ui-app/src/contexts/FeatureFlagContext.tsx   provider, useFeatureFlag(s), setFlag
+src/ui-app/src/components/FeatureFlagPanel.tsx   mid-demo toggle (user menu → Surfaces & flags)
+src/ui-app/src/components/FlagDisabledNotice.tsx route-refusal notice
+src/ui-app/src/pages/BankerCopilotPage.tsx       Phase 2 placeholder, so the flag gates something real
+```
+
+### 10.2 Why `runtime-config.js` and not `config.json`
+
+`index.html` loads it with a plain synchronous `<script>` **before** the React bundle, so flags
+resolve before first render. A fetched `config.json` would be async and would guarantee a flash of
+the default surface on every page load — unacceptable for a flag whose only job is deciding which
+surface you see. Verified in the built artifact: `runtime-config.js` appears in `<head>`, ahead of
+`main.<hash>.js`.
+
+The file is mountable identically in both deployment modes, which is what keeps the repo's
+dual-mode convention intact:
+
+```yaml
+# docker-compose.yml — ui-app service (Rusty owns this file)
+volumes:
+  - ./infra/local/ui-app.nginx.conf:/etc/nginx/nginx.conf:ro
+  - ./infra/local/runtime-config.js:/usr/share/nginx/html/runtime-config.js:ro
+```
+
+```yaml
+# deploy/kustomize/base/ui-app.yaml (Rusty owns this file)
+volumeMounts:
+  - name: runtime-config
+    mountPath: /usr/share/nginx/html/runtime-config.js
+    subPath: runtime-config.js
+volumes:
+  - name: runtime-config
+    configMap:
+      name: ui-app-runtime-config
+```
+
+Neither file was edited here — infra is Rusty's. The app **works correctly with no mount at all**
+(layer 5 supplies safe defaults), so this is an enhancement to wire up, not a prerequisite.
+
+### 10.3 Runtime vs. build-time — the recommendation, and the honest caveat
+
+**Runtime, as Brian leaned.** Flipping a switch in the user menu writes a `localStorage` override
+and re-renders immediately: no rebuild, no redeploy, not even a page reload. Switching surfaces
+live in front of an audience works.
+
+The caveat worth stating plainly: layers 1–2 are **per-browser**, so a mid-demo flip changes *your
+browser*, not the deployment. Changing what a new visitor sees still means remounting layer 3.
+That is the right split — a presenter should not be able to reconfigure everyone's app by clicking
+a switch — but it means "runtime-toggleable" is true at two different scopes and it is worth being
+precise about which one you are using.
+
+### 10.4 Scope and defaults
+
+**Global (per-deployment) default, per-browser override.** No per-user server-side flag store, and
+we do not need one: per-browser override *is* the assignment mechanism for the §11 comparison, and
+the flags carry nothing worth persisting server-side.
+
+| Flag | Default today | Planned change |
+|---|---|---|
+| `classicAdminTabs` | **true** | **None.** Unchanged at Phase 2 and unchanged at Phase 5. Retirement now needs an explicit ruling backed by §11 data, not the passage of a phase. |
+| `bankerCopilot` | **false** | → **true when Phase 2 lands** (i.e. when `/copilot` renders a real harness rather than the placeholder). |
+| `comparisonInstrumentation` | **true** | None. |
+
+`bankerCopilot` is false today because the harness does not exist and a nav item pointing at an
+empty route is worse than no nav item. It flips with Phase 2 so **both** surfaces are visible by
+default — coexistence is the point, and a comparison you have to opt into is a comparison nobody
+runs.
+
+The scheduled change is encoded as a `plannedDefaultChange` field on the flag definition, rendered
+in the toggle panel, and **asserted in a unit test**. A deferred default change is exactly the
+decision that gets forgotten; three redundant reminders is proportionate.
+
+### 10.5 This is a presentation toggle, NOT a security control
+
+Stated here, in a module-level comment in `featureFlags.ts`, and in the UI copy on the refusal
+notice — because someone will eventually reason about this flag as though it enforces something,
+and they will be wrong.
+
+Every value comes from the browser: a query param, a `localStorage` entry, or a world-readable JS
+file served to anonymous visitors. All three are user-controlled. Anyone with devtools can set any
+flag to any value in seconds.
+
+- Hiding a nav item hides a nav item. It does not make the destination unreachable or unauthorised.
+- Refusing a route removes a React screen. **It does not remove the HTTP API behind it.** Every
+  request that screen would have made is still reachable with `curl` and a valid token.
+- Turning a flag off protects nothing. Turning it on grants nothing.
+
+The real boundaries are unchanged: server-side authentication, server-side authorisation in the
+gateway and each service, the authority ladder for anything that changes state, and `isAdmin` as a
+client-side *mirror* of authorisation (itself not a control). If "we can hide it with the flag" is
+ever the answer to a security question, the answer is wrong.
+
+**Does hiding also refuse the route? Yes — and here is the exact guarantee.**
+
+When a surface flag is off, the app hides the nav **and** refuses to render the route. The reason
+is **experimental hygiene, not security**: a participant who wanders onto the disabled surface
+mid-task silently contaminates the measurement, and refusing the route makes that hard to do by
+accident.
+
+The refusal is deliberately **loud and reversible** — it names the flag, says in plain language
+that this is a display setting rather than a permission check, and offers a button that turns the
+surface back on. An authorisation failure would never offer you a button that fixes it. That
+asymmetry is the design: nobody should leave that screen believing the flag protected anything.
+
+Both admin routes remain wrapped in the `isAdmin` check *in addition to* the flag. The two gates
+do different jobs and the code comments say so at the point of use.
+
+### 10.6 Verification
+
+- 15 unit tests over flag resolution: layer precedence, URL parsing, malformed/missing runtime config,
+  storage-unavailable fallback, `clearOverrides`, and the planned-default-change assertion.
+- 12 unit tests over the comparison recorder and the pre-registered task set (§11).
+- Full suite: **27 new tests pass**; 136 of 149 pre-existing tests pass. The 13 failures are in
+  `AgentPipeline.test.tsx` and `DocumentUpload.test.tsx` and were **verified pre-existing** by
+  stashing this work and re-running on a clean tree — identical failures, same count.
+- `tsc --noEmit` clean and production build succeeds.
+
+---
+
+## 11. The Comparison — What We Measure and How Not to Rig It
+
+Coexistence is only worth its cost if it produces an answer we could lose. This section is the
+methodology; `src/ui-app/src/telemetry/comparison.ts` is its implementation.
+
+### 11.1 The metric that must not be read backwards
+
+Epic §9 risk 1 is explicit: a **falling time-to-sign is a defect, not adoption**. It is what
+approval fatigue looks like in a chart.
+
+That single sentence inverts how anyone normally reads a latency metric, and it is the reason
+every metric in the module carries a `direction` field including a value literally named
+`lowerIsSuspicious`:
+
+| Metric | Direction | Note |
+|---|---|---|
+| `taskDurationMs` | lower is better | Headline efficiency. Also the easiest to rig via task selection. |
+| `interactionCount` | lower is better | Weak alone — replacing ten clicks with one long wait is not obviously better. |
+| `contextSwitchCount` | lower is better | **The core claim.** "Tab-hunting across 7 admin tabs" is the pain; this is its direct test. |
+| `signatureDwellMs` | **lower is SUSPICIOUS** | Falling = fatigue. Never present a decrease as an improvement. |
+| `signaturesPerHour` | **lower is SUSPICIOUS** | The harness must produce *fewer, better* approvals. Higher is the failure mode. |
+| `evidenceOpenRate` | higher is better | Proxy for informed vs. reflexive. Proxy, not truth — opening a panel is not reading it. |
+| `denialRate` | **neutral** | Deliberately targetless. A rate near zero on either surface means the human step is not functioning. |
+| `reversalRate` | lower is better | The only outcome-quality metric. Everything else measures effort or process. |
+
+If those directions live only in a chart config or a slide, someone eventually celebrates the
+wrong one and this exercise produces a confident false conclusion. Encoding directionality at the
+point of definition, and asserting it in a test, is the cheapest available defence.
+
+### 11.2 What a fair comparison looks like
+
+**Shared task set.** Three tasks that genuinely exist on both surfaces — drawn from the "subsumed"
+bucket in §1.3, because those are the only ones where both surfaces can do the same work:
+
+1. `review-flagged-txn` — triage a flagged transaction and clear or escalate it (L1).
+2. `review-account-application` — review a pending application and decide (L1, some L2).
+3. `investigate-velocity-pattern` — determine whether three flags on one account are one pattern
+   or three incidents. Deliberately the messiest: it requires correlating across what are, in
+   Classic, three separate tabs. If the harness cannot win here it cannot win anywhere.
+
+`taskKey` is identical across surfaces and is the join key. Comparing across different tasks
+measures the tasks, not the surfaces.
+
+**Counterbalanced order.** Each participant does every task on both surfaces, and the order is
+alternated across participants. Whoever goes second benefits from already understanding the task —
+if everyone sees Copilot second, we will measure learning and call it product quality.
+
+**Pre-registered metrics.** The list in §11.1 is fixed in code *before the harness exists* — the
+only moment at which we are honestly incapable of choosing metrics that flatter it. Adding a
+metric later is fine; adding one after seeing the data and then leading with it is not.
+
+**Blind outcome scoring.** `reversalRate` and decision correctness are scored by someone who
+cannot tell which surface produced the decision. Effort metrics are cheap and self-reporting;
+quality is the one that matters and the one most vulnerable to motivated reasoning.
+
+### 11.3 How we would rig this without meaning to
+
+Named explicitly, because the person most likely to bias this comparison is me — I designed the
+thing being measured.
+
+1. **Task selection.** Choose tasks that span many tabs and Classic loses by construction. Mitigated
+   by including `review-flagged-txn`, which lives in a *single* tab and is Classic's best case. If
+   the harness cannot at least draw there, that is a real finding and it goes in the report.
+2. **Counting interactions differently.** An agent-driven trace update is not a context switch; the
+   banker did not go anywhere. One increment per *user-initiated* change of what is on screen, on
+   both surfaces. This rule is in the module docstring because it is the easiest place to cheat
+   without noticing.
+3. **Excluding agent latency.** `taskDurationMs` is wall-clock and includes time spent watching the
+   agent think. A trace pane is not free just because it is interesting.
+4. **Reporting the mean.** Task timings are right-skewed; one participant answering the phone moves
+   a mean by seconds. Medians throughout, spreads reported. `summarise()` returns `null` rather
+   than `0` on empty data, because zero reads as a real measurement of "instant".
+5. **Claiming significance.** Sample sizes a demo can reach do not support it. Report medians and
+   spreads; report no p-values.
+6. **Separating numbers from caveats.** `exportComparisonData()` embeds `interpretationWarnings` in
+   the payload so the caveats travel with the data. A number in a spreadsheet outlives its
+   footnote.
+
+### 11.4 What would falsify "the harness is better"
+
+Committed in advance:
+
+- `contextSwitchCount` does not fall materially → the core claim is wrong.
+- `signatureDwellMs` falls or `signaturesPerHour` rises → **we built approval fatigue**, and per
+  §9 risk 1 that is a defect regardless of how good the efficiency numbers look.
+- `reversalRate` rises → faster, worse decisions. Strictly negative.
+- `denialRate` collapses toward zero → the human step has stopped functioning and the ladder is
+  theatre.
+
+Any of the last three should stop the retirement conversation outright, no matter what
+`taskDurationMs` did.
+
+### 11.5 Current implementation status — honest limits
+
+**Works today:** task sessions, interaction/context-switch/evidence counters, decision records
+using the ratified lifecycle vocabulary, per-surface medians, JSON export with embedded warnings,
+flag-gated so it collects nothing when off. Privacy-safe by construction — ids, counts, timings,
+and enum values only; no payload contents, customer data, or free-text denial reasons.
+
+**Wired in Phase 2 (2026-05-12).** Both surfaces are now instrumented, in one pass, as the Phase 1
+deferral promised. The counting rules live in exactly one place —
+`src/ui-app/src/components/comparison/TaskMeasurementBar.tsx` — and both `/admin` and `/copilot` are
+wrapped in that same component. Neither surface contains a single call to the recorder; counting is
+done by delegated DOM events over the wrapped subtree, and regions are declared by a
+`data-comparison-region` attribute (a tab in Classic, a pane in the harness).
+
+That structure is the guarantee. It is not possible to instrument one surface more thoroughly than
+the other, because neither surface contains any counting code to add to or remove from. A test
+(`components/comparison/__tests__/TaskMeasurementBar.test.tsx`) asserts this mechanically rather
+than trusting anyone to remember it.
+
+The rules, stated once so they can be argued with:
+
+- **Interaction** — one activation of an interactive element inside the measured subtree. Scrolling
+  counts on neither surface. Typing counts once per *field*, not per keystroke; otherwise the
+  harness, which has a text command bar, loses by construction on a metric that means nothing.
+- **Context switch** — the interacted element's region differs from the previous one.
+- **Evidence open** — activation of anything carrying `data-comparison-evidence`.
+- **Decision** — reported explicitly by the surface, because only it knows dwell time and whether
+  evidence was opened before signing.
+
+**Still does not work, and should not be claimed:**
+
+- **No backend exporter.** Buffered in `sessionStorage` and exported by hand from a button on either
+  surface. A backend contract for this is not mine to design.
+- **No data yet.** Instrumentation existing is not the same as a result existing. Any claim of the
+  form "the harness is N times better" requires facilitated sessions that have not happened.
+- **`signaturesPerHour` and `reversalRate` are defined but not computed.** The first needs a
+  session-duration denominator; the second needs post-hoc joining to reversal events that do not
+  exist yet.
+- **`sessionStorage` means data dies with the tab.** Fine for a facilitated session, wrong for
+  passive collection over days.

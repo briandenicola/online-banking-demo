@@ -1944,3 +1944,205 @@ Generalized `policyVersion` single-field test into comprehensive contract test c
 
 ---
 
+
+### 2026-09-04 (2) — Structural schema drift: the epic and the design doc specified two different databases
+
+Rusty (new Platform/Infra) found, while writing the Cosmos indexing policy, that epic §5.2 and
+Turk's design §5.3 both gave a full `copilot-approvals` document and **they were not the same
+document** — `signatures[]` vs `signatureSlots[]`, `proposedAtUtc` vs `createdAt`,
+`requiredRung`/`policyVersion` flat vs nested under `policy.*`, plus design-only
+`awaitingSeniority`/`pendingSlotOrdinal`/`expiresAtEpoch`.
+
+**Ruled design §5.3 authoritative. Epic §5.2 now carries no schema at all** — only container, PK,
+TTL semantics, and a field *inventory* (which facts must be recorded, and which invariant each
+serves). **Authority follows the analysis, not the document's rank:** the design doc is the copy
+with query patterns and index derivation attached, infra was already built to it, and two of three
+consumers already agreed with each other.
+
+**The lesson that generalises past this epic.** Arbitrating a winner fixes today's instance and
+leaves the mechanism running. The duplication *was* the bug. So the layer boundary is now
+normative — epic says *what must be true*, design says *what it looks like on the wire*,
+design+Terraform say *how it is queried*, **and no layer restates another**. §5.3.1 was "one
+value, one definition"; §5.3.1a extended it to identifiers; §5.3.1b now extends it to shape. One
+rule: **anything restated in more than one artifact must be generated from one source or checked
+against one source — never maintained in parallel by careful people.** The version that bites is
+always the one where each copy is *locally* correct, because local correctness is what gets
+reviewer sign-off. Both docs were coherent; both had been reviewed by me.
+
+**Why a name-based check could not catch this, and what replaced it.** §5.3.1a compares
+identifiers, but `createdAt` and `proposedAtUtc` are each internally consistent *within* their own
+document — there is no shared name spelled two ways to grep. What diverged is the **set of field
+paths**, and a set difference is not a substring search. §5.3.1b reduces every artifact to a
+sorted set of **dotted paths** (nesting then falls out for free: `policyVersion` and
+`policy.policyVersion` are different strings). Four sites, asymmetric directions: design defines
+the canonical set; a **real document written by the service and read back raw must EQUAL it** (the
+only check that sees a .NET serializer naming-policy mismatch — no doc-to-doc comparison can);
+Python read models and Terraform indexed paths must each be a **subset**, failing closed.
+
+**Cosmos-specific danger worth remembering: a field-path mismatch returns ZERO ROWS, not an
+error.** An index on a path nobody writes doesn't throw — the composite index silently stops
+serving the ORDER BY and the query degrades to a cross-partition scan that looks healthy at demo
+volume. In an approvals store, "the supervisor's inbox is empty" is indistinguishable from "there
+is nothing to approve." Rank schema risk by *how quiet the failure is*, not by how many fields
+differ.
+
+**My own design error, found by a new engineer wiring an index.** I had put a `cosignerId`-keyed
+**pointer document** in the epic so the supervisor inbox would be single-partition. Ruled it OUT —
+and the deciding argument is security, not performance. Writing that pointer requires knowing
+**who will co-sign at proposal time**, which converts "a second qualified human must review this"
+into "*this named person* must review this", handing the requesting banker (or an agent under
+their identity) **the ability to choose their own reviewer** — the exact self-dealing pattern L2
+exists to prevent. A performance optimisation would have quietly reintroduced the thing being
+defended against, in a section adjacent to the one arguing separation of duties is the point.
+**A second copy of a schema is not only a drift risk; it is a place to hide a design error from
+yourself**, because it reads as locally reasonable and never gets read beside the constraint it
+breaks. Normative now: the supervisor queue keys on required **seniority**, never on a person;
+`awaitingSeniority`/`pendingSlotOrdinal` describe *what kind of signer is needed*, and any future
+optimisation must key on the queue (Turk's deferred `/queueKey` container preserves this).
+
+**Two more duplicates found while merging, in neither doc's diff (each was internally consistent):**
+- `execution.signedUnderPolicyVersion` — a second copy of `policy.policyVersion` *in the same
+  document* (the design's own comment said `// ==`). Provably always equal, because §5.3.2 voids
+  the signature and creates a replacement when policy changes. Removed. **Kept on the audit
+  events** — a standalone flat record must be readable without joining back. **The rule is one
+  copy per DOCUMENT, not one copy per SYSTEM**; write that distinction down or someone will
+  "fix" the events next.
+- `distinctIdentitiesRequired` — always equals `requiredSigners` under Q4. Retired in favour of
+  `signatureSlots[].mustDifferFrom`, which is a stronger control: **a count is satisfied by
+  arithmetic and a miscount passes silently; naming the excluded identity makes it a
+  set-membership test.** Prefer declarative exclusions over tallies for any separation-of-duties
+  check.
+
+**Nesting vs. the letter of a prior ruling.** The epic had said `policyVersion` "appears exactly
+once — here, at the top level." Ruled: it constrains **cardinality, not depth**; `policy.*` nesting
+is correct and Turk should not flatten it. Grouping policy-derived values under one object is
+*better*, because a flat namespace is what invites the second copy — which is exactly how both
+duplicates above arose. When someone has already built against a ruling, rule explicitly rather
+than by silence; ambiguity they have to guess at is worse than a decision they disagree with.
+
+**Paths:** epic §5.2/§5.2.1–5.2.3 (inventory, cosigner ruling, corrections), §5.3.1b (structural
+test), §11.1 findings 21–31 · design §5.3 + §5.2 (annotated, reasoning untouched) ·
+`.squad/decisions/inbox/danny-approval-schema-arbitration.md` · `infra/cloud/cosmos.tf` (Rusty's).
+
+### 2026-09-04 (3) — Phase 5 becomes coexistence, and it made an unaudited write path load-bearing
+
+Brian ruled Phase 5 is no longer "admin tab retirement": the tabs stay behind a runtime feature
+flag so the tab experience and the agentic harness can be compared side by side.
+
+**Reframe worth reusing: keeping the incumbent makes the claim falsifiable.** The epic had
+asserted since §1 that intent→plan→tools→artifact beats eight admin tabs. Retiring the tabs would
+have made that claim permanently *unfalsifiable* — the alternative would no longer exist to lose
+to. Coexistence turns the last phase from a deletion task into **the only phase that produces
+evidence**, and gives a **control group for the fatigue risk**: "the harness must produce fewer,
+better approvals" previously had no answer to *fewer than what?* Now it does — fewer than the
+mutating clicks the same banker makes doing the same task through the tabs. **Whenever a design
+claims to beat an incumbent, keeping the incumbent is usually cheaper than the argument about
+whether it won.** I also wrote the failure reading next to each metric; a metric without a stated
+threshold that would worry you is decoration, and committed to publishing unflattering results.
+
+**State the tension the reader would otherwise find themselves.** Keeping the tabs keeps a write
+path that does not traverse the ladder. That does *not* break I-1 — the invariant is that *agents*
+never approve, and a human clicking a tab is a human acting directly with no agent in the loop —
+but it does make *"every mutating action carries a policy-evaluated signature"* **false**. The
+true claim is narrower: *every action an agent originates carries a human signature bound to a
+payload hash under a versioned policy.* Writing the weaker true claim down beats letting someone
+discover the stronger one is false and distrust the rest of the document.
+
+**The find: four admin writes publish NOTHING.** `src/user-service/Services/UserService.cs`
+publishes from exactly two places (`PublishUserRegisteredEvent`, `PublishRoleGrantedEvent`).
+`LockUserAsync`, `UnlockUserAsync`, `DeleteUserAsync` and reset-password emit no event at all.
+**A different and worse class than #335**, which is *published-but-not-consumed* — there the
+record exists and the consumer is deaf, so Rusty's `event-processor` coverage fixes it. Here the
+publisher half does not exist, so no amount of consumer work helps. Two of the four are action
+types our policy governs (`user.lock`/`user.unlock`) and one is **L3** (`user.delete`) — the most
+tightly controlled action in the system, completely unaudited on the tab path. Filed **#337**, a
+hard Phase 5 blocker. **Lesson: a ruling that keeps a surface alive promotes every latent defect
+on that surface to a permanent one.** When scope changes from "delete X" to "keep X", re-audit X
+immediately — the risk register was written against the deletion.
+
+**Audit parity is what makes a presentation flag safe.** If tab writes and broker writes land in
+different trails, the flag becomes an audit bypass and the rational response to a heavy approval
+flow is "just use the other UI" — the ladder degrades to opt-in. Formula worth keeping: *take the
+flag away and the audit still holds; take the audit away and the flag is a fig leaf.*
+
+**Flag semantics decided:** runtime (the value is flipping mid-demo), per-user with a global
+default (**A/B needs two cohorts at once; global-only compares across time and confounds the
+result with everything else that changed**), default tabs-ON, fails open. **Navigation only — it
+does NOT refuse routes, and it is NORMATIVE that it is a presentation toggle and not a security
+control.** A hidden-but-reachable route is a UI convention. Also: gating routes would destroy the
+purpose, since you cannot A/B two experiences if one 403s — and *a flag that is sometimes a
+control is worse than one that never is, because it teaches people to trust it.*
+
+**Break-glass is a property of the ACTION, not the URL.** The old plan made `/admin` the
+break-glass console for L3; with tabs always present that collapses to "the other UI" and the L3
+boundary becomes a navigation choice. Restated: L3 actions are break-glass wherever performed,
+distinguished by the evidence they generate (mandatory reason, elevated-severity event,
+out-of-band notification, 100% review), not by which page hosts the button.
+
+**The asymmetry ruling I'm most likely to be asked about again:** the #140 Phase 2 supersession
+**holds** and does not soften to "available behind the flag," even though that looks inconsistent
+with coexistence. **The rule: coexistence applies to what already exists, not to what has not been
+built.** The tabs are built and exercised — keeping them buys a control group. The #140 decision
+panel does not exist, so "keeping it" means *building* a second review surface in order to hide
+it: speculative duplication of the highest-risk surface we have, the one where a human signs,
+against a seam whose whole security property is exactly one broker-only endpoint. Posted a
+follow-up on #140 because Turk could reasonably have inferred the boundary moved — **when a ruling
+changes a principle, proactively state where the principle does NOT reach.**
+
+**New risk that replaced old risk 14:** retirement was the deadline that would have exposed any
+capability the Copilot surface lacks. Coexistence removes it, so nothing now forces parity, and
+"saved views covering each existing tab's job" is the easiest deliverable to quietly skip.
+
+**Paths:** epic §8.5 (§8.5.1 measurement … §8.5.6 deliverables), §7.1 (#140 amendment), risk 14,
+acceptance criteria · `.squad/decisions/inbox/danny-phase5-coexistence.md` · #337 ·
+`src/user-service/Services/UserService.cs` (publish sites) · Linus owns `src/ui-app/` flag.
+
+#### Same-day amendment: audit parity overruled — accepted caveat, not a blocker
+
+Brian overruled my audit-parity requirement within the hour: *"since this is demo, i'm okay with
+that gap."* He was right — retrofitting audit emission across a legacy admin surface is real work
+in service of a control nobody exercises in a demo. I had let a correct finding (four unaudited
+writes) drag a large, off-mission workstream into the epic. **Finding a real gap does not entitle
+you to make closing it someone's job; that is a separate decision, and it is not the architect's
+to make alone.**
+
+**The distinction Brian drew is the reusable one: an accepted caveat is a decision; an open risk
+is a debt someone will feel obliged to pay down.** So the treatment is deliberately asymmetric —
+write it into the spec dated and attributed like any other ruling, **keep it OUT of the §9 risk
+register** (that register is for undecided things), and **close the issue as accepted rather than
+leaving it open**, because a closed issue with the reasoning attached is something a maintainer
+reopens deliberately, while an open one is ambient guilt.
+
+**Smallest honest treatment = say the gap, say what we may no longer claim, say what would change
+outside demo.** Turning "we may not claim X" into an **acceptance criterion** is what stops it
+eroding: banned "every mutating action is audited" and "the flag compares two equally governed
+surfaces" from the demo script, README and spec. The comparison is about *experience*, not
+governance, so the Phase 5 exit criterion no longer compares audit records.
+
+**The knock-on I nearly missed, and the reason to re-read adjacent sections after any ruling.**
+§8.5.5 justified the presentation-only flag by arguing audit parity was the backstop — "it does
+not matter which surface a write came from if both are equally attributable." **That argument
+evaporated the moment parity was dropped**, leaving a dangling justification that still read as
+sound. Rewrote it to the narrower true one: **the flag adds no exposure that did not already
+exist** — those routes are reachable and role-authorized today; hiding navigation changes what a
+banker *sees*, never what a banker *may do*. And it is now *more* important nobody calls it a
+control, because there is no compensating control behind it either. **When a ruling removes a
+requirement, grep for everything that used that requirement as a premise.**
+
+**Also worth naming rather than burying:** with the caveat accepted, a banker doing L3 work
+through a tab leaves no record. `user.delete` — the one action an agent may not even *propose* —
+is on the tab path the least evidenced operation in the system. Put the sharpest consequence
+*next to* the caveat, not inside it, or it reads as hedged.
+
+**Cheap check, clean answer (worth the five minutes):** the admin tabs' entire mutating surface is
+three call sites in `AdminUserManagementTab.tsx` (delete, lock/unlock, reset-password); every
+other admin tab is read-only. All four writes are **never-published**, not
+published-but-unaudited — so Rusty's `event-processor` consumer-side fixes never overlapped them.
+Two audit gap *classes* exist in this repo and they need different fixes: never-published
+(publisher missing) vs published-but-unconsumed (#335, `default:` branch). Do not conflate them.
+
+**Argument that survives the ruling and is the real reason it would matter in production:** an
+unaudited surface sitting beside a governed one is an **incentive**, not just an omission — under
+heavy approval load the rational move becomes "just use the other UI" and the ladder degrades to
+opt-in. In a demo nobody is under load, so the incentive is inert. That framing is what makes the
+caveat defensible now and obviously urgent later.

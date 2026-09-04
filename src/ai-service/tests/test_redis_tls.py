@@ -9,6 +9,30 @@ Verifies that:
 
 import pytest
 import os
+from pathlib import Path
+
+
+def _repo_root() -> Path:
+    """Locate the repository root by walking up for markers.
+
+    This was previously hardcoded to an absolute path on one developer's machine
+    ("/home/brian/code/online-banking-demo"), which also happens to be the
+    repository's former name. Every assertion below therefore failed with
+    FileNotFoundError anywhere else -- these are security tests for Redis TLS
+    that could not have caught a regression on any machine but one, and did not
+    run at all until CI existed.
+
+    Raising rather than skipping is deliberate: a security test that quietly
+    declines to run is indistinguishable from one that passes.
+    """
+    here = Path(__file__).resolve()
+    for candidate in (here, *here.parents):
+        if (candidate / ".git").exists() and (candidate / "src").is_dir():
+            return candidate
+    raise RuntimeError(
+        f"could not locate repository root above {here}; "
+        "expected an ancestor containing both .git and src/"
+    )
 
 
 class TestRedisTLSConfigurationIssue38:
@@ -24,8 +48,7 @@ class TestRedisTLSConfigurationIssue38:
         # redis.Redis(..., ssl_cert_reqs="required") when Azure mode is enabled
         
         # Check ai-service anomaly service for Redis initialization
-        import os
-        repo_root = "/home/brian/code/online-banking-demo"
+        repo_root = _repo_root()
         ai_service_path = os.path.join(
             repo_root,
             "src/ai-service/app/services/anomaly_service.py",
@@ -47,8 +70,7 @@ class TestRedisTLSConfigurationIssue38:
         SECURITY (Issue #38): Verify non-Azure mode allows plain connections.
         Local development (AZURE_MODE != true) should allow non-TLS Redis.
         """
-        import os
-        repo_root = "/home/brian/code/online-banking-demo"
+        repo_root = _repo_root()
         
         # Check that code checks AZURE_MODE or similar before enabling TLS
         ai_service_path = os.path.join(
@@ -74,8 +96,7 @@ class TestRedisTLSConfigurationIssue38:
         """
         SECURITY (Issue #38): Verify chatbot-service Redis TLS config.
         """
-        import os
-        repo_root = "/home/brian/code/online-banking-demo"
+        repo_root = _repo_root()
         chatbot_path = os.path.join(repo_root, "src/chatbot-service/app/main.py")
         
         with open(chatbot_path, 'r') as f:
@@ -92,8 +113,7 @@ class TestRedisTLSConfigurationIssue38:
         """
         SECURITY (Issue #38): Verify budget-service Redis TLS config.
         """
-        import os
-        repo_root = "/home/brian/code/online-banking-demo"
+        repo_root = _repo_root()
         budget_path = os.path.join(repo_root, "src/budget-service/app/main.py")
         
         with open(budget_path, 'r') as f:
@@ -114,8 +134,7 @@ class TestGoRedisTLSConfigurationIssue38:
         SECURITY (Issue #38): Verify event-processor uses ServerName for TLS verification.
         Previously used InsecureSkipVerify: true which disabled certificate validation.
         """
-        import os
-        repo_root = "/home/brian/code/online-banking-demo"
+        repo_root = _repo_root()
         event_processor_path = os.path.join(repo_root, "src/event-processor/main.go")
         
         with open(event_processor_path, 'r') as f:
@@ -145,8 +164,7 @@ class TestGoRedisTLSConfigurationIssue38:
         SECURITY (Issue #38): Verify event-processor uses TLS conditionally.
         Should check AZURE_MODE or REDIS_URL for TLS requirements.
         """
-        import os
-        repo_root = "/home/brian/code/online-banking-demo"
+        repo_root = _repo_root()
         event_processor_path = os.path.join(repo_root, "src/event-processor/main.go")
         
         with open(event_processor_path, 'r') as f:
@@ -171,8 +189,7 @@ class TestRedisTLSRegression:
         SECURITY (Issue #38): Regression test - no InsecureSkipVerify anywhere.
         This was the vulnerability in Issue #38.
         """
-        import os
-        repo_root = "/home/brian/code/online-banking-demo"
+        repo_root = _repo_root()
         src_path = os.path.join(repo_root, "src")
         
         # Search for InsecureSkipVerify in Go files
@@ -192,8 +209,7 @@ class TestRedisTLSRegression:
         Checks only the services that were part of the Issue #38 fix (ai-service,
         chatbot-service, budget-service). Other services may still need remediation.
         """
-        import os
-        repo_root = "/home/brian/code/online-banking-demo"
+        repo_root = _repo_root()
         
         # Only check services that were fixed as part of Issue #38
         fixed_services = ["ai-service", "chatbot-service", "budget-service"]

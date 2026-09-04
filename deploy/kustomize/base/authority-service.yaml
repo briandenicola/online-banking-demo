@@ -1,0 +1,151 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: authority-service
+  namespace: banking-demo
+  labels:
+    app: authority-service
+    app.kubernetes.io/part-of: banking-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: authority-service
+  template:
+    metadata:
+      labels:
+        app: authority-service
+        azure.workload.identity/use: "true"
+    spec:
+      # Dedicated identity (#336), NOT the shared banking-workload-identity.
+      # This ServiceAccount is federated to its own UAMI in
+      # infra/cloud/identity-authority.tf, whose Cosmos role assignments are
+      # scoped to the copilot-approvals and authority-policy CONTAINERS only.
+      # This is what turns epic §4.4 layer 1 from a naming convention into a
+      # control: a token minted for any other service cannot write an approval,
+      # and this service's token cannot touch accounts or transactions.
+      serviceAccountName: authority-workload-identity
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: authority-service
+        image: ghcr.io/banking-demo/authority-service:1.0.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        env:
+        - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: appinsights-connection-string
+        # The approval signing key MUST be distinct from the JWT key — the service refuses to
+        # start if they are equal. A bearer token must never be able to forge a signature.
+        - name: Approval__SigningKey
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: authority-signing-key
+        # The policy ships baked into the image. To change the ladder without a rebuild,
+        # mount a ConfigMap over /app/config and repoint POLICY_FILE_PATH; the service fails
+        # closed (crash loop) if the file is missing or invalid, never permissive.
+        - name: POLICY_FILE_PATH
+          value: "/app/config/authority-policy.yaml"
+        # Confirmed per Rusty/Turk contract: this is now read from the SHARED
+        # role-hierarchy ConfigMap, not the copy baked into this image. The
+        # image's baked copy at /app/config/role-hierarchy.yaml is deliberately
+        # NOT used at runtime — it exists so the container is self-consistent in
+        # docker-compose and CI, but in-cluster the one object below is
+        # authoritative for both this service and user-service.
+        #
+        # Fail-closed is intentional. If the ConfigMap is absent the mount is
+        # empty and this service crash-loops rather than falling back to its
+        # baked copy, because falling back is precisely how two images built at
+        # different commits end up disagreeing about who can sign an L2 slot.
+        # A pod that cannot prove which role model it is enforcing must not
+        # enforce one.
+        - name: ROLE_HIERARCHY_PATH
+          value: "/app/shared-config/role-hierarchy.yaml"
+        - name: Jwt__JwksUri
+          value: "http://user-service:8080/.well-known/jwks.json"
+        # The one mediator client. Buys a broker token from user-service and nothing
+        # else; deliberately absent from every other workload, above all the harness.
+        - name: Jwt__MediatorClientSecret
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: mediator-client-secret-authority
+        envFrom:
+        - configMapRef:
+            name: banking-demo-config
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          # /readyz reports the loaded policyVersion. A pod running a stale or different
+          # resolved policy is visible here rather than silently deciding approvals.
+          httpGet:
+            path: /readyz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        volumeMounts:
+        - name: secrets-store
+          mountPath: "/mnt/secrets-store"
+          readOnly: true
+        # Mounted as a DIRECTORY at a path of its own — not with subPath, and
+        # not over /app/config, which would hide authority-policy.yaml. A
+        # directory mount also picks up ConfigMap edits in place, so the role
+        # model can be corrected without a rollout.
+        - name: role-hierarchy
+          mountPath: "/app/shared-config"
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+      volumes:
+      # The single cluster-wide role model, created from
+      # src/user-service/config/role-hierarchy.yaml by tasks/Taskfile.cloud.yml
+      # (_configmap:apply) and mounted identically into user-service.
+      # optional: true so a missing ConfigMap is an application-level failure
+      # with a log line, not a pod stuck in ContainerCreating with no signal.
+      - name: role-hierarchy
+        configMap:
+          name: role-hierarchy
+          optional: true
+      - name: secrets-store
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: banking-secrets-provider
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: authority-service
+  namespace: banking-demo
+  labels:
+    app: authority-service
+spec:
+  type: ClusterIP
+  selector:
+    app: authority-service
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP

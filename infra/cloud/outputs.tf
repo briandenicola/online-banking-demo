@@ -62,9 +62,20 @@ output "app_name" {
   value       = local.resource_name
 }
 
-output "jwt_key" {
-  description = "JWT signing key held in state. Export as JWT_KEY before running scripts/setup-keyvault-secrets.sh to reuse it instead of generating a new one."
-  value       = random_password.jwt_key.result
+output "jwt_private_key" {
+  description = "RSA private key that signs every JWT. Only user-service ever receives it. Export as JWT_PRIVATE_KEY_PEM before running scripts/setup-keyvault-secrets.sh to reuse it instead of generating a new one."
+  value       = tls_private_key.jwt_signing.private_key_pem
+  sensitive   = true
+}
+
+output "jwt_public_key" {
+  description = "Public half of the JWT signing key. Published by user-service at /.well-known/jwks.json; no service needs it as configuration."
+  value       = tls_private_key.jwt_signing.public_key_pem
+}
+
+output "mediator_client_secret_authority" {
+  description = "Broker client credential for authority-service, the only mediator client. Export as MEDIATOR_CLIENT_SECRET_AUTHORITY before running scripts/setup-keyvault-secrets.sh."
+  value       = random_password.mediator_client_secret_authority.result
   sensitive   = true
 }
 
@@ -100,4 +111,52 @@ output "keyvault_bootstrap_instructions" {
     Direct portal link:
       https://portal.azure.com/#@/resource${azurerm_linux_virtual_machine.jumpbox.id}/bastionHost
   EOT
+}
+#############################################
+# BANKER COPILOT — authority-service platform wiring (epic #332, Phase 1)
+#############################################
+
+output "authority_service_client_id" {
+  description = "Client ID of the dedicated authority-service workload identity (#336). Annotated onto the authority-workload-identity Kubernetes service account."
+  value       = azurerm_user_assigned_identity.authority_service.client_id
+}
+
+output "authority_service_service_account" {
+  description = "Kubernetes service account bound to the authority-service workload identity."
+  value       = var.authority_service_service_account
+}
+
+output "bootstrap_supervisor_email" {
+  description = "Seeded bootstrap supervisor identity — supplied to user-service as Authority__BootstrapSupervisorEmail."
+  value       = var.bootstrap_supervisor_email
+}
+
+output "bootstrap_banker_email" {
+  description = "Seeded bootstrap banker identity — supplied to user-service as Authority__BootstrapBankerEmail."
+  value       = var.bootstrap_banker_email
+}
+
+#############################################
+# BANKER COPILOT — harness platform wiring (epic #332, Phase 2)
+#############################################
+
+output "banker_copilot_service_client_id" {
+  description = "Client ID of the dedicated banker-copilot-service workload identity (#336). Annotated onto the banker-copilot-workload-identity Kubernetes service account. Distinct from authority_service_client_id by design — the harness must not be able to assume the executor's identity."
+  value       = azurerm_user_assigned_identity.banker_copilot_service.client_id
+}
+
+output "banker_copilot_service_account" {
+  description = "Kubernetes service account bound to the banker-copilot-service workload identity."
+  value       = var.banker_copilot_service_account
+}
+
+output "copilot_container_names" {
+  description = "Cosmos container names the harness reads and writes. Emitted so the deployment task can populate the ConfigMap from Terraform rather than from a second hand-maintained list — the container name is one value with one home, and the scoped role assignments in identity-copilot.tf reference the same resources."
+  value = {
+    sessions  = azurerm_cosmosdb_sql_container.copilot_sessions.name
+    artifacts = azurerm_cosmosdb_sql_container.copilot_artifacts.name
+    traces    = azurerm_cosmosdb_sql_container.copilot_traces.name
+    approvals = azurerm_cosmosdb_sql_container.copilot_approvals.name
+    database  = azurerm_cosmosdb_sql_database.banking.name
+  }
 }

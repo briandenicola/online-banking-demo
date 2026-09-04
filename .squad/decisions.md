@@ -681,3 +681,74 @@ Every question raised in the epic has been ruled on. Nothing is under-specified,
 *None — all questions on epic #332 have been ruled. See Q1–Q4 rulings above and O9 ruling above.*
 
 - **O10** Wire `/policy/impact` into CI gate? Defer until approval store seeded.
+
+---
+
+## Epic #332 Phases 1–2 — Decision Records
+
+Nineteen rulings were issued during Phase 1 and Phase 2 delivery. They were
+written to `.squad/decisions/inbox/`, which `.gitignore` treats as runtime
+state — meaning the reasoning behind every security fix in this epic was one
+`git clean` away from being lost while the code it justified stayed behind.
+
+They are now tracked verbatim in **`.squad/decisions/records/`** rather than
+summarized here. These are arbitration rulings on security-relevant questions;
+compressing them into one-line entries would discard the reasoning, which is
+the part that stops a question from being relitigated. The inbox is emptied, as
+the convention intends.
+
+### Arbitration (Danny)
+
+| Record | Ruling |
+|---|---|
+| `danny-approval-schema-arbitration.md` | Two approval schemas existed (epic §5.2, design §5.3). Design is authoritative; **the epic's copy was deleted rather than reconciled** — the duplication was the bug, not the divergence. Also deleted `cosignerId` on security grounds: naming the co-signer at proposal time let a banker choose their own reviewer. |
+| `danny-phase5-coexistence.md` | Phase 5 is coexistence behind a feature flag, not retirement (Brian's call). Records the resulting audit-parity gap as a **dated accepted caveat (#337, closed as accepted — not invalid)**, and notes that §8.5.5's justification had quietly collapsed because it rested on parity as its premise. |
+
+### Authority & policy engine (Turk)
+
+| Record | Ruling |
+|---|---|
+| `turk-role-model-single-source.md` | The role model has one source and this service is not it. `authority-service` consumes `role-hierarchy.yaml` and **fails closed at startup** on divergence. |
+| `turk-copilot-harness-read-only-by-construction.md` | The harness registers zero write tools; read-only is a property of construction, not configuration. |
+| `turk-hashfields-must-cover-escalator-inputs.md` | Any field that can raise the required rung must be inside the signed payload hash, or it can be changed after signature. |
+| `turk-policy-predicate-form.md` | Prefer `mustDifferFrom` over `distinctIdentitiesRequired`: **a count is satisfied by arithmetic and a miscount passes silently, whereas naming the excluded identity is a set-membership test that fails loudly.** |
+| `turk-dual-mode-auth-must-announce-itself.md` | A service accepting two auth modes must state which one it used; silent fallback is indistinguishable from a bypass. |
+| `turk-schema-arbitration-applied.md` | Applying Danny's ruling; records the two serializer hazards the new path-set check caught on its first run. |
+| `turk-test-project-and-config-key-notes.md` | Test-glob and config-key gotchas (F2-9, hyphenated ConfigMap keys). |
+
+### Platform & infrastructure (Rusty)
+
+| Record | Ruling |
+|---|---|
+| `rusty-approval-schema-drift.md` | Original drift report that triggered Danny's arbitration — found by reading the publishers rather than trusting the docs. |
+| `rusty-harness-identity-containment.md` | The harness identity must not be able to reach the executor's write path. |
+| `rusty-workload-identity-scope.md` | Federated-credential scope per service; no shared identity. |
+| `rusty-copilot-container-keys.md` | Cosmos partition-key choices; **a field-path mismatch returns zero rows, not an error.** |
+| `rusty-role-granted-event-naming.md` | Event naming; `InsufficientFundsAttempt` and `UserRegistered` had **always been published and never audited**. |
+| `rusty-sse-chunked-encoding.md` | Removal of an incorrect `chunked_transfer_encoding off` that would have broken streaming. |
+
+### UI (Linus)
+
+| Record | Ruling |
+|---|---|
+| `linus-banker-copilot-feature-flag.md` | Both surfaces default on; `plannedDefaultChange` encodes that retiring either needs **an explicit ruling supported by comparison data, not the passage of a phase**. |
+| `linus-banker-copilot-phase2-ui.md` | Three-pane `/copilot` surface; SSE-over-`fetch` because native `EventSource` cannot carry a bearer token. |
+
+### QA (Livingston)
+
+| Record | Ruling |
+|---|---|
+| `livingston-banker-copilot-phase1-testing.md` | Phase 1 test plan; found the live privilege escalation via `banker.claimValues` including `user`. |
+| `livingston-phase2-qa.md` | Phase 2: F2-7 path traversal, F2-10 CI quarantine no-op, and the pending-integration ledger that **fails rather than skips**. |
+
+### The pattern these records share
+
+Every significant defect in this epic lived in a **seam between two
+independently-stated facts, each internally coherent**: two approval schemas,
+two role models, two spellings of a policy version. The tests passed throughout,
+because each test asserted against the same side of the seam its author wrote.
+
+A related class is recorded across the QA entries: **five tests that could not
+fail for the right reason**, all with full line coverage — including a security
+audit that passed vacuously on every machine but its author's. This is why this
+repo uses mutation testing and does not track coverage.

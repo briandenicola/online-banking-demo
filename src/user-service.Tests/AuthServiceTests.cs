@@ -13,17 +13,11 @@ public class AuthServiceTests
 
     public AuthServiceTests()
     {
-        var configData = new Dictionary<string, string?>
-        {
-            ["Jwt:Key"] = "ThisIsATestSecretKeyThatIsAtLeast32Chars!!",
-            ["Jwt:ExpiresInMinutes"] = "60",
-            ["Jwt:Issuer"] = "test-issuer",
-            ["Jwt:Audience"] = "test-audience"
-        };
-
-        _configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(configData)
-            .Build();
+        // No audience: after #334 that is retired configuration, coming from the
+        // canonical registry instead. The signing key IS supplied, via the shared
+        // fixture, so these tests do not silently inherit cloud-or-local mode from
+        // whatever happens to be exported in the developer's shell.
+        _configuration = TestJwtConfiguration.Build();
 
         _sut = new AuthService(_configuration);
     }
@@ -74,8 +68,13 @@ public class AuthServiceTests
         var handler = new JwtSecurityTokenHandler();
         var jwtToken = handler.ReadJwtToken(token);
 
-        jwtToken.Issuer.Should().Be("test-issuer");
-        jwtToken.Audiences.Should().Contain("test-audience");
+        // Asserted against the canonical registry rather than restated here: a literal would
+        // pass happily while the registry and the running services disagreed.
+        var registry = Banking.Auth.JwtAudienceRegistry.Load(null);
+        jwtToken.Issuer.Should().Be(registry.Issuer);
+        jwtToken.Audiences.Should().BeEquivalentTo(registry.SessionAudiences);
+        jwtToken.Audiences.Should().NotContain(registry.MediatorAudience,
+            "no token a human can log in for may ever be accepted as a broker token");
     }
 
     [Fact]

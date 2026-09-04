@@ -13,8 +13,44 @@ namespace UserService.Tests;
 [Trait("Issue", "35")]
 public class CosmosSDKVersionTests
 {
-    private const string RepositoryRoot = "/home/brian/code/online-banking-demo";
     private const string DirectoryPackagesPath = "Directory.Packages.props";
+
+    /// <summary>
+    /// Repository root, discovered by walking up from the test assembly until a
+    /// directory containing BOTH .git and Directory.Packages.props is found.
+    ///
+    /// This was previously a hardcoded absolute path, which meant these security
+    /// tests only ran on one machine. Everywhere else they either failed outright
+    /// or — worse — passed vacuously, because the file-not-found branch returned
+    /// success. A security test that cannot find what it is auditing must FAIL,
+    /// never silently pass, so discovery throws rather than returning null.
+    /// </summary>
+    private static readonly string RepositoryRoot = FindRepositoryRoot();
+
+    private static string FindRepositoryRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (dir is not null)
+        {
+            var hasGit = Directory.Exists(Path.Combine(dir.FullName, ".git"))
+                         || File.Exists(Path.Combine(dir.FullName, ".git"));
+            var hasPackages = File.Exists(Path.Combine(dir.FullName, DirectoryPackagesPath));
+
+            if (hasGit && hasPackages)
+            {
+                return dir.FullName;
+            }
+
+            dir = dir.Parent;
+        }
+
+        throw new InvalidOperationException(
+            $"Could not locate the repository root above '{AppContext.BaseDirectory}'. " +
+            $"Expected an ancestor directory containing both '.git' and '{DirectoryPackagesPath}'. " +
+            "These Issue #35 security tests audit real repository files and must not be " +
+            "reported as passing when those files cannot be found.");
+    }
 
     /// <summary>
     /// SECURITY (Issue #35): Verifies Directory.Packages.props uses stable Cosmos SDK version.
@@ -24,13 +60,14 @@ public class CosmosSDKVersionTests
     public void DirectoryPackages_CosmosSDK_IsStableVersion()
     {
         var packagesPath = Path.Combine(RepositoryRoot, DirectoryPackagesPath);
-        
-        if (!File.Exists(packagesPath))
-        {
-            // If Directory.Packages.props doesn't exist, skip this test
-            // (Would indicate central package management is not enabled)
-            return;
-        }
+
+        // Deliberately NOT a silent return. The original code treated a missing
+        // Directory.Packages.props as "skip", which reported this security test as
+        // PASSING on every machine that could not find the file. Absence of the
+        // audited artifact is a failure condition, not a pass.
+        File.Exists(packagesPath).Should().BeTrue(
+            $"the Cosmos SDK version audit requires '{packagesPath}'; if central package " +
+            "management were genuinely removed this test must fail loudly rather than pass silently");
 
         var content = File.ReadAllText(packagesPath);
         var doc = XDocument.Parse(content);

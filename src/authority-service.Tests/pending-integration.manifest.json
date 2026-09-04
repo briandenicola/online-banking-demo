@@ -1,0 +1,132 @@
+{
+  "_comment": [
+    "The honest ledger of what this suite actually exercises versus what it is still waiting for.",
+    "IntegrationReadinessTests reads this file and enforces it in BOTH directions:",
+    "",
+    "  status = 'pending'  -> the path/marker must still be ABSENT. If it has appeared, the test",
+    "                         FAILS, because a pending test must not quietly stay pending after",
+    "                         the code it was waiting for lands. A [Fact(Skip=...)] is invisible",
+    "                         the moment its blocker clears; this is not.",
+    "",
+    "  status = 'landed'   -> the path/marker must still be PRESENT. Once wired up, the same entry",
+    "                         becomes a regression guard, so the ledger keeps earning its keep",
+    "                         instead of decaying into a to-do list nobody re-reads.",
+    "",
+    "Flip status in the same change that wires the test up, and move the entries out of 'blocks'",
+    "into 'covers' as they are genuinely covered."
+  ],
+
+  "generatedBy": "Livingston (Tester/QA)",
+  "generatedOn": "2026-09-04",
+  "revisedOn": "2026-09-04 (Turk's service and Rusty's wiring landed mid-session)",
+  "epic": 332,
+  "phase": 1,
+
+  "dependencies": [
+    {
+      "id": "authority-service",
+      "path": "src/authority-service",
+      "owner": "Turk",
+      "status": "landed",
+      "covers": [
+        "Production/ProductionPolicyEngineTests — monotonicity over the REAL escalator power set",
+        "Production/ProductionArchitectureTests — 5 states, 4 terminal reasons, single writer",
+        "Production/ProductionArchitectureTests — ExecuteAsync accepts no caller payload (F-2)",
+        "Production/ProductionArchitectureTests — re-evaluation precedes the downstream call",
+        "Production/ProductionDenialReasonTests — the real validator against the degenerate corpus"
+      ],
+      "blocks": [
+        "Nonce single-use test (needs Redis)",
+        "HTTP contract tests for /api/authority/* (needs WebApplicationFactory or a live host)",
+        "Cosmos-backed concurrency test: two signers racing the last L2 slot under one ETag"
+      ]
+    },
+    {
+      "id": "authority-policy-file",
+      "path": "config/authority-policy.yaml",
+      "owner": "Turk",
+      "status": "landed",
+      "covers": [
+        "Real-threshold monotonicity run (no longer a fixture stand-in)",
+        "policyVersion derivation against the resolved production policy",
+        "Role-model tests against the shipping signerRoles / rungs blocks"
+      ],
+      "blocks": []
+    },
+    {
+      "id": "role-hierarchy-config",
+      "path": "config/role-hierarchy.yaml",
+      "owner": "Rusty",
+      "status": "pending",
+      "expectedAbsent": true,
+      "note": [
+        "user-service/Program.cs already loads this path, and RoleHierarchy.Load falls back to a",
+        "hard-coded Default when it is missing. The fallback is the strict reading of §5.8.2, so",
+        "the absence is SAFE — but it means the deployed ladder currently lives in C#, not in the",
+        "file the epic designates as authoritative. Nothing fails; the file is simply not there."
+      ],
+      "blocks": [
+        "admin-does-not-imply-supervisor asserted against the REAL hierarchy file",
+        "Proving the file and RoleHierarchy.Default agree (today there is no file to compare)"
+      ]
+    },
+    {
+      "id": "event-processor-authority-cases",
+      "path": "src/event-processor/main.go",
+      "owner": "Rusty",
+      "status": "landed",
+      "marker": "ApprovalVoidedByPolicyChange",
+      "covers": [
+        "Contracts/SharedIdentifierContractTests — audit event names are PascalCase and unique"
+      ],
+      "blocks": [
+        "End-to-end: all eleven authority event types consumed without 'Audit Unknown event type' (#335)"
+      ]
+    },
+    {
+      "id": "banker-supervisor-roles",
+      "path": "src/user-service/Constants.cs",
+      "owner": "Rusty",
+      "status": "landed",
+      "marker": "Supervisor",
+      "covers": [
+        "Production/ProductionRoleModelTests — the roles exist and admin is kept off the ladder",
+        "Production/ProductionRoleModelTests — F-7b, the cross-artifact seniority disagreement"
+      ],
+      "blocks": [
+        "Seed data contains two distinct identities (one banker, one supervisor)",
+        "An admin who is the requester cannot co-sign their own L2 approval, end to end"
+      ]
+    },
+    {
+      "id": "gateway-authority-route",
+      "path": "infra/local/gateway.nginx.conf",
+      "owner": "Rusty",
+      "status": "landed",
+      "marker": "/api/authority",
+      "covers": [
+        "Contracts/SharedIdentifierContractTests — the /api/authority/ prefix is used consistently"
+      ],
+      "blocks": [
+        "/api/authority/* reachable through the gateway (needs the stack running)",
+        "proxy_buffering off on /api/copilot/* so the live trace is actually live"
+      ]
+    },
+    {
+      "id": "ci-workflow",
+      "path": ".github/workflows/ci.yml",
+      "owner": "Rusty",
+      "status": "pending",
+      "expectedAbsent": true,
+      "note": [
+        "The workflows present are squad automation and an SDK pin guard — none of them build",
+        "or test any .NET project. Every guarantee in this suite currently",
+        "depends on somebody running `dotnet test` by hand. A test suite that is not wired into",
+        "a gate is a suggestion, and this is the single largest gap in Phase 1 assurance."
+      ],
+      "blocks": [
+        "Automatic execution of this project on every push to the epic branch"
+      ]
+    }
+  ]
+}

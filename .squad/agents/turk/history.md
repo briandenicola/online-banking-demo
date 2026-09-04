@@ -1748,3 +1748,424 @@ Plus permanent `payloadHash` display on every approval card. When policy escalat
 
 ---
 
+
+---
+
+## Session: authority-service Phase 1 implementation (epic #332)
+
+### Learnings
+
+**The service exists and runs.** `src/authority-service/` builds clean (0 warnings, 0 errors) on
+net10.0, 94/94 unit tests pass in `src/authority-service.UnitTests/`, and I ran the real thing
+over HTTP: propose → sign → co-sign → deny, plus a 250,000 payload correctly escalating L1 → L2,
+plus same-human double-sign rejected with 403, plus a short denial reason rejected with 400. The
+policy loads and `/readyz` reports `pv1:92590557c5772211`.
+
+**Fail-closed is verified, not asserted.** Pointing `POLICY_FILE_PATH` at a missing file crashes
+the process at startup with an explicit message rather than starting permissive. That is the one
+behaviour I refused to take on trust, because a policy engine that starts without a policy is
+worse than no policy engine — it looks like a control.
+
+**Two bugs the tests caught that reading would not have.**
+
+1. `ExecuteAsync` originally rejected any approval where the requester was also a signer. That is
+   correct at L2 and *wrong at L1*, where the agent proposes and the banker who requested it is
+   the legitimate single approver. Separation of duties is a property of a **slot**
+   (`mustDifferFrom`), not of the document. I had generalised a rule from the case that motivated
+   it — the classic way a safety control becomes a bug.
+2. `transaction.flag.review` had `hashFields: [transactionId, decision, note]` — **`amount` was
+   not in the signed hash**, while `amount` is exactly what drives the rung. A signature would
+   have bound everything except the number that decided how many humans were needed. Caught only
+   because a tampering test refused to fail. Rule for the rest of Phase 2: **every field any
+   escalator reads must be in `hashFields`.** I want that enforced by the loader, not by review.
+
+**A missing hash field is now refused rather than hashed as absent.** The canonicalizer used to
+walk a missing path and shrug. That makes `{}` and `{amount: 0}` produce different approvals a
+signer cannot tell apart. Declared field absent → refuse the propose.
+
+**Where the §5.3.2 split actually lives.** At execute, the payload **hash** is recomputed under
+the `policyVersion` **stored on the approval** (hash fields, money fields and currency scale are
+frozen onto the document at propose time), while the **rung** is re-derived under the **live**
+policy. Get these backwards and every policy edit invalidates every outstanding approval as
+"tampered". This is the single subtlest thing in the service and it deserves the test that
+guards it in both directions.
+
+**V4 was unreachable and the config proved it.** With `ReasonMaxRepeatUnit = 4` and
+`ReasonMinDistinctChars = 5`, any string that IS a repeat of a ≤4-character unit has ≤4 distinct
+characters, so V3 always fires first and the repeated-unit rule can never be observed. Raised the
+repeat-unit bound to 8. A validation rule that cannot fire is not a strict rule — it is a rule
+that is lying about being enforced, and only writing the test for it exposed that.
+
+**Danny's schema arbitration cost me a refactor I earned.** I had flattened `policyVersion`,
+`baseRung`, `requiredRung` and `firedEscalators` to the top level; the ratified shape nests them
+under `policy`. Restored via a real `ApprovalPolicySnapshot` with `[JsonIgnore]` façade
+properties, so the 137 call sites still read `approval.RequiredRung` while the wire shape matches
+the contract. `ApprovalDocumentShapeTests` now pins it, including that `policyVersion` appears
+**exactly once** in the serialized document. Danny is right about the mechanism: a flat namespace
+is what invites the second copy.
+
+**Cosmos path mismatches return zero rows, not errors.** Everything the composite indexes in
+`infra/cloud/cosmos.tf` address — `status`, `createdAt`, `expiresAtEpoch`, `awaitingSeniority`,
+`terminalReason`, `terminalAt` — stays top level, and there is a test asserting so. In a service
+that gates money movement, "the supervisor's inbox is empty" and "the query is broken" must never
+look the same.
+
+**Zero hardcoded thresholds, enforced at load rather than by discipline.** Magnitude operators
+(`gte`/`gt`/`lte`/`lt`/`countGte`) must name a threshold; the loader rejects the policy if one
+carries a bare number. Only equality and membership may carry literals, and only non-numeric
+ones. I also had to add `defaults.supervisorSeniority` and `defaults.retentionSeconds` as named
+threshold references so that not even a threshold *name* is a literal in code.
+
+**`raiseBy: 1` compounds, and that is load-bearing for the property test.** Two firing escalators
+take L1 → L2 → L3, and L3 is not proposable — so a many-escalator subset produces a *refusal*,
+not a decision with more signers. The monotonicity property therefore asserts rung monotonicity
+unconditionally but signer monotonicity only between admissible subsets.
+
+**The local environment lied to me for ten minutes.** `AZURE_CLIENT_ID` is set in Brian's shell,
+so the dual-mode Redis/Cosmos path chose Entra ID and died on a Conditional Access policy — with
+a 500 whose message was "Failed to acquire token" and no clue which dependency. Dual-mode auth
+that switches on ambient env vars needs to *log which mode it chose at startup*. Filed as a
+decision note; it will burn the next person on any of our services, not just this one.
+
+
+---
+
+## Session: Danny's schema arbitration applied (epic #332)
+
+### Learnings
+
+**Danny's two removals landed, and the mechanism behind them found three more.** He ruled out
+`execution.signedUnderPolicyVersion` (a second copy of `policy.policyVersion` in the same
+document) and `distinctIdentitiesRequired` (a head count that always equalled `requiredSigners`).
+Applying the *rule* rather than the *instances* immediately turned up three more of the same
+class that neither of us had listed:
+
+- `signatureSlots[].boundPolicyVersion` — a per-slot copy of `policy.policyVersion`.
+- `signatureSlots[].rungSatisfied` — a per-slot copy of `policy.requiredRung`.
+- `target.pathParams` — the same fact as `target.resolvedPath`, in a second representation.
+
+All three are provably-equal duplicates for the same reason as Danny's: under §5.3.2 a change to
+the rung or the policy version **voids the signatures and creates a replacement approval**, so a
+filled slot's values can never diverge from the document's own. They could only ever be stale.
+All are gone from the document and all are still on the audit events, which are standalone flat
+records that must be readable without joining back.
+
+**`distinctIdentitiesRequired` HAD entered my code** — Danny's note assumed it was epic-only. It
+was in the evaluator, the decision object, the document, the API responses and the signing quorum
+check. Reporting "confirmed absent" would have been the easy answer and the wrong one. The
+signing check is now `filledSlots >= requiredSigners` with separation of duties enforced entirely
+by `mustDifferFrom` per slot.
+
+**Danny's reasoning generalises and I applied it to the policy file too.** A count is satisfied
+by arithmetic; naming the excluded identity is a set-membership test against a specific subject.
+So the `distinctIdentities` knob is gone from the rung schema — and the loader now **rejects** a
+policy that still declares it rather than ignoring it. Silently ignoring the key would let an
+operator write `distinctIdentities: 1`, read it back, and believe they had turned dual control
+off, when separation of duties is no longer reachable from the policy file at all. **A dead knob
+that looks live is worse than no knob.**
+
+**§5.3.1b, and the two serializer settings that would have broken it silently.** The contract test
+now reduces both the design doc's canonical block and a document the service **actually wrote** to
+sorted sets of dotted field paths and asserts equality. Building it exposed the Cosmos client
+configuration as the real hazard:
+
+- `PropertyNamingPolicy = CamelCase` layered a naming policy over my explicit `[JsonProperty]`
+  attributes. It happens to agree today. If a property ever loses its attribute, the policy would
+  quietly rename the Cosmos path instead of letting the mismatch surface.
+- `IgnoreNullValues = true` **dropped every null field from the document.** `terminalReason: null`
+  and no `terminalReason` at all are different things to a Cosmos predicate, and a path-set
+  comparison cannot see a field that was never written.
+
+Both are gone. There is now one explicit `JsonSerializerSettings`, used by the Cosmos serializer,
+the in-memory repository and the contract test, so the document the SDK writes is the document the
+test asserts. **Explicit and asserted, not inherited** — because a Cosmos path mismatch returns
+zero rows rather than an error, and in a service that gates money movement "the supervisor's inbox
+is empty" must never be indistinguishable from "the query is broken".
+
+**Three of my own negative tests were mutating nothing.** They did
+`File.ReadAllText(policy).Replace(x, y)` and `Replace` is a silent no-op when `x` is absent — so a
+test could load an *unmutated* policy, see no exception, and report that an invariant holds when
+it had never been challenged. One of them was already in that state after I edited the policy
+file. Every negative policy test now goes through `TestHarness.MutatedPolicyYaml`, which **throws**
+if the text is not found, and there is a test that the helper itself throws. A test that cannot
+fail is worse than a missing test, because it is counted.
+
+**`cosignerId` never existed in my code** — no field, no API parameter, no hash input, nothing in
+the queue. The cross-partition query keys on `awaitingSeniority`. Danny's security argument is the
+one I want to remember: a pointer keyed on the co-signer requires knowing *who* will co-sign at
+proposal time, which hands the requester the ability to **choose their own reviewer** — the exact
+self-dealing pattern L2 exists to prevent. Performance optimisations that need to name a person
+in advance should be treated as security changes.
+
+**Final state:** builds clean, 99/99 unit tests pass, live HTTP run re-verified after the
+serializer change (L2 escalation, same-human double-sign rejected, co-sign completes, execution
+gate reached). `policyVersion` moved to `pv1:47381f84ae616f46` because the resolved policy changed
+— which is the version doing its job.
+
+
+### Two role models, one of them wrong (2026-09-04)
+
+Brian found a privilege escalation pair in `config/authority-policy.yaml`: `banker.claimValues`
+listed `user`/`User` — the retail customer claim, seniority 0 in the ratified hierarchy — so a
+customer token satisfied an L1 signature; and `admin` sat at seniority 3 with L2 co-sign rights, so
+one admin identity could fill both slots of a dual-control approval.
+
+**The lesson is not "check role lists more carefully".** Both files were internally coherent, and
+Rusty's tests locking `admin` out of banking authority passed the whole time — they test his file.
+I had re-derived the role model in mine. A model stated twice is a model wrong once, and nothing in
+either service could see it, because the defect only exists *between* them.
+
+What I changed my mind about: I had assumed a config file that "just names roles" is cheap
+duplication. It is not — a claim-to-seniority map **is** the authorization decision, written in
+data. So the loader now consumes `role-hierarchy.yaml` and refuses to start on any disagreement,
+`seniority:` in the policy is a hard error rather than an ignored key, and a `claimValue` may only
+be a case variant of its own role's name (which kills cross-role aliases structurally rather than
+by review).
+
+Three things I would not have predicted going in:
+
+- **One integer could not carry two meanings.** `admin` needed L3 standing, so someone gave it a
+  number; a number that beats supervisor beats supervisor *everywhere*, including the L2 co-sign
+  check. Bug 2 was not a typo, it was a modelling collapse. L3 is now `outOfHarness` with
+  `platformRoles`, a different concept from banking `seniority`.
+- **The audit found a third copy.** An env-overridable `supervisor_seniority` threshold set the L2
+  bar — dual control lowerable to peer level by setting a number, with no role file touched and no
+  test failing. Derived from `cosignerRoles` now. When you go looking for one duplicate you should
+  expect to find the rest; I found four more.
+- **Proposing had no floor at all.** A customer could put an entry in a supervisor's queue that
+  read as though a banker raised it. Fixed, but I only noticed because a test I wrote to assert
+  "admin cannot propose" failed by *not* throwing. The test I expected to be redundant was the
+  one that found something.
+
+Also fixed from Livingston's pass: `RaiseBy` computed in `long` (an escalation could overflow into
+a downgrade), `.IgnoreUnmatchedProperties()` removed so a misspelled escalator key is a startup
+failure rather than a rule that silently does nothing, and an honest comment on `VerifyStoredHash`
+saying it is a self-consistency check — the real control is that `ExecuteAsync` accepts no payload.
+
+---
+
+## Phase 2 — `banker-copilot-service` (epic #332, issue #332 Phase 2)
+
+Built the harness that sits in front of the ladder I built in Phase 1: FastAPI on 8005, dual-mode
+auth, fail-closed tool manifest, planner loop, SSE, `CopilotEventEnvelope`, session/run/artifact
+persistence. 88 tests of mine pass. Livingston's independent project runs 212 green against it.
+
+**The design decision I am most confident about: I made a write tool unspellable.**
+
+I did not add a check that rejects write tools. I removed the vocabulary. The manifest schema has
+no `mode`, no `actionId`, no `authority`, no `idempotencyKeyFrom` — an allowlist at every level,
+so an unrecognised key is a startup failure. `method` is constrained to `{"GET"}` and
+`capabilityScope` must end in `.read`. The keys someone would reach for when adding a write are
+refused **by name, with the reason**, because a silently-dropped key is indistinguishable from one
+that worked. This matters more than the runtime assertion: a check is a line someone can delete
+during a refactor and nothing else changes. A schema that cannot express the concept is defended
+by every parse.
+
+The runtime assertion still exists, and it is itself tamper-tested — I poison a registry via
+`dataclasses.replace` and assert `assert_zero_write_tools()` fires. Without that, the assertion
+could quietly become a no-op and all 88 tests would still be green.
+
+**Phase 1's V4 bug came back, in my own code, within the hour.** The `capabilityScope` check ran
+*before* `_parse_target`, so on a realistic write entry the scope guard tripped first and the
+**method guard could never fire**. Both guards were correct; the ordering made one unreachable. My
+own tests caught it only because I had written a test per guard *in isolation* — a single test
+using a realistic malformed entry would have passed on the wrong guard and told me the method
+check worked. **A guard proven only by a realistic input is not proven; it is alibi'd by its
+neighbour.** Test each guard with an input that trips exactly that one.
+
+**A test that asserts an ordering is not a test that asserts a set.**
+`test_shipped_manifest_registers_exactly_the_expected_tools` asserts set *equality*. A subset
+check passes when someone adds a tool; a superset check passes when someone removes one. Both
+directions or it is not a test. Same reasoning as Phase 1's count-vs-membership lesson, applied to
+a different artifact.
+
+**The bugs were all in seams, again. Every single one.**
+
+- **`if False:`** was sitting where the session-ownership check belonged. Any banker could read any
+  other banker's session. My own test caught it, and I had watched that test pass earlier in the
+  session — so it was live for a while. The lesson is not "write the check"; it is that a guard
+  degraded to a constant is invisible to review, greps as present, and reads as intentional. I now
+  grep my own diff for `if False`/`if True`/`return True  #` before calling anything done.
+- **The SSE `id:` field carried `event.id`, and the client resumes with `Last-Event-ID`.** Two
+  cursors both meaning "where you got to", in different alphabets. A resume would have been
+  uninterpretable and the client would have silently replayed from zero — rendering duplicates
+  that look like the agent repeating itself. `id:` is now the seq. One cursor.
+- **The stream 404'd when no run existed yet**, but Linus's client opens the stream *then*
+  dispatches the turn. An ordinary race answered with an error that trips reconnect backoff, which
+  then hides the opening frames of the run it attached to watch. Now it attaches and heartbeats.
+- **Then my fix introduced a double-subscribe**: backlog yielded, then a second `subscribe()` ran
+  unconditionally and yielded it all again. Livingston caught it (F2-6) before I did. Duplicate
+  seq frames look *plausible* — that is what makes them expensive.
+
+**Livingston's strict-xfail markers are the best cross-lane mechanism I have seen here.** He pinned
+`xfail(strict=True)` to the double-subscribe finding, so the moment I fixed it his suite went
+**red on three tests that now pass**. A marker that cannot outlive the defect. That is the same
+shape as "reject a retired config key rather than ignore it", applied to test infrastructure.
+
+**Duplication, avoided by asking instead of copying.** `requiredEvidence`, rungs, thresholds,
+dollar amounts and the action catalogue are *not* in my manifest — the planner fetches
+`GET /api/authority/policy` at runtime. Roles are not re-derived: `require_banker` consumes the
+`effectiveRoles` claim and **refuses a token that lacks it** rather than re-expanding the
+hierarchy. Phase 1 cost hours to a second role model; the fix is not "keep them in sync", it is
+"have one". The one cross-file test I do have asserts the *seam*: evidence tool ids in
+`config/authority-policy.yaml` must be a subset of registered tools. Two internally coherent files
+can still disagree, and only a test that spans them can see it.
+
+**Redaction that silently matches nothing is worse than no redaction.** My JSONPath subset accepted
+`$..ssn` and quietly degraded it to a top-level field match — a rule that reads as "scrub every
+ssn anywhere" and scrubs almost nothing. Unsupported expressions now raise at manifest load. Found
+by a parametrised test I nearly did not write because "the supported cases all work".
+
+**Two upstream facts worth carrying forward:** `httpx.Response.elapsed` is inaccessible under
+`MockTransport` (timing moved to `time.monotonic()`), and `TestClient` never reports
+`is_disconnected()`, so any SSE generator that waits unconditionally will hang the suite rather
+than fail it. A hang is a worse test outcome than a failure because it carries no information;
+every wait in that generator now has a bound.
+
+**What I could not verify:** the Docker daemon is not running in this environment, so I have not
+built the image. I booted the app under uvicorn instead and drove it over real HTTP — readyz
+reporting `writeTools: 0`, attach-before-run, the full ordered trace, cross-banker isolation, and
+`cosignerId` rejected 422 — which is better evidence of behaviour but says nothing about whether
+the Dockerfile builds. Reporting it as unverified rather than assumed.
+
+### Addendum — Rusty's env contract found two bugs my 98 tests could not
+
+He declared the platform-side env names and partition keys rather than guessing mine. Two of my
+defects were invisible to every test I own, because both only manifest against real Cosmos:
+
+- **`sessionId` was conditional on the persisted trace frame.** His eval-replay index is
+  `WHERE sessionId = @sessionId ORDER BY ts ASC`. A frame missing that path is not a query error,
+  it is silently absent from the replay. Now unconditional, and `to_document()` raises without it.
+- **`list_artifacts` passed the run id as the partition key** to a container partitioned by
+  `/sessionId`. **Zero rows, no error** — the exact Cosmos failure mode I wrote into my own Phase 1
+  lessons, and I made it anyway three weeks later. Knowing a failure mode does not protect you from
+  it; only a test or a declared contract that spans the boundary does, and mine ran in-memory where
+  partition keys are meaningless.
+
+The general lesson: **in-memory test doubles erase precisely the constraints the real store
+enforces.** My store fake made partition keys a no-op, so 98 green tests said nothing about the
+one thing that would have failed in cloud. Where a fake removes a constraint, the constraint needs
+a test of its own shape — I now assert the *document shape and key paths* directly, since that is
+the part the fake cannot lie about.
+
+Also: I declined two IAM grants he offered (Cosmos reader on `copilot-approvals`, and Redis). I do
+not read either. Standing permission with no consumer is how a boundary erodes — the argument for
+refusing capability is the same one the whole epic rests on.
+
+**And a warning to whoever reads this next: the `if False:` on the session-ownership check came
+back a second time after I fixed it.** Something in this workspace reverted that exact line while
+other lanes were active. I re-applied it and re-verified after the suite ran. If you are working
+in `app/routes/sessions.py`, grep for `if False` before you trust it — a guard degraded to a
+constant greps as present, reads as intentional, and is invisible to review.
+
+### Addendum 2 — the double erases the constraint, part two
+
+Rusty audited my stores against his Terraform and found three real bugs. Same root cause as his
+first pass, and I want it recorded plainly because I have now made this mistake twice in one day:
+
+**`asdict()` on a snake_case dataclass is a persistence bug waiting for a query.** `Artifact`
+persisted `run_id` while `list_artifacts` filtered `c.runId`. Zero rows, no error, forever.
+`Session` and `Run` "worked" only because someone had hand-patched two camelCase keys on top of
+the snake_case document — so those documents carried BOTH spellings of the same fact, and the
+pattern stayed correct only while everyone remembered to patch each new field. Artifact is what
+happens the first time someone forgets. I did not apply the suggested three-line patch; I
+declared the casing once per entity and deleted `asdict()` from the persistence path, because
+patching the instance would have left the mechanism intact.
+
+**A fake that is more permissive than the real store launders partition bugs into green tests.**
+My in-memory store ignored partition keys entirely, so 110 passing tests said nothing about
+whether `partition_key=run_id` addressed a container partitioned by `/sessionId`. The fake now
+enforces the same scoping. Where a double removes a constraint, either the double enforces it or
+the constraint needs a test of a shape the double cannot fake — I did both: document-shape
+assertions, and a session-scoped lookup test on the fake.
+
+**I broke something by fixing it, an hour before he told me.** I had replaced `get_run`'s
+cross-partition query with a point read on `partition_key=run_id` — correct under PK `/id`, which
+is what the epic said. He had already moved the container to `/sessionId` (correctly: runs live
+there too, so `/id` would give every run its own partition). My "optimisation" would have
+returned nothing in cloud and everything in tests. **An optimisation that depends on a fact you
+did not verify is a bug you cannot see.** I now read the Terraform, not the epic, for anything
+about physical storage.
+
+**The bug behind the bugs: the write path did not exist.** The planner emitted
+`artifact.created` and never called `save_artifact`, and there was no route to read artifacts
+back. All the casing and partition-key defects he found were latent behind a write that never
+happened — which is also why no test of mine could have caught them. A trace event announcing a
+thing that was never stored is a lie the UI repeats. Persist first, then emit.
+
+**Environment: `app/routes/sessions.py` was silently reverted three times** during this session —
+twice the ownership check went back to `if False:`, once my whole artifacts route vanished after
+being applied. Surrounding edits survived each time. Lesson that generalises: when a workspace is
+shared with other agents, **verify against a running process, not against the file you just
+wrote**. `curl`ing `/openapi.json` is what told me the route was gone; the file read would have
+told me too, but I only thought to check because the live probe 404'd. Trust the process, not the
+buffer.
+
+### Phase 2, addendum 3 — a contract that finds the bug you were not looking for
+
+Brian asked me to extend Danny's §5.3.1b path-set contract to the harness's Cosmos containers. I was
+expecting it to re-prove the two bugs Rusty had already found and I had already fixed. It found a
+third, which is the entire argument for writing it.
+
+`copilot-sessions` is indexed `(bankerId ASC, updatedAt DESC)` — "my sessions, most recently active
+first", the left-hand session list. My session document had `actorId` and no `updatedAt` whatsoever.
+Not a typo: a modelling gap. The platform lane had built an index for a query my model could not
+answer, and nothing anywhere would have raised a hand. The pane would have rendered sessions in
+arbitrary order and looked plausible.
+
+Three things I want to carry forward.
+
+**An orphaned index is quieter than a wrong one.** A field-path mismatch on a *filter* returns zero
+rows, which at least looks odd. A mismatch on an *ORDER BY* returns the right rows in the wrong
+order by full scan. Correct-looking output, wrong ordering, growing cost. There is no failure signal
+at any point.
+
+**Derive, do not restate — and I had already broken my own rule.** I had a `PARTITION_KEYS` dict in
+my platform-contract tests, written the same hour I was telling myself duplication is the bug. It
+was a third copy of a fact that lives in Terraform and is depended on in the store. It happened to
+be right, which is exactly why it was dangerous: it would have gone on being right until the day it
+was not, and it would have been the copy nobody thought to check. Deleted; the tests parse the
+Terraform now, and there is one parser shared by both modules rather than two.
+
+**Put the invariant in the store, not the call sites.** `updatedAt` is only correct if *every*
+mutation advances it. As a rule at each call site it is right N times and wrong at N+1. Moved into
+`save_session`, where it cannot be forgotten. The general form: if a field must be maintained on
+every write, maintain it on the write path, not in the callers' heads.
+
+Also worth recording: the fail-closed startup is not theoretical. Booting the service without the
+six `DOWNSTREAM__*` URLs refused to start and named all six missing services. I hit it by accident
+while live-verifying, which is the best way to find out a guard works.
+
+### Phase 2, addendum 4 — the boundary I enforced, and the one I forgot to
+
+Livingston found path-parameter traversal in my tool executor (F2-7). I had spent the whole phase
+making it structurally impossible to register a write tool — allowlists at every level, refused keys
+rejected by name, a tamper-tested assertion — and then substituted model-controlled strings into the
+URL path with `str.replace()`.
+
+His framing is the one worth keeping: **the declared path IS the capability scope; if an argument
+can leave it, the scope is advisory.** I had been thinking of a tool's identity as its *method* and
+its *scope string*, and treating the path as an implementation detail of where the data lives. It is
+not. `/api/transactions/{id}` is a narrower permission than `/api/*`, and the only thing expressing
+that narrowing was a template hole with nothing guarding it.
+
+**Guard the reach, not just the shape.** I checked what kind of thing a tool was allowed to be, and
+never checked how far a call could travel once it was allowed. Both are needed; the second is the
+one that is easy to forget because it does not appear in the schema.
+
+**`pattern` is a search, not a full match.** `[A-Za-z0-9_-]+` looks like a safe id constraint and
+matches `../../admin` — the substring is enough. I could have written that pattern into the manifest
+myself, reviewed it, and passed it. So the loader does not read the pattern; it *proves* the pattern
+by running it against a corpus of values that leave a path segment, and names the ones that get
+through. Do not review a regex you can execute against hostile input instead.
+
+**Fix at the vocabulary, not the routine.** Percent-encoding at substitution time would have closed
+the hole. Requiring a `pattern` at load closes it and keeps it closed, because a sanitiser has to
+remember and a schema cannot forget. Third time this phase that the fail-closed loader-side version
+beat the careful-code version.
+
+**One honest note.** His F2-5 test for the invoke-time guard reaches into `registry._by_id`, an
+attribute my `ToolRegistry` does not have, so it fails on `AttributeError` and can never flip no
+matter what I do. I fixed the defect anyway and proved it in my own suite. A strict-xfail marker is
+only as good as the assertion under it — a test that fails for the wrong reason looks identical to
+one that fails for the right reason, and the marker makes it look intentional.

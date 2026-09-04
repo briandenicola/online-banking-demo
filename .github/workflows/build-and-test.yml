@@ -1,0 +1,209 @@
+name: Build and Test
+
+# Builds and tests every project in the repository.
+#
+# WHY THIS EXISTS
+# ---------------
+# Until this workflow, NO CI job built any .NET, Python, Go or frontend project.
+# The repository had ~750 tests and nothing ran them. During the Banker Copilot
+# epic (#332) that gap forced QA to refuse to tick eight acceptance criteria
+# across two phases, because "the tests pass" was a claim resting entirely on
+# agents remembering to run them locally.
+#
+# That matters more than usual here. #332's security model — agents never
+# approve; every state-changing action carries a human signature — is enforced by
+# guards that were deliberately tamper-tested (broken, observed failing, then
+# reverted). A tamper-proven guard with no CI behind it is only proven for as
+# long as someone keeps running the suite by hand.
+#
+# QUARANTINE POLICY
+# -----------------
+# Two ui-app suites fail for reasons that predate this epic. They are named
+# explicitly in the `ui-app-quarantined` job rather than deleted or skipped, so
+# they still run, still report, and cannot silently grow. Adding to that list
+# requires editing this file in a reviewed PR — which is the point.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-and-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dotnet:
+    name: .NET build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build all projects
+        run: |
+          failed=0
+          for proj in src/*/*.csproj; do
+            echo "::group::build $proj"
+            dotnet build "$proj" --nologo || failed=1
+            echo "::endgroup::"
+          done
+          exit $failed
+
+      - name: Test all test projects
+        run: |
+          failed=0
+          for proj in src/*.Tests/*.csproj src/*.UnitTests/*.csproj; do
+            [ -e "$proj" ] || continue
+            echo "::group::test $proj"
+            dotnet test "$proj" --nologo --no-build --verbosity quiet || failed=1
+            echo "::endgroup::"
+          done
+          exit $failed
+
+  python:
+    name: Python build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Test each Python service
+        run: |
+          failed=0
+          # src/*/tests already matches src/banker-copilot-service.Tests/tests,
+          # since that directory is itself a child of src/. A second glob for
+          # src/*.Tests/tests would run those suites twice.
+          for dir in src/*/tests; do
+            [ -d "$dir" ] || continue
+            svc="$(dirname "$dir")"
+            echo "::group::pytest $svc"
+            (
+              cd "$svc"
+              if [ -f pyproject.toml ]; then
+                pip install -q -e '.[dev]' 2>/dev/null || pip install -q -e . || true
+              fi
+              if [ -f requirements.txt ]; then
+                pip install -q -r requirements.txt || true
+              fi
+              pip install -q pytest pytest-asyncio
+              pytest -q
+            ) || failed=1
+            echo "::endgroup::"
+          done
+          exit $failed
+
+  go:
+    name: Go build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/event-processor/go.mod
+
+      - name: Build and vet
+        working-directory: src/event-processor
+        run: |
+          go build ./...
+          go vet ./...
+
+      - name: Test
+        working-directory: src/event-processor
+        run: go test ./...
+
+  ui-app:
+    name: ui-app build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: src/ui-app/package-lock.json
+
+      - name: Install
+        working-directory: src/ui-app
+        # react-scripts@5 declares a peerOptional typescript ^3||^4 and this app
+        # is on typescript 6, which npm ci treats as an unresolvable conflict.
+        # The lockfile itself is consistent; only the peer assertion objects.
+        run: npm ci --legacy-peer-deps
+
+      - name: Typecheck
+        working-directory: src/ui-app
+        run: npx tsc --noEmit --ignoreDeprecations 6.0
+
+      - name: Test
+        working-directory: src/ui-app
+        env:
+          CI: true
+        # NOTE: --testPathIgnorePatterns takes REGEXES matched against the full
+        # path, not file paths. An earlier version of this named
+        # "src/components/DocumentUpload.test.tsx", which matched nothing at all
+        # because both suites actually live under components/account-opening/.
+        # The quarantine silently did nothing and the blocking job ran them.
+        #
+        # Kept as two separately named entries rather than one alternation: a
+        # quarantine is a debt register, and named entries can be counted and
+        # argued about. Verify with `npx craco test --listTests` after any change.
+        run: |
+          npx craco test \
+            --watchAll=false \
+            --testPathIgnorePatterns \
+              "account-opening/DocumentUpload.test.tsx" \
+              "account-opening/AgentPipeline.test.tsx"
+
+      - name: Build
+        working-directory: src/ui-app
+        env:
+          # The production build treats warnings as errors under CI=true, and one
+          # pre-existing hook-dependency warning in ApplicationStatus.tsx predates
+          # this epic. Unset rather than suppressed repo-wide so the warning stays
+          # visible in the build log.
+          CI: ''
+        run: npx craco build
+
+  ui-app-quarantined:
+    name: ui-app quarantined suites (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: src/ui-app/package-lock.json
+
+      - name: Install
+        working-directory: src/ui-app
+        # react-scripts@5 declares a peerOptional typescript ^3||^4 and this app
+        # is on typescript 6, which npm ci treats as an unresolvable conflict.
+        # The lockfile itself is consistent; only the peer assertion objects.
+        run: npm ci --legacy-peer-deps
+
+      # These two suites fail for reasons predating epic #332. They are run here
+      # so the failures stay visible and countable instead of being deleted. When
+      # someone fixes them, delete this job and drop the ignore patterns above.
+      - name: Run quarantined suites
+        working-directory: src/ui-app
+        env:
+          CI: true
+        run: |
+          npx craco test \
+            --watchAll=false \
+            --testPathPattern \
+              "(DocumentUpload|AgentPipeline)\.test\.tsx"

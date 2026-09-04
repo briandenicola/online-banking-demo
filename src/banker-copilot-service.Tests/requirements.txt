@@ -1,0 +1,46 @@
+# Dependencies for the Phase 2 QA suite.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# The CI Python job iterates `src/*/tests` and, for each match, installs from a
+# pyproject.toml or a requirements.txt found in that directory before running
+# pytest. This project is a bare test project: it has neither, so without this
+# file CI installs only pytest and pytest-asyncio and the suite fails to COLLECT.
+#
+# It cannot borrow the service's environment either. `src/banker-copilot-service.Tests`
+# sorts BEFORE `src/banker-copilot-service` ('.' is 0x2E, '/' is 0x2F), so this
+# suite runs first, while the service's own dependencies are still uninstalled.
+# Verified by running the suite in a venv containing only pytest: three modules
+# fail to import.
+#
+# The versions are deliberately the same ranges as
+# `src/banker-copilot-service/pyproject.toml`. A test suite resolving a different
+# version of the library it is testing is a test suite testing something else.
+
+# Read by the spec oracle and by the manifest fixtures.
+PyYAML>=6.0,<7.0
+jsonschema>=4.23.0,<5.0
+
+# Imported transitively when the production suite imports the shipping service.
+fastapi>=0.115,<0.140
+httpx>=0.27,<0.29
+pydantic>=2.9.0,<3.0
+structlog>=24.1,<27.0
+PyJWT>=2.8.0,<3.0
+python-dotenv>=1.0.0,<2.0
+
+# TestClient is part of starlette, which fastapi pulls in, but the client itself
+# needs this and it is not a fastapi dependency.
+anyio>=4.0,<5.0
+
+# app/config.py imports these at module scope, so importing ANY part of the
+# shipping service pulls them in — including the parts this suite only reads.
+opentelemetry-api>=1.27.0
+opentelemetry-sdk>=1.27.0
+opentelemetry-instrumentation-fastapi>=0.46b0
+opentelemetry-instrumentation-httpx>=0.46b0
+opentelemetry-exporter-otlp>=1.27.0
+
+# RS256 token minting for the auth fixtures (issue #334). PyJWT needs this for
+# any asymmetric algorithm; without it every token test errors at collection.
+cryptography>=41,<47

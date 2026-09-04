@@ -1,0 +1,260 @@
+{
+  "policyId": "banker-copilot-authority-test-baseline",
+  "defaults": {
+    "ttlMinutes": 30,
+    "ttlExpiryOutcome": "denied"
+  },
+  "rungs": {
+    "L1": {
+      "requiredSigners": 1,
+      "distinctIdentities": 1,
+      "signerRoles": ["banker", "admin"],
+      "cosignerRoles": [],
+      "proposable": true,
+      "minSeniority": 1
+    },
+    "L2": {
+      "requiredSigners": 2,
+      "distinctIdentities": 2,
+      "signerRoles": ["banker", "admin"],
+      "cosignerRoles": ["supervisor"],
+      "proposable": true,
+      "minSeniority": 2
+    },
+    "L3": {
+      "requiredSigners": 0,
+      "distinctIdentities": 0,
+      "signerRoles": [],
+      "cosignerRoles": [],
+      "proposable": false,
+      "minSeniority": 3
+    }
+  },
+
+  "thresholds": {
+    "transfer_l2_amount": "10000.00",
+    "transfer_l2_age_hours": "72",
+    "flagged_txn_l2_amount": "25000.00",
+    "balance_adjust_l2_amount": "1000.00",
+    "loan_l1_max": "50000.00",
+    "loan_l2_max": "1000000.00",
+    "bulk_fanout_count": "10",
+    "velocity_signatures_in_window": "20",
+    "low_agent_confidence_floor": "0.70",
+    "session_anomaly_score": "0.80",
+    "policy_exception_count": "1"
+  },
+
+  "actions": {
+    "transfer.reverse": {
+      "displayName": "Reverse a completed transfer",
+      "baseRung": "L1",
+      "ttlMinutes": 20,
+      "agentMayPropose": true,
+      "hashFields": ["transferId", "amount", "currency", "reason"],
+      "moneyFields": ["amount"],
+      "currencyScale": 2,
+      "requiredEvidence": ["get_transfer", "list_account_transactions"],
+      "thresholds": [
+        {
+          "key": "transfer_amount_l2",
+          "description": "Transfer amount at or above the dual-control ceiling",
+          "when": { "field": "amount", "op": "gte", "valueRef": "transfer_l2_amount" },
+          "raiseTo": "L2"
+        },
+        {
+          "key": "transfer_age_l2",
+          "description": "Transfer older than the same-day reversal window",
+          "when": { "field": "transferAgeHours", "op": "gte", "valueRef": "transfer_l2_age_hours" },
+          "raiseTo": "L2"
+        }
+      ]
+    },
+
+    "transaction.flag.review": {
+      "displayName": "Clear / confirm a flagged transaction",
+      "baseRung": "L1",
+      "ttlMinutes": 30,
+      "agentMayPropose": true,
+      "hashFields": ["transactionId", "amount", "currency", "decision"],
+      "moneyFields": ["amount"],
+      "currencyScale": 2,
+      "requiredEvidence": ["get_flagged_transaction", "list_account_transactions"],
+      "thresholds": [
+        {
+          "key": "flagged_txn_amount_l2",
+          "description": "Flagged transaction at or above the dual-control ceiling",
+          "when": { "field": "amount", "op": "gte", "valueRef": "flagged_txn_l2_amount" },
+          "raiseTo": "L2"
+        },
+        {
+          "key": "confirmed_fraud_l2",
+          "description": "Confirming fraud is never single-signature",
+          "when": { "field": "decision", "op": "eq", "value": "confirmed_fraud" },
+          "raiseTo": "L2"
+        }
+      ]
+    },
+
+    "account.balance.adjust": {
+      "displayName": "Post a balance adjustment",
+      "baseRung": "L1",
+      "ttlMinutes": 20,
+      "agentMayPropose": true,
+      "hashFields": ["accountId", "amount", "currency", "direction", "memo"],
+      "moneyFields": ["amount"],
+      "currencyScale": 2,
+      "requiredEvidence": ["get_account", "list_account_transactions"],
+      "thresholds": [
+        {
+          "key": "balance_adjust_amount_l2",
+          "when": { "field": "amount", "op": "gte", "valueRef": "balance_adjust_l2_amount" },
+          "raiseTo": "L2"
+        },
+        {
+          "key": "balance_adjust_credit_l2",
+          "description": "Creating money is always dual-control",
+          "when": { "field": "direction", "op": "eq", "value": "credit" },
+          "raiseTo": "L2"
+        }
+      ]
+    },
+
+    "user.lock": {
+      "displayName": "Lock a customer account",
+      "baseRung": "L1",
+      "ttlMinutes": 15,
+      "agentMayPropose": true,
+      "hashFields": ["userId", "reason"],
+      "moneyFields": [],
+      "requiredEvidence": ["get_user", "list_login_audits"],
+      "thresholds": []
+    },
+
+    "user.unlock": {
+      "displayName": "Unlock a customer account",
+      "baseRung": "L2",
+      "ttlMinutes": 30,
+      "agentMayPropose": true,
+      "hashFields": ["userId", "reason"],
+      "moneyFields": [],
+      "requiredEvidence": ["get_user", "list_login_audits"],
+      "thresholds": []
+    },
+
+    "loan.decision.record": {
+      "displayName": "Record an underwriting decision on a loan application",
+      "baseRung": "L1",
+      "ttlMinutes": 240,
+      "agentMayPropose": true,
+      "hashFields": ["loanApplicationId", "amount", "currency", "verdict"],
+      "moneyFields": ["amount"],
+      "currencyScale": 2,
+      "requiredEvidence": ["get_loan_application", "get_underwriting_decision", "get_policy_evaluation"],
+      "thresholds": [
+        {
+          "key": "loan_amount_l2",
+          "description": "Loan above the single-signature ceiling",
+          "when": { "field": "amount", "op": "gte", "valueRef": "loan_l1_max" },
+          "raiseTo": "L2"
+        },
+        {
+          "key": "loan_amount_l3",
+          "description": "Loan above the harness ceiling entirely",
+          "when": { "field": "amount", "op": "gte", "valueRef": "loan_l2_max" },
+          "raiseTo": "L3"
+        },
+        {
+          "key": "loan_conditional_l2",
+          "description": "CONDITIONAL is never single-signature",
+          "when": { "field": "verdict", "op": "eq", "value": "CONDITIONAL" },
+          "raiseTo": "L2"
+        },
+        {
+          "key": "loan_decline_l2",
+          "description": "Adverse action against a customer is never solo",
+          "when": { "field": "verdict", "op": "eq", "value": "DECLINE" },
+          "raiseTo": "L2"
+        }
+      ]
+    },
+
+    "user.role.promote": {
+      "displayName": "Promote a user to admin",
+      "baseRung": "L3",
+      "agentMayPropose": false,
+      "hashFields": ["userId", "targetRole"],
+      "moneyFields": [],
+      "requiredEvidence": [],
+      "thresholds": []
+    },
+
+    "authority.policy.edit": {
+      "displayName": "Modify the authority policy or capability allowlist",
+      "baseRung": "L3",
+      "agentMayPropose": false,
+      "hashFields": ["policyId"],
+      "moneyFields": [],
+      "requiredEvidence": [],
+      "thresholds": []
+    }
+  },
+
+  "escalators": [
+    {
+      "key": "self-dealing",
+      "description": "Approval touches an account or user related to the acting banker",
+      "when": { "field": "context.selfDealing", "op": "eq", "value": true },
+      "raiseBy": 1,
+      "minRung": "L2"
+    },
+    {
+      "key": "bulk-fan-out",
+      "description": "More than N approvals of the same action type in one session",
+      "when": { "field": "session.proposalCountForActionType", "op": "gt", "valueRef": "bulk_fanout_count" },
+      "raiseBy": 1
+    },
+    {
+      "key": "velocity",
+      "description": "Signature rate exceeds the rolling-window ceiling — approval-fatigue guard",
+      "when": { "field": "actor.signaturesInWindow", "op": "gt", "valueRef": "velocity_signatures_in_window" },
+      "raiseBy": 1
+    },
+    {
+      "key": "low-agent-confidence",
+      "description": "Primary agent confidence below floor",
+      "when": { "field": "agent.confidence", "op": "lt", "valueRef": "low_agent_confidence_floor" },
+      "raiseBy": 1
+    },
+    {
+      "key": "policy-exception",
+      "description": "One or more underwriting/compliance policy exceptions present",
+      "when": { "field": "underwriting.policyExceptions", "op": "countGte", "valueRef": "policy_exception_count" },
+      "raiseBy": 1
+    },
+    {
+      "key": "severe-policy-exception",
+      "description": "A hard-stop policy code is present",
+      "when": {
+        "field": "underwriting.policyExceptions",
+        "op": "intersects",
+        "value": ["POL-001", "POL-002", "POL-007"]
+      },
+      "raiseBy": 1,
+      "minRung": "L3"
+    },
+    {
+      "key": "high-risk-customer",
+      "description": "Customer is in a high-risk tier",
+      "when": { "field": "customer.riskTier", "op": "in", "value": ["high", "sanctions_hit", "pep"] },
+      "raiseBy": 1
+    },
+    {
+      "key": "anomalous-session",
+      "description": "Acting banker's own session flagged by login-audit heuristics",
+      "when": { "field": "session.anomalyScore", "op": "gte", "valueRef": "session_anomaly_score" },
+      "raiseBy": 1,
+      "minRung": "L2"
+    }
+  ]
+}

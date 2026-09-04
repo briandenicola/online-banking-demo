@@ -38,13 +38,13 @@ const (
 
 // EventProcessor handles Redis Stream messages
 type EventProcessor struct {
-	tracer       trace.Tracer
-	client       redis.Cmdable
-	redisReady   bool
-	wg           sync.WaitGroup
-	maxRetries   int
+	tracer        trace.Tracer
+	client        redis.Cmdable
+	redisReady    bool
+	wg            sync.WaitGroup
+	maxRetries    int
 	failureCounts map[string]int
-	mu           sync.Mutex
+	mu            sync.Mutex
 }
 
 // BankingEvent represents an incoming banking event
@@ -331,12 +331,12 @@ func (p *EventProcessor) consumeEvents(ctx context.Context) {
 						count := p.failureCounts[msg.ID]
 						p.mu.Unlock()
 
-					slog.Error("Error processing message",
-						"message_id", msg.ID,
-						"attempt", count,
-						"max_retries", p.maxRetries,
-						"error", err,
-					)
+						slog.Error("Error processing message",
+							"message_id", msg.ID,
+							"attempt", count,
+							"max_retries", p.maxRetries,
+							"error", err,
+						)
 
 						if count >= p.maxRetries {
 							// Dead-letter: move to DLQ stream, then ACK original
@@ -413,6 +413,73 @@ func (p *EventProcessor) processMessage(ctx context.Context, message redis.XMess
 			"to_account", evt.Data["toAccountId"],
 			"amount", evt.Data["amount"],
 		)
+
+	// Pre-existing audit gap (#335): transaction-service and user-service have
+	// always published these onto banking-events, and they have always landed in
+	// the default branch below — published, but unaudited. Verified against
+	// TransactionService.PublishInsufficientFundsEvent and
+	// UserService.PublishUserRegisteredEvent rather than against a doc.
+	case "InsufficientFundsAttempt":
+		slog.Warn("Audit InsufficientFundsAttempt",
+			"account", evt.Data["accountId"],
+			"current_balance", evt.Data["currentBalance"],
+			"requested_amount", evt.Data["requestedAmount"],
+			"type", evt.Data["type"],
+		)
+	case "UserRegistered":
+		slog.Info("Audit UserRegistered",
+			"user_id", evt.Data["userId"],
+			"username", evt.Data["username"],
+			"email", evt.Data["email"],
+		)
+
+	// Role grants are L3 by construction and can never originate from the
+	// Copilot harness, so an unaudited one is a red flag rather than noise.
+	// Logged at WARN for the same reason user-service logs it at WARN.
+	case "RoleGranted":
+		slog.Warn("Audit RoleGranted",
+			"user_id", evt.Data["userId"],
+			"username", evt.Data["username"],
+			"role", evt.Data["role"],
+			"previous_role", evt.Data["previousRole"],
+		)
+
+	// Banker Copilot authority events (epic #332).
+	//
+	// The common set below is what every authority event carries, so an auditor
+	// can reconstruct a complete chain — approval, escalation, each signature,
+	// execution — by filtering on approvalId or correlationId alone.
+	//
+	// Note terminalReason is logged for EVERY authority event, not only denials.
+	// `status == "denied"` is now a single large bucket covering human refusals,
+	// timeouts, policy escalations and re-plans; reading status without
+	// terminalReason is wrong roughly one time in four.
+	case "CopilotSessionStarted",
+		"ApprovalProposed",
+		"ActionProposalRejected",
+		"PolicyEscalated",
+		"ApprovalSigned",
+		"ApprovalDenied",
+		"ApprovalExpired",
+		"ApprovalExecuted",
+		"ApprovalExecutionFailed",
+		"ApprovalVoidedByPolicyChange",
+		"PolicyReloaded":
+		slog.Info("Audit "+evt.EventType,
+			"approval_id", evt.Data["approvalId"],
+			"action_id", evt.Data["actionId"],
+			"requester", evt.Data["requesterId"],
+			"session_id", evt.Data["sessionId"],
+			"agent_id", evt.Data["agentId"],
+			"rung", evt.Data["requiredRung"],
+			"slot_ordinal", evt.Data["slotOrdinal"],
+			"signer", evt.Data["signerId"],
+			"terminal_reason", evt.Data["terminalReason"],
+			"superseded_by_approval_id", evt.Data["supersededByApprovalId"],
+			"policy_version", evt.Data["policyVersion"],
+			"correlation", evt.Data["correlationId"],
+		)
+
 	default:
 		slog.Warn("Audit Unknown event type", "event_type", evt.EventType, "data", evt.Data)
 	}
