@@ -1,0 +1,125 @@
+name: Mutation Testing (security-critical)
+
+# Runs mutation testing against ONLY the security-critical code in epic #332:
+# the authority ladder's policy engine, and the harness's tool registry.
+#
+# WHY MUTATION TESTING AND NOT COVERAGE
+# -------------------------------------
+# Epic #332 turned up five separate tests that could not fail for the right
+# reason: a security audit that returned success when it could not find the file
+# it audited, a test that died on AttributeError so it could neither pass nor
+# fail meaningfully, a role-model test that asserted the *vulnerable* model, and
+# two guards that were redundant enough that breaking either alone was
+# unobservable.
+#
+# Every one of those had full line coverage. Coverage measures whether a line
+# executed, not whether any assertion would notice it changing. Mutation testing
+# asks the question we actually care about — "if this code were wrong, would the
+# suite go red?" — which is the automated form of the tamper-testing QA has been
+# doing by hand each phase.
+#
+# WHAT THIS CANNOT CATCH
+# ----------------------
+# Mutation testing only detects tests that CANNOT FAIL. It cannot detect a test
+# that fails correctly but asserts the WRONG THING — a test asserting that
+# `admin` is a valid L2 co-signer would survive mutation testing cleanly while
+# encoding a privilege escalation. That class is defended by deriving assertions
+# from the ratified spec rather than from the implementation, which is a review
+# discipline and not automatable. Do not let a green run here be read as proof
+# that the suite asserts the right things.
+#
+# SCOPE IS DELIBERATELY NARROW
+# ----------------------------
+# Mutation testing is slow. It is applied here to the code where "the tests
+# silently stopped biting" is a security incident rather than an inconvenience.
+# Resist widening it to the whole repository.
+
+on:
+  schedule:
+    # 07:00 UTC daily — off the critical path, results waiting each morning.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dotnet-policy-engine:
+    name: authority-service policy engine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install Stryker
+        run: dotnet tool install -g dotnet-stryker
+
+      - name: Mutate the policy engine
+        working-directory: src/authority-service.UnitTests
+        # No --break-at threshold yet: the first runs establish a baseline. Set
+        # one deliberately from observed scores rather than guessing a number
+        # that is either vacuous or red on arrival.
+        run: |
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          dotnet stryker \
+            --project authority-service.csproj \
+            --mutate 'Policy/**/*.cs' \
+            --mutate 'Repositories/ApprovalWriteGuard.cs' \
+            --mutate 'Services/DenialReasonValidator.cs' \
+            --reporter html \
+            --reporter progress
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stryker-report-policy-engine
+          path: src/authority-service.UnitTests/StrykerOutput/**/reports/*.html
+          if-no-files-found: warn
+
+  python-tool-registry:
+    name: banker-copilot-service tool registry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install
+        working-directory: src/banker-copilot-service
+        run: |
+          pip install -q -e . 2>/dev/null || pip install -q -e '.[dev]' || true
+          pip install -q pytest pytest-asyncio mutmut
+
+      # The registry is where "zero write tools registered" is enforced, and the
+      # manifest loader is where an unconstrained path parameter is refused. If a
+      # mutant survives in either, a guard the epic depends on is not actually
+      # being tested.
+      - name: Mutate the tool registry and manifest loader
+        working-directory: src/banker-copilot-service
+        run: |
+          mutmut run \
+            --paths-to-mutate app/tools/ \
+            --tests-dir tests/ \
+            --no-progress || true
+          echo "::group::surviving mutants"
+          mutmut results
+          echo "::endgroup::"
+
+      - name: Export report
+        if: always()
+        working-directory: src/banker-copilot-service
+        run: mutmut junitxml > mutmut-results.xml || true
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutmut-report-tool-registry
+          path: src/banker-copilot-service/mutmut-results.xml
+          if-no-files-found: warn
