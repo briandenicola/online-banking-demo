@@ -15,6 +15,9 @@ infra/local/terraform.tfstate.d/
 infra/local/*.tfstate
 infra/local/*.tfstate.backup
 
+# Provider lock files — environments are disposable, providers float
+**/.terraform.lock.hcl
+
 
 # IDE
 .idea/
