@@ -146,12 +146,17 @@ jobs:
         working-directory: src/ui-app
         env:
           CI: true
+        # NOTE: --testPathIgnorePatterns takes REGEXES matched against the full
+        # path, not file paths. An earlier version of this listed
+        # "src/components/DocumentUpload.test.tsx", which matched nothing at all
+        # because both suites actually live under components/account-opening/.
+        # The quarantine silently did nothing. Anchor on the filename instead,
+        # and verify with `npx craco test --listTests` after any change.
         run: |
           npx craco test \
             --watchAll=false \
             --testPathIgnorePatterns \
-              "src/components/DocumentUpload.test.tsx" \
-              "src/components/AgentPipeline.test.tsx"
+              "(DocumentUpload|AgentPipeline)\.test\.tsx$"
 
       - name: Build
         working-directory: src/ui-app
