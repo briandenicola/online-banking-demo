@@ -73,4 +73,5 @@ days.
 - Bug: `src/ai-service/app/services/anomaly_service.py:643` (pre-fix)
 - Fix: commit `c241a18` (issue #123)
 - Detection pattern used: workload-identity pod + Entra-auth Redis
-  client (see basher history #119 entry).
+  client (see `redis-from-workload-identity-pod` skill / basher
+  history #119 entry).
