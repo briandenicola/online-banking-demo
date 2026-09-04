@@ -1,0 +1,3 @@
+# Session Log: Foundry Managed VNet Plan Batch (2026-05-14T12:57:04Z)
+
+Brian directed a pivot of Foundry private networking architecture from BYO private endpoints (shipped in #138 phases 1–3) to Microsoft's Managed Virtual Network preview feature. Danny (Lead/Architect, bumped to Opus 4.6 for architectural depth) produced a comprehensive 3-phase migration plan filed as GitHub issue #141, which includes account enablement, capabilityHost refactor, and cleanup phases with explicit recreate-risk callouts. Basher is concurrently working on dotnet-10-upgrade on a separate worktree and was notified of the #141 dependency. Scribe consolidated inbox decisions, appended cross-team notifications, and committed.
