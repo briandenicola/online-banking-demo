@@ -204,17 +204,10 @@ def test_the_quarantine_list_is_explicit_and_small():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "F2-10: the quarantine patterns match nothing. They name "
-        "src/components/{DocumentUpload,AgentPipeline}.test.tsx but the files live at "
-        "src/components/account-opening/..., so both pre-existing failing suites still run in "
-        "the BLOCKING ui-app job. Verified against the runner, not inferred: `craco test "
-        "--listTests` with these exact patterns lists both files. Remove this marker when the "
-        "patterns are corrected — strict, so the fix reports XPASS rather than passing quietly."
-    ),
-)
+# F2-10 is fixed: the patterns now name account-opening/... and were verified
+# against the runner (13 suites discovered without the filter, 11 with it). The
+# strict xfail that recorded the defect has been removed, which is what it asked
+# for — it was strict precisely so the fix could not pass quietly.
 @pytest.mark.parametrize("pattern", _quarantine_patterns() or ["<none found>"])
 def test_each_quarantine_pattern_excludes_something(pattern):
     """An exclusion that excludes nothing is worse than no exclusion.

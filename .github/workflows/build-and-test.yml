@@ -136,7 +136,10 @@ jobs:
 
       - name: Install
         working-directory: src/ui-app
-        run: npm ci
+        # react-scripts@5 declares a peerOptional typescript ^3||^4 and this app
+        # is on typescript 6, which npm ci treats as an unresolvable conflict.
+        # The lockfile itself is consistent; only the peer assertion objects.
+        run: npm ci --legacy-peer-deps
 
       - name: Typecheck
         working-directory: src/ui-app
@@ -147,16 +150,20 @@ jobs:
         env:
           CI: true
         # NOTE: --testPathIgnorePatterns takes REGEXES matched against the full
-        # path, not file paths. An earlier version of this listed
+        # path, not file paths. An earlier version of this named
         # "src/components/DocumentUpload.test.tsx", which matched nothing at all
         # because both suites actually live under components/account-opening/.
-        # The quarantine silently did nothing. Anchor on the filename instead,
-        # and verify with `npx craco test --listTests` after any change.
+        # The quarantine silently did nothing and the blocking job ran them.
+        #
+        # Kept as two separately named entries rather than one alternation: a
+        # quarantine is a debt register, and named entries can be counted and
+        # argued about. Verify with `npx craco test --listTests` after any change.
         run: |
           npx craco test \
             --watchAll=false \
             --testPathIgnorePatterns \
-              "(DocumentUpload|AgentPipeline)\.test\.tsx$"
+              "account-opening/DocumentUpload.test.tsx" \
+              "account-opening/AgentPipeline.test.tsx"
 
       - name: Build
         working-directory: src/ui-app
@@ -183,7 +190,10 @@ jobs:
 
       - name: Install
         working-directory: src/ui-app
-        run: npm ci
+        # react-scripts@5 declares a peerOptional typescript ^3||^4 and this app
+        # is on typescript 6, which npm ci treats as an unresolvable conflict.
+        # The lockfile itself is consistent; only the peer assertion objects.
+        run: npm ci --legacy-peer-deps
 
       # These two suites fail for reasons predating epic #332. They are run here
       # so the failures stay visible and countable instead of being deleted. When

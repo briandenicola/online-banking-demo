@@ -92,13 +92,10 @@ public class RoleHierarchyTests
     [Fact]
     public async Task Token_Carries_EffectiveRoles_And_Seniority()
     {
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Jwt:ExpiresInMinutes"] = "60",
-                ["Jwt:Issuer"] = "test-issuer"
-            })
-            .Build();
+        var configuration = TestJwtConfiguration.Build(new Dictionary<string, string?>
+        {
+            ["Jwt:Issuer"] = "test-issuer"
+        });
 
         var authService = new AuthService(configuration, RoleHierarchy.Default);
 
@@ -120,13 +117,10 @@ public class RoleHierarchyTests
     [Fact]
     public async Task Admin_Token_Does_Not_Smuggle_In_Banking_Authority()
     {
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Jwt:ExpiresInMinutes"] = "60",
-                ["Jwt:Issuer"] = "test-issuer"
-            })
-            .Build();
+        var configuration = TestJwtConfiguration.Build(new Dictionary<string, string?>
+        {
+            ["Jwt:Issuer"] = "test-issuer"
+        });
 
         var authService = new AuthService(configuration, RoleHierarchy.Default);
 

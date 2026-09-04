@@ -83,7 +83,8 @@ public class TransfersControllerTests
     [Fact]
     public async Task GetTransfer_ExistingTransfer_ReturnsOk()
     {
-        var transfer = new Transfer { Id = "t-1", Amount = 100m };
+        SetUser("user-1");
+        var transfer = new Transfer { Id = "t-1", Amount = 100m, UserId = "user-1" };
         _transferServiceMock.Setup(s => s.GetTransferByIdAsync("t-1")).ReturnsAsync(transfer);
 
         var result = await _sut.GetTransfer("t-1");
@@ -94,10 +95,40 @@ public class TransfersControllerTests
     [Fact]
     public async Task GetTransfer_NonExistentTransfer_ReturnsNotFound()
     {
+        SetUser("user-1");
         _transferServiceMock.Setup(s => s.GetTransferByIdAsync("nonexistent")).ReturnsAsync((Transfer?)null);
 
         var result = await _sut.GetTransfer("nonexistent");
 
         result.Should().BeOfType<NotFoundResult>();
+    }
+
+    // The controller checks ownership, but until now nothing asserted it: the two
+    // tests above never set a user, so they failed before reaching the check and
+    // no test exercised it. Someone could have deleted the ownership comparison
+    // and this suite would have gone from red to red.
+    //
+    // NotFound rather than Forbid is deliberate — replying "forbidden" would
+    // confirm the transfer exists to someone who is not entitled to know that.
+    [Fact]
+    public async Task GetTransfer_TransferOwnedByAnotherUser_ReturnsNotFound()
+    {
+        SetUser("user-1");
+        var someoneElses = new Transfer { Id = "t-2", Amount = 100m, UserId = "user-2" };
+        _transferServiceMock.Setup(s => s.GetTransferByIdAsync("t-2")).ReturnsAsync(someoneElses);
+
+        var result = await _sut.GetTransfer("t-2");
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async Task GetTransfer_Unauthenticated_ReturnsUnauthorized()
+    {
+        SetUser("");
+
+        var result = await _sut.GetTransfer("t-1");
+
+        result.Should().BeOfType<UnauthorizedResult>();
     }
 }
