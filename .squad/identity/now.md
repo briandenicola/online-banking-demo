@@ -195,10 +195,35 @@ refused to start. The fail-closed design caught QA.
 | `event-processor` | builds, vets, tests pass |
 | `ui-app` | 18 suites / 181 tests; 2 pre-existing suites quarantined |
 
-**Not verifiable on this machine:** `transfer-`, `transaction-`, `prompt-eval-service.Tests` have
-root-owned `obj/` directories from an old containerised build. Needs `sudo rm -rf`. CI is
-unaffected (gitignored, fresh checkout). The `obj.root2` workaround directory has itself become
-root-owned — do not add a ninth alias, delete the originals.
+**CI is green.** All four blocking jobs pass on PR #338. The fifth job, `ui-app quarantined
+suites`, is red by design (`continue-on-error: true`) so two pre-existing failures stay visible
+and countable rather than deleted.
+
+**Still not runnable on this machine:** `transaction-service.Tests` has a root-owned `obj/` from
+an old containerised build. Needs `sudo rm -rf src/transaction-service.Tests/obj`. CI runs it
+fine. The `obj.root2` workaround directory became root-owned itself — do not add a ninth alias
+to `Directory.Build.props`, delete the originals.
+
+### What CI found on its first run
+
+Four of five jobs failed, and **none of the failures were caused by this epic**. All were
+pre-existing conditions nobody could see, because three of these suites had never run anywhere.
+
+- **6 Redis TLS security tests** (issue #38) opened files under a hardcoded
+  `/home/brian/code/online-banking-demo` — one machine, and the repo's *former* name. They had
+  never verified anything anywhere else. **Third instance** of this exact defect.
+- **7 transfer-service failures** from three stale contracts: a loose Redis mock returning null,
+  tests predating a fail-closed account-ownership check, and an assertion on a `Pending` status
+  the service no longer produces. The controller's ownership check had **no test at all** —
+  deleting it would have taken the suite from red to red.
+- **9 user-service failures locally, 0 in CI** — the inverse defect. After #334 the issuer reads
+  ambient `AZURE_CLIENT_ID` to choose cloud vs local mode, so the suite failed for anyone with
+  Azure credentials exported and passed on CI, which has none. It was reporting a property of the
+  developer's shell.
+- **npm ci** — `react-scripts@5` peer-conflicts with typescript 6.
+
+**The lesson to carry forward:** a test that has never run is not a passing test. Prefer failing
+loudly over skipping, and never let a suite's outcome depend on ambient environment.
 
 ### Security defects found and fixed in Phase 2
 
