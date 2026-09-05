@@ -168,6 +168,85 @@ else
     builder.Services.AddSingleton<IAuditPublisher, NullAuditPublisher>();
 }
 
+// ---------------------------------------------------------------------------------------
+// OUT-OF-BAND NOTIFICATION SINKS (epic §5.6).
+//
+// Config-driven, no hardcoded endpoints. `Notifications:Sinks` selects which sinks run; each
+// sink's endpoint (stream key, webhook URL, email recipient) is its own config value and an
+// unconfigured optional sink is INERT, never defaulted to a guess. Fire-and-forget everywhere:
+// a notification never gates an approval (I-1/I-6).
+//
+// The redis-stream sink reuses the audit connection multiplexer but publishes to a DIFFERENT,
+// dedicated stream key so a transient notification never lands in the audited banking-events
+// vocabulary — see .squad/decisions/inbox/rusty-phase3-notification-sinks.md. When no Redis
+// connection is configured (unit tests, isolated dev), it degrades to the null sink.
+// ---------------------------------------------------------------------------------------
+var notificationOptions = new NotificationOptions();
+builder.Configuration.GetSection("Notifications").Bind(notificationOptions);
+builder.Services.AddSingleton(notificationOptions);
+
+builder.Services.AddSingleton<INotificationSink>(sp =>
+{
+    var opts = sp.GetRequiredService<NotificationOptions>();
+    var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+    var enabled = opts.EnabledSinks();
+    var sinks = new List<INotificationSink>();
+
+    foreach (var name in enabled)
+    {
+        switch (name)
+        {
+            case "redis-stream":
+                var multiplexer = sp.GetService<IConnectionMultiplexer>();
+                if (multiplexer is null)
+                {
+                    loggerFactory.CreateLogger("Notifications").LogWarning(
+                        "redis-stream notification sink is enabled but no Redis connection is " +
+                        "configured; it is inert.");
+                    break;
+                }
+                sinks.Add(new RedisStreamNotificationSink(
+                    multiplexer, opts.RedisStreamKey,
+                    loggerFactory.CreateLogger<RedisStreamNotificationSink>()));
+                break;
+
+            case "webhook":
+                sinks.Add(new WebhookNotificationSink(
+                    sp.GetRequiredService<IHttpClientFactory>(), opts.WebhookUrl,
+                    opts.WebhookTimeoutSeconds,
+                    loggerFactory.CreateLogger<WebhookNotificationSink>()));
+                break;
+
+            case "email":
+                sinks.Add(new EmailNotificationSink(
+                    opts.EmailTo, loggerFactory.CreateLogger<EmailNotificationSink>()));
+                break;
+
+            case "null":
+                sinks.Add(new NullNotificationSink());
+                break;
+
+            default:
+                loggerFactory.CreateLogger("Notifications").LogWarning(
+                    "Unknown notification sink '{Sink}' in Notifications:Sinks — ignored.", name);
+                break;
+        }
+    }
+
+    if (sinks.Count == 0)
+    {
+        return new NullNotificationSink();
+    }
+
+    if (sinks.Count == 1)
+    {
+        return sinks[0];
+    }
+
+    return new CompositeNotificationSink(
+        sinks, loggerFactory.CreateLogger<CompositeNotificationSink>());
+});
+
 builder.Services.AddSingleton<IActionBroker, HttpActionBroker>();
 builder.Services.AddScoped<ApprovalService>();
 builder.Services.AddHostedService<ExpirySweeperBackgroundService>();

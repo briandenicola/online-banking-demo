@@ -87,6 +87,20 @@ data:
   Approval__SweepIntervalSeconds: "60"
   Approval__SweepBatchSize: "100"
   Approval__RetentionSeconds: "7776000"
+  # Out-of-band supervisor notification sinks (epic §5.6). SELECTION and endpoints are
+  # configuration, never literals in authority-service. `Notifications__Sinks` chooses which
+  # sinks run; the redis-stream sink publishes to a DEDICATED stream key, NOT the audited
+  # banking-events bus, so a transient supervisor ping never pollutes the audit vocabulary
+  # (see .squad/decisions/inbox/rusty-phase3-notification-sinks.md). The Redis CONNECTION
+  # itself is a secret, wired in authority-service.yaml — these keys are non-secret selection.
+  # To POST to Teams/Slack in a live demo, add `webhook` to Notifications__Sinks and set
+  # Notifications__WebhookUrl. Nested .NET config keys use `__`, which is a valid ConfigMap
+  # key (unlike a hyphen, which envFrom would silently drop).
+  Notifications__Sinks: "redis-stream"
+  Notifications__RedisStreamKey: "copilot-notifications"
+  Notifications__WebhookUrl: ""
+  Notifications__WebhookTimeoutSeconds: "5"
+  Notifications__EmailTo: ""
   COSMOS_DB_ENDPOINT: "REPLACE_WITH_COSMOS_ENDPOINT"
   CHAT_MEMORY_ENABLED: "REPLACE_WITH_CHAT_MEMORY_ENABLED"
   CHAT_MEMORY_REQUIRED: "false"

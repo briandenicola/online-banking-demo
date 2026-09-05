@@ -127,3 +127,69 @@ describe('TerminalApprovalCard', () => {
     expect(screen.getByText(/NOT been applied/i)).toBeInTheDocument();
   });
 });
+
+describe('co-signature identity clarity', () => {
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('states which identity is about to sign, for the two-session demo', () => {
+    window.localStorage.setItem('auth_email', 'a.reyes@bank.example');
+    window.localStorage.setItem('auth_role', 'supervisor');
+    renderCard(demoApproval);
+    expect(screen.getByText(/Signing as/i)).toBeInTheDocument();
+    expect(screen.getByText('A Reyes')).toBeInTheDocument();
+    // At L2 it names the co-signature and the different-identity requirement.
+    expect(screen.getByText(/independent supervisor co-signature/i)).toBeInTheDocument();
+  });
+
+  it('points the acting identity at their own unfilled slot without naming a reviewer at proposal time', () => {
+    window.localStorage.setItem('auth_email', 'a.reyes@bank.example');
+    renderCard(demoApproval);
+    expect(screen.getByText(/you \(A Reyes\) sign here/i)).toBeInTheDocument();
+    // The other unfilled slot is still a rule, never an assignment.
+    expect(screen.getByText(/must be a different person/i)).toBeInTheDocument();
+  });
+
+  it('shows no signing-identity banner when the caller may not sign', () => {
+    window.localStorage.setItem('auth_email', 'a.reyes@bank.example');
+    renderCard({ ...demoApproval, callerMaySign: false });
+    expect(screen.queryByText(/Signing as/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/sign here/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('TerminalApprovalCard — the path forward is live, not a dead end', () => {
+  it('offers a clickable review of the replacement approval when superseded', () => {
+    const superseded: Approval = {
+      ...demoApproval,
+      status: 'denied',
+      terminalReason: 'PAYLOAD_SUPERSEDED',
+      terminalAt: new Date().toISOString(),
+      supersededByApprovalId: 'apr_demo_0002',
+    };
+    render(
+      <CopilotProvider offline>
+        <TerminalApprovalCard approval={superseded} />
+      </CopilotProvider>
+    );
+    expect(screen.getByRole('button', { name: /Review the new approval/i })).toBeEnabled();
+    // A blameless void tells the banker a fresh signature is required.
+    expect(screen.getByText(/fresh signature is required/i)).toBeInTheDocument();
+  });
+
+  it('offers no review button when there is no replacement pointer', () => {
+    const denied: Approval = {
+      ...demoApproval,
+      status: 'denied',
+      terminalReason: 'HUMAN_DENIED',
+      terminalAt: new Date().toISOString(),
+    };
+    render(
+      <CopilotProvider offline>
+        <TerminalApprovalCard approval={denied} />
+      </CopilotProvider>
+    );
+    expect(screen.queryByRole('button', { name: /Review the new approval/i })).not.toBeInTheDocument();
+  });
+});

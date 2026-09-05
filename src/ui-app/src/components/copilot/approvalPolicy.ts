@@ -432,3 +432,141 @@ export function countdownSeverity(
   if (fraction <= 0.25) return 'warning';
   return 'normal';
 }
+
+// ---------------------------------------------------------------------------
+// Batch eligibility — L1 ONLY, structurally
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a single approval may enter a batch.
+ *
+ * The L2 exclusion is NOT a disabled button — it is a set-membership test that
+ * an L2 item simply fails, so no batch UI can ever form around one. Batching a
+ * second opinion defeats the second opinion: the whole point of L2 is that a
+ * different human looked at THIS item, and a "sign all" gesture is exactly the
+ * reflexive click L2 exists to prevent (§6.1, epic O-invariant).
+ *
+ * The rung already encodes "under threshold": an item that resolved to L1 with a
+ * single signer is, by definition, one no escalator raised. So batchability is
+ * read off the rung the server computed, never off a dollar amount re-derived on
+ * the client — the same reason `callerMaySign` is mirrored and never inferred.
+ */
+export function isBatchEligible(approval: Approval): boolean {
+  // Every condition is a POSITIVE assertion, so anything unexpected — a new
+  // lifecycle status, an absent server field, an unknown rung — fails CLOSED.
+  // In particular:
+  //  - status is an allow-list of the two OPEN states, never `!== 'denied'`;
+  //  - `callerMaySign === true` (the server-supplied authorization gate) rejects
+  //    a missing/undefined field: a missing gate is never consent;
+  //  - rung/signers together forbid L2, which must be un-batchable by construction.
+  // See approvalPolicy.test.ts for the per-condition tamper pins.
+  return (
+    (approval.status === 'pending' || approval.status === 'proposed') &&
+    approval.requiredRung === 'L1' &&
+    approval.requiredSigners === 1 &&
+    approval.callerMaySign === true
+  );
+}
+
+export interface BatchGroup {
+  actionId: string;
+  actionLabel: string;
+  items: Approval[];
+}
+
+/**
+ * Groups batch-eligible approvals by action type, capped, sorted by TTL.
+ *
+ * SINGLE action type per group: heterogeneous batching is autonomy laundering.
+ * Only groups of two or more are returned — a "batch of one" is just a card, and
+ * offering a batch affordance for it trains the sign-all reflex for no gain.
+ */
+export function batchableGroups(approvals: Approval[], cap: number, now: number = Date.now()): BatchGroup[] {
+  const byAction = new Map<string, Approval[]>();
+  for (const approval of approvals) {
+    if (!isBatchEligible(approval)) continue;
+    const list = byAction.get(approval.actionId) || [];
+    list.push(approval);
+    byAction.set(approval.actionId, list);
+  }
+
+  const groups: BatchGroup[] = [];
+  for (const [actionId, list] of Array.from(byAction.entries())) {
+    if (list.length < 2) continue;
+    const sorted = [...list].sort((a, b) => msUntil(a.expiresAt, now) - msUntil(b.expiresAt, now));
+    groups.push({
+      actionId,
+      actionLabel: sorted[0].actionLabel,
+      // The cap is a hard slice, not a warning. The remaining items stay as
+      // individual cards; they are not silently dropped, just not batched.
+      items: sorted.slice(0, Math.max(1, cap)),
+    });
+  }
+  // Most-pressing group first — the one with the soonest-expiring lead item.
+  return groups.sort(
+    (a, b) => msUntil(a.items[0].expiresAt, now) - msUntil(b.items[0].expiresAt, now)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Denial counts — grouped by reason, NEVER an undifferentiated total
+// ---------------------------------------------------------------------------
+
+export interface DenialBreakdown {
+  byReason: Record<TerminalReason, number>;
+  /** HUMAN_DENIED only. The one bucket that is evidence about the agent. */
+  humanDenied: number;
+  /** Everything a policy/TTL/payload change caused — the banker did nothing wrong. */
+  systemVoided: number;
+  total: number;
+}
+
+/**
+ * Counts denials, split by cause.
+ *
+ * §5.1.1(c): a single "N denied" figure silently merges a colleague's rejection
+ * with a policy void, and reading the void as a rejection is the exact harm O9
+ * flags. Only `HUMAN_DENIED` is evidence about the agent's judgement; the other
+ * three are evidence about the ground moving. They must never be summed into one
+ * number anywhere the UI renders a count.
+ */
+export function denialCountsByReason(approvals: Approval[]): DenialBreakdown {
+  const byReason: Record<TerminalReason, number> = {
+    HUMAN_DENIED: 0,
+    POLICY_RUNG_ESCALATED: 0,
+    PAYLOAD_SUPERSEDED: 0,
+    TTL_EXPIRED: 0,
+  };
+
+  for (const approval of approvals) {
+    if (approval.status !== 'denied') continue;
+    // A denial with no reason is a defect (the store already logs it); count it
+    // as HUMAN_DENIED would be a lie, so it lands nowhere and the totals below
+    // will visibly not add up, which is the honest signal.
+    if (approval.terminalReason && approval.terminalReason in byReason) {
+      byReason[approval.terminalReason] += 1;
+    }
+  }
+
+  const humanDenied = byReason.HUMAN_DENIED;
+  const systemVoided =
+    byReason.POLICY_RUNG_ESCALATED + byReason.PAYLOAD_SUPERSEDED + byReason.TTL_EXPIRED;
+
+  return { byReason, humanDenied, systemVoided, total: humanDenied + systemVoided };
+}
+
+/** Short human label for a terminal reason, for counts and chips. */
+export function terminalReasonShortLabel(reason: TerminalReason): string {
+  switch (reason) {
+    case 'HUMAN_DENIED':
+      return 'denied by a reviewer';
+    case 'POLICY_RUNG_ESCALATED':
+      return 'voided by a policy change';
+    case 'PAYLOAD_SUPERSEDED':
+      return 'superseded — payload changed';
+    case 'TTL_EXPIRED':
+      return 'expired unsigned';
+    default:
+      return reason;
+  }
+}

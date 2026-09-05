@@ -24,6 +24,7 @@ SERVICE_NAME = "banker-copilot-service"
 
 DEFAULT_MANIFEST_PATH = "/app/config/copilot-tools.yaml"
 DEFAULT_ROLE_HIERARCHY_PATH = "/app/config/role-hierarchy.yaml"
+DEFAULT_HARNESS_LIMITS_PATH = "/app/config/harness-limits.yaml"
 
 #: Env prefixes searched, in order, when resolving a logical upstream service name to a base URL.
 _DOWNSTREAM_ENV_PATTERNS = (
@@ -90,6 +91,7 @@ def legacy_config_names_in_use() -> dict[str, str]:
 class Settings:
     manifest_path: str
     role_hierarchy_path: str
+    harness_limits_path: str
     authority_service_url: str | None
     cosmos_endpoint: str | None
     cosmos_database: str
@@ -159,6 +161,12 @@ def load_settings() -> Settings:
             "COPILOT_TOOL_MANIFEST_PATH", "TOOL_MANIFEST_PATH", DEFAULT_MANIFEST_PATH
         ),
         role_hierarchy_path=os.getenv("ROLE_HIERARCHY_PATH", DEFAULT_ROLE_HIERARCHY_PATH),
+        # The fan-out limits file (epic §6.3). Path only — the numbers live in the file, never
+        # here, so there is one home for a concurrency bound. The engine loads it via
+        # app.planner.limits.load_fanout_limits().
+        harness_limits_path=env_with_legacy(
+            "COPILOT_HARNESS_LIMITS_PATH", "HARNESS_LIMITS_PATH", DEFAULT_HARNESS_LIMITS_PATH
+        ),
         authority_service_url=(os.getenv("AUTHORITY_SERVICE_URL", "").strip().rstrip("/") or None),
         cosmos_endpoint=os.getenv("COSMOS_DB_ENDPOINT", "").strip() or None,
         cosmos_database=env_with_legacy("COPILOT_DATABASE", "COSMOS_DB_DATABASE", "BankingDemo"),

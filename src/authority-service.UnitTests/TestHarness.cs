@@ -94,6 +94,7 @@ public static class TestHarness
             new DenialReasonValidator(configuration),
             audit,
             broker,
+            new NullNotificationSink(),
             NullLogger<ApprovalService>.Instance);
 
         return new Harness(service, repository, provider, audit, broker, configuration);

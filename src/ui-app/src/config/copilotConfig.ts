@@ -70,6 +70,13 @@ export interface CopilotConfig {
   spotCheckRate: number;
   /** Never show more than this many approval cards in "Needs you" at once. */
   queueVisibleLimit: number;
+  /**
+   * Hard cap on items in a single L1 batch. Clamped to a CEILING, not a floor:
+   * an operator may lower it, never raise it. Batching ten identical $12 fee
+   * reversals is efficiency; batching forty heterogeneous items is autonomy
+   * laundering, and the cap is the structural wall against it (§6.1).
+   */
+  batchMaxItems: number;
   /** Visual tree depth cap; deeper subagents flatten behind a disclosure. */
   maxTraceDepth: number;
   /** Above this many visible nodes, switch to windowed rendering. */
@@ -123,6 +130,7 @@ const DEFAULTS: CopilotConfig = {
   sessionSignatureWindowMs: 60 * 60 * 1000,
   spotCheckRate: 0.07,
   queueVisibleLimit: 5,
+  batchMaxItems: 10,
   maxTraceDepth: 3,
   virtualiseAboveNodes: 200,
   heartbeatIntervalMs: 15000,
@@ -157,6 +165,17 @@ const FLOORS = {
   overrideJustificationMinLength: 20,
   queueVisibleLimit: 1,
   maxTraceDepth: 1,
+} as const;
+
+/**
+ * Hard ceilings. The mirror image of FLOORS: some anti-fatigue controls are
+ * defeated by being RAISED, not lowered. The batch cap is the case that matters
+ * — a deployment that sets it to 100 has reintroduced the approve-all this epic
+ * exists to prevent, so it is clamped down to 10 here rather than trusted to an
+ * operator.
+ */
+const CEILINGS = {
+  batchMaxItems: 10,
 } as const;
 
 interface RuntimeShape {
@@ -210,6 +229,7 @@ function buildEnv(): Record<string, string | undefined> {
     sessionSignatureWindowMs: process.env.REACT_APP_COPILOT_SIGNATURE_WINDOW_MS,
     spotCheckRate: process.env.REACT_APP_COPILOT_SPOT_CHECK_RATE,
     queueVisibleLimit: process.env.REACT_APP_COPILOT_QUEUE_VISIBLE_LIMIT,
+    batchMaxItems: process.env.REACT_APP_COPILOT_BATCH_MAX_ITEMS,
     heartbeatIntervalMs: process.env.REACT_APP_COPILOT_HEARTBEAT_MS,
     undoWindowMs: process.env.REACT_APP_COPILOT_UNDO_WINDOW_MS,
     demoModeEnabled: process.env.REACT_APP_COPILOT_DEMO_MODE,
@@ -224,6 +244,17 @@ function clampFloor(value: number, floor: number, label: string): number {
         'Anti-fatigue controls are tunable but not removable.'
     );
     return floor;
+  }
+  return value;
+}
+
+function clampCeiling(value: number, ceiling: number, label: string): number {
+  if (value > ceiling) {
+    logger.warn(
+      `copilotConfig: ${label}=${value} exceeds the enforced ceiling ${ceiling}; using the ceiling. ` +
+        'The batch cap is a structural wall against approve-all and cannot be raised.'
+    );
+    return ceiling;
   }
   return value;
 }
@@ -314,6 +345,11 @@ export function getCopilotConfig(): CopilotConfig {
       FLOORS.queueVisibleLimit,
       'queueVisibleLimit'
     ),
+    batchMaxItems: clampCeiling(
+      Math.max(1, pick(rt.batchMaxItems, env.batchMaxItems, DEFAULTS.batchMaxItems)),
+      CEILINGS.batchMaxItems,
+      'batchMaxItems'
+    ),
     maxTraceDepth: clampFloor(
       pick(rt.maxTraceDepth, undefined, DEFAULTS.maxTraceDepth),
       FLOORS.maxTraceDepth,
@@ -377,3 +413,4 @@ export function authorityUrl(path: string): string {
 
 export const COPILOT_CONFIG_DEFAULTS = DEFAULTS;
 export const COPILOT_CONFIG_FLOORS = FLOORS;
+export const COPILOT_CONFIG_CEILINGS = CEILINGS;

@@ -288,6 +288,14 @@ services:
       - POLICY_FILE_PATH=/app/config/authority-policy.yaml
       - ROLE_HIERARCHY_PATH=/app/config/role-hierarchy.yaml
       - Redis__ConnectionString=redis:6379
+      # Out-of-band supervisor notification sinks (epic §5.6). Config-driven; redis-stream is
+      # the default local sink and publishes to a DEDICATED stream (NOT banking-events). Add
+      # `webhook` to the list and set Notifications__WebhookUrl to POST to Teams/Slack.
+      - Notifications__Sinks=${AUTHORITY_NOTIFICATION_SINKS:-redis-stream}
+      - Notifications__RedisStreamKey=${AUTHORITY_NOTIFICATION_STREAM_KEY:-copilot-notifications}
+      - Notifications__WebhookUrl=${AUTHORITY_NOTIFICATION_WEBHOOK_URL:-}
+      - Notifications__WebhookTimeoutSeconds=${AUTHORITY_NOTIFICATION_WEBHOOK_TIMEOUT_SECONDS:-5}
+      - Notifications__EmailTo=${AUTHORITY_NOTIFICATION_EMAIL_TO:-}
       - Downstream__transaction-service=http://transaction-service:8080
       - Downstream__transfer-service=http://transfer-service:8080
       - Downstream__account-service=http://account-service:8080
@@ -374,6 +382,10 @@ services:
       # surface. Read-only: a harness that could rewrite its own manifest could
       # grant itself a write tool.
       - ./config/copilot-tools.yaml:/app/config/copilot-tools.yaml:ro
+      # Fan-out concurrency limits (epic §6.3). Edit config/harness-limits.yaml locally and
+      # restart to re-tune. Read-only: a harness that could rewrite its own limits could grant
+      # itself unbounded fan-out.
+      - ./config/harness-limits.yaml:/app/config/harness-limits.yaml:ro
       # user-service owns this file; the harness reads it and may not diverge
       # from it. Same mount authority-service takes, from the same source path —
       # three services, one role model, no copies.

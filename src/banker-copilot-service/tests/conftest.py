@@ -16,6 +16,10 @@ if str(SERVICE_ROOT) not in sys.path:
 #: fixture that agrees with it. A fixture would let the shipped file drift while tests pass.
 MANIFEST_PATH = REPO_ROOT / "config" / "copilot-tools.yaml"
 ROLE_HIERARCHY_PATH = REPO_ROOT / "src" / "user-service" / "config" / "role-hierarchy.yaml"
+#: The real, shipped fan-out limits file (epic §6.3). Same discipline as the manifest: tests
+#: boot the harness against the artifact that deploys, so a drift in the shipped bounds fails
+#: a test rather than passing against a fixture that quietly agrees with itself.
+HARNESS_LIMITS_PATH = REPO_ROOT / "config" / "harness-limits.yaml"
 
 #: #334: the RS256 test keypair and the canonical audiences live in one place for every
 #: service's suite. Imported rather than restated so a token this file mints is a token the
@@ -48,7 +52,14 @@ def _base_env(monkeypatch):
     monkeypatch.setenv("COPILOT_TOOL_MANIFEST_PATH", str(MANIFEST_PATH))
     monkeypatch.delenv("TOOL_MANIFEST_PATH", raising=False)
     monkeypatch.setenv("ROLE_HIERARCHY_PATH", str(ROLE_HIERARCHY_PATH))
+    monkeypatch.setenv("COPILOT_HARNESS_LIMITS_PATH", str(HARNESS_LIMITS_PATH))
+    monkeypatch.delenv("HARNESS_LIMITS_PATH", raising=False)
     monkeypatch.delenv("COSMOS_DB_ENDPOINT", raising=False)
+    # #334 lesson: a test's outcome must never depend on ambient env. An inherited
+    # AZURE_CLIENT_ID silently flips credential_mode to 'entra' and, with it, the
+    # session-ownership path this suite asserts on — so it is cleared explicitly here
+    # rather than assumed absent.
+    monkeypatch.delenv("AZURE_CLIENT_ID", raising=False)
     for service in (
         "ai-service",
         "transaction-service",

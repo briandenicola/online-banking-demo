@@ -87,6 +87,11 @@ spec:
         # prove which tools it registered must not register any.
         - name: TOOL_MANIFEST_PATH
           value: "/app/config/copilot-tools.yaml"
+        # Fan-out concurrency limits (epic §6.3). Baked into the image like the tool manifest;
+        # repoint at a ConfigMap mount to re-tune fan-out without a rebuild. The engine
+        # fail-closes if the file is missing or invalid.
+        - name: COPILOT_HARNESS_LIMITS_PATH
+          value: "/app/config/harness-limits.yaml"
         # The SHARED role model, not the copy baked into this image.
         # Identical treatment to authority-service and user-service: one
         # ConfigMap object mounted into every pod that derives banking authority

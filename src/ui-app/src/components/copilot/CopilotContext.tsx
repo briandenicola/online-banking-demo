@@ -34,7 +34,7 @@ import {
 import { CopilotState, createCopilotStore, CopilotStore } from '../../state/copilotStore';
 import { openCopilotStream, CopilotStreamHandle } from '../../api/copilotStream';
 import { createSession, sendMessage, startRun, fetchRunTrace } from '../../api/copilot';
-import { listApprovals, signApproval, denyApproval } from '../../api/approvals';
+import { listApprovals, signApproval, denyApproval, getApproval } from '../../api/approvals';
 import { logger } from '../../utils/logger';
 
 export interface CopilotContextValue {
@@ -49,6 +49,13 @@ export interface CopilotContextValue {
   setShowTimings: (value: boolean) => void;
   selectedApprovalId?: string;
   selectApproval: (id?: string) => void;
+  /**
+   * Load (if needed) and select an approval by id — the "Review the new
+   * approval" path from a superseded/voided card. Fetches from authority-service
+   * when the replacement is not already in the store, so a supersede void is a
+   * door forward, never a dead-end chip.
+   */
+  openApproval: (id: string) => Promise<void>;
   highlightedNodeId?: string;
   highlightNode: (id?: string) => void;
   /** Submit an intent. Opens a session if one is not already open. */
@@ -275,6 +282,26 @@ export const CopilotProvider: React.FC<CopilotProviderProps> = ({
     [store]
   );
 
+  const openApproval = useCallback(
+    async (id: string) => {
+      // Select immediately if we already hold it — the replacement usually
+      // arrived on the same stream that voided the old one. Otherwise fetch it,
+      // because the whole point of the supersede pointer is that the path
+      // forward is reachable, not merely named.
+      const present = store.getSnapshot().approvals[id];
+      if (!present && !offline) {
+        try {
+          const fetched = await getApproval(id);
+          store.putApproval(fetched);
+        } catch (error) {
+          logger.error('copilot: could not load replacement approval', error);
+        }
+      }
+      setSelectedApprovalId(id);
+    },
+    [offline, store]
+  );
+
   const replay = useCallback(
     (events: CopilotEvent[]) => {
       // Animations are suppressed during a drain: replaying 200 frames with the
@@ -300,6 +327,7 @@ export const CopilotProvider: React.FC<CopilotProviderProps> = ({
       setShowTimings,
       selectedApprovalId,
       selectApproval: setSelectedApprovalId,
+      openApproval,
       highlightedNodeId,
       highlightNode: setHighlightedNodeId,
       submitIntent,
@@ -323,6 +351,7 @@ export const CopilotProvider: React.FC<CopilotProviderProps> = ({
       refreshApprovals,
       sign,
       deny,
+      openApproval,
       replay,
       lastError,
     ]

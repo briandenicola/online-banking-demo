@@ -1016,3 +1016,63 @@ before `/`. I verified it by running the shell, not by reasoning — and good
 thing, since `sorted(Path.glob(...))` disagrees with bash and would have had me
 assert against a machine that does not exist. **When a test encodes a fact about
 another tool's behaviour, get the fact from that tool.**
+
+---
+
+## Phase 3 — supervisor, fan-out, L2 co-signature (branch `squad/332-phase3-supervisor`)
+
+**26. Prove independence by what was *handed over*, not by what was *said*.** The headline for
+Phase 3 was blind construction: the supervisor agent must not see the proposer's conclusion. The
+brief was explicit that a test checking for an instruction ("please disregard the above") proves
+nothing. So the oracle's `build_supervisor_input(intent)` takes ONLY the banker intent — the
+proposer's plan/reasoning/conclusion have no argument to travel through. This is the Phase-1
+"`ExecuteAsync` takes no payload parameter" trick again: **a leak that cannot be named cannot be
+passed.** The byte-level token scan is a cross-check with a positive control, never the proof —
+because a scan is exactly the thing that passes vacuously on an empty corpus (learning #1).
+
+**27. Re-attack a fixed vuln from one rung lower than where it was fixed.** The Phase-1 escalations
+(my `banker.claimValues ⊇ user`; the coordinator's admin above supervisor and in `L2.cosignerRoles`)
+were fixed in the store. So I attacked the **loader's** cross-file check between `authority-policy.yaml`
+and `role-hierarchy.yaml` — a fresh surface. Tampering the *real* config and preceding every tamper
+with a positive control (untampered pair loads clean) is what makes a green mean "the tamper broke
+it" rather than "it was already broken for another reason" — the wrong-reason false pass.
+
+**28. Watch the tamper fail with the WRONG message and fix the tamper, not the assertion.** My
+admin-in-cosigner tests first failed with "role not defined in signerRoles" instead of the
+seniority-floor message. The loader checks membership before seniority. The fix was to wire admin as
+a first-class signer role so the guard actually reached is the floor — the true shape of the Phase-1
+vuln (admin was a real signer role, not a typo). If I had loosened the assertion to match, I'd have
+shipped a test that green-lights a half-wired admin.
+
+**29. When you find a gap you can't close, pin it — don't defend it.** F3-1: the loader enforces
+"batch is L1-only" only via the global `maxRung` cap, NOT per-action; a `batchable: true` on an L2
+action loads without error (proven empirically). Latent (no batchable action, no batch endpoint). I
+did NOT write a test asserting the loader rejects it — that's a false pass defending an open gap,
+the learning-#2 shape. Instead a tripwire pins the shipping config and fires the day an L2 action is
+marked batchable. Same for F3-2 (the seniority floor trusts the ratified ladder): demonstrate the
+exposure, pin the control file, record it as a boundary — not a tick.
+
+**30. A "redundant" existing test can be quietly vacuous — strengthen it with the real setup.** The
+existing supersede test never SIGNED the original, so its claim "a replan starts from zero
+signatures" had no signature to lose. The Phase-3 L2 window is where it matters: sign the first
+co-signature, mutate payload, prove NO signature survives into the successor and both slots re-open.
+Non-vacuity assertions (a slot WAS filled; the hash DID change) are load-bearing, not decoration.
+
+**31. No .NET tamper harness exists — say so, and tamper manually anyway.** `tamper-test.py` only
+tampers Python. I broke each of the seven .NET guards by hand (break, run the named test, confirm
+red, revert with `git checkout` — or a manual restore for untracked oracle files), and recorded it
+as a non-tick that automation is missing. A guard proven only by a harness that can't reach it is
+not proven; a guard proven by a manual cycle I documented is. Two of my oracle files are untracked,
+so `git checkout` can't revert them — I restored those edits explicitly and re-ran green to confirm.
+
+**32. The oracle is a stand-in, not the destination — attack production the moment it exists.**
+Turk's `app/planner/fanout.py` landed WHILE I was writing. The lazy move is to leave the proof
+against `spec/supervisor.py` and call the headline done. But the oracle only proves the SPEC is
+coherent; it says nothing about Turk's real builder. So I pointed a production suite
+(`tests/production/test_supervisor_blind_construction.py`) at the shipping module and re-ran the
+structural attack — deriving expectations from §6.4, NOT from Turk's field set (or I'd be writing a
+test that agrees with the code, the exact thing this exercise exists to catch). Then I tamper-proved
+it against `fanout.py` itself, not the oracle. Two PROVEN production tampers. Also: my earlier
+`absent:fanout` ledger entry would now be STALE and silently wrong — when the dependency you marked
+absent arrives, the honest move is to verify it, not to keep a red marker pointing at a file that
+now exists.

@@ -29,6 +29,7 @@ if str(SERVICE_ROOT) not in sys.path:
 
 CONFIG_ROOT = REPO_ROOT / "config"
 TOOL_MANIFEST = CONFIG_ROOT / "copilot-tools.yaml"
+HARNESS_LIMITS = CONFIG_ROOT / "harness-limits.yaml"
 ROLE_HIERARCHY = REPO_ROOT / "src" / "user-service" / "config" / "role-hierarchy.yaml"
 
 # The service reads its settings once, at import. Env therefore has to be in
@@ -77,6 +78,7 @@ _BASE_ENV = {
     "JWT_ISSUER": "user-service",
     "JWT_AUDIENCE": "banking-demo",
     "TOOL_MANIFEST_PATH": str(TOOL_MANIFEST),
+    "COPILOT_HARNESS_LIMITS_PATH": str(HARNESS_LIMITS),
     "ROLE_HIERARCHY_PATH": str(ROLE_HIERARCHY),
     "AUTHORITY_SERVICE_URL": "http://authority-service:8080",
 }

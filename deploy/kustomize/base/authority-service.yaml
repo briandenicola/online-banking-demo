@@ -79,6 +79,16 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: mediator-client-secret-authority
+        # Redis connection for the audit publisher (§5.7) AND the out-of-band notification
+        # sinks (§5.6). Without this the service silently falls back to the NULL audit publisher
+        # and the redis-stream notification sink goes inert — both are no-ops that look healthy.
+        # Same secret event-processor consumes, so producer and consumer share one endpoint.
+        # The Notifications__* SELECTION keys are non-secret and arrive via the ConfigMap below.
+        - name: Redis__ConnectionString
+          valueFrom:
+            secretKeyRef:
+              name: banking-secrets
+              key: redis-connection-string
         envFrom:
         - configMapRef:
             name: banking-demo-config

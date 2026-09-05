@@ -9,6 +9,7 @@ COPY ./src/banker-copilot-service/pyproject.toml ./
 # They are baked in so the container starts standalone, and both are overridable by a
 # read-only bind mount / ConfigMap at the same paths.
 COPY ./config/copilot-tools.yaml ./config/copilot-tools.yaml
+COPY ./config/harness-limits.yaml ./config/harness-limits.yaml
 COPY ./src/user-service/config/role-hierarchy.yaml ./config/role-hierarchy.yaml
 
 RUN pip install --no-cache-dir --root-user-action=ignore .

@@ -49,10 +49,11 @@ function durationChip(durationMs?: number): string {
   return durationMs >= 1000 ? `${(durationMs / 1000).toFixed(2)}s` : `${durationMs}ms`;
 }
 
-const ToolCallNode: React.FC<{ tool: ToolCall; density: TraceDensity; highlighted: boolean }> = ({
+const ToolCallNode: React.FC<{ tool: ToolCall; density: TraceDensity; highlighted: boolean; ownerLabel?: string }> = ({
   tool,
   density,
   highlighted,
+  ownerLabel,
 }) => (
   <Stack
     direction="row"
@@ -71,6 +72,12 @@ const ToolCallNode: React.FC<{ tool: ToolCall; density: TraceDensity; highlighte
     <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
       🔧 {tool.name}
     </Typography>
+    {ownerLabel && (
+      // Attribution for a tool call that belongs to a subagent but is listed at
+      // the plan-step level. Without it, a fan-out's calls would read as the root
+      // plan's own, which is the interleaving-noise failure this pane must avoid.
+      <Chip size="small" variant="outlined" color="secondary" label={`⑂ ${ownerLabel}`} />
+    )}
     {tool.attempt > 1 && <Chip size="small" color="warning" variant="outlined" label={`↻ ${tool.attempt}`} />}
     {tool.resultSummary && density !== 'summary' && (
       <Typography variant="caption" sx={{ color: 'text.secondary' }}>
@@ -260,8 +267,20 @@ const PlanStepNode: React.FC<{ step: PlanStep; run: RunState; density: TraceDens
               tool={tool}
               density={density}
               highlighted={highlightedNodeId === tool.id}
+              ownerLabel={tool.subagentId ? run.subagents[tool.subagentId]?.name : undefined}
             />
           ))}
+        {subagents.length >= 2 && (
+          // A fan-out. The header names it as parallel work and states the
+          // reading rule, because the risk of concurrency is interleaved noise
+          // where you cannot tell which agent produced which step. Each child
+          // renders as its own bordered sub-tree below, so tool calls stay
+          // grouped UNDER their owning agent and never intermix.
+          <Typography variant="caption" sx={{ pl: 5, color: 'secondary.main', fontWeight: 600, display: 'block' }}>
+            ⑂ {subagents.length} agents in parallel — each agent&apos;s steps are grouped under it,
+            not interleaved
+          </Typography>
+        )}
         {subagents.map((subagent) => (
           <SubagentNode key={subagent.id} subagent={subagent} run={run} density={density} depth={1} />
         ))}

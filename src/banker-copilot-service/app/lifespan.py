@@ -21,6 +21,8 @@ from app.config import (
     load_settings,
 )
 from app.events.bus import CosmosTraceSink, InMemoryTraceSink, RunStreamRegistry
+from app.planner.fanout import FanOutEngine
+from app.planner.limits import load_fanout_limits
 from app.planner.loop import Planner, planner_mode
 from app.stores.sessions import CosmosSessionStore, InMemorySessionStore
 from app.tools.executor import ToolExecutor
@@ -127,12 +129,32 @@ async def lifespan(app: FastAPI):
         app.state.http,
         settings.upstream_timeout_ms_default,
     )
+
+    # Fan-out limits (§6.3). Fail-closed, exactly like the manifest: a harness that
+    # cannot state its own concurrency ceiling must not spawn a subagent, so a missing
+    # or invalid file aborts startup rather than defaulting to an unbounded fan-out.
+    fanout_limits = load_fanout_limits(settings.harness_limits_path)
+    logger.info(
+        "Fan-out limits loaded",
+        max_concurrent=fanout_limits.max_concurrent_subagents,
+        max_depth=fanout_limits.max_subagent_depth,
+        tool_budget=fanout_limits.per_subagent_tool_budget,
+        wall_clock_s=fanout_limits.subagent_wall_clock_seconds,
+    )
+    app.state.fanout = FanOutEngine(
+        registry=registry,
+        executor=app.state.executor,
+        runs=app.state.runs,
+        limits=fanout_limits,
+    )
+
     app.state.planner = Planner(
         registry=registry,
         executor=app.state.executor,
         authority=app.state.authority,
         max_iterations=settings.planner_max_iterations,
         store=app.state.session_store,
+        fanout=app.state.fanout,
     )
 
     app.state.planner_mode = planner_mode()

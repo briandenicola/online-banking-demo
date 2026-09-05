@@ -2169,3 +2169,112 @@ attribute my `ToolRegistry` does not have, so it fails on `AttributeError` and c
 matter what I do. I fixed the defect anyway and proved it in my own suite. A strict-xfail marker is
 only as good as the assertion under it — a test that fails for the wrong reason looks identical to
 one that fails for the right reason, and the marker makes it look intentional.
+
+---
+
+## Phase 3 — supervisor fan-out, co-sign queue, batch L1-only (branch `squad/332-phase3-supervisor`)
+
+The headline was the blind construction, and the thing I'm proudest of is that the independence is
+in the **type signature**, not the prompt. `build_supervisor_input(intent)` takes one parameter —
+the banker's intent — and there is no channel for the proposer's reasoning to travel through.
+Passing the primary output is a `TypeError`, not a lint warning. When I tamper-widened it to accept
+`(intent, primary)`, the structural test failed on the signature before the token-scan even ran.
+Two guards, one break, both caught it. The structural one is the one that must never be deleted; the
+token-scan is insurance, and it's only honest over a corpus where the primary's tokens are
+distinctive (I seeded `QURKLE9`, `approve-immediately`) — an earlier fixture shared the word "wire"
+between primary and intent and reported a false leak. A token-scan is only as good as the
+distinctness of its corpus. That's in the blind-construction decision record.
+
+**Fan-out engine** (`app/planner/fanout.py`, ~23KB): the L2 second opinion is the one mandatory
+fan-out; everything else is opt-in per trigger, and every limit comes from `harness-limits.yaml`
+loaded fail-closed — depth ceiling, tool budget, wall-clock, concurrency. The supervisor sub-agent
+re-runs the evidence tools with args bound from the banker's RAW inputs, never the primary's
+evidence cache — a genuine second draw. Agreement is computed only after both opinions are in hand.
+The harness still boots `writeTools: 0`; the engine spawns a read-only reviewer and cannot propose
+or execute. 177 tests green in `banker-copilot-service`, 298 in QA's `banker-copilot-service.Tests`
+(ledger promoted — the `absent:*fan*out*` entry is gone and replaced by real coverage in my suite).
+
+**Co-sign queue seniority** — closed a magic `2`. Both repos filtered the AwaitingSupervisor queue
+on `awaitingSeniority >= 2`; that's a seniority integer in code AND a duplicate of `supervisor`'s
+seniority in the ratified hierarchy, reachable via `rungs.L2.cosignerRoles`.
+`ResolveAwaitingSeniority` now derives it: `policy.MinimumSeniorityAmong(policy.Rung(L2).CosignerRoles)`.
+Three fail-closed gates — loader refuses empty `cosignerRoles` at startup, `MinimumSeniorityAmong`
+throws rather than returning 0, and the repo throws if the bar arrives null. New suite
+`SupervisorQueueSeniorityTests` (5 tests) observes the RESOLVED query via a recording repo so the
+assertion is on the derived value, not downstream filtering. Tamper: hardcoded the bar back to `2`,
+`Bar_follows_the_policy_when_the_cosigner_role_changes` caught it (expected 1 for `[banker]`, got 2).
+Decision record written.
+
+**Batch L1-only — the interesting non-change.** I started to close Livingston's F3-1 (loader doesn't
+reject a `batchable` action that resolves to L2) by adding a loader guard folding base rung with
+escalating rules. Built fine. Then I reverted it, because his own oracle told me to: *"The dangerous
+reading of 'L1 only' is 'baseRung L1 only'. That is NOT the invariant... the batch must key on
+`RequiredRung`, never `BaseRung`."* An L1-base action that escalates to L2 by amount
+(`transaction.flag.review`) is legitimately batchable for its L1-resolved instances; the sign-time,
+per-item, all-or-nothing check in `BatchSigner.SignBatch` refuses the escalated ones. My loader guard
+would have forbidden the safe case to defend against one the runtime already catches — and it's a
+second guard that would drift from the first. Duplication is the bug; I declined to add a duplicate.
+F3-1 stays a config tripwire, which is the right level. Decision record explains it in full, including
+that I deliberately marked no action `batchable` and added no batch-sign endpoint (none is demanded).
+
+**Co-sign `mustDifferFrom` and payload-mutation void path** — confirmed present and green from
+Phases 1-2 (`SeparationOfDutiesTests`, `SupersedeSignatureVoidTests`), keyed on set-membership
+per Danny's ruling, not a distinct-count. I did not touch those production paths, so no tamper
+obligation; reporting them proven-present, not proven-by-me.
+
+**Shared-workspace scars this phase:** a concurrent agent renamed `fanout_limits.py`→`limits.py`
+mid-session (adapted imports); the `ApprovalService` ctor gained `INotificationSink`+`ILogger` from
+another agent and broke `authority-service.UnitTests` until I threaded `new NullNotificationSink()`
+into `TestHarness`. And the stale-build gotcha bit twice — once on Python `.pyc` after an `mv`
+revert, once on .NET after an `mv` revert kept a test red until I `touch`ed the source. **After any
+mv-based tamper revert, touch the file or the cached build lies to you.** Always re-read before edit,
+rebuild to verify.
+
+**Final state (PROVED):** authority-service builds clean; UnitTests 126, Tests 224,
+banker-copilot-service 177, banker-copilot-service.Tests 298 — all green. Every guard I added was
+tamper-tested and reverted. Did NOT commit; work left in tree for the coordinator.
+
+### Phase 3 follow-up — the coordinator's finding: execution-time re-verification was unpinned
+
+The coordinator upheld my F3-1 ruling and asked me to add the strongest form of the argument to the
+record: **there is no privileged batch path at all.** A UI "batch" is N independent
+`sign(item.id, item.payloadHash)` calls (`BatchApprovalCard.tsx:105`, verified — a loop, each item
+its own hash). An L2 item in a batch is refused by the *ordinary per-approval sign check*, the same
+one a single card hits. Batching is a UX affordance, not an authority path, so the loader guard I
+declined to add would harden a door onto the same room. Added to the batch decision record.
+
+Then the real finding, in code I didn't author: **both execution-time re-checks in `ExecuteAsync`
+were correct but unpinned.** `POST /{id}/execute` is its own endpoint, so the attack is propose L2 →
+sign once yourself → execute directly. Line 520 (`SignaturesCollected < RequiredSigners`) and line
+532 (`MustDifferFrom.Contains(SignedBy)`) are the only refusals — and the coordinator proved both
+could be deleted with all 350 tests green. Dead code by every existing test's reckoning, guarding
+the crown-jewel invariant, externally reachable.
+
+Wrote `ExecuteReVerificationTests.cs` (3 tests) driving `/execute` DIRECTLY with states the
+sign-time front door can never produce. The construction: build a genuine L2 approval to `signed`
+via the real harness (real hash, real signatures under the shipped key), then surgically mutate a
+copy served through a one-approval fake repo:
+- **insufficient signatures** — null slot 1, so `SignaturesCollected` drops to 1 while status stays
+  `signed`. Asserts `insufficient_signatures` AND `broker.Calls` empty AND execution never claimed.
+- **separation of duties** — set slot 1's `SignedBy` to the proposer (which its `mustDifferFrom`
+  names) and **mint a genuinely VALID signature** for that identity. This is the faithful attack:
+  the signature verifies, so ONLY line 532 refuses — not signature verification, which is a
+  different guard. Asserts `separation_of_duties` + broker empty.
+- **positive control** — same fixture un-mutated executes cleanly, so the refusals are the checks
+  talking, not an artifact of the hand-built document.
+
+Every assertion is on the **downstream side effect** (`broker.Calls`), not just the status code, so
+a future refactor that returns 409 *after* executing still fails — the coordinator's explicit ask.
+
+**The diagonal (tamper record):**
+- Break L520 alone (`SignaturesCollected < 0`) → insufficient-signatures test RED, SoD test GREEN.
+- Break L532 alone (`false && ...`) → SoD test RED, insufficient-signatures test GREEN.
+Each test pins exactly one guard. Under the L532 tamper the SoD execution proceeded all the way to
+the broker (the signature was valid), which is the proof that 532 — not signature verification — is
+the sole thing refusing it. Reverted both; UnitTests 129 green, authority-service.Tests 224 green.
+(Stale-build gotcha again: `touch` after every `mv` revert.)
+
+**On `fanout.py` being unwired:** I agree with the coordinator — no route reaches
+`build_supervisor_input` yet, and that is Phase 3 scope, not a defect. The engine is built, mirrors
+the oracle name-for-name, and is unit-proven; wiring a route into it is Phase 4. Flagging it plainly
+rather than dressing it up: today it is exercised only by its own tests.

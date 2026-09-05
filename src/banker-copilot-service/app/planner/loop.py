@@ -85,12 +85,17 @@ class Planner:
         authority: AuthorityClient,
         max_iterations: int,
         store=None,
+        fanout=None,
     ) -> None:
         self._registry = registry
         self._executor = executor
         self._authority = authority
         self._max_iterations = max_iterations
         self._store = store
+        # The Phase 3 fan-out engine. Optional so the single-threaded planner (and every
+        # test that never reaches L2) is unchanged; when present, an L2 proposal triggers
+        # the ONE mandatory fan-out — the blind independent second opinion (§6.2/§6.4).
+        self._fanout = fanout
 
     async def run(self, request: PlannerRequest, stream: RunStream) -> None:
         started = time.monotonic()
@@ -178,7 +183,17 @@ class Planner:
                         },
                     )
                 elif step["kind"] == "propose":
-                    await self._run_propose_step(request, stream, evidence)
+                    body = await self._run_propose_step(request, stream, evidence)
+                    # §6.2: an L2 proposal triggers the ONE mandatory fan-out — a blind,
+                    # independent second opinion. L1 never fans out (batching/duplicating a
+                    # second opinion defeats it). The engine is absent in single-threaded
+                    # deployments, so guard on its presence.
+                    if (
+                        body is not None
+                        and self._fanout is not None
+                        and body.get("requiredRung") == "L2"
+                    ):
+                        await self._fanout.run_second_opinion(request, stream, body, evidence)
 
                 await stream.emit(
                     "step.completed",
@@ -283,7 +298,9 @@ class Planner:
 
     async def _run_propose_step(
         self, request: PlannerRequest, stream: RunStream, evidence: dict[str, Any]
-    ) -> None:
+    ) -> dict[str, Any] | None:
+        """Propose the action for human signature. Returns the admitted approval body
+        (so the caller can trigger the L2 fan-out), or ``None`` if nothing was admitted."""
         try:
             outcome = await self._authority.propose(
                 {
@@ -306,7 +323,7 @@ class Planner:
                 "run.error",
                 {"code": exc.code, "message": exc.message, "recoverable": False},
             )
-            return
+            return None
 
         if not outcome.admitted:
             await stream.emit(
@@ -317,7 +334,7 @@ class Planner:
                     "recoverable": outcome.status_code == 422,
                 },
             )
-            return
+            return None
 
         body = outcome.body
         await stream.emit(
@@ -334,6 +351,7 @@ class Planner:
                 "payloadHash": body.get("payloadHash"),
             },
         )
+        return body
 
 
 def _plan_steps(evidence_tools: list[str], action_id: str | None) -> list[dict[str, Any]]:

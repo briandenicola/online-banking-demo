@@ -37,8 +37,10 @@ import {
 import { Approval, QueueGroupId } from './types';
 import { AuthorityRungChip, ApprovalCountdown } from './CopilotPrimitives';
 import { getCopilotConfig } from '../../config/copilotConfig';
-import { useNow } from './CopilotContext';
-import { msUntil } from './approvalPolicy';
+import { useCopilot, useNow } from './CopilotContext';
+import { batchableGroups, denialCountsByReason, msUntil, terminalReasonShortLabel } from './approvalPolicy';
+import BatchApprovalCard from './BatchApprovalCard';
+import { TERMINAL_REASONS } from './types';
 
 const GROUP_LABELS: Record<QueueGroupId, string> = {
   needsYou: 'Needs you',
@@ -185,6 +187,92 @@ export const SessionApprovalMeter: React.FC<SessionApprovalMeterProps> = ({
 
 // ---------------------------------------------------------------------------
 
+/**
+ * The batch offer.
+ *
+ * Only appears when two or more L1 single-signer items of the SAME action type
+ * are eligible. It is collapsed by default: the batch is an affordance the
+ * banker opts into, not a wall of pre-checked items inviting one click. L2 items
+ * can never reach here — `batchableGroups` never yields them.
+ */
+const BatchSection: React.FC<{ approvals: Approval[] }> = ({ approvals }) => {
+  const config = getCopilotConfig();
+  const { streamStatus } = useCopilot();
+  const now = useNow();
+  const [openId, setOpenId] = useState<string | undefined>(undefined);
+
+  const groups = useMemo(
+    () => batchableGroups(approvals, config.batchMaxItems, now),
+    [approvals, config.batchMaxItems, now]
+  );
+
+  if (groups.length === 0) return null;
+
+  return (
+    <Box sx={{ px: 1, py: 0.5, borderBottom: 1, borderColor: 'divider' }}>
+      <Typography variant="overline" sx={{ color: 'text.secondary' }}>
+        Batch (L1 only)
+      </Typography>
+      {groups.map((group) => (
+        <Box key={group.actionId}>
+          <Button
+            size="small"
+            fullWidth
+            variant="outlined"
+            color="info"
+            sx={{ justifyContent: 'flex-start', mt: 0.5 }}
+            onClick={() => setOpenId((prev) => (prev === group.actionId ? undefined : group.actionId))}
+            aria-expanded={openId === group.actionId}
+          >
+            Review {group.items.length} together — {group.actionLabel}
+          </Button>
+          <Collapse in={openId === group.actionId}>
+            <Box sx={{ mt: 1 }}>
+              <BatchApprovalCard group={group} streamStatus={streamStatus} />
+            </Box>
+          </Collapse>
+        </Box>
+      ))}
+    </Box>
+  );
+};
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Denial counts, split by cause — never one undifferentiated total (§5.1.1(c)).
+ *
+ * A banker whose signature was voided by a policy change must not be counted in
+ * the same bucket as one a colleague rejected. Only `HUMAN_DENIED` is evidence
+ * about the agent; the rest are evidence the ground moved. Rendering a single
+ * "N denied" number would erase exactly the distinction O9 is about.
+ */
+const DenialBreakdown: React.FC<{ approvals: Approval[] }> = ({ approvals }) => {
+  const breakdown = useMemo(() => denialCountsByReason(approvals), [approvals]);
+  if (breakdown.total === 0) return null;
+
+  return (
+    <Box sx={{ px: 1, py: 0.5 }}>
+      <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
+        Denials by reason — counted separately, never summed:
+      </Typography>
+      <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', mt: 0.25 }}>
+        {TERMINAL_REASONS.filter((reason) => breakdown.byReason[reason] > 0).map((reason) => (
+          <Chip
+            key={reason}
+            size="small"
+            variant="outlined"
+            color={reason === 'HUMAN_DENIED' ? 'error' : 'default'}
+            label={`${breakdown.byReason[reason]} ${terminalReasonShortLabel(reason)}`}
+          />
+        ))}
+      </Stack>
+    </Box>
+  );
+};
+
+// ---------------------------------------------------------------------------
+
 export interface TaskQueuePaneProps {
   approvals: Approval[];
   selectedId?: string;
@@ -274,19 +362,12 @@ const TaskQueuePane: React.FC<TaskQueuePaneProps> = ({ approvals, selectedId, on
       </Box>
 
       <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
+        <BatchSection approvals={approvals} />
         {renderGroup('needsYou', groups.needsYou, true)}
         {renderGroup('awaitingCosigner', groups.awaitingCosigner, false)}
         {renderGroup('running', groups.running, false)}
         {renderGroup('doneToday', groups.doneToday, false)}
-      </Box>
-
-      <Box sx={{ px: 1, pb: 1 }}>
-        <Chip
-          size="small"
-          variant="outlined"
-          label="No batch approval — L1 only, Phase 3"
-          sx={{ width: '100%' }}
-        />
+        <DenialBreakdown approvals={approvals} />
       </Box>
 
       <SessionApprovalMeter {...meter} />

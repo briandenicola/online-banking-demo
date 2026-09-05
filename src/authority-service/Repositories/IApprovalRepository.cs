@@ -22,6 +22,18 @@ public record ApprovalQuery
     /// <summary>Excluded from the co-sign queue: a supervisor never sees their own approvals there.</summary>
     public string? ExcludeRequesterId { get; init; }
 
+    /// <summary>
+    /// The seniority bar an approval's next unfilled slot must demand to appear in the
+    /// <see cref="ApprovalScope.AwaitingSupervisor"/> queue. DERIVED from the policy's
+    /// <c>rungs.L2.cosignerRoles</c> via the ratified hierarchy — never a literal. It was a
+    /// hardcoded <c>2</c> in both repositories, which is a seniority integer in code and exactly
+    /// the magic-number the whole engine forbids; worse, if the co-signer role's seniority ever
+    /// moved in <c>role-hierarchy.yaml</c> the queue would silently point at the wrong bar.
+    /// <c>ApprovalService.ListAsync</c> fills it from the live policy; a repository that reaches
+    /// the co-sign query with this still null <b>throws</b> rather than guessing a default.
+    /// </summary>
+    public int? AwaitingSeniorityAtLeast { get; init; }
+
     public int Limit { get; init; } = 25;
 }
 

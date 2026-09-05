@@ -70,6 +70,7 @@ import {
 import { AuthorityRungChip, ApprovalCountdown, ConfidenceBar, PayloadHashChip } from './CopilotPrimitives';
 import { getCopilotConfig } from '../../config/copilotConfig';
 import { useCopilot, useNow } from './CopilotContext';
+import { signingIdentity } from './signingIdentity';
 
 // ---------------------------------------------------------------------------
 // Why this rung
@@ -142,54 +143,84 @@ export function unfilledSlotCopy(slot: SignatureSlot): string {
     : `${seniority} — anyone eligible under this policy`;
 }
 
-export const SignatureRoster: React.FC<{ approval: Approval }> = ({ approval }) => (
-  <Box>
-    <Typography variant="overline" sx={{ color: 'text.secondary' }}>
-      Signatures
-    </Typography>
-    <Stack spacing={0.5} sx={{ mt: 0.5 }}>
-      {approval.signatureSlots.map((slot) => (
-        <Stack
-          key={slot.ordinal}
-          direction="row"
-          spacing={1}
-          sx={{ alignItems: 'center', flexWrap: 'wrap' }}
-        >
-          <Typography variant="body2" sx={{ minWidth: 24 }}>
-            {slot.ordinal}.
+export const SignatureRoster: React.FC<{ approval: Approval; activeIdentityLabel?: string }> = ({
+  approval,
+  activeIdentityLabel,
+}) => {
+  // The slot the acting identity would fill: the first unfilled one, and only
+  // when the SERVICE says this caller may sign. We never compute eligibility
+  // here — `callerMaySign` is authoritative — we only point at the slot the
+  // person is about to affect, so a two-session demo cannot leave anyone unsure
+  // which signature their click binds.
+  const callerSlotOrdinal =
+    approval.callerMaySign
+      ? approval.signatureSlots.find((slot) => !slot.filled)?.ordinal
+      : undefined;
+
+  return (
+    <Box>
+      <Typography variant="overline" sx={{ color: 'text.secondary' }}>
+        Signatures
+      </Typography>
+      <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+        {approval.signatureSlots.map((slot) => (
+          <Stack
+            key={slot.ordinal}
+            direction="row"
+            spacing={1}
+            sx={{ alignItems: 'center', flexWrap: 'wrap' }}
+          >
+            <Typography variant="body2" sx={{ minWidth: 24 }}>
+              {slot.ordinal}.
+            </Typography>
+            {slot.filled ? (
+              <>
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                  {slot.signedByUsername || slot.signedBy}
+                </Typography>
+                <Chip size="small" color="success" variant="outlined" label="signed" />
+                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                  {slot.signedAt ? new Date(slot.signedAt).toLocaleTimeString() : ''}
+                </Typography>
+              </>
+            ) : (
+              <>
+                {/* A RULE, never a person. There is no `cosignerId` in the
+                    domain — naming a reviewer at proposal time would let the
+                    requester choose who checks their work, which is the
+                    self-dealing pattern L2 exists to prevent. So the copy
+                    describes eligibility, and the service decides who qualifies. */}
+                <Typography variant="body2">{unfilledSlotCopy(slot)}</Typography>
+                <Chip size="small" variant="outlined" label="◷ awaiting" />
+                {slot.ordinal === callerSlotOrdinal && (
+                  // Points at the acting identity's own slot — a "you", derived
+                  // from `callerMaySign`, NOT a prospective assignment of anyone
+                  // else. It disappears the moment the caller cannot sign.
+                  <Chip
+                    size="small"
+                    color="primary"
+                    variant="filled"
+                    label={
+                      activeIdentityLabel
+                        ? `← you (${activeIdentityLabel}) sign here`
+                        : '← you sign here'
+                    }
+                  />
+                )}
+              </>
+            )}
+          </Stack>
+        ))}
+        {approval.requiredSigners > 1 && (
+          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+            You cannot sign twice. Separation of duties means different people, not different proofs —
+            re-authenticating as yourself does not satisfy the second slot.
           </Typography>
-          {slot.filled ? (
-            <>
-              <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                {slot.signedByUsername || slot.signedBy}
-              </Typography>
-              <Chip size="small" color="success" variant="outlined" label="signed" />
-              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                {slot.signedAt ? new Date(slot.signedAt).toLocaleTimeString() : ''}
-              </Typography>
-            </>
-          ) : (
-            <>
-              {/* A RULE, never a person. There is no `cosignerId` in the
-                  domain — naming a reviewer at proposal time would let the
-                  requester choose who checks their work, which is the
-                  self-dealing pattern L2 exists to prevent. So the copy
-                  describes eligibility, and the service decides who qualifies. */}
-              <Typography variant="body2">{unfilledSlotCopy(slot)}</Typography>
-              <Chip size="small" variant="outlined" label="◷ awaiting" />
-            </>
-          )}
-        </Stack>
-      ))}
-      {approval.requiredSigners > 1 && (
-        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-          You cannot sign twice. Separation of duties means different people, not different proofs —
-          re-authenticating as yourself does not satisfy the second slot.
-        </Typography>
-      )}
-    </Stack>
-  </Box>
-);
+        )}
+      </Stack>
+    </Box>
+  );
+};
 
 // ---------------------------------------------------------------------------
 // Payload rows, with the disclosure gate
@@ -420,10 +451,22 @@ const DisagreementBanner: React.FC<{ disagreement: Disagreement }> = ({ disagree
 
 export const TerminalApprovalCard: React.FC<{ approval: Approval }> = ({ approval }) => {
   const copy = terminalCopy(approval.terminalReason, approval.terminalDetail);
+  const { openApproval } = useCopilot();
+  const [loadingReplacement, setLoadingReplacement] = useState(false);
   const diff =
     approval.previousPayload && approval.previousPayload.length > 0
       ? diffPayloads(approval.previousPayload, approval.payload)
       : [];
+
+  const handleReview = async () => {
+    if (!approval.supersededByApprovalId) return;
+    setLoadingReplacement(true);
+    try {
+      await openApproval(approval.supersededByApprovalId);
+    } finally {
+      setLoadingReplacement(false);
+    }
+  };
 
   return (
     <Paper variant="outlined" sx={{ p: 2, borderColor: `${copy.severity}.main` }}>
@@ -477,6 +520,29 @@ export const TerminalApprovalCard: React.FC<{ approval: Approval }> = ({ approva
           </Stack>
         </Box>
       )}
+
+      {/* The path forward. A blameless void (policy change, payload supersede)
+          that only NAMES its replacement is a dead end; the banker did nothing
+          wrong and must be able to reach the re-approval in one click, not hunt
+          for an id. Only rendered when the server actually supplied a pointer —
+          a fabricated link would be worse than none. */}
+      {approval.supersededByApprovalId && (
+        <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap' }}>
+          <Button
+            variant="contained"
+            size="small"
+            disabled={loadingReplacement}
+            onClick={handleReview}
+          >
+            {loadingReplacement ? 'Loading…' : 'Review the new approval'}
+          </Button>
+          {copy.blameless && (
+            <Typography variant="caption" sx={{ color: 'text.secondary', alignSelf: 'center' }}>
+              A fresh signature is required against the new payload — reading this one does not carry over.
+            </Typography>
+          )}
+        </Stack>
+      )}
     </Paper>
   );
 };
@@ -529,6 +595,7 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
   const config = getCopilotConfig();
   const { sign, deny } = useCopilot();
   const now = useNow();
+  const identity = useMemo(() => signingIdentity(), []);
 
   const [seenMaterial, setSeenMaterial] = useState<Set<string>>(() => new Set());
   const [openedAt] = useState(() => Date.now());
@@ -675,6 +742,28 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
         <AuthorityRungChip rung={approval.requiredRung} requiredSigners={approval.requiredSigners} />
       </Stack>
 
+      {/* WHO is about to sign. In the two-session co-signature demo this is the
+          line that stops a supervisor signing while unsure which browser identity
+          the click binds to. Display only — eligibility is `callerMaySign`, and
+          this banner is suppressed when the service says this caller may not sign,
+          so it can never read as an invitation the policy engine would refuse. */}
+      {approval.callerMaySign && identity.known && (
+        <Alert severity={isL2 ? 'warning' : 'info'} icon={false} sx={{ py: 0.25, mb: 0.5 }}>
+          <Typography variant="body2">
+            Signing as <strong>{identity.displayName}</strong>
+            {identity.email ? ` · ${identity.email}` : ''}
+            {isL2 ? (
+              <>
+                {' '}— you are providing the{' '}
+                <strong>independent supervisor co-signature</strong>. It counts only because you are
+                a different identity from the requester
+                {approval.requesterUsername ? ` (${approval.requesterUsername})` : ''}.
+              </>
+            ) : null}
+          </Typography>
+        </Alert>
+      )}
+
       <Typography variant="body1" sx={{ fontWeight: 600 }}>
         {approval.actionLabel}
       </Typography>
@@ -726,7 +815,7 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
       />
 
       <Divider sx={{ my: 1 }} />
-      <SignatureRoster approval={approval} />
+      <SignatureRoster approval={approval} activeIdentityLabel={identity.known ? identity.displayName : undefined} />
 
       {spotField && !spotSatisfied && (
         <Alert severity="info" sx={{ mt: 1 }}>

@@ -741,6 +741,60 @@ the convention intends.
 | `livingston-banker-copilot-phase1-testing.md` | Phase 1 test plan; found the live privilege escalation via `banker.claimValues` including `user`. |
 | `livingston-phase2-qa.md` | Phase 2: F2-7 path traversal, F2-10 CI quarantine no-op, and the pending-integration ledger that **fails rather than skips**. |
 
+## Epic #332 Phase 3 — Decision Records
+
+Eight further rulings, tracked verbatim in `.squad/decisions/records/` on the
+same reasoning as Phases 1–2.
+
+### Supervisor & fan-out (Turk)
+
+| Record | Ruling |
+|---|---|
+| `turk-phase3-blind-construction.md` | Supervisor independence is **structural, not promised**: `build_supervisor_input(intent)` takes one parameter, so the primary's output has no argument to travel through. Deliberately not `(intent, primary)` with a promise to ignore `primary` — a promise is what §6.4 forbids. |
+| `turk-phase3-queue-seniority-derivation.md` | Closed a magic `2`: the co-sign seniority bar is derived from `rungs.L2.cosignerRoles` via the ratified hierarchy, not restated as a number. |
+| `turk-phase3-batch-l1-only.md` | **Declined** to add a loader guard for QA's F3-1. The invariant keys on the **resolved** rung at sign time, not the base rung; a loader guard would forbid marking an L1 action batchable at all, including the L1-resolved instances batching exists to serve. Reinforced in arbitration: there is no server-side batch verb — a UI "batch" is N independent `sign(id, payloadHash)` calls — so batching is a UX affordance, not an authority path, and the declined guard would have hardened a door onto the same room. |
+
+### Platform (Rusty)
+
+| Record | Ruling |
+|---|---|
+| `rusty-phase3-supervisor-queue-index.md` | Re-verified the Q3 composite index against the **writer**, not the docs: a wrong field path fails the same silent zero-rows way, so an always-empty queue is indistinguishable from an empty one. |
+| `rusty-phase3-notification-sinks.md` | Out-of-band co-signature notification names the **kind** of signer awaited, never a person, and never gates state. |
+| `rusty-phase3-fanout-limits-config.md` | Fan-out bounds live in `config/harness-limits.yaml` with **no fallback literals** — a harness that cannot state its own concurrency ceiling must not spawn. |
+
+### Frontend (Linus)
+
+| Record | Ruling |
+|---|---|
+| `linus-phase3-terminal-reason-and-cosignature.md` | Co-signature UI; signing identity is display-only, gated on the server-supplied `callerMaySign`. |
+
+### QA (Livingston)
+
+| Record | Ruling |
+|---|---|
+| `livingston-phase3-qa.md` | Wrote Phase 3 tests from the spec, concurrently with the implementers, so the tests derive from the requirement rather than the code. On finding F3-1 he **declined to write the test**: asserting the loader rejects a batchable L2 action would have passed while defending a gap that was never closed. He wrote a config tripwire instead and escalated the fix. |
+
+### What coordinator verification added
+
+Every lane's claims were re-tested independently rather than accepted. Four
+guards were found to be **correct in logic but unheld by any test** — the shape
+this epic keeps producing:
+
+- `isBatchEligible` had four conditions; each could be individually broken with
+  the full suite green. Worst was `callerMaySign === true` → `!== false`, which
+  differs on exactly one input, `undefined` — an **absent authorization field
+  would have read as permission**.
+- The two execution-time re-verifications in `ApprovalService` — the quorum gate
+  and the separation-of-duties re-check — could **each be deleted with all 350
+  .NET tests passing**, while `POST /{id}/execute` is a public endpoint. The
+  crown-jewel invariant rested on nobody removing a block every test reported as
+  dead code.
+
+Generalization now standing for this repo: **a guard protected only in
+aggregate is a guard that erodes silently.** Where several conditions defend one
+invariant, each needs a test that fails for its own reason — proven by tampering
+each condition alone and reading the diagonal.
+
 ### The pattern these records share
 
 Every significant defect in this epic lived in a **seam between two

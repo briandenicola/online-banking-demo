@@ -1,0 +1,39 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Banker Copilot — subagent fan-out limits (epic #332 §6.3)
+#
+# This file is the SINGLE home of the fan-out concurrency bounds, per invariant I-3
+# ("all thresholds are configuration-driven; zero hardcoded counts in application code").
+# The fan-out engine (banker-copilot-service, `asyncio.gather` per §6.1/§6.5) reads these and
+# has NO fallback literals — a missing or invalid file aborts startup, exactly like the tool
+# manifest, because a harness that cannot state its own concurrency ceiling must not spawn.
+#
+# Baked into the image so the container is self-consistent in docker-compose and CI, and
+# overridable by a read-only bind mount / ConfigMap at the same path to re-tune WITHOUT a
+# rebuild. It is mounted read-only: a harness that could rewrite its own limits could grant
+# itself unbounded fan-out.
+#
+# NOT restated anywhere else. Each value below has exactly one home; docker-compose and the
+# kustomize base repoint the PATH to this file, they never re-declare a number (my standing
+# rule — a threshold stated twice is a threshold wrong once).
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: harness-limits/v1
+
+fanout:
+  # The most subagents that may run concurrently under one root harness (§6.3).
+  # Concurrency costs trace legibility, and the trace pane IS the demo (§6.1), so this is
+  # deliberately small.
+  maxConcurrentSubagents: 4
+
+  # Recursion ceiling. Depth 2 means the root may spawn subagents and those subagents may NOT
+  # spawn their own — "no grandchildren" (§6.3). A subagent is depth 1; its child would be
+  # depth 2 and is refused.
+  maxSubagentDepth: 2
+
+  # Per-subagent tool-call budget (§6.3). A runaway subagent burns its budget and stops rather
+  # than the whole run.
+  perSubagentToolBudget: 20
+
+  # Per-subagent wall-clock budget in seconds (§6.3). A subagent that exceeds it is cancelled;
+  # the root records the timeout and proceeds — fan-out is opt-in and a stuck leaf must never
+  # wedge the case.
+  subagentWallClockSeconds: 60

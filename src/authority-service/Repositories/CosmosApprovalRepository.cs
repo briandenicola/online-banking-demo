@@ -99,7 +99,12 @@ public class CosmosApprovalRepository : ApprovalRepositoryBase
         {
             sql += " AND c.status = @pendingStatus AND c.awaitingSeniority >= @seniority";
             parameters["@pendingStatus"] = SharedIdentifiers.Status.Pending;
-            parameters["@seniority"] = 2;
+            parameters["@seniority"] = query.AwaitingSeniorityAtLeast
+                ?? throw new InvalidOperationException(
+                    "AwaitingSupervisor query reached the repository without a derived seniority " +
+                    "bar. The bar is resolved from rungs.L2.cosignerRoles by ApprovalService and " +
+                    "must never fall back to a literal; refusing to run a co-sign query that would " +
+                    "guess it.");
         }
 
         if (query.RequesterId is not null)

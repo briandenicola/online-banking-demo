@@ -195,3 +195,64 @@ touch `src/banker-copilot-service/`, `src/ui-app/` or `src/authority-service/`.
     6/6 both modes, 0 keys dropped. Worth keeping as a standing check — the general rule is that
     **docker-compose is more permissive than Kubernetes about env var names, so compose passing
     proves nothing about the cluster.**
+
+### 2026-09-04 — Phase 3 platform slice for epic #332 (supervisor queue, notifications, fan-out config)
+
+Branch `squad/332-phase3-supervisor` (shared tree; Turk building the co-signature/batch engine
+and Linus the UI in parallel — I touched only `authority-service` DI/notification code, the
+harness config surface, and deployment wiring). Verified against source, not docs, again.
+
+26. **The Q3 supervisor-queue composite index was already correct — the honest deliverable was
+    proving it, not adding it.** `(status, awaitingSeniority, createdAt)` on `copilot-approvals`
+    has been in `cosmos.tf` since Phase 1. I re-verified all three paths against the WRITER
+    (`Approval.cs` `[JsonProperty]` + `ThrowingApprovalStatusConverter` → lowercase `"pending"`;
+    `RefreshPendingSlot` maintains `awaitingSeniority`), not the design doc, because a composite
+    index on a path the writer never persists fails the same zero-rows-not-an-error way a query
+    does. No pointer doc / no `cosignerId` anywhere. Filed
+    `rusty-phase3-supervisor-queue-index.md`.
+
+27. **`authority-service` had NO `Redis__ConnectionString` in the kustomize base — so audit
+    publishing (§5.7) was silently a no-op in AKS.** In-cluster it fell back to
+    `NullAuditPublisher`; every approval event was published-to-nothing while passing both probes.
+    Found it because the redis-stream notification sink needs the same connection. Added it from
+    `banking-secrets/redis-connection-string` (the secret event-processor already consumes),
+    which fixes the audit gap and enables the sink together. "It validated" ≠ "it published",
+    third time this epic (Phase 2 lesson 19). compose already had it; only kustomize was missing.
+
+28. **A notification is not an audit event, so it must not ride the audited bus.** The
+    redis-stream `INotificationSink` defaults to a DEDICATED stream `copilot-notifications`, not
+    `banking-events` (config-overridable). `banking-events` is a closed 11-type PascalCase
+    vocabulary that `RedisAuditPublisher` throws on and the Go consumer switches on; a transient
+    supervisor ping there is either forced into the audit enum or lands in the `default:` branch
+    as another published-but-unaudited unknown. Same "read the consumer, not the doc" basis as
+    `RoleGranted`. Filed `rusty-phase3-notification-sinks.md`.
+
+29. **The §5.2.2 "kind of signer, never who" rule extends onto the wire.** The notification
+    payload carries `awaitingSeniority`/`pendingSlotOrdinal`, never a co-signer id — a test
+    asserts the envelope has no `cosigner*`/`assignee`/`reviewerId` field. Naming a co-signer in
+    a notification is the same self-dealing hole the pointer doc was deleted for, one layer out.
+
+30. **A config module in `app/planner/` named `*fan*out*.py` falsely trips the integration
+    ledger.** My loader was `fanout_limits.py`; it instantly failed
+    `phase3-supervisor-blind-construction` whose precondition glob is
+    `absent:...app/planner/*fan*out*.py` = "the harness gained a real fan-out CONSTRUCTION path,
+    promote the blind-construction test." A config loader is not that path. Renamed to
+    `app/planner/limits.py` (frozen `FanoutLimits`, fail-closed). The glob is the right tripwire
+    for Turk's engine; it should fire on the `asyncio.gather` path, not on the YAML it reads.
+    Lesson: on a shared tree, another lane's tripwire can be armed by your filename. Filed
+    `rusty-phase3-fanout-limits-config.md`.
+
+31. **Fan-out limits are one file, loaded, never restated.** `config/harness-limits.yaml`
+    (4/2/20/60, §6.3) is the single home; `limits.py` fail-closes on missing/malformed/unknown-
+    version/non-positive; the test parses the numbers OUT of the epic so epic↔file↔loader drift
+    fails loudly. Path-only through config.py/Dockerfile/compose/kustomize — no per-limit env var,
+    because a second spelling of `4` is `4` wrong once (lesson 23).
+
+**Environment limits (stated, not glossed):** dotnet 10, terraform, kubectl, kustomize, docker
+CLI and python are all present — so `dotnet test` (207 authority + 294 harness green),
+`terraform validate/fmt`, `docker compose config`, `kubectl kustomize` were ALL actually run and
+pass. What I could NOT run: no Docker daemon and no live Redis/Azure, so an actual
+`StreamAddAsync`, the webhook POST, and the end-to-end "supervisor's second browser gets the
+ping" are unproven — unit-tested with fakes only. Build task, kustomize base, and gateway routes
+already cover both Copilot services (no new microservice in Phase 3), so nothing new was
+undeployable; verified rather than assumed.

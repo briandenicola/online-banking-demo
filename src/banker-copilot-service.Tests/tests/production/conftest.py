@@ -26,6 +26,7 @@ import pytest
 
 from . import service_import  # noqa: F401
 from .service_import import (
+    HARNESS_LIMITS,
     REPO_ROOT,
     TEST_PRIVATE_KEY_PEM,
     TEST_PUBLIC_KEY_PEM,
@@ -49,6 +50,7 @@ def _base_env(monkeypatch):
     monkeypatch.setenv("JWT_ISSUER", "user-service")
     monkeypatch.setenv("JWT_AUDIENCE", "banking-demo")
     monkeypatch.setenv("TOOL_MANIFEST_PATH", str(TOOL_MANIFEST))
+    monkeypatch.setenv("COPILOT_HARNESS_LIMITS_PATH", str(HARNESS_LIMITS))
     monkeypatch.setenv("ROLE_HIERARCHY_PATH", str(ROLE_HIERARCHY_PATH))
     monkeypatch.delenv("COSMOS_DB_ENDPOINT", raising=False)
     for service in (

@@ -1218,3 +1218,89 @@ Also carried over: `traceDegraded` from the server is propagated, never swallowe
 "succeeds" against an incompletely-persisted trace still leaves the trace flagged INCOMPLETE. The
 one thing this surface must not do is present a holed record as a complete one to a person deciding
 whether to sign.
+
+## Phase 3 — supervisor co-signature, terminal-reason differentiation, L1 batch (2026-09-04, issue #332)
+
+Frontend-only, branch `squad/332-phase3-supervisor`, no commit. Five deliverables landed; the
+decision record is `.squad/decisions/inbox/linus-phase3-terminal-reason-and-cosignature.md`.
+
+**O9 is not "distinct copy", it is "distinct copy plus a door".** Phase 2 already made the four
+terminal reasons read differently. What it left was a dead-end: `supersededByApprovalId` rendered as
+a chip `replaced by apr_x`. A blameless void that only NAMES its replacement is still a wall in the
+face of someone who did nothing wrong. The fix was a live "Review the new approval" button wired to a
+new `openApproval(id)` context method (select if held, fetch if not). The button is absent when there
+is no pointer — a fabricated link is worse than none, and a HUMAN_DENIED card has nothing to review.
+
+**Make the biased shape impossible to produce, not merely discouraged.** For denial counts I wrote
+`denialCountsByReason()` returning per-reason buckets plus `humanDenied` / `systemVoided`, and
+deliberately gave it no "total denied" field to reach for. A single "N denied" number re-merges the
+policy-void-vs-human-rejection distinction O9 is entirely about, and the merge is invisible in a
+diff. Same lesson as the Phase-2 comparison recorder: when a wrong aggregate is the risk, don't
+render it carefully — make the function unable to emit it.
+
+**Display identity must be structurally incapable of granting anything.** The co-sign banner ("Signing
+as A. Reyes", and at L2 "the independent supervisor co-signature that counts because you are a
+different identity") reads from `localStorage`, not `AuthContext` — the card renders in tests with no
+AuthProvider and a label must never throw. Both the banner and the roster's "← you sign here" marker
+are gated on `callerMaySign`, so neither can read as an invitation the service would refuse. This is
+the same discipline as `callerMaySign` never being inferred: a client that computes eligibility has
+become a second, weaker policy engine. Labelling the person who is here is fine; naming a prospective
+reviewer (`cosignerId`) is the self-dealing the data model omits on purpose — I did not reintroduce it.
+
+**"Impossible" beats "disabled" for the L2-batch prohibition.** The instinct is a greyed-out "batch"
+button on L2 items. Wrong: a disabled control still teaches that batching an L2 is a thing that
+exists. Instead `isBatchEligible()` is a set-membership test an L2 item fails, `batchableGroups()`
+can't yield one, and `BatchApprovalCard` re-filters defensively — the test that matters hands it a
+tampered group with an L2 item and asserts the item never renders. The batch cap is enforced as a
+config CEILING (lowerable, not raisable), mirroring the anti-fatigue FLOORS: some controls are
+defeated by being raised, not lowered, and the batch cap is the approve-all wall.
+
+**A batch is N signatures, not one.** Each row carries its own payload hash and signs independently;
+one item's payload moving rejects that item alone. Rendering the material fields per row (not a
+count) is the same rule as the single card's disclosure gate — "and 9 more" is autonomy laundering.
+
+**Repo test convention drift, noted:** the copilot tests live in `__tests__/` dirs, not colocated —
+the opposite of the P2-Wave-1 rule I recorded earlier. I followed the local convention (the whole
+`components/copilot/__tests__/` folder) rather than fight it in one file.
+
+**Verification (PROVED):** tsc clean w/ `--ignoreDeprecations 6.0`; `craco build` green (285.6 kB);
+`craco test` 214 passed, the only 13 failures the two quarantined account-opening suites, unchanged.
+Copilot pattern 69 passing (was 50). **BELIEVED, not proved (no backend here):** the actual sign
+POST, the replacement fetch in `openApproval`, and the two-browser co-sign against a live authority
+-service. The comparison-recorder carry-over appears already satisfied by Phase 2's shared
+`TaskMeasurementBar` (comparison suites pass); I did not re-instrument, since re-touching one surface
+is how the counting rules drift.
+
+### Phase 3 follow-up — L2 batch exclusion: aggregate → per-layer proof
+
+Coordinator tamper-tested my L2-batch guard and found it was only proven **in aggregate**: `isBatchEligible` ANDs `requiredRung === 'L1'` and `requiredSigners === 1`, but every existing fixture kept the two consistent (L2 always carried 2 signers), so deleting *either* guard alone left 31/31 green. Absent-by-two-coincidences, not impossible. Same false-pass shape Livingston found in Phase 1.
+
+Fix (in `__tests__/approvalPolicy.test.ts`): two condition-isolating tests with **deliberately self-inconsistent** fixtures, each making one guard useless so the other is the only thing that can return `false`:
+- `{ requiredRung: 'L2', requiredSigners: 1 }` → ineligible — pins the **rung** check.
+- `{ requiredRung: 'L1', requiredSigners: 2 }` → ineligible — pins the **signers** check.
+Plus a third-path test: `batchableGroups()` fed a list containing the L2/one-signer item must exclude it — proves it re-filters through `isBatchEligible` and never trusts its input. A comment on the block warns future readers NOT to "fix" the fixtures into consistency (that restores the hole).
+
+PROVED by per-layer tamper test (each tamper applied alone, suite run, then reverted):
+- Delete rung guard → `pins the rung check` FAILS, `pins the signers check` stays green, `batchableGroups re-filters` FAILS. 
+- Weaken `=== 1` to `>= 1` → `pins the signers check` FAILS, `pins the rung check` stays green, grouping test stays green.
+Each layer now fails for its own reason. Final: tsc clean (`--ignoreDeprecations 6.0`), copilot suite 72/72 (was 69). Guards restored, backup removed, nothing committed.
+
+### Phase 3 follow-up 2 — the other two conditions of isBatchEligible pinned
+
+Coordinator applied my own lesson to the remaining two of the four conditions and found both unpinned: tampering `callerMaySign === true` → `!== false`, or the status allow-list → `!== 'denied'`, left the suite fully green.
+
+The `callerMaySign` one was materially worse than the rung/signers gap: `callerMaySign` is the SERVER-supplied authorization gate, the one thing the client may not decide. `=== true` vs `!== false` differ only on `undefined` — so `!== false` fails OPEN on an absent field (older API, renamed field, partial DTO, serializer omitting nulls, mapping layer dropping unknown keys), showing a banker a bulk-sign button for approvals they may not be entitled to sign. Same absent-field-means-yes failure mode as the Cosmos field-path mismatch and the envFrom hyphen drop.
+
+The real code was already correct (`=== true`, positive status allow-list) — the miss was tests. Added:
+- `callerMaySign` absent → ineligible, written with `delete noGate.callerMaySign` (not `= undefined`) + boundary cast, so it survives a fixture-builder refactor; comment explains the wire isn't bound by our TS.
+- status `signed` → ineligible, status `executed` → ineligible (pins the allow-list; a terminal approval can't enter a batch).
+Also documented in `isBatchEligible` source that every condition is a positive assertion so unknowns fail closed (item 3: the enumerated open-status pair already IS a fail-closed allow-list, not a deny-list — no logic change needed, now commented).
+
+PROVED — full 4-row diagonal, each tamper applied alone then reverted:
+| Tamper (alone) | Red test(s) |
+|---|---|
+| rung `=== 'L1'` → `!== 'L3'` | `pins the rung check` + `batchableGroups re-filters` |
+| signers `=== 1` → `>= 1` | `pins the signers check` |
+| callerMaySign `=== true` → `!== false` | `callerMaySign is absent — a missing gate is not consent` |
+| status allow-list → `!== 'denied'` | `already-signed` + `already-executed` |
+Each condition fails for its own reason. Restored clean: policy suite 31/31, copilot suite 75/75, tsc clean. Nothing committed.

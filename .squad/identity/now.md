@@ -250,12 +250,73 @@ survives it cleanly — that class needs spec-derivation discipline and is not a
 
 ---
 
-## Next: Phase 3 — Supervisor agent and co-signature
+## Phase 3 — COMPLETE (in PR, not yet merged)
 
 Supervisor agent with **blind construction** (it must not see the proposing agent's reasoning) ·
 fan-out engine · co-signature flow · supervisor queue (cross-partition, **no pointer doc** — the
 `cosignerId` pointer was deleted because it let a banker choose their own reviewer) ·
 payload-mutation void path · L1-only batch approval.
+
+### Delivered
+
+- **Blind construction (headline).** `src/banker-copilot-service/app/planner/fanout.py`.
+  `build_supervisor_input(intent)` takes **one** parameter, so the primary's output has no
+  argument to travel through. Independence is a property of the signature, not a promise to
+  ignore an argument. `BankerIntent` is a frozen dataclass carrying only the banker's own words
+  and the raw entity ids — verified there is no smuggling channel through it either.
+- **Fan-out engine** with all bounds from `config/harness-limits.yaml`, fail-closed, no fallback
+  literals. Harness still boots `writeTools: 0`.
+- **Co-sign queue seniority** derived from `rungs.L2.cosignerRoles`, not a magic `2`.
+- **Out-of-band notification sinks** (`INotificationSink`), config-driven, naming the *kind* of
+  signer awaited, never a person; never gates state.
+- **Co-signature UI**, signing identity display-only behind server-supplied `callerMaySign`.
+- **Payload-supersede void path**: no signature survives a replan; both L2 slots re-open.
+
+### Verified state (all green locally)
+
+| Suite | Result |
+|---|---|
+| .NET (6 projects) | **482 passed** — authority `.Tests` 224, `.UnitTests` 129, account 29, prompt-eval 31, transfer 19, user 50 |
+| Python (6 services) | **865 passed** — banker-copilot 177, `.Tests` 298, account-opening 169, ai 130, chatbot 56, budget 35 |
+| ui-app (blocking) | **19 suites / 206 tests** |
+
+`transaction-service.Tests` still blocked **locally only** by a root-owned `obj/`
+(`sudo rm -rf src/transaction-service.Tests/obj`). CI is unaffected.
+
+### What coordinator verification found — read this before trusting a green suite
+
+Every lane's claims were re-tested rather than accepted, and **four guards were correct in logic
+but held by no test**:
+
+1. `isBatchEligible` has four conditions. Each could be broken alone with the full suite green;
+   only breaking two together went red. Worst was `callerMaySign === true` → `!== false`, which
+   differs on exactly one input — `undefined`. An **absent authorization field would have read as
+   permission**, the same shape as the Cosmos zero-rows mismatch and the `envFrom` hyphen drop.
+2. The two execution-time re-verifications in `ApprovalService.cs` (quorum at ~L520, SoD at ~L532)
+   could **each be deleted with all 350 .NET tests passing**, while `ApprovalsController.cs:116`
+   exposes `POST /{id}/execute` publicly. The path was: propose L2 → sign once → call execute.
+   Both are now pinned by `authority-service.UnitTests/ExecuteReVerificationTests.cs`, which drives
+   `/execute` directly and asserts on the **downstream side effect** (broker never called), not the
+   status code — so a refactor that returns 409 *after* executing still fails. Includes a positive
+   control proving the refusals come from the checks and not the fixture.
+
+**Standing rule this produced: a guard protected only in aggregate is a guard that erodes
+silently.** Where several conditions defend one invariant, each needs a test that fails for its own
+reason. Prove it by tampering each condition alone and reading the diagonal.
+
+### Honest non-ticks
+
+- `fanout.py` is imported by **nothing outside its own tests** — no route reaches
+  `build_supervisor_input`. The engine is built and unit-proven; **wiring is Phase 4**. Agreed by
+  Turk and the coordinator, recorded so nobody mistakes it for done.
+- No Foundry endpoint here: the fan-out loop under a real model is unexercised, as is whether the
+  supervisor ever genuinely *disagrees*. A 100%-agreement supervisor is a rubber stamp and would
+  present as success — this is item 4.2 of the deployment checklist and the highest-value thing to
+  watch on Monday.
+- No running backend: live SSE and co-signature round-trips remain unproven.
+- **F3-1 (latent, accepted):** `PolicyLoader` never validates `Batchable`, so marking an L2 action
+  batchable would load without error. Deliberately left open — see
+  `turk-phase3-batch-l1-only.md`. Pinned by a config tripwire, not a false-pass test.
 
 #334 is no longer a blocker; it landed in Phase 2.
 
