@@ -74,7 +74,7 @@ jobs:
 
       - name: Upload mutation report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: stryker-report-policy-engine
           path: src/authority-service.UnitTests/StrykerOutput/**/reports/*.html
@@ -118,7 +118,7 @@ jobs:
 
       - name: Upload mutation report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mutmut-report-tool-registry
           path: src/banker-copilot-service/mutmut-results.xml
