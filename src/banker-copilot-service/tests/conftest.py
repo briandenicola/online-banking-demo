@@ -7,10 +7,42 @@ from pathlib import Path
 import pytest
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = SERVICE_ROOT.parents[1]
+
+
+def _find_repo_root(start: Path) -> Path:
+    """Walk up for the repo root instead of assuming a fixed depth.
+
+    This used to be ``SERVICE_ROOT.parents[1]``, which is correct only when the
+    suite runs from its normal checkout location. Mutation testing copies the
+    service into a ``mutants/`` sandbox one level deeper, so the fixed index
+    silently resolved to ``src/`` and every shared fixture below vanished —
+    the whole Python mutation job failed to start on that alone.
+
+    Anchoring on files we actually need means the answer is either right or a
+    loud error, never a plausible wrong directory. Same discipline as the
+    de-hardcoded repo root in the ai-service TLS suite.
+    """
+    for candidate in (start, *start.parents):
+        if (candidate / "config" / "copilot-tools.yaml").is_file() and (candidate / "src").is_dir():
+            return candidate
+    raise RuntimeError(
+        f"could not locate the repository root from {start}. These tests assert against the "
+        "real shipped manifests rather than fixtures, so a missing root is a hard error: "
+        "silently falling back to a fixture is how a suite starts agreeing with itself."
+    )
+
+
+REPO_ROOT = _find_repo_root(SERVICE_ROOT)
 
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
+
+#: Make this file importable by name so sibling test modules can import the repo root
+#: rather than each recomputing it. The recomputed copies were fixed-depth and wrong
+#: anywhere but a normal checkout.
+_TESTS_DIR = Path(__file__).resolve().parent
+if str(_TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TESTS_DIR))
 
 #: The real, shipped manifest — tests assert against the artifact that actually deploys, not a
 #: fixture that agrees with it. A fixture would let the shipped file drift while tests pass.

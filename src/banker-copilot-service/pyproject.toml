@@ -37,6 +37,31 @@ pytest-asyncio = ">=0.24,<2.0"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 
+# Mutation testing config. This MUST live in a config file, not on the command
+# line: mutmut 3.x loads config at import time, so `mutmut run --paths-to-mutate`
+# — and even `mutmut run --help` — crashes before argument parsing if this
+# section is absent. The workflow previously passed 2.x-era CLI flags and had
+# been failing on every nightly run, which meant the Python half of mutation
+# testing proved nothing. Mutation testing is the only test-quality signal this
+# repo tracks (coverage is deliberately not tracked), so a mutation job that
+# cannot start is a hole in the one thing we rely on.
+[tool.mutmut]
+# `source_paths`, not the 2.x `paths_to_mutate`, and
+# `pytest_add_cli_args_test_selection`, not the 2.x `tests_dir` — both old names
+# are accepted but deprecated, and neither is what 3.x looks for first.
+#
+# The registry is where "zero write tools registered" is enforced and the
+# manifest loader is where an unconstrained path parameter is refused. A mutant
+# surviving in either means a guard the epic depends on is not actually tested.
+source_paths = ["app"]
+# Copy the whole app so intra-package imports resolve inside the sandbox, but
+# mutate ONLY the security-critical surface. Copying just `app/tools` made the
+# sandbox unimportable (`No module named 'app.stores'`), and widening the
+# mutation target instead would bury the signal we care about in noise from
+# unrelated modules.
+only_mutate = ["app/tools/*"]
+pytest_add_cli_args_test_selection = ["tests"]
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

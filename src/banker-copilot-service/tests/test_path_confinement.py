@@ -147,6 +147,52 @@ def test_substitution_refuses_a_value_that_would_leave_the_declared_path(hostile
     assert excinfo.value.code == "invalid_arguments"
 
 
+@pytest.mark.parametrize(
+    "hostile",
+    ["a\nb", "a\rb", "a\tb", "a\x00b", "\x1fb"],
+    ids=["newline", "carriage-return", "tab", "nul", "unit-separator"],
+)
+def test_substitution_refuses_a_c0_control_character(hostile):
+    """Pins the ``ord(ch) < 0x20`` half of the control-character guard on its own.
+
+    None of these are segment breakers and none strip to empty, so this guard is the only
+    thing that rejects them. A newline reaching a URL is request-splitting territory, and
+    the value is model-controlled — reachable by prompt injection, not just by a bug.
+
+    Found by mutation testing: turning the guard's ``or`` into ``and`` makes the whole
+    condition unsatisfiable, and the suite stayed green. The guard was correct and
+    completely unheld.
+    """
+    tool = _tool()
+    with pytest.raises(ToolInvocationError) as excinfo:
+        build_request(tool, _registry(tool), {"txId": hostile})
+    assert excinfo.value.code == "invalid_arguments"
+
+
+def test_substitution_refuses_the_delete_character():
+    """Pins the ``ord(ch) == 0x7F`` half separately.
+
+    DEL sits above the C0 range, so the other half of the ``or`` cannot cover it. Kept as
+    its own test so that dropping either half fails for its own reason rather than the two
+    conditions defending each other into silence.
+    """
+    tool = _tool()
+    with pytest.raises(ToolInvocationError) as excinfo:
+        build_request(tool, _registry(tool), {"txId": "a\x7fb"})
+    assert excinfo.value.code == "invalid_arguments"
+
+
+def test_a_space_is_encoded_rather_than_rejected():
+    """A positive control for the boundary: 0x20 itself is legal input, merely encoded.
+
+    Without this, tightening the guard to ``<= 0x20`` would look exactly like a correct
+    guard, and over-rejection is how a demo mysteriously stops answering.
+    """
+    tool = _tool()
+    url, _ = build_request(tool, _registry(tool), {"txId": "a b"})
+    assert url == "http://svc/api/transactions/a%20b"
+
+
 def test_a_reserved_character_is_encoded_rather_than_structuring_the_url():
     tool = _tool()
     url, _ = build_request(tool, _registry(tool), {"txId": "a:b;c=d"})

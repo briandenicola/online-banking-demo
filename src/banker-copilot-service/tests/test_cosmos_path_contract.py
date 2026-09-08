@@ -95,7 +95,10 @@ def _excluded_paths(block: str) -> set[str]:
     }
 
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+# Imported, not restated. This file previously computed its own
+# ``parents[3]``, which is the same fixed-depth assumption that broke the
+# mutation sandbox — and a repo root stated twice is a repo root wrong once.
+from conftest import REPO_ROOT  # noqa: E402
 
 
 def terraform_containers() -> dict[str, str]:
