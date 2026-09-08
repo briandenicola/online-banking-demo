@@ -1255,3 +1255,43 @@ and name the thing the metric is silently standing in for.**
 0.95. It would have been a single row folded into "disagreed" without effort — and would have
 inflated exactly the number under test. Checking **both** halves of the marker (the factor string
 *and* the zero confidence) is what makes the bucket safe to automate.
+
+**57. A correction to the instrument arrived mid-flight and the number survived — because the
+classifier gated on positive frames, not on a status field.** `run.done.status` turned out to lie
+on the build I measured: a refused proposal reported `completed`. My grading used that field only
+to *demote* a run; admission always required `approval.required(L2)` + `subagent.spawned`. **A
+one-directional dependency on an untrusted field is safe in a way a two-directional one is not** —
+the lie could suppress a data point but never manufacture one. That property was not luck, but it
+was also not deliberate foresight about *this* bug; it fell out of the rule "success is a positive
+signal, never an absence of errors". Rules like that pay out on defects you did not anticipate.
+
+**58. "My instrument was immune" is an argument, not evidence — go and check.** I re-fetched all
+42 traces and re-graded from frames alone: 0 classification changes. Only then did I say the rate
+stood. Re-deriving from stored run ids also beat re-running: it re-grades *the same samples*
+rather than drawing fresh ones, so a changed number would have meant a changed classifier rather
+than model variance. **When correcting a measurement, hold the sample fixed and vary only the
+grading.**
+
+**59. Then distinguish "immune by design" from "never exercised", and say both.** No run in my
+corpus took the propose-refusal path, so the defect was *latent* for me rather than *caught* by
+me. The flattering version — "my harness was immune" — was true and incomplete; the second half is
+luck and belongs in the record next to it.
+
+**60. If a colleague hands you a defect described in prose, reproduce it and hand back a run id.**
+Turk described the propose path; I drove one deliberately bad run and got
+`run.error` → `step.completed` on the failed step → `run.done status=completed`, with the summary
+endpoint agreeing. That is a regression fixture he can use, and it cost one run. **A tester's most
+useful output for another engineer is a reproduction, not a confirmation.**
+
+**61. Three defects in one day, one shape: failure wearing the costume of success.** The
+wrong-verb supervisor, the consensus banner rendering two *absent* verdicts as agreement, and
+`completed` on a refused proposal. Individually three bugs; together a design habit. I stopped
+writing them up as three findings and proposed one rule instead — **every success signal must be
+positive and specific: the thing that was supposed to happen, observed.** Counting instances
+across other people's findings is how a QA role sees a class that no single fix reveals.
+
+**62. When a fix will move your denominator, stamp the build and say which direction.** After the
+status fix deploys, runs that reported `completed` with no approval will report `failed`, and the
+failure count will rise. Without provenance on the number that reads as a regression in the very
+thing I just certified. **A rate without the build it was measured on is a trap for the next
+reader** — including for me.

@@ -2,11 +2,20 @@
 
 **Status: MEASURED, end to end, against the live deployment on 2026-09-08.**
 
+**Build provenance: measured against the cluster as deployed at `226b24a`, before Turk's
+`run.done.status` fix.** State this with any quote of the rate. On that build the status field
+lies (see §The status field lies), and **the denominator will legitimately move after the next
+deploy** — runs that reported `completed` while producing no approval will start reporting
+`failed`. **A rising failure count there is the measurement getting more correct, not a
+regression.**
+
 **Result: the supervisor agreed with the primary on 7 of 31 real verdicts — an agreement rate of
 22.6%.** Disagreement is not merely reachable; it is the *common* outcome, and on inspection the
 disagreements are specific, evidence-anchored and mostly correct. 42 runs were driven in total
-(32 distinct cases + 10 byte-identical repeats); every one of them reached L2 and spawned the
-supervisor.
+(32 distinct cases + 10 byte-identical repeats); every one of them reached L2, spawned the
+supervisor and completed it. **All 42 were re-derived from their trace frames after the status
+defect came to light — 0 classifications changed** (`rederive_from_traces.py`,
+`rederived-2026-09-08.jsonl`).
 
 Check 4.2 asks one question: *when a real model gives the blind second opinion on an L2 banking
 action, is disagreement with the primary genuinely reachable?* **Yes.** With two qualifications
@@ -30,12 +39,12 @@ Corpus of 32 distinct cases, `account.balance.adjust`, driven through
 |---|---:|---|
 | **agreed** (supervisor said `proceed`) | 7 | |
 | **disagreed** (`hold` × 21, `decline` × 3) | 24 | real model verdicts against the action |
-| **supervisor-unavailable** | 1 | **FAILED MODEL CALL, not a disagreement** |
-| excluded — no fan-out or run failed | 0 | every run reached L2 and spawned the supervisor |
+| **supervisor-unavailable** | 1 | **FAILED SUPERVISOR CALL, not a disagreement** |
+| **instrument failures** | 0 | the measurement did not happen |
 | runs driven | 32 | |
 
 **Agreement rate: 7/31 = 22.6%.** The denominator is real model verdicts only. It excludes the
-one failed call and would exclude any non-measurement, of which there were none.
+one failed supervisor call and would exclude any instrument failure, of which there were none.
 
 Across all 42 runs including the stability repeats: 10 agreed, 31 disagreed, 1 failed call —
 10/41 = 24.4%. The headline figure is the 32-case corpus; the repeats are not independent
@@ -49,6 +58,75 @@ failed model call and excluded — **never as a disagreement.** Re-running the i
 returned a real `HOLD` at 0.95, so the failure was transient. Observed rate: **1 in 42 ≈ 2.4%.**
 The failsafe text a human would read is honest: *"Nothing here has been reviewed independently…
 Treat this as unreviewed."*
+
+---
+
+## The status field lies — and why the number survives it
+
+`run.done.status` is **unreliable** on the build this was measured against. The planner opened
+with `status = "completed"` and only lowered it where a path remembered to. The tool-failure path
+remembered — which is why the earlier Gate A failures correctly reported `failed`; that was real.
+The **propose** path did not. `start_run`'s `finally` block also hardcoded `completed`, so a
+planner that *raised* was recorded as completed, and that is the field `GET
+/api/copilot/runs/{id}` hands back to a harness.
+
+**Reproduced deliberately, live: `run_9291617d3bc44032`.** A proposal refused for a non-canonical
+money field — no approval produced, no supervisor, nothing for a human to sign:
+
+```
+15  run.error       {"code": "payload_not_canonicalizable", ...}
+16  step.completed  {"stepId": "step_4"}        <-- the step that just errored
+17  run.done        {"status": "completed"}     <-- the run that just failed
+```
+
+```
+GET /api/copilot/runs/run_9291617d3bc44032  ->  {"status":"completed", ...}
+```
+
+### Why this measurement is unaffected
+
+The probe never trusted the field. `run.done.status` was used *only to demote* a run
+(`!= "completed"` → failure); it could never admit one. Admission required the positive frames —
+`approval.required(L2)` **and** `subagent.spawned(supervisor)`. So the lie could only ever have
+*suppressed* a data point, never manufactured one, and the rate could not be inflated by it.
+
+That is an argument, not evidence, so it was checked. **All 42 recorded runs were re-fetched and
+re-graded from trace frames alone, with `run.done.status` consulted for nothing:**
+
+```
+runs re-graded            42
+  agreed                  10
+  disagreed               31
+  supervisor-unavailable   1
+  instrument failures      0
+classification changes vs original probe: 0
+runs claiming 'completed' while carrying run.error or missing fan-out: 0
+```
+
+**Zero changes, zero liars.** No run in the corpus took the propose-refusal path — every one of
+the 42 produced an approval and a completed supervisor — so the defect was latent for this
+measurement rather than caught by it. Both facts are worth stating: the classifier was immune by
+construction, *and* the path was never exercised. **The 22.6% stands unchanged.**
+
+The harness has since been hardened anyway: it now requires `subagent.completed` as a third
+positive signal, records `claimedStatus` and a `statusFieldLied` flag on every run, and reports
+instrument failures as a **fourth bucket** — distinct from `unavailable`, because a rig that broke
+and a supervisor that failed are different facts.
+
+### Failure wearing the costume of success
+
+This is the third instance of that defect class found in a single day, on the same feature:
+
+1. the supervisor **judging the wrong verb** and recording violent agreement as disagreement;
+2. the banner rendering **two absent verdicts** as *"Independent review reached the same
+   verdict"* — a dead pipeline displaying as consensus;
+3. a **refused proposal reporting `completed`** at both the frame and the summary endpoint.
+
+Each one made a broken path look like a working one to whoever read it next. That is the specific
+risk this whole verification exists to manage, and it argues for a standing rule rather than three
+separate fixes: **every success signal in this system should be positive and specific — the thing
+that was supposed to happen, observed — and never the absence of an error.** The check-4.2 harness
+was written that way and that is the only reason its number survived this correction intact.
 
 ---
 
@@ -235,6 +313,9 @@ shows it to a human deciding whether to sign.
 | `e2e_supervisor_probe.py` | The end-to-end runner. Proposes only; signs nothing. |
 | `results-e2e-2026-09-08.jsonl` | The 32-case result. Full per-run detail: run ids, verdicts, confidences, key factors, counter-arguments. |
 | `stability-e2e-2026-09-08.jsonl` | The 10 byte-identical repeats. |
+| `rederive_from_traces.py` | Re-grades recorded runs from trace frames alone, consulting no status field. Re-reads; does not re-run. |
+| `rederived-2026-09-08.jsonl` | All 42 runs re-derived after the status defect surfaced. 0 classification changes. |
+| `instrument-defect-2026-09-08.jsonl` | The deliberate reproduction, `run_9291617d3bc44032` — `completed` while carrying `run.error`. |
 | `supervisor_cases.py`, `supervisor_agreement_probe.py` | The earlier **component-mode** probe, kept for the in-pod fallback path. |
 | `component-probe-*-2026-09-08.jsonl` | Component-mode results. **Not a check 4.2 result** — the fan-out seam is stubbed. Never quote as an agreement rate. |
 
@@ -266,12 +347,17 @@ Public DNS with a valid certificate — **no `-k`**. Only stdlib; no install ste
 ### Detecting whether the decider actually ran
 
 Use the **positive** signal, never the absence of errors: an `approval.required` frame with
-`requiredRung == "L2"` **and** a `subagent.spawned` frame with `role == "supervisor"`. The runner
-requires both and buckets a run as `no_fanout` otherwise.
+`requiredRung == "L2"`, a `subagent.spawned` frame with `role == "supervisor"`, **and** a
+`subagent.completed` frame. The runner requires all three and buckets a run as `instrument`
+otherwise.
 
-Do **not** use container logs. `FoundryDecider` logs `"Supervisor second opinion"` on every call,
-but a process started with `kubectl exec` writes to its own stdout, **not** the container's log
-stream — absence of that line proves nothing.
+**Do not classify on `run.done.status`, and do not classify on `GET /api/copilot/runs/{id}`.**
+Both report `completed` for runs whose proposal was refused — see §The status field lies. A
+`run.error` frame anywhere means the run is not a measurement, whatever the tail claims.
+
+Do **not** use container logs either. `FoundryDecider` logs `"Supervisor second opinion"` on every
+call, but a process started with `kubectl exec` writes to its own stdout, **not** the container's
+log stream — absence of that line proves nothing.
 
 ---
 
@@ -316,8 +402,11 @@ contract is still the durable fix, and is still worth adding.
 5. **Both polarities.** ✅ 18 adverse / 13 permissive among graded runs; 9 built to be defensible,
    13 to be stopped, 9 genuinely ambiguous.
 6. **Byte-identical repeats.** ✅ done, and they still flip on marginal cases — §Determinism.
-7. **Three outcome categories, never two.** ✅ `unavailable` is checked on **both** halves of the
-   marker (`supervisor_unavailable` **and** `confidence == 0.0`) before any verdict comparison,
-   and is excluded from the denominator.
+7. **Three outcome categories, never two.** ✅ Now **four**. `unavailable` is checked on **both**
+   halves of the marker (`supervisor_unavailable` **and** `confidence == 0.0`) before any verdict
+   comparison; `instrument` is separate again, because a rig that broke and a supervisor that
+   failed are different facts. Only `agree` and `disagree` enter the denominator.
 8. **`0/30` and `30/30` are both findings, not passes.** ✅ 7/31 is reported as a finding, with
-   its denominator, its exclusions and its caveats.
+   its denominator, its exclusions, its build provenance and its caveats.
+9. **No status field in the grading path.** ✅ Added after the fact. Admission is by positive
+   frames only; `run.done.status` is recorded solely to flag where it contradicts them.

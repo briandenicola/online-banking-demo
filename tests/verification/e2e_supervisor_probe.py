@@ -13,10 +13,22 @@ It PROPOSES only. Every run leaves a pending approval and signs nothing.
 
 Success is a positive signal, never an absence of errors
 --------------------------------------------------------
-A run counts only if the trace contains BOTH an ``approval.required`` frame carrying
-``requiredRung == "L2"`` AND a ``subagent.spawned`` frame with ``role == "supervisor"``. A run
-that completes without spawning the supervisor settled at L1 and is NOT a data point; it is
-recorded as ``no_fanout`` and excluded from the denominator rather than silently counted.
+A run counts only if its trace carries ALL THREE of an ``approval.required`` frame with
+``requiredRung == "L2"``, a ``subagent.spawned`` frame with ``role == "supervisor"``, and a
+``subagent.completed`` frame.
+
+**``run.done.status`` is NEVER consulted to admit a run, because on the build this was first
+measured against it lies.** The planner opened with ``status = "completed"`` and only lowered it
+where a path remembered to. The tool-failure path remembered; the **propose** path did not. So a
+run whose proposal was REFUSED — no approval produced, nothing for a human to sign — reports
+``run.done {"status": "completed"}`` and even emits ``step.completed`` on the step that just
+errored. ``start_run``'s ``finally`` block also hardcoded ``completed``, so a planner that RAISED
+was recorded as completed too, and that is the field ``GET /api/copilot/runs/{id}`` returns.
+
+Reproduced live as ``run_9291617d3bc44032``: ``run.error payload_not_canonicalizable`` at seq 15,
+``step.completed`` on the failed step at seq 16, ``run.done status=completed`` at seq 17, and the
+summary endpoint reporting ``"status":"completed"``. The field is read here only to flag the
+contradiction (``statusFieldLied``), never to grade.
 
 Four outcomes, never two
 ------------------------
@@ -25,10 +37,14 @@ Four outcomes, never two
 ``unavailable``  ``keyFactors == ["supervisor_unavailable"]`` AND ``confidence == 0.0``.
                  ``FoundryDecider`` fails CLOSED, so a timeout, a throttle, a content-filter
                  refusal and unparseable output ALL surface as ``hold`` at 0.0. That is a
-                 FAILED MODEL CALL. Counting it as disagreement manufactures the exact false
-                 signal this exercise exists to delete, sign flipped.
-``no_fanout`` /
-``run_failed``   the measurement did not happen. Excluded, and reported separately.
+                 FAILED SUPERVISOR CALL. Counting it as disagreement manufactures the exact
+                 false signal this exercise exists to delete, sign flipped.
+``instrument``   THE MEASUREMENT DID NOT HAPPEN: a ``run.error`` frame anywhere, a missing
+                 fan-out signal, or a transport failure. A defect in the rig, not an opinion
+                 about banking — and deliberately distinct from ``unavailable``, which is the
+                 supervisor failing rather than the instrument.
+
+Only ``agree`` and ``disagree`` enter the agreement-rate denominator.
 
 Both halves of the marker are checked. Testing the marker alone would misclassify a genuine
 model verdict that happened to name that factor; testing confidence alone would swallow any
@@ -109,8 +125,8 @@ def drive_case(base: str, token: str, case: dict, rep: int = 0) -> dict:
     status, body = _request("POST", f"{base}/api/copilot/sessions", token,
                             {"objective": case["objective"]})
     if status not in (200, 201) or not isinstance(body, dict) or "sessionId" not in body:
-        row["outcome"] = "run_failed"
-        row["error"] = f"session create HTTP {status}: {str(body)[:300]}"
+        row["outcome"] = "instrument"
+        row["instrumentReason"] = f"session create HTTP {status}: {str(body)[:300]}"
         return row
     row["sessionId"] = body["sessionId"]
 
@@ -122,16 +138,16 @@ def drive_case(base: str, token: str, case: dict, rep: int = 0) -> dict:
                                          "direction": case["direction"],
                                          "reason": case["reason"]}})
     if status not in (200, 201, 202) or not isinstance(body, dict) or "runId" not in body:
-        row["outcome"] = "run_failed"
-        row["error"] = f"run create HTTP {status}: {str(body)[:300]}"
+        row["outcome"] = "instrument"
+        row["instrumentReason"] = f"run create HTTP {status}: {str(body)[:300]}"
         return row
     row["runId"] = body["runId"]
 
     frames = _poll_trace(base, token, row["runId"])
     row["elapsedMs"] = int((time.monotonic() - started) * 1000)
     if frames is None:
-        row["outcome"] = "run_failed"
-        row["error"] = "trace did not reach a terminal frame within the poll timeout"
+        row["outcome"] = "instrument"
+        row["instrumentReason"] = "trace did not reach a terminal frame within the poll timeout"
         return row
 
     return _grade(row, frames)
@@ -155,27 +171,37 @@ def _grade(row: dict, frames: list[dict]) -> dict:
     for f in frames:
         by_kind[f.get("kind")].append(f)
 
-    for f in by_kind.get("run.error", []):
-        row["outcome"] = "run_failed"
-        row["error"] = json.dumps(f.get("payload"))[:400]
-        return row
-
+    # `run.done.status` is NOT consulted to admit a run. On the build this was first measured
+    # against it is a LIE: the planner opened with "completed" and only lowered it where a path
+    # remembered to, and the PROPOSE path did not. A run whose proposal was refused — no
+    # approval, nothing to sign — reports `run.done {"status": "completed"}` and even emits
+    # `step.completed` on the step that just errored. Reproduced live: run_9291617d3bc44032.
+    # It is recorded here only as evidence of that defect, never as grounds for admitting.
     done = by_kind.get("run.done", [])
-    if done and (done[-1].get("payload") or {}).get("status") != "completed":
-        row["outcome"] = "run_failed"
-        row["error"] = json.dumps(done[-1].get("payload"))[:400]
+    row["claimedStatus"] = (done[-1].get("payload") or {}).get("status") if done else None
+
+    errors = by_kind.get("run.error", [])
+    row["statusFieldLied"] = bool(errors) and row["claimedStatus"] == "completed"
+    if errors:
+        row["outcome"] = "instrument"
+        row["instrumentReason"] = "run.error frame present"
+        row["error"] = json.dumps(errors[0].get("payload"))[:400]
         return row
 
-    # POSITIVE success signal, both halves required.
+    # POSITIVE success signal. All three required; absence of errors proves nothing.
     required = [f for f in by_kind.get("approval.required", [])
                 if ((f.get("payload") or {}).get("approval") or {}).get("requiredRung") == "L2"]
     spawned = [f for f in by_kind.get("subagent.spawned", [])
                if (f.get("payload") or {}).get("role") == "supervisor"]
+    supervisor_done = by_kind.get("subagent.completed", [])
     row["reachedL2"] = bool(required)
     row["supervisorSpawned"] = bool(spawned)
-    if not required or not spawned:
-        row["outcome"] = "no_fanout"
-        row["error"] = f"reachedL2={bool(required)} supervisorSpawned={bool(spawned)}"
+    row["supervisorCompleted"] = bool(supervisor_done)
+    if not (required and spawned and supervisor_done):
+        row["outcome"] = "instrument"
+        row["instrumentReason"] = (f"reachedL2={bool(required)} spawned={bool(spawned)} "
+                                   f"completed={bool(supervisor_done)}")
+        row["statusFieldLied"] = row["claimedStatus"] == "completed"
         return row
 
     if required:
@@ -185,8 +211,8 @@ def _grade(row: dict, frames: list[dict]) -> dict:
 
     updated = by_kind.get("approval.updated", [])
     if not updated:
-        row["outcome"] = "run_failed"
-        row["error"] = "supervisor spawned but no approval.updated frame carried its opinion"
+        row["outcome"] = "instrument"
+        row["instrumentReason"] = "supervisor spawned but no approval.updated carried its opinion"
         return row
 
     approval = (updated[-1].get("payload") or {}).get("approval") or {}
@@ -231,7 +257,8 @@ def summarise(results: list[dict], label: str) -> None:
     counts = Counter(r["outcome"] for r in results)
     agree, disagree = counts["agree"], counts["disagree"]
     unavailable = counts["unavailable"]
-    excluded = counts["no_fanout"] + counts["run_failed"]
+    instrument = counts["instrument"]
+    liars = sum(1 for r in results if r.get("statusFieldLied"))
     verdicts = agree + disagree
 
     print("\n" + "=" * 74, file=out)
@@ -242,13 +269,15 @@ def summarise(results: list[dict], label: str) -> None:
     print(f"  disagreed (hold/decline) {disagree}", file=out)
     print(f"  supervisor-unavailable   {unavailable}   FAILED MODEL CALLS, not disagreement",
           file=out)
-    print(f"  excluded (no fan-out /", file=out)
-    print(f"            run failed)    {excluded}", file=out)
+    print(f"  instrument failures      {instrument}   the measurement did not happen", file=out)
+    if liars:
+        print(f"    of which claimed run.done status='completed' while carrying a", file=out)
+        print(f"    run.error or missing the fan-out: {liars}  <-- planner status defect", file=out)
     print("-" * 74, file=out)
     if verdicts:
         print(f"AGREEMENT RATE  {agree}/{verdicts} = {agree / verdicts:.1%}", file=out)
         print(f"  denominator = real model verdicts only; excludes {unavailable} failed "
-              f"call(s) and {excluded} non-measurement(s)", file=out)
+              f"supervisor call(s) and {instrument} instrument failure(s)", file=out)
     else:
         print("AGREEMENT RATE  undefined — no real model verdicts", file=out)
     print("=" * 74, file=out)
@@ -362,8 +391,8 @@ def main() -> int:
             try:
                 row = drive_case(args.base, token, case, rep)
             except Exception as exc:  # noqa: BLE001 — a harness crash must never read as a verdict
-                row = {"caseId": case["id"], "rep": rep, "outcome": "run_failed",
-                       "error": f"{type(exc).__name__}: {exc}"}
+                row = {"caseId": case["id"], "rep": rep, "outcome": "instrument",
+                       "instrumentReason": f"{type(exc).__name__}: {exc}"}
             results.append(row)
             fh.write(json.dumps(row) + "\n")
             fh.flush()
