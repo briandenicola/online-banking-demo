@@ -1,41 +1,41 @@
 {
   "toolId": "get_account",
   "provenance": {
-    "capturedFrom": "NOT CAPTURED FROM A LIVE RUN \u2014 hand-built from the shipped response type.",
+    "capturedFrom": "LIVE CAPTURE from the deployed cluster.",
+    "capturedAt": "2026-09-08T21:06:50.423630+00:00",
+    "capturedFrom_detail": "https://onlinebankingdemo.bjdazure.tech via the `banker` identity, read-only GET, approved by Brian (@briandenicola).",
+    "accountId": "58ada63b-6022-40d3-9896-795f8a5cc57b",
+    "accountOwner": "the acting banker (0c5bcca9-6b4e-41cd-ac75-6a518443fb89) \u2014 see the caveat below",
+    "supersedes": "a hand-built sample derived from the C# response type. The shapes agreed; this replaces belief with observation.",
     "derivedFrom": [
-      "src/account-service/Models/Account.cs (the serialized type)",
+      "LIVE: GET https://onlinebankingdemo.bjdazure.tech/api/accounts/58ada63b-6022-40d3-9896-795f8a5cc57b as `banker`, HTTP 200.",
       "src/account-service/Controllers/AccountsController.cs GetAccount -> Ok(account)",
-      "config/copilot-tools.yaml get_account.target = GET account-service /api/accounts/{accountId}"
+      "src/account-service/Models/Account.cs serialized by System.Text.Json (AddControllers, no AddNewtonsoftJson) => camelCase on the wire"
     ],
-    "relatedRuns": [
-      "run_5855e85caad34c12",
-      "run_5ed954af071b4ebc"
-    ],
-    "runNote": "Those runs (tests/verification/, Livingston's Gate A / Gate B measurement) REFUSED at propose with evidence_incomplete. That is why no live get_account evidence object exists to record yet: they are cited as the provenance of the GAP, not of this shape.",
-    "warning": "Hand-written fixtures are how a seam test passes against a system that does not exist. This sample proves the two config documents are mutually satisfiable against a shape we BELIEVE the service returns. It does NOT prove account-service still returns that shape. A live capture is a post-demo contract test."
+    "warning": "A LIVE CAPTURE PROVES MORE THAN A HAND-BUILT SAMPLE, BUT IT IS STILL THE HAPPY PATH. This account is owned by the ACTING BANKER, and both endpoints scope reads to the caller. A banker reading a CUSTOMER's account behaves differently and asymmetrically: get_account returns 404 (loud - evidence missing, propose refuses) while list_account_transactions returns 200 with an EMPTY ARRAY (silent). The projection would then assert {accountId, count: 0, items: []} - 'this account has no transaction history' - when the truth is 'the banker cannot see them'. count: 0 is present and non-null, so EvidenceComplete PASSES and the approval record carries a false statement. This sample cannot detect that, and neither can the seam test. Deferred deliberately (Brian, 2026-09-08); named before `main`. It also does not prove the shape is stable - only that it was true at capture time."
   },
   "arguments": {
-    "accountId": "acct-1001"
+    "accountId": "58ada63b-6022-40d3-9896-795f8a5cc57b"
   },
   "response": {
-    "id": "acct-1001",
-    "userId": "user-77",
-    "accountNumber": "1000000001",
-    "accountType": "checking",
-    "balance": 4820.55,
+    "id": "58ada63b-6022-40d3-9896-795f8a5cc57b",
+    "userId": "0c5bcca9-6b4e-41cd-ac75-6a518443fb89",
+    "accountNumber": "ACC88973534",
+    "accountType": "Checking",
+    "balance": 32897.4,
     "currency": "USD",
-    "createdAt": "2026-01-14T09:12:44.000Z",
+    "createdAt": "2026-09-08T19:22:31.7766187Z",
     "isActive": true
   },
   "projected": {
-    "id": "acct-1001",
-    "userId": "user-77",
-    "accountNumber": "1000000001",
-    "accountType": "checking",
-    "balance": 4820.55,
+    "id": "58ada63b-6022-40d3-9896-795f8a5cc57b",
+    "userId": "0c5bcca9-6b4e-41cd-ac75-6a518443fb89",
+    "accountNumber": "ACC88973534",
+    "accountType": "Checking",
+    "balance": 32897.4,
     "currency": "USD",
-    "createdAt": "2026-01-14T09:12:44.000Z",
+    "createdAt": "2026-09-08T19:22:31.7766187Z",
     "isActive": true,
-    "accountId": "acct-1001"
+    "accountId": "58ada63b-6022-40d3-9896-795f8a5cc57b"
   }
 }

@@ -322,7 +322,16 @@ def test_every_sample_records_where_it_came_from(path):
     assert provenance.get("capturedFrom")
     assert provenance.get("derivedFrom")
     assert provenance.get("warning"), (
-        "every sample must state what it does not prove; these are hand-built, not live captures"
+        "every sample must state what it does NOT prove. This requirement outlives the reason it was "
+        "written for. It was added when every sample was hand-built from a C# response type, where "
+        "the gap was obvious. `get_account` and `list_account_transactions` are now live captures "
+        "(2026-09-08), which is strictly stronger evidence -- and that is exactly when a warning "
+        "stops being a formality and starts being load-bearing, because a real captured payload "
+        "invites more trust than it has earned. Both are the happy path: the account is owned by "
+        "the acting banker, so neither sample can reach the case where a banker reads a CUSTOMER's "
+        "account and `list_account_transactions` returns 200 with an empty array that satisfies "
+        "EvidenceComplete while asserting something false. Do not drop this assertion when the last "
+        "hand-built sample is replaced."
     )
 
 
