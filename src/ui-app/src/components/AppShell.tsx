@@ -72,7 +72,7 @@ const navItems = [
 ];
 
 const AppShell: React.FC<AppShellProps> = ({ children }) => {
-  const { user, logout, isAdmin, isBanker } = useAuthContext();
+  const { user, logout, isAdmin, isBanker, mayViewAdminObservability } = useAuthContext();
   const { isEnabled } = useFeatureFlags();
   const navigate = useNavigate();
   const location = useLocation();
@@ -87,7 +87,13 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
   // deliberate, not a transitional accident. Running the same task on each is
   // the only way the "the harness is better" claim can be checked rather than
   // asserted. See docs/design/banker-copilot-ui.md §11.
-  const showClassicAdmin = isAdmin && isEnabled('classicAdminTabs');
+  //
+  // The Admin link mirrors the /admin ROUTE gate, so it must use the same
+  // capability the route does — a supervisor with the read-only tabs but no nav
+  // entry has a surface they can only reach by typing a URL. `isAdmin` still
+  // gates the write tabs inside the page, and the "Surfaces & flags" panel
+  // below, which is platform configuration.
+  const showClassicAdmin = mayViewAdminObservability && isEnabled('classicAdminTabs');
   const showCopilot = isBanker && isEnabled('bankerCopilot');
 
   React.useEffect(() => {

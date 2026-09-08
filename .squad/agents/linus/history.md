@@ -1304,3 +1304,77 @@ PROVED — full 4-row diagonal, each tamper applied alone then reverted:
 | callerMaySign `=== true` → `!== false` | `callerMaySign is absent — a missing gate is not consent` |
 | status allow-list → `!== 'denied'` | `already-signed` + `already-executed` |
 Each condition fails for its own reason. Restored clean: policy suite 31/31, copilot suite 75/75, tsc clean. Nothing committed.
+
+## Supervisor read-only admin tabs (2026-09-08, branch `332-beta`)
+
+UI half only; Turk did server-side enforcement in parallel. Decision record:
+`.squad/decisions/inbox/linus-supervisor-readonly-tabs.md`. Nothing committed.
+
+**Name the capability, not the holder.** `mayViewAdminObservability`, backed by
+`ADMIN_OBSERVABILITY_ROLES = ['admin','supervisor']`, derived from `effectiveRoles` the way
+`isBanker` is. `isAdmin` stays `user?.role === 'admin'` and the role hierarchy is untouched. The
+naming is load-bearing, not cosmetic: a flag called `isSupervisorAdmin` invites the next person
+who needs the view to be handed the ROLE instead, which is the escalation restated as a
+convenience. The thing being protected is that L3 holds `user.role.promote` and
+`authority.policy.edit` — a supervisor who was an admin could promote themselves and then rewrite
+the policy governing their own co-signature.
+
+**The bug I was warned about was real, and I proved it by re-introducing it.** AdminPage rendered
+panels positionally (`activeTab === 1 && <AdminUserManagementTab/>`). That is safe only while
+every caller sees the same eight tabs. Filter the list and position 1 stops meaning "User
+Management" and starts meaning whatever survived — so the filter hands a restricted panel to
+exactly the caller it exists to exclude, silently, from a diff that looks like a pure addition.
+Fixed by moving definitions+rules to a pure `pages/adminTabs.ts`, keying `<Tab value={regionId}>`
+and every panel off `regionId`. The eight frozen `regionId`s are unchanged (Phase 5 counts
+`data-comparison-region`; renaming one rebases the measurement) and are now pinned by a test.
+
+**Put the read-only-ness on the TAB, not on the gate.** `readOnlyObservability: boolean` per tab
+definition. Adding a write control to a tab marked `true` becomes a one-line change a reviewer can
+see, instead of a fact smeared across a gate expression. And it gave me a test that pins the DATA
+(`admin-users` must be `false`) separately from the filter — flipping the flag opens the tab
+without touching a line of gate logic, so the filter test alone would not have been enough.
+
+**Tone matters at a boundary.** `AdminTabRestrictedNotice` is deliberately the opposite of
+`FlagDisabledNotice`: that one is NOT an authorisation failure and offers a button that fixes it;
+this one IS one, says so, and offers no such button. A fix button here would be a lie, a blank
+panel would be worse — a person cannot tell a boundary from a broken page.
+
+**The lesson from Phase 3 paid for itself immediately.** My first six tamper tests all failed
+correctly, so the guard looked proven. But every fixture kept `role` and `effectiveRoles`
+CONSISTENT — so a client that read `user.role` directly would have passed all of them by
+coincidence, and the whole "read the claim the server reads" rationale was unheld. Added two
+deliberately self-inconsistent fixtures (`role: 'banker'` + `effectiveRoles: ['banker','supervisor']`,
+and `role: 'supervisor'` + `effectiveRoles: ['banker']`) with a comment warning not to "fix" them
+into agreement. Tamper 8 confirmed: swapping the derivation to the declared role failed ONLY those
+two. Absent-by-coincidence again, in a new costume — third time now.
+
+**Tamper diagonal (each applied alone, suite run, reverted):**
+
+| Tamper | Red test(s) |
+|---|---|
+| supervisor filter → `return ADMIN_TABS` | `never gives a supervisor User Management` + `does NOT see User Management` (11 total) |
+| `return []` → read-only filter (fail open) | `plain banker no admin surface`, `absent capability is not access`, `banker sees no tabs` |
+| `resolveAdminTab` resolves against `ADMIN_TABS` not `visible` | `explains rather than renders when a withheld tab is selected` |
+| positional panel indexing restored | `opens on All Transactions, not whatever sits at index 0` — rendered `PANEL Applications` to a supervisor |
+| `admin-users.readOnlyObservability` → `true` | `marks User Management as a write tab` + the supervisor set |
+| `ADMIN_OBSERVABILITY_ROLES` += `'banker'` | `is false for a plain banker`, `grants the capability to exactly two roles` |
+| `isAdmin` OR `=== 'supervisor'` (the forbidden change) | `does not make a supervisor an admin` + supervisor tab set |
+| capability derived from `user.role` | the two divergent-fixture tests, and ONLY those |
+
+**Verification:** 23 new tests across `pages/__tests__/adminTabs.test.ts`,
+`pages/__tests__/AdminPage.test.tsx`, `contexts/__tests__/AuthContext.test.tsx`. Full UI suite
+264 passed / 26 suites; the only 2 failing suites are the pre-existing quarantined account-opening
+ones (AgentPipeline, DocumentUpload — 13 failures, unchanged baseline). `tsc --noEmit
+--ignoreDeprecations 6.0` clean. `craco build` green, 286.51 kB. The three eslint warnings that
+break `CI=true` builds are in `ApplicationStatus.tsx` and `CopilotHarness.tsx` — files outside my
+change set, pre-existing/in-flight in other lanes; zero warnings in mine. Note the repo uses
+**craco**, not bare `react-scripts`; `npx jest` still bypasses the CRA babel transform.
+
+**BELIEVED, not proved:** that a supervisor's live session actually renders these tabs against the
+deployed cluster, and that the read-only endpoints serve them. This is a mirror — the services are
+the enforcement — and I verified agreement by READING Turk's constants
+(`OBSERVABILITY_READ_ROLES = ("admin","supervisor")`, `BankingRoles.ObservabilityRead`), not by
+calling anything. Reading is how the last drift survived review. **Follow-up filed in the decision
+record: a cross-language contract test comparing the two role lists**, in the shape of
+`harnessRole.contract.test.ts` — not written yet because Turk's constants were still moving in the
+working tree while I worked.
