@@ -2193,3 +2193,78 @@ per-key provenance envelope, both **required before `main`, not before the demo*
 FAIL, or make it LIE?* It disposed of relaxing `EvidenceComplete` in one line (the check would
 survive in the code and the narration as a tautology that can never fail), and it is what
 promoted the `list_login_audits` finding from a footnote to a ruling.
+
+---
+
+## 2026-09-08 — The primary assessment, and what independence has to mean (`danny-primary-assessment-ruling.md`)
+
+The primary agent had no judgement at all: `agentAssessment: {summary: <the banker's own
+objective, echoed back>, evidenceToolIds}`. Meanwhile the supervisor is a real model call. So
+check 4.2's headline "22.6% agreement" measured **one agent** — Livingston disqualified his own
+number, correctly, and should not be talked out of it.
+
+**The question that mattered was not "give the primary a model" — it was what independence
+MEANS once both sides are the same model.** Two instances of one model, prompted alike, seeing
+the same evidence, would score *better* on 4.2 while being worth *less* than what we had. Ruled
+the mechanism is an **adversarial role asymmetry — the two agents are never asked the same
+question** — plus the evidence-provenance asymmetry that already ships (the supervisor's own
+second draw). A different model or temperature is a **knob, not a control**, and its worst
+property is that it is *claimable*: it reads to a reviewer as independence while guaranteeing
+nothing.
+
+**The trap in the candidate list I was handed, and I nearly agreed with it.** "Give the
+supervisor a different evidence view — the projected evidence *and the proposal*" sounds like
+strengthening independence. The proposal is **downstream of the primary**. `FanOutEngine`
+already sources `action_id` from the request rather than the approval body, with a comment
+saying why. That candidate would have undone a shipped structural control in the name of
+improving it. **Rule of thumb worth keeping: when a proposal to strengthen a control widens the
+signature the control is made of, the proposal is the bug.**
+
+**A real defect found by reasoning about failure, not by reading for it.**
+`_primary_recommendation` falls back to `"proceed"`. Harmless while the primary always proceeds
+— but the moment the primary can *fail*, a supervisor `hold` against a manufactured position
+renders as **disagreement**. That is exactly the classification error Livingston had to correct
+by hand on the supervisor side (a failed call is not dissent), mirrored onto the primary, and
+living **inside the code** rather than inside a probe. Agreement had to become tri-state:
+`agree | diverge | not_comparable`. **Every default that is currently invisible becomes a lie
+the day the other side gains a new state.**
+
+**Confidence is not honest and I said so.** 0.83–0.98, median 0.94, no separation between a case
+that was 5/5 stable and one that flips on identical bytes — displayed to a human deciding
+whether to sign. Refused both easy answers: not deleted (it is the model's own statement, and
+deleting data is its own dishonesty), not recalibrated (nothing to calibrate against). Ruled:
+nothing may rank, colour or gate on it, and the field is renamed `selfReportedConfidence` —
+**a field name carries a caveat where a tooltip cannot, because the name survives being copied
+into a screenshot.**
+
+**Deferring the evidence ceiling for a measurement reason, not a caution reason.** Brian accepted
+"the model may gather MORE, never less". Correct, and I specified it fully — but shipping it in
+the same deploy as the assessment changes the evidence surface *and* the number of agents at
+once, so no movement in 4.2 could be attributed to either. **Ship, re-measure, then open the
+ceiling.** Same argument applies to aligning the supervisor's `0.0` confidence sentinel: right
+fix, wrong week, because it perturbs the baseline mid-measurement.
+
+**Confirmed the adverse proposal on an argument the brief did not have.** The strongest reason
+the primary must still propose when it concludes "don't" is not the empty screen — it is that
+**the banker still needs to act, and a refusal relocates the work to the admin tabs, which leave
+no audit record** (my own earlier ruling). A refusal does not prevent the action; it routes it
+around the ladder. Rulings compound: the audit-parity caveat from the earlier session was the
+deciding fact here.
+
+**The generalisation I want to reuse, and it is the companion to Gate B's.** Gate B: every defect
+was *correct in its own file and unheld across a boundary*. This one: **every defect on this
+feature has been a claim the system was not entitled to make** — review (scripted supervisor),
+consensus (the banner over two absent verdicts), completion (`run.done` over a refused
+proposal), corroboration (the fabricated constant), assessment (the echoed objective),
+independence (the metric). None of them threw. So: **does this artifact claim more than the
+mechanism behind it can support?** That question is what §R5 was, and it is what caught three of
+the rulings here.
+
+**On confirming other agents' deviations.** Turk broke the letter of my §R7 and was right to:
+taken literally it demanded a C# interpreter of the projection grammar — a third drifting
+document, inside the fix for the second instance of that exact defect. He applied the *reason*
+and flagged it. **I amended §R7 rather than defending it.** A ruling whose letter defeats its own
+reason should move; the test is whether the agent can state the reason back, and he did. Linus's
+boundary crossing got the rule rather than a one-off pass: **a charter boundary follows the
+concern, not the file extension — and the permission is asymmetric. Delete presentation logic
+from the backend, never add it there.**
