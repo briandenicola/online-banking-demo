@@ -33,6 +33,7 @@ from app.stores.sessions import Session, new_artifact
 from app.tools.executor import ToolExecutor, ToolInvocationError
 from app.tools.propose import AuthorityClient, ProposeRejected
 from app.tools.registry import ToolRegistry
+from app.planner.approval_view import primary_wire_assessment
 
 logger = structlog.get_logger("banker-copilot-service")
 
@@ -339,18 +340,26 @@ class Planner:
             return None
 
         body = outcome.body
+        # Shipped contract: ApprovalRequiredPayload = { approval: Approval, policyVersion,
+        # requiredRung } (ui-app types.ts). The reducer reads `event.payload.approval` — emitting
+        # the old `{request: body}` left `p.approval` undefined and threw a TypeError on the FIRST
+        # approval of every run. The value is the authoritative WIRE body; the single mapper
+        # `authorityWire.toApproval` turns it into the client Approval (see decision record — the
+        # SSE path must route through that one mapper, exactly as the REST path does). We enrich
+        # only the primary's assessment with a renderable `verdict`, derived from its own declared
+        # recommendation; nothing is re-derived from the primary's private reasoning.
+        emitted = dict(body)
+        if isinstance(body.get("agentAssessment"), dict):
+            emitted["agentAssessment"] = primary_wire_assessment(body)
         await stream.emit(
             "approval.required",
             {
-                "request": body,
+                "approval": emitted,
                 # Copied from the approval, never re-derived from whatever policy happens to be
                 # live at emit time. §8.0: that default would be invisible in normal operation
                 # and wrong exactly during a policy change, which is the case #333 most needs.
                 "policyVersion": body.get("policyVersion"),
                 "requiredRung": body.get("requiredRung"),
-                "baseRung": body.get("baseRung"),
-                "requiredSigners": body.get("requiredSigners"),
-                "payloadHash": body.get("payloadHash"),
             },
         )
         return body

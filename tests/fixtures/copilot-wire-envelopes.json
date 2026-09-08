@@ -1,0 +1,198 @@
+[
+  {
+    "seq": 11,
+    "runId": "run_demo",
+    "kind": "approval.required",
+    "payload": {
+      "approval": {
+        "id": "apr_7f3c",
+        "status": "pending",
+        "actionId": "transaction.hold.place",
+        "actionLabel": "Place hold on funds",
+        "requesterId": "usr_banker_44",
+        "requesterUsername": "banker@example.com",
+        "sessionId": "sess_demo",
+        "payload": {
+          "amount": 24500,
+          "fromAccountId": "acc_1187",
+          "toAccountId": "acc_9920",
+          "effectiveDate": "2026-05-12",
+          "reason": "AML-14 structuring review"
+        },
+        "evidence": {
+          "ev_1": {
+            "kind": "tool_result",
+            "label": "Three wires to one counterparty in 48h",
+            "toolCallId": "tc_2"
+          },
+          "ev_3": {
+            "kind": "policy",
+            "label": "AML-14 structuring threshold",
+            "toolCallId": "tc_4"
+          }
+        },
+        "agentAssessment": {
+          "summary": "Aggregate sits above the AML-14 trigger.",
+          "recommendation": "proceed",
+          "evidenceToolIds": [
+            "ev_1",
+            "ev_3"
+          ],
+          "agentName": "Primary agent",
+          "verdict": "APPROVE",
+          "rationale": "Aggregate sits above the AML-14 trigger.",
+          "citedEvidenceIds": [
+            "ev_1",
+            "ev_3"
+          ]
+        },
+        "payloadHash": "sha256:9f2c4a7b1e8d3f60a5c2b9e4d7f1a8c3b6e9d2f5a8c1b4e7d0f3a6c9b2e5d8f1",
+        "payloadHashShort": "9f2c4a7b",
+        "policyVersion": "policy-2026.05.1",
+        "policyId": "pol_hold_funds",
+        "baseRung": "L1",
+        "requiredRung": "L2",
+        "requiredSigners": 2,
+        "signaturesCollected": 0,
+        "firedEscalators": [
+          {
+            "key": "aml.structuring",
+            "raisedTo": "L2",
+            "reason": "aggregate above AML-14 threshold"
+          }
+        ],
+        "signatureSlots": [
+          {
+            "ordinal": 0,
+            "minSeniority": 1,
+            "mustDifferFrom": [],
+            "filled": false
+          },
+          {
+            "ordinal": 1,
+            "minSeniority": 2,
+            "mustDifferFrom": [
+              "usr_banker_44"
+            ],
+            "filled": false
+          }
+        ],
+        "createdAt": "2026-05-12T14:00:00Z",
+        "expiresAt": "2026-05-12T14:15:00Z",
+        "executionState": "not_started",
+        "callerMaySign": true
+      },
+      "policyVersion": "policy-2026.05.1",
+      "requiredRung": "L2"
+    },
+    "sessionId": "sess_demo"
+  },
+  {
+    "seq": 15,
+    "runId": "run_demo",
+    "kind": "approval.updated",
+    "payload": {
+      "approval": {
+        "id": "apr_7f3c",
+        "status": "pending",
+        "actionId": "transaction.hold.place",
+        "actionLabel": "Place hold on funds",
+        "requesterId": "usr_banker_44",
+        "requesterUsername": "banker@example.com",
+        "sessionId": "sess_demo",
+        "payload": {
+          "amount": 24500,
+          "fromAccountId": "acc_1187",
+          "toAccountId": "acc_9920",
+          "effectiveDate": "2026-05-12",
+          "reason": "AML-14 structuring review"
+        },
+        "evidence": {
+          "ev_1": {
+            "kind": "tool_result",
+            "label": "Three wires to one counterparty in 48h",
+            "toolCallId": "tc_2"
+          },
+          "ev_3": {
+            "kind": "policy",
+            "label": "AML-14 structuring threshold",
+            "toolCallId": "tc_4"
+          }
+        },
+        "agentAssessment": {
+          "primary": {
+            "summary": "Aggregate sits above the AML-14 trigger.",
+            "recommendation": "proceed",
+            "evidenceToolIds": [
+              "ev_1",
+              "ev_3"
+            ],
+            "agentName": "Primary agent",
+            "verdict": "APPROVE",
+            "rationale": "Aggregate sits above the AML-14 trigger.",
+            "citedEvidenceIds": [
+              "ev_1",
+              "ev_3"
+            ]
+          },
+          "supervisor": {
+            "agentId": "run_demo::supervisor",
+            "agentName": "Independent supervisor",
+            "verdict": "DECLINE",
+            "confidence": 0.62,
+            "rationale": "The customer runs a haulage business; this reads as vendor settlement, not structuring.",
+            "keyFactors": [
+              {
+                "label": "counterparty is an established freight vendor",
+                "value": "independently corroborated"
+              },
+              {
+                "label": "pattern matches invoice settlement",
+                "value": "independently corroborated"
+              }
+            ],
+            "citedEvidenceIds": [
+              "get_flagged_transaction"
+            ]
+          }
+        },
+        "payloadHash": "sha256:9f2c4a7b1e8d3f60a5c2b9e4d7f1a8c3b6e9d2f5a8c1b4e7d0f3a6c9b2e5d8f1",
+        "payloadHashShort": "9f2c4a7b",
+        "policyVersion": "policy-2026.05.1",
+        "policyId": "pol_hold_funds",
+        "baseRung": "L1",
+        "requiredRung": "L2",
+        "requiredSigners": 2,
+        "signaturesCollected": 0,
+        "firedEscalators": [
+          {
+            "key": "aml.structuring",
+            "raisedTo": "L2",
+            "reason": "aggregate above AML-14 threshold"
+          }
+        ],
+        "signatureSlots": [
+          {
+            "ordinal": 0,
+            "minSeniority": 1,
+            "mustDifferFrom": [],
+            "filled": false
+          },
+          {
+            "ordinal": 1,
+            "minSeniority": 2,
+            "mustDifferFrom": [
+              "usr_banker_44"
+            ],
+            "filled": false
+          }
+        ],
+        "createdAt": "2026-05-12T14:00:00Z",
+        "expiresAt": "2026-05-12T14:15:00Z",
+        "executionState": "not_started",
+        "callerMaySign": true
+      }
+    },
+    "sessionId": "sess_demo"
+  }
+]

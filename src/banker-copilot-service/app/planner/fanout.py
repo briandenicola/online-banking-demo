@@ -42,6 +42,11 @@ import structlog
 
 from app.events.bus import RunStream, RunStreamRegistry
 from app.planner.limits import FanoutLimits
+from app.planner.approval_view import (
+    primary_wire_assessment,
+    supervisor_wire_assessment,
+    verdict_for,
+)
 from app.tools.executor import ToolExecutor, ToolInvocationError
 from app.tools.registry import ToolRegistry
 
@@ -537,7 +542,7 @@ class FanOutEngine:
                 "subagentId": subagent_run_id,
                 "status": "complete",
                 "confidence": opinion.confidence,
-                "verdictSummary": _verdict_for(opinion.recommendation),
+                "verdictSummary": verdict_for(opinion.recommendation),
                 "durationMs": 0,
             },
         )
@@ -550,19 +555,29 @@ class FanOutEngine:
                 "finalSeq": child_stream.last_seq + 1,
             },
         )
-        # Shipped contract (ui-app `types.ts`): ApprovalUpdatedPayload = { approval: Approval }, and
-        # Approval.assessments is AgentAssessment[] (the reducer at copilotStore.ts reads
-        # `event.payload.approval`; the card at ApprovalCard.tsx filters `assessments` on
-        # role === 'supervisor'). The DOC's §4.2 said `{request}` / `opinions[]` — it had drifted
-        # from the code, and the code wins (it renders pixels and is test-covered). The supervisor
-        # is appended to assessments[] as an AgentAssessment. It is EVIDENCE for a human, never a
-        # signature: no signature is added and the state is left exactly as it arrived. Agreement
-        # is not emitted — the UI derives disagreement from the two assessments[] (disagreementOf).
+        # Shipped contract (ui-app `types.ts` + `authorityWire.ts`): the reducer stores
+        # `event.payload.approval` and the ONE mapper `toApproval` turns the wire body into the
+        # client `Approval` the card renders — flattening the payload (which is what powers the
+        # material-field disclosure gate) and assigning assessment ROLES from key position. The
+        # supervisor's opinion is never persisted (zero write tools; it is evidence, never a
+        # signature), so it exists only here: we nest it under `agentAssessment.supervisor`, a
+        # shape `toApproval.toAssessments` already tolerates, alongside the primary. That keeps a
+        # SINGLE wire->client mapper (no second client-shaper in Python; see decision record) and
+        # makes the supervisor's role structural — it cannot silently render as the primary.
+        # It is EVIDENCE for a human, never a signature: no signature is added and the state is
+        # left exactly as it arrived.
         updated_approval = dict(approval)
-        existing_assessments = list(updated_approval.get("assessments") or [])
-        updated_approval["assessments"] = existing_assessments + [
-            _supervisor_assessment(subagent_run_id, opinion, reader_tool_ids)
-        ]
+        updated_approval["agentAssessment"] = {
+            "primary": primary_wire_assessment(approval),
+            "supervisor": supervisor_wire_assessment(
+                subagent_run_id,
+                opinion.recommendation,
+                opinion.confidence,
+                opinion.strongest_counter_argument,
+                opinion.key_factors,
+                reader_tool_ids,
+            ),
+        }
         await stream.emit("approval.updated", {"approval": updated_approval})
 
         return FanOutResult(
@@ -578,47 +593,6 @@ def _primary_recommendation(approval: Mapping[str, Any]) -> str:
     # approval's assessment if present, so a future non-proposing primary still compares.
     assessment = approval.get("agentAssessment") or {}
     return str(assessment.get("recommendation") or "proceed")
-
-
-# Shipped `types.ts` AgentAssessment.verdict is a free string the card renders directly;
-# SecondOpinion.recommendation is the engine's internal token. This is a boundary ADAPTER, not a
-# fork: the recognised recommendations map to the shipped verdict labels and anything a real model
-# returns lands on CONDITIONAL — "a human must look", the safe default for the whole harness.
-_VERDICT_BY_RECOMMENDATION: dict[str, str] = {"proceed": "APPROVE", "hold": "DECLINE"}
-
-
-def _verdict_for(recommendation: str) -> str:
-    return _VERDICT_BY_RECOMMENDATION.get(recommendation.strip().casefold(), "CONDITIONAL")
-
-
-def _supervisor_assessment(
-    agent_id: str, opinion: "SecondOpinion", cited_evidence_ids: tuple[str, ...]
-) -> dict[str, Any]:
-    """Map the structural ``SecondOpinion`` onto the shipped ``AgentAssessment`` (ui-app
-    ``types.ts``), role='supervisor'.
-
-    ``role`` is set EXPLICITLY and UNCONDITIONALLY. Every field of AgentAssessment is optional,
-    and ``ApprovalCard.tsx`` renders a role-less assessment as "Primary agent" — so an omitted
-    role would paint the supervisor's dissent AS the primary on the dual-control card, at the
-    demo's peak. Absent-field-as-benign-case is the exact shape this epic has been bitten by.
-
-    Nothing here is authored prose the supervisor could have echoed the primary into: the verdict
-    is derived from its structural recommendation, the rationale is its own structural
-    counter-argument, and the cited evidence is the ids of the tools it re-ran itself.
-    """
-    return {
-        "agentId": agent_id,
-        "agentName": "Independent supervisor",
-        "role": "supervisor",
-        "verdict": _verdict_for(opinion.recommendation),
-        "confidence": opinion.confidence,
-        "rationale": opinion.strongest_counter_argument,
-        "keyFactors": [
-            {"label": factor, "value": "independently corroborated"}
-            for factor in opinion.key_factors
-        ],
-        "citedEvidenceIds": list(cited_evidence_ids),
-    }
 
 
 def _recommendations_agree(primary_reco: str, supervisor_reco: str) -> bool:

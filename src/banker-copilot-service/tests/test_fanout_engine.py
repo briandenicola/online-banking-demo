@@ -189,13 +189,11 @@ async def test_agreement_is_computed_after_the_fact():
 
     # Primary proposed (recommendation "proceed"); supervisor said "hold" → disagreement.
     assert result.agrees_with_primary is False
-    # Shipped contract (types.ts): the structural opinion surfaces on the approval as an
-    # AgentAssessment (role='supervisor') under approval.assessments[]. "hold" → DECLINE verdict;
-    # the UI computes disagreement from the two assessments[].
+    # Wire contract: the supervisor's opinion rides under `agentAssessment.supervisor` — the shape
+    # the single mapper `toApproval.toAssessments` already tolerates, which assigns roles by key
+    # position. "hold" → DECLINE verdict; the UI computes disagreement from the two assessments.
     updated = next(f for f in _frames(runs, "run_1") if f["kind"] == "approval.updated")
-    supervisor_assessment = next(
-        a for a in updated["payload"]["approval"]["assessments"] if a["role"] == "supervisor"
-    )
+    supervisor_assessment = updated["payload"]["approval"]["agentAssessment"]["supervisor"]
     assert supervisor_assessment["verdict"] == "DECLINE"
     completed = next(f for f in _frames(runs, "run_1") if f["kind"] == "subagent.completed")
     assert completed["payload"]["status"] == "complete"

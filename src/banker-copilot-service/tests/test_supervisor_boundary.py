@@ -226,9 +226,7 @@ async def test_no_supervisor_authored_frame_echoes_the_primary_sentinel():
     # narrower and sharper: the SUPERVISOR's appended assessment — its verdict, rationale, factors
     # and cited evidence — must contain no primary token.
     updated = next(f for f in frames if f["kind"] == "approval.updated")
-    supervisor_assessment = next(
-        a for a in updated["payload"]["approval"]["assessments"] if a["role"] == "supervisor"
-    )
+    supervisor_assessment = updated["payload"]["approval"]["agentAssessment"]["supervisor"]
     assert PRIMARY_SENTINEL not in json.dumps(supervisor_assessment)
 
     # And the primary DID surface it — proving the sentinel was live and the scan is meaningful.
@@ -276,42 +274,90 @@ async def test_the_second_opinion_never_advances_the_approval_toward_execution()
     # The supervisor added an ASSESSMENT (evidence), not a signature, and did not advance state.
     assert approval["status"] == "pending"
     assert not approval.get("signatures")
-    supervisor_assessment = next(a for a in approval["assessments"] if a["role"] == "supervisor")
+    supervisor_assessment = approval["agentAssessment"]["supervisor"]
     assert supervisor_assessment["verdict"] == "APPROVE"  # it agreed — and STILL nothing executed.
 
 
 @pytest.mark.asyncio
-async def test_approval_updated_payload_uses_the_shipped_field_names():
+async def test_approval_updated_payload_uses_the_shipped_wire_field_names():
     """Cross-language drift is what hid the second opinion once already: the doc said
-    `{request:{opinions[]}}` while the shipped reducer reads `event.payload.approval` and the card
-    reads `approval.assessments[]`. This asserts the EMITTED payload's field NAMES against the
-    shipped `types.ts` contract, so the two sides parting again fails here, loudly and cheaply."""
+    `{request:{opinions[]}}` while the shipped reducer reads `event.payload.approval` and the
+    single mapper `toApproval` reads the wire body's `agentAssessment`. This asserts the EMITTED
+    payload's field NAMES against that wire contract, so the two sides parting again fails here,
+    loudly and cheaply."""
     spy = _SpyDecider()
     runs, _ = await _drive("L2", spy)
     updated = next(f for f in _frames(runs, "run_1") if f["kind"] == "approval.updated")
 
-    # types.ts: ApprovalUpdatedPayload = { approval: Approval }; Approval.assessments: AgentAssessment[].
+    # ApprovalUpdatedPayload = { approval: <wire Approval> }; the reducer reads event.payload.approval.
     assert "approval" in updated["payload"], "reducer reads event.payload.approval — not 'request'"
     assert "request" not in updated["payload"], "the doc's 'request' key is dropped on the floor by the UI"
     approval = updated["payload"]["approval"]
-    assert "assessments" in approval, "ApprovalCard reads approval.assessments[] — not 'opinions'"
-    supervisor = next(a for a in approval["assessments"] if a.get("agentName") == "Independent supervisor")
-    # The AgentAssessment field names the card actually consumes (types.ts:207-216).
-    for field_name in ("agentId", "agentName", "role", "verdict", "confidence", "rationale", "keyFactors", "citedEvidenceIds"):
-        assert field_name in supervisor, f"AgentAssessment.{field_name} missing — the card reads it"
+    # The supervisor rides under agentAssessment.supervisor — the shape toApproval.toAssessments
+    # tolerates. The primary stays under agentAssessment.primary (it must survive the reducer's
+    # wholesale replace of the approval).
+    agent_assessment = approval["agentAssessment"]
+    assert "primary" in agent_assessment, "the primary must survive putApproval's replace"
+    assert "supervisor" in agent_assessment, "the supervisor's opinion must be on the approval"
+    supervisor = agent_assessment["supervisor"]
+    # The wire fields toApproval.toAssessments actually reads (authorityWire.ts single()).
+    for field_name in ("agentId", "agentName", "verdict", "confidence", "rationale", "keyFactors", "citedEvidenceIds"):
+        assert field_name in supervisor, f"agentAssessment.supervisor.{field_name} missing — toApproval reads it"
 
 
 @pytest.mark.asyncio
-async def test_the_supervisor_assessment_declares_its_role_explicitly():
-    """ApprovalCard.tsx renders a role-less assessment AS the primary agent. So the supervisor's
-    dissent, if it omitted `role`, would paint as the primary on the dual-control card — absent
-    field reading as the benign case, the exact shape this epic has been bitten by four times. The
-    role must be present and equal to 'supervisor' on the EMITTED payload."""
+async def test_the_supervisor_role_is_structural_not_a_droppable_field():
+    """ApprovalCard renders a role-less assessment AS the primary agent — absent-field-as-benign,
+    the exact shape this epic has been bitten by. Under the wire `{primary, supervisor}` shape the
+    role is not a field on the object at all: `toApproval.toAssessments` assigns it from the KEY the
+    assessment arrives under. So the supervisor's role cannot be dropped without dropping the whole
+    opinion. This pins that the opinion arrives under the `supervisor` key (and only there)."""
     spy = _SpyDecider()
     runs, _ = await _drive("L2", spy)
     updated = next(f for f in _frames(runs, "run_1") if f["kind"] == "approval.updated")
-    assessments = updated["payload"]["approval"]["assessments"]
+    agent_assessment = updated["payload"]["approval"]["agentAssessment"]
 
-    supervisor = [a for a in assessments if a.get("role") == "supervisor"]
-    assert len(supervisor) == 1, "exactly one assessment must self-identify as the supervisor"
-    assert supervisor[0]["role"] == "supervisor"
+    assert set(agent_assessment) == {"primary", "supervisor"}, (
+        "the supervisor opinion must arrive under the 'supervisor' key — that key IS its role"
+    )
+    # The supervisor's own dissent (its verdict/rationale) is under 'supervisor', not 'primary'.
+    assert agent_assessment["supervisor"]["agentName"] == "Independent supervisor"
+    assert agent_assessment["primary"]["agentName"] != "Independent supervisor"
+
+
+@pytest.mark.asyncio
+async def test_the_primary_assessment_survives_the_supervisor_update():
+    """`copilotStore.putApproval` REPLACES the whole approval, it does not merge. So an
+    `approval.updated` that carried only the supervisor would DELETE the primary from the store,
+    and the dual-control disagreement banner — which needs BOTH opinions — could never render at
+    the demo's peak. The emitted approval must therefore still carry the primary's assessment."""
+    spy = _SpyDecider()
+    runs, _ = await _drive("L2", spy)
+    updated = next(f for f in _frames(runs, "run_1") if f["kind"] == "approval.updated")
+    agent_assessment = updated["payload"]["approval"]["agentAssessment"]
+
+    primary = agent_assessment.get("primary")
+    assert primary is not None, "the primary assessment was erased by the supervisor update"
+    # The primary PROPOSED, so it carries a proceed→APPROVE verdict the card can put opposite the
+    # supervisor's — without a primary verdict there is no disagreement to render.
+    assert primary["verdict"] == "APPROVE"
+
+
+
+@pytest.mark.asyncio
+async def test_approval_required_uses_the_shipped_approval_key():
+    """`approval.required` once emitted `{request: body}`, but the reducer (copilotStore.ts) reads
+    `event.payload.approval` unguarded — `p.approval.id` threw a TypeError on the FIRST approval of
+    every run. types.ts: ApprovalRequiredPayload = { approval, policyVersion, requiredRung }. This
+    pins the key so the crash cannot silently return."""
+    spy = _SpyDecider()
+    runs, _ = await _drive("L2", spy)
+    required = next(f for f in _frames(runs, "run_1") if f["kind"] == "approval.required")
+
+    assert "approval" in required["payload"], "reducer reads event.payload.approval — not 'request'"
+    assert "request" not in required["payload"], "the doc's 'request' key throws in the reducer"
+    approval = required["payload"]["approval"]
+    assert approval.get("id"), "reducer reads p.approval.id — it must be present"
+    # The primary is enriched with a renderable verdict, without re-deriving from private reasoning.
+    assert approval["agentAssessment"]["verdict"] == "APPROVE"
+    assert required["payload"]["requiredRung"] == "L2"

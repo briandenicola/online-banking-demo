@@ -451,11 +451,27 @@ export interface PayloadField {
 // `AgentAssessment`, carries them on `Approval.assessments[]`, and the approval event payloads are
 // `{ approval: Approval }`. The SSE reducer reads `event.payload.approval`; the dual-control card
 // reads `approval.assessments[]` filtered on `role === 'supervisor'`. The names below match the code.
+//
+// WIRE vs CLIENT (2026-09, Arch note): the `Approval` below is the CLIENT shape the reducer stores
+// and the card renders. On the SSE stream the service emits the authority-service WIRE approval
+// body under `payload.approval` (the same body the REST path fetches), and the client normalizes it
+// through the ONE mapper `ui-app/src/api/authorityWire.ts:toApproval` — which flattens the payload
+// (powering the material-field disclosure gate), maps evidence, and assigns assessment ROLES from
+// key position. The supervisor's second opinion is never persisted (the harness registers zero
+// write tools; it is evidence, never a signature), so the service carries it on the wire body as
+// `agentAssessment.supervisor` — a shape `toApproval.toAssessments` already tolerates — and the
+// mapper turns `agentAssessment.{primary,supervisor}` into `assessments[{role}]`. Because the role
+// is derived from the KEY, a supervisor opinion can never silently render as the primary.
+// REQUIRED companion (owner: UI): the SSE ingestion (`api/copilotStream.ts`) must route
+// `approval.required`/`approval.updated` payloads through `toApproval`, exactly as the REST path
+// does — today it applies no transform. Until it does, the live service path stores an unmapped
+// wire body. The frozen wire shape both sides test against is `tests/fixtures/copilot-wire-envelopes.json`.
 
 export interface AgentAssessment {
-  // Every field is optional in the shipped type. `role` MUST nonetheless be set on every emitted
-  // assessment: ApprovalCard.tsx renders a role-less assessment AS the primary agent, so an omitted
-  // role paints the supervisor's dissent as the primary on the dual-control card.
+  // Every field is optional in the shipped type. On the SSE path `role` is assigned structurally by
+  // `toApproval.toAssessments` from the `agentAssessment.{primary,supervisor}` key the assessment
+  // arrives under — NOT a droppable field — because ApprovalCard.tsx renders a role-less assessment
+  // AS the primary agent, which would paint the supervisor's dissent as the primary.
   agentId?: string;
   agentName?: string;
   role?: 'primary' | 'supervisor';
