@@ -1076,3 +1076,75 @@ it against `fanout.py` itself, not the oracle. Two PROVEN production tampers. Al
 `absent:fanout` ledger entry would now be STALE and silently wrong — when the dependency you marked
 absent arrives, the honest move is to verify it, not to keep a red marker pointing at a file that
 now exists.
+
+---
+
+## Check 4.2 — measuring the supervisor's real agreement rate (branch `332-beta`, 2026-09-08)
+
+**33. The headline number was never the hard part; reaching the thing being measured was.**
+The brief said "drive an L2 run and read the agreement rate". Four hours of that is discovering
+you cannot drive ANY run to the fan-out. `PolicyEvaluator.EvidenceComplete` demands the field
+names in `authority-policy.yaml`'s `evidence:` block (`accountId`, `userId`, `count`, `status`);
+the copilot read tools return `id`, `isActive`, and — for `list_account_transactions` — a bare
+JSON **array**, which cannot be a `JObject` under any field names at all. Every proposal dies at
+`evidence_incomplete`, so `requiredRung` is never read and the mandatory L2 fan-out has never
+fired once in production. Two config files that were each individually reviewed and are mutually
+unsatisfiable. **Nothing in the suite compares a tool's actual response shape to the evidence
+contract that consumes it** — that seam has no test on either side of it.
+
+**34. "Exactly TWO L2 actions" was the brief's own framing, and it was wrong.** Two actions have
+`baseRung: L2`. Four more escalate to L2 by rule (credit adjustment, large/stale reversal, adverse
+opening decision, confirmed fraud). The fan-out guards on `requiredRung == "L2"`, i.e. the rung
+AFTER escalation. Taking the brief's number would have given me a corpus of two shapes instead of
+six. **When a brief hands you a count, re-derive it from the file the code actually reads.**
+
+**35. Both base-L2 actions are undrivable by the only role allowed to drive them.** `user.unlock`
+requires `list_login_audits` and `transaction.score.override` requires `get_scored_transaction`;
+both are `require_admin` endpoints, and `require_banker` deliberately excludes admin ("platform
+power is not banking authority"). The copilot forwards the banker's own bearer, so the read 403s
+and the run fails at step 2. The policy demands proof the proposer is structurally forbidden to
+obtain. Same class of defect as #33 — a cross-file contract nobody owns.
+
+**36. When the production path is closed, measure the component and SAY which seam you stubbed.**
+I ran the real `FoundryDecider` inside the live pod (real workload identity, real private-endpoint
+route to Foundry, real deployed `gpt-5.4-mini`, real prompt and parse path) with pre-built evidence
+instead of tool-gathered evidence. That is a legitimate measurement of "is disagreement reachable"
+and a dishonest measurement of "does the co-signature work end to end". The harness docstring says
+so in the file, not just in the report, because the file is what someone re-runs in two months.
+
+**37. `kubectl cp` needs `tar` in the container. Distroless images don't have it.** Base64 over
+`kubectl exec -i` + a `python -c` writer works everywhere Python is the entrypoint. Worth
+remembering — it is the difference between "cannot measure" and "measured".
+
+**38. Build the third bucket before you look at the first number.** `FoundryDecider` fails closed:
+timeout, throttle, content-filter refusal and unparseable output all return `hold` / `0.0` /
+`("supervisor_unavailable",)`. Classifying that as "disagreed" would have manufactured exactly the
+false signal this whole exercise existed to delete — the old defect with the sign flipped. The
+classifier checks the marker AND the zero confidence before it ever compares recommendations.
+Observed 0/34, which is worth stating as a result rather than as an absence.
+
+**39. The failure mode inverted, and the corpus is what made that visible.** 27/34 disagreements,
+not 0. A single-shape corpus would have read as a triumph. Because half the cases were built to be
+*defensible*, I could see the supervisor withholding on 6 of 11 of them — including a textbook
+lockout — and report over-holding as the new risk. **A corpus with only hostile cases cannot
+detect a supervisor that says no to everything, which is the same review theatre as yes-to-everything.**
+
+**40. Byte-identical inputs flip. Measure that, don't average over it.** `unlock-01` returned hold
+three times and proceed twice on the *same bytes*; `reverse-01` and `opening-02` also flipped.
+Any single L2 run's disagreement is therefore partly a coin toss, and a rate quoted without the
+stability probe implies a determinism that is not there. Cheap to measure (`--repeat`), and it
+changes what the number means.
+
+**41. A verdict can be right about the facts and wrong about the question.** On the
+well-documented rejection, the supervisor produced flawless reasoning (sanctions match, repeated
+document tampering) and returned `decline` — 4/4, confidence 0.99 — because it judged *opening the
+account*, not the banker's actual action of *rejecting* it. The seam then records violent agreement
+as disagreement. Root cause is structural: `SupervisorInput` carries `task_framing` + entity ids +
+posture and has **no field for the action id or payload**, so polarity lives only in free prose and
+inverts on adverse-action verbs. This is the blindness guarantee overshooting — the thing withheld
+is the proposer's *conclusion*, not the *question*.
+
+**42. Distinctness is the cheap non-boilerplate check, and it must be run.** 34/34 counter-arguments
+unique, median 294 chars, each naming case-specific facts. That is the quantitative half of "is it
+reasoning or filler"; reading six of them was the qualitative half. Neither alone would have
+convinced me, and the previous scripted decider would have scored 2 distinct strings out of 34.
