@@ -168,7 +168,18 @@ async def start_run(
         try:
             await planner.run(planner_request, stream)
         finally:
-            run.status = "completed" if not stream.trace_degraded else "completed_degraded"
+            # The persisted run record reports what the TRACE said, not a second opinion.
+            # This used to hardcode "completed" in a `finally`, so a run that emitted
+            # `run.done status: "failed"` — or that died before emitting anything at all —
+            # still answered `GET /runs/{id}` with `completed`. That is the run-status field
+            # a harness or dashboard polls, so the lie outlived the run.
+            #
+            # A missing terminal frame means the planner never got to say how it went; that
+            # reads as failed, never as success by omission. `trace_degraded` is an orthogonal
+            # fact (the frames did not all persist) and stays a suffix on whatever happened,
+            # rather than overwriting it.
+            terminal = stream.terminal_status or "failed"
+            run.status = f"{terminal}_degraded" if stream.trace_degraded else terminal
             run.finished_at = utc_now_iso()
             run.final_seq = stream.last_seq
             run.trace_degraded = stream.trace_degraded

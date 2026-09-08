@@ -106,6 +106,69 @@ def planner_mode() -> str:
     return "foundry"
 
 
+@dataclass(frozen=True)
+class ProposeStepResult:
+    """What the propose step achieved, and separately, whether its error admits a repair.
+
+    Two facts, deliberately not collapsed into one:
+
+    * ``approval`` — did this step produce something a human can actually sign? This, and
+      only this, is what the run's terminal status turns on.
+    * ``recoverable`` — does the error the step hit *admit* a repair (a re-canonicalised
+      payload, a re-read)? That describes the **error**, never what the planner **did**
+      about it.
+
+    Deriving the run's status from ``recoverable`` would plant the same bug in a new place.
+    A recoverable refusal that nobody actually recovered from still leaves the banker with
+    no proposal, and reporting that as ``completed`` is the lie being fixed here. So a
+    recoverable error keeps the run alive only if a repair attempt then *succeeds* and sets
+    ``approval``. The deterministic planner has no repair strategy today — the seam where
+    one belongs is marked at the call site — so both kinds currently end the run failed, but
+    they end it for visibly different reasons and ``run.error`` still carries the flag.
+    """
+
+    approval: dict[str, Any] | None = None
+    error_code: str | None = None
+    recoverable: bool = False
+
+    @property
+    def admitted(self) -> bool:
+        return self.approval is not None
+
+
+@dataclass
+class _RunOutcome:
+    """The run's terminal status, *derived* from what the run achieved.
+
+    ``status`` used to be a local initialised to ``"completed"`` that only paths which
+    remembered to would lower. That default is the whole defect: every terminal path
+    inherited success for free, so the one path that forgot (a refused proposal) emitted
+    ``run.done status: "completed"`` on an unrecoverable error — failure wearing the
+    costume of success, sitting on the field every harness and dashboard trusts first.
+
+    Here a run starts having achieved nothing and success must be *earned*: either the
+    proposal the objective asked for was admitted, or the objective never asked for one.
+    A new terminal path added later inherits failure, not success.
+    """
+
+    #: True when the plan contains a propose step — i.e. the run's purpose is to put an
+    #: approval in front of a human. False for an evidence-only run (no ``action_id``),
+    #: which is a deliberate no-op outcome and legitimately completes without an approval.
+    proposal_expected: bool
+    proposal_admitted: bool = False
+    #: Set by paths that abort the plan outright: tool/evidence failure, the iteration cap,
+    #: or an unhandled exception.
+    aborted: bool = False
+
+    @property
+    def status(self) -> str:
+        if self.aborted:
+            return "failed"
+        if self.proposal_expected and not self.proposal_admitted:
+            return "failed"
+        return "completed"
+
+
 @dataclass
 class PlannerRequest:
     session: Session
@@ -141,7 +204,9 @@ class Planner:
     async def run(self, request: PlannerRequest, stream: RunStream) -> None:
         started = time.monotonic()
         artifact_ids: list[str] = []
-        status = "completed"
+        # Success is earned, never defaulted. `proposal_expected` is set the moment the plan
+        # is known, a few lines below.
+        outcome = _RunOutcome(proposal_expected=bool(request.action_id))
 
         await stream.emit(
             "run.started",
@@ -160,6 +225,10 @@ class Planner:
         try:
             evidence_tools = await self._required_evidence(request)
             steps = _plan_steps(evidence_tools, request.action_id)
+            # The plan is the authority on what this run set out to do. Reading it here (rather
+            # than trusting the request) means a plan that silently dropped its propose step
+            # cannot report success for a signature it never sought.
+            outcome.proposal_expected = any(step["kind"] == "propose" for step in steps)
 
             await stream.emit("plan.proposed", {"version": 1, "steps": steps})
 
@@ -177,7 +246,7 @@ class Planner:
                             "recoverable": False,
                         },
                     )
-                    status = "failed"
+                    outcome.aborted = True
                     break
 
                 await stream.emit(
@@ -189,7 +258,12 @@ class Planner:
                 if step["kind"] == "tool":
                     ok = await self._run_tool_step(request, stream, step, evidence)
                     if not ok:
-                        status = "failed"
+                        # Belt and braces: a tool step only exists when the run has an
+                        # `action_id`, so the plan also contains a propose step this break
+                        # skips — the outcome would read failed on that alone. Stated
+                        # anyway, because "correct via a fact about another step" is how a
+                        # path ends up depending on something nobody meant it to.
+                        outcome.aborted = True
                         await stream.emit(
                             "step.failed",
                             {
@@ -224,16 +298,40 @@ class Planner:
                         },
                     )
                 elif step["kind"] == "propose":
-                    body = await self._run_propose_step(request, stream, evidence)
+                    result = await self._run_propose_step(request, stream, evidence)
+                    if not result.admitted:
+                        # This step exists for one reason: to put an approval in front of a
+                        # human. It produced none, so it did not do its job, and emitting
+                        # `step.completed` here would dress the failure as success — which is
+                        # precisely how run_6f19b2eb4ec54a20 came to report
+                        # `run.done status: "completed"` after refusing a non-canonical
+                        # `amount`. The step is marked failed and the plan stops.
+                        #
+                        # A repair loop for `result.recoverable` belongs HERE: re-enter the
+                        # propose step with an adjusted payload and fall through to the
+                        # admitted branch if it then succeeds. There is no such loop today, so
+                        # `willRetry` says false rather than implying an attempt that never
+                        # happens, and the run ends failed either way — a refusal nobody
+                        # recovered from is still a run with no proposal in it. The
+                        # recoverable/unrecoverable distinction is preserved where it is
+                        # actionable: on the `run.error` frame already emitted.
+                        await stream.emit(
+                            "step.failed",
+                            {
+                                "stepId": step["id"],
+                                "error": result.error_code or "propose_refused",
+                                "willRetry": False,
+                            },
+                        )
+                        break
+
+                    outcome.proposal_admitted = True
+                    body = result.approval
                     # §6.2: an L2 proposal triggers the ONE mandatory fan-out — a blind,
                     # independent second opinion. L1 never fans out (batching/duplicating a
                     # second opinion defeats it). The engine is absent in single-threaded
                     # deployments, so guard on its presence.
-                    if (
-                        body is not None
-                        and self._fanout is not None
-                        and body.get("requiredRung") == "L2"
-                    ):
+                    if self._fanout is not None and body.get("requiredRung") == "L2":
                         await self._fanout.run_second_opinion(
                             request, stream, body, evidence, parent_step_id=step["id"]
                         )
@@ -247,7 +345,7 @@ class Planner:
                 )
 
         except Exception as exc:  # noqa: BLE001 - the trace must record the failure honestly
-            status = "failed"
+            outcome.aborted = True
             logger.error("Planner run failed", run_id=request.run_id, error=str(exc))
             await stream.emit(
                 "run.error",
@@ -257,7 +355,9 @@ class Planner:
         await stream.emit(
             "run.done",
             {
-                "status": status,
+                # Derived from what the run achieved (see `_RunOutcome`), never a default
+                # that each terminal path has to remember to lower.
+                "status": outcome.status,
                 "durationMs": int((time.monotonic() - started) * 1000),
                 "finalArtifactIds": artifact_ids,
                 # finalSeq counts itself: the client asserts it saw every seq up to and
@@ -341,9 +441,15 @@ class Planner:
 
     async def _run_propose_step(
         self, request: PlannerRequest, stream: RunStream, evidence: dict[str, Any]
-    ) -> dict[str, Any] | None:
-        """Propose the action for human signature. Returns the admitted approval body
-        (so the caller can trigger the L2 fan-out), or ``None`` if nothing was admitted."""
+    ) -> ProposeStepResult:
+        """Propose the action for human signature.
+
+        Returns a :class:`ProposeStepResult` that says both what was admitted (if anything)
+        and whether the refusal admits a repair. It used to return the approval body or a
+        bare ``None``, and the caller treated ``None`` as "nothing to fan out from" and
+        nothing more — so a refusal was indistinguishable from a run that simply had no L2
+        second opinion to gather, and the loop marched on to `step.completed`.
+        """
         try:
             outcome = await self._authority.propose(
                 {
@@ -362,22 +468,26 @@ class Planner:
                 correlation_id=request.correlation_id,
             )
         except ProposeRejected as exc:
+            # Refused before it ever left this service: the payload could not be
+            # canonicalised. Nothing upstream was consulted and nothing here can repair it.
             await stream.emit(
                 "run.error",
                 {"code": exc.code, "message": exc.message, "recoverable": False},
             )
-            return None
+            return ProposeStepResult(error_code=exc.code, recoverable=False)
 
         if not outcome.admitted:
+            recoverable = outcome.status_code == 422
+            code = outcome.body.get("error", "propose_refused")
             await stream.emit(
                 "run.error",
                 {
-                    "code": outcome.body.get("error", "propose_refused"),
+                    "code": code,
                     "message": outcome.body.get("message", "authority-service refused the proposal"),
-                    "recoverable": outcome.status_code == 422,
+                    "recoverable": recoverable,
                 },
             )
-            return None
+            return ProposeStepResult(error_code=code, recoverable=recoverable)
 
         body = outcome.body
         # Shipped contract: ApprovalRequiredPayload = { approval: Approval, policyVersion,
@@ -402,7 +512,7 @@ class Planner:
                 "requiredRung": body.get("requiredRung"),
             },
         )
-        return body
+        return ProposeStepResult(approval=body)
 
 
 def _plan_steps(evidence_tools: list[str], action_id: str | None) -> list[dict[str, Any]]:

@@ -2611,3 +2611,50 @@ derived from the services' C# response types, not captured live — the only run
 captured them are the runs that refused. If `account-service` does not return `id`/`balance` at the
 top level, Gate B stays shut and my seam test would not know. Named that as the largest residual
 risk rather than reporting green.
+
+---
+
+## Learnings — run terminal status (`run_6f19b2eb4ec54a20`, 2026-09-08)
+
+**1. A default of "completed" is not a value, it is a promise every future path inherits.**
+`Planner.run` opened with `status = "completed"` and lowered it only where somebody remembered
+to. That is not a bug in the propose path — it is a bug in the *shape*. The tool path was
+correct by diligence, not by construction, so the two paths diverging was a matter of time.
+I replaced the default with `_RunOutcome`, which starts having achieved nothing and requires
+success to be *earned* (a proposal admitted, or none ever expected). A terminal path added
+next month now inherits failure. The fix is the inversion; the propose branch was a symptom.
+
+**2. "Recoverable" describes the error, not what was done about it.**
+The tempting one-liner was to fail the run when `recoverable` is false and keep it alive when
+true. That reads the *severity of the error* as if it were the *outcome of the run*, and it
+would have rebuilt the exact bug one field over: a 422 that nobody actually recovered from
+still leaves the banker with no proposal, and `completed` would still be a lie. So status
+turns on `proposal_admitted` alone, and the recoverable/unrecoverable distinction is kept
+where it is actionable — on the `run.error` frame and at the marked seam where a repair loop
+would go. Both kinds fail today, for visibly different, separately traceable reasons.
+
+**3. The lie had a second home, and grep found it, not reasoning.**
+`start_run`'s `finally` block hardcoded `run.status = "completed"` — in a `finally`, so even a
+planner that *raised* was recorded as completed, and that is the field `GET /runs/{id}`
+returns to any harness or dashboard. Two places independently deciding "did this succeed?" is
+how one of them comes to disagree. The route now reports what the trace said
+(`RunStream.terminal_status`), and a missing terminal frame reads as failed rather than as
+success-by-omission.
+
+**4. Tamper-testing caught a guard that was correct for the wrong reason.**
+Removing the abort flag from the tool-failure branch left all 300 tests green. Not because
+the test was weak in an obvious way — because a tool step only exists when the run has an
+`action_id`, so the *propose* clause was silently carrying my tool-failure assertion. The
+test passed without ever exercising the field it appeared to guard. Same species as the
+`project()` unwiring that left 285 tests green last week: **a passing test tells you an
+outcome held, never which code held it.** Only tampering distinguishes them. I traced the
+genuinely reachable path (an evidence-only run that raises mid-plan) and held that instead,
+and left the tool branch's flag in with a comment saying out loud that it is defence in depth
+rather than letting it read as load-bearing.
+
+**5. Two of my first three "second surface" tests would have survived a full revert.**
+They asserted on `RunStream.terminal_status`, which is upstream of the route I actually
+changed. Reinstating the hardcoded `"completed"` in `sessions.py` would not have failed them.
+I added an end-to-end test that starts a run through HTTP, has authority-service refuse it,
+and reads the run back the way Livingston's harness does. The rule I keep relearning: put the
+assertion downstream of the changed line, then prove it by breaking that line.
