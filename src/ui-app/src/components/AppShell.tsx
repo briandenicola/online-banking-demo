@@ -119,7 +119,19 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
   );
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        // A full-bleed surface owns the viewport and scrolls internally, so the
+        // shell must CONSTRAIN rather than grow. `minHeight` lets a child that
+        // asks for too much push the page taller than the window, which is what
+        // buried the copilot command bar below the fold.
+        ...(fullBleed
+          ? { height: '100vh', overflow: 'hidden' }
+          : { minHeight: '100vh' }),
+      }}
+    >
       {/* Top Navigation */}
       <AppBar position="sticky" elevation={0} sx={{ bgcolor: 'primary.main' }}>
         <Toolbar sx={{ px: { xs: 2, md: 4 } }}>
@@ -247,7 +259,16 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
       </AppBar>
 
       {/* Main Content */}
-      <Box component="main" sx={{ flexGrow: 1, pb: isMobile ? 8 : 0, minHeight: 0 }}>
+      <Box
+        component="main"
+        sx={{
+          flexGrow: 1,
+          pb: isMobile ? 8 : 0,
+          minHeight: 0,
+          // Full-bleed children fill the remaining space by flexing into it.
+          ...(fullBleed ? { display: 'flex', flexDirection: 'column' } : {}),
+        }}
+      >
         <FullBleedContext.Provider value={setFullBleed}>
           {fullBleed ? (
             children

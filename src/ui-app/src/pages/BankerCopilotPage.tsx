@@ -70,7 +70,7 @@ const BankerCopilotPage: React.FC = () => {
   return (
     <CopilotProvider>
       <TaskMeasurementBar surface="copilot">
-        <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0 }}>
           <DemoModeBanner />
           <CopilotHarness />
         </Box>
