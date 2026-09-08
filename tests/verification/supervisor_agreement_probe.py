@@ -1,4 +1,22 @@
-"""Check 4.2 — measure the supervisor's real agreement rate against the LIVE deployment.
+"""Check 4.2 — harness for measuring the supervisor's real agreement rate.
+
+STATUS: CHECK 4.2 IS BLOCKED AND UNMEASURED. Read ``README.md`` in this directory before
+quoting any number this file produces. Two independent server-side gaps stop every copilot
+run before the fan-out, so the end-to-end agreement rate does not exist yet:
+
+  Gate A  six read tools point at admin-only or owner-scoped upstreams, and the copilot
+          calls upstream with the acting BANKER's token (live proof: run_bc66286148fc465c).
+  Gate B  the evidence field names ``authority-policy.yaml`` demands are not the names the
+          tools return, and three tools return bare JSON ARRAYS, which can never satisfy
+          ``PolicyEvaluator.EvidenceComplete``'s JObject requirement. Gate B is downstream
+          of and independent of Gate A: fixing the authorization gap alone unblocks nothing
+          (live proof: run_5855e85caad34c12 — both reads returned HTTP 200 with real data
+          and the proposal was still rejected ``evidence_incomplete``).
+
+Until both are fixed, this file runs in COMPONENT mode: it calls ``FoundryDecider`` directly
+with pre-built evidence and STUBS THE ENTIRE FAN-OUT SEAM. Its output answers "can this model
+produce a reasoned disagreement at all" and NOT "what is the co-signature's agreement rate".
+Never quote it as the latter.
 
 The question
 ------------
@@ -163,6 +181,9 @@ def summarise(results: list[dict]) -> None:
     verdicts = agree + disagree
 
     print("\n" + "=" * 72, file=sys.stderr)
+    print("COMPONENT-MODE RESULT — this is NOT a check 4.2 agreement rate.", file=sys.stderr)
+    print("The fan-out seam is stubbed; see README.md, gates A and B.", file=sys.stderr)
+    print("-" * 72, file=sys.stderr)
     print(f"SAMPLE SIZE {n}", file=sys.stderr)
     print(f"  agreed                 {agree}", file=sys.stderr)
     print(f"  disagreed              {disagree}", file=sys.stderr)

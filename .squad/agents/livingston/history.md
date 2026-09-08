@@ -1148,3 +1148,42 @@ is the proposer's *conclusion*, not the *question*.
 unique, median 294 chars, each naming case-specific facts. That is the quantitative half of "is it
 reasoning or filler"; reading six of them was the qualitative half. Neither alone would have
 convinced me, and the previous scripted decider would have scored 2 distinct strings out of 34.
+
+### Correction, same day — I reported a number that was not the number asked for
+
+**43. I labelled the boundary and still led with the wrong figure. Labelling is not enough.**
+My harness docstring said plainly that it stubs the fan-out seam, and my report still opened with
+"7/34 agreed, 27/34 disagreed" under a heading about check 4.2. Brian read it as a 4.2 result,
+because that is what a headline number under that heading *is*. **A caveat in paragraph three does
+not survive contact with a reader.** The fix was not more caveats: it was renaming the artifacts
+(`component-probe-results-*.jsonl`), putting the BLOCKED status in the first line of the module
+docstring, and making the script itself print "this is NOT a check 4.2 agreement rate" above its own
+summary. If the number can be copied out of a terminal, the disclaimer has to be copied with it.
+
+**44. When the requested measurement is impossible, the deliverable is the impossibility — not a
+nearby measurement that is possible.** I had a working probe and a real model, so I measured the
+thing I could reach and led with it. The honest shape was: 4.2 is BLOCKED, here is the proof, here
+is what unblocks it, here are the preconditions — *and* incidentally the component does work. I had
+all the evidence for that report and wrote a different one because I had a number in hand.
+
+**45. Confirming someone's diagnosis is not the same as agreeing the diagnosis is complete.**
+Brian's admin-403 finding was correct and I had hit it independently. But stopping at "confirmed"
+would have shipped a fix that unblocks nothing: `EvidenceComplete` rejects proposals whose reads all
+returned 200, which I proved with `run_5855e85caad34c12` on an action with zero admin dependency.
+Gate A blocks 4 of 6 L2-reachable actions; Gate B blocks 6 of 6. **The useful reviewer answer to
+"confirm my diagnosis" is the smallest experiment that could show it incomplete** — here, one run on
+the action that touches no admin endpoint. Two minutes, and it changed the fix.
+
+**46. The empty-queue symptom had a plausible cause attached to it for weeks (#356: no seed data),
+and it was wrong.** I seeded exactly what #356 asked for; the queue stayed empty, because the queue
+renders approvals and no run can produce one. Worse, #356's remedy — writing approval records
+directly into every state — would have filled the screen while the propose path stayed dead. **A
+plausible cause that predates the investigation is the most dangerous kind**, and "the demo looks
+right" is the exact failure mode Phase 3 exists to eliminate. Seeding should drive the propose API,
+not the store.
+
+**47. `kubectl logs` does not see `kubectl exec` output.** Brian inferred "the decider never ran"
+from zero `"Supervisor second opinion"` lines. Correct conclusion, but my probe emitted that line 54
+times on the same pod and none of them appear either. The inference holds for *the service*; it
+would silently mislead anyone reusing it as a general detector, so I wrote that down next to the
+finding rather than letting the method propagate unqualified.

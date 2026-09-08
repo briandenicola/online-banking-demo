@@ -56,17 +56,38 @@ often differ from the payload's `hashFields` — `transaction.score.override` ha
 
 `extract_entity_ids` harvests any key ending in `id` (case-insensitive) with a scalar value.
 
-## 5. Three known gates that will stop you before the fan-out
+## 5. Two independent gates stop you before the fan-out (as of 2026-09-08, both open)
 
-1. **Evidence shape** — `PolicyEvaluator.EvidenceComplete` requires a JSON object carrying the
-   `requiredFields` from the policy's `evidence:` block. The tools return different field names, and
-   `list_account_transactions` returns a bare array. Currently fails for every action.
-2. **Admin-only evidence** — `list_login_audits` and `get_scored_transaction` are `require_admin`;
-   the banker driving the run cannot read them.
-3. **Ownership scoping** — `get_account` returns 404 for accounts the token's user does not own.
-   Seed test accounts as the *banker*, not as a customer.
+**Gate A — unreachable reads.** Six tools point at admin-only or owner-scoped upstreams, and the
+copilot calls upstream with the acting *banker's* token: `list_login_audits`,
+`get_scored_transaction`, `get_flagged_transaction`, `list_flagged_transactions`,
+`get_application_audit` (all `require_admin`), and `get_account_application` (owner-only).
+`require_banker` deliberately excludes admin, so granting the role is not the fix. Also note
+`get_account` 404s for accounts the token's user does not own — seed test accounts as the *banker*.
+
+**Gate B — the evidence contract does not match the tools.** `PolicyEvaluator.EvidenceComplete`
+requires a JSON **object** carrying the `requiredFields` from the policy's `evidence:` block.
+`list_account_transactions`, `list_login_audits` and `get_application_audit` return bare **arrays**,
+which can never satisfy it under any field-name change; `get_account`/`get_user`/`get_transfer`
+return `id`/`isActive` where the contract wants `accountId`/`userId`/`status`/`transferId`.
+
+**Gate B is downstream of and independent of Gate A.** Two of the six L2-reachable actions
+(`account.balance.adjust`, `transfer.reverse`) touch no admin endpoint at all and still fail. Prove
+this to yourself in one run before accepting any "it's an auth problem" diagnosis: drive
+`account.balance.adjust` with `direction: credit` and watch both reads return 200 and the proposal
+still come back `evidence_incomplete`.
+
+**Confirm success positively.** The fan-out fired only if you see an `approval.required` frame with
+`requiredRung: "L2"` followed by `subagent.spawned`. Absence of errors is not success.
 
 ## 6. Measuring the supervisor when the end-to-end path is closed
+
+**This is a fallback, and its output is not an end-to-end agreement rate.** It stubs the whole
+fan-out seam. Name the artifacts so the boundary travels with the number (`component-probe-*`), put
+the status in the first line of the script's docstring, and have the script print the caveat above
+its own summary — a caveat in prose does not survive someone copying a figure out of a terminal.
+If the requested measurement is blocked, the deliverable is the blockage and its preconditions, not
+a nearby measurement that happens to be reachable.
 
 Run the real decider **inside the pod** — that is where the workload identity, the private-endpoint
 route to Foundry and the deployed model actually are. Anything reconstructed outside it measures a
