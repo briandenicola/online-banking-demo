@@ -60,21 +60,26 @@ spec:
         # point in the harness's containment until #334 lands.
         - name: JWT_ISSUER
           value: "user-service"
-        # Model access for the planner loop. NOTE the naming: every other
-        # service here uses FOUNDRY_PROJECT_ENDPOINT / FOUNDRY_MODEL, but
-        # banker-copilot-service reads AZURE_AI_PROJECT_ENDPOINT /
-        # AZURE_AI_MODEL_DEPLOYMENT. The platform layer supplies what the code
-        # actually reads rather than what the convention says, because a
-        # manifest that is "correct" and unread is just a service with no model
-        # access. Both names refer to the same two values and should converge on
-        # one — filed as a follow-up rather than papered over by setting all four.
-        - name: AZURE_AI_PROJECT_ENDPOINT
+        # Model access for the planner loop, on the repo-wide FOUNDRY_* names that
+        # ai-service and prompt-eval-service already use. This manifest previously
+        # set AZURE_AI_PROJECT_ENDPOINT / AZURE_AI_MODEL_DEPLOYMENT — the names the
+        # code shipped with — and the service reported the divergence through
+        # `legacyConfigNames` on /readyz. It is reported there no longer.
+        - name: FOUNDRY_PROJECT_ENDPOINT
           valueFrom:
             secretKeyRef:
               name: copilot-secrets
               key: openai-endpoint
-        - name: AZURE_AI_MODEL_DEPLOYMENT
+        - name: FOUNDRY_MODEL
           value: "gpt-5.4-mini"
+        # Declared, not inferred. `planner_mode()` used to return "deterministic"
+        # whenever the model configuration was incomplete, so a deployment that had
+        # lost its model access still reported `status: ready` and answered with no
+        # model behind it — and a reviewer measuring supervisor disagreement would
+        # have been reading a canned script as agreement. Asking for foundry here
+        # means the pod fails to start rather than quietly degrading.
+        - name: COPILOT_PLANNER_MODE
+          value: "foundry"
         - name: COSMOS_DB_ENDPOINT
           valueFrom:
             configMapKeyRef:
@@ -85,7 +90,7 @@ spec:
         # mount to change the tool surface without a rebuild. The loader refuses
         # to start on a missing or invalid manifest — a harness that cannot
         # prove which tools it registered must not register any.
-        - name: TOOL_MANIFEST_PATH
+        - name: COPILOT_TOOL_MANIFEST_PATH
           value: "/app/config/copilot-tools.yaml"
         # Fan-out concurrency limits (epic §6.3). Baked into the image like the tool manifest;
         # repoint at a ConfigMap mount to re-tune fan-out without a rebuild. The engine

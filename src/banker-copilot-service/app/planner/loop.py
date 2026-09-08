@@ -28,7 +28,7 @@ from typing import Any
 import structlog
 
 from app.events.bus import RunStream
-from app.config import env_with_legacy
+from app.config import ConfigurationError, env_with_legacy
 from app.stores.sessions import Session, new_artifact
 from app.tools.executor import ToolExecutor, ToolInvocationError
 from app.tools.propose import AuthorityClient, ProposeRejected
@@ -48,12 +48,38 @@ except ImportError:  # pragma: no cover
     AGENT_FRAMEWORK_AVAILABLE = False
 
 
+PLANNER_MODES = ("foundry", "deterministic")
+
+
 def planner_mode() -> str:
     """Which loop will run, decided once and logged.
 
     Phase 1 lost ten minutes to a dual-mode switch that read an ambient env var and never said
     which branch it took. Every mode decision in this service is named out loud.
+
+    The mode is *declared*, never inferred. This function used to return ``"deterministic"``
+    whenever the Foundry preconditions were not all met, which collapsed three unrelated
+    failures — the ``agent_framework_foundry`` extra missing from the image, an unset endpoint,
+    an unset model — into one indistinguishable success. A deployment that had lost its model
+    access reported ``status: ready`` and answered questions with no model behind it. Reviewers
+    checking supervisor disagreement would have been measuring a script and reading it as
+    agreement. Failure looked exactly like success.
+
+    So deterministic is now reachable only because somebody typed it. Asking for ``foundry``
+    (the default) with incomplete configuration raises, and names the part that is missing.
     """
+    requested = os.getenv("COPILOT_PLANNER_MODE", "").strip().lower() or "foundry"
+    if requested not in PLANNER_MODES:
+        raise ConfigurationError(
+            f"COPILOT_PLANNER_MODE={requested!r} is not a planner mode. "
+            f"Expected one of {', '.join(PLANNER_MODES)}."
+        )
+
+    if requested == "deterministic":
+        # An explicit choice — local development and tests run here. Nothing to verify: the
+        # deterministic planner needs no model. It is returned because it was asked for.
+        return "deterministic"
+
     # `FOUNDRY_*` is this repo's convention (ai-service, prompt-eval-service). This service
     # shipped with `AZURE_AI_*`, which the platform lane then wired to match rather than leave
     # the service with no model access — the right call, and the wrong direction to settle in.
@@ -61,9 +87,23 @@ def planner_mode() -> str:
     # instead of permanent.
     endpoint = env_with_legacy("FOUNDRY_PROJECT_ENDPOINT", "AZURE_AI_PROJECT_ENDPOINT", "").strip()
     deployment = env_with_legacy("FOUNDRY_MODEL", "AZURE_AI_MODEL_DEPLOYMENT", "").strip()
-    if AGENT_FRAMEWORK_AVAILABLE and endpoint and deployment:
-        return "foundry"
-    return "deterministic"
+
+    missing: list[str] = []
+    if not AGENT_FRAMEWORK_AVAILABLE:
+        missing.append("the agent_framework_foundry package is not importable in this image")
+    if not endpoint:
+        missing.append("FOUNDRY_PROJECT_ENDPOINT is unset")
+    if not deployment:
+        missing.append("FOUNDRY_MODEL is unset")
+
+    if missing:
+        raise ConfigurationError(
+            "COPILOT_PLANNER_MODE=foundry, but the planner cannot reach a model: "
+            + "; ".join(missing)
+            + ". Set COPILOT_PLANNER_MODE=deterministic to run without a model deliberately."
+        )
+
+    return "foundry"
 
 
 @dataclass

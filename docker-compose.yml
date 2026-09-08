@@ -368,12 +368,17 @@ services:
       - COPILOT_SESSIONS_CONTAINER=copilot-sessions
       - COPILOT_ARTIFACTS_CONTAINER=copilot-artifacts
       - COPILOT_TRACES_CONTAINER=copilot-traces
-      # Model access for the planner loop. banker-copilot-service reads
-      # AZURE_AI_* where the rest of the repo uses FOUNDRY_*; supplying the names
-      # the code actually reads, and defaulting from the existing repo variables
-      # so an operator's existing .env keeps working.
-      - AZURE_AI_PROJECT_ENDPOINT=${AZURE_AI_PROJECT_ENDPOINT:-${FOUNDRY_PROJECT_ENDPOINT:-${AZURE_OPENAI_ENDPOINT:-}}}
-      - AZURE_AI_MODEL_DEPLOYMENT=${AZURE_AI_MODEL_DEPLOYMENT:-${FOUNDRY_MODEL:-gpt-5.4-mini}}
+      # Model access for the planner loop, on the repo-wide FOUNDRY_* names, still
+      # defaulting from an operator's existing variables so a working .env keeps working.
+      - FOUNDRY_PROJECT_ENDPOINT=${FOUNDRY_PROJECT_ENDPOINT:-${AZURE_AI_PROJECT_ENDPOINT:-${AZURE_OPENAI_ENDPOINT:-}}}
+      - FOUNDRY_MODEL=${FOUNDRY_MODEL:-${AZURE_AI_MODEL_DEPLOYMENT:-gpt-5.4-mini}}
+      # Local runs have no Foundry endpoint by default, so they run the planner without a
+      # model. That is now said out loud. Previously it was inferred from the endpoint above
+      # resolving to empty, which meant local and a broken cloud deployment were
+      # indistinguishable from inside the service — both reported ready, both answered with
+      # no model. Set COPILOT_PLANNER_MODE=foundry (with an endpoint) to exercise the real
+      # planner locally; it will refuse to start rather than silently degrade.
+      - COPILOT_PLANNER_MODE=${COPILOT_PLANNER_MODE:-deterministic}
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - OTEL_SERVICE_NAME=banker-copilot-service

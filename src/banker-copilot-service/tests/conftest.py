@@ -106,6 +106,12 @@ def _base_env(monkeypatch):
     # default. Set here rather than in the service so the default is never tuned for tests.
     monkeypatch.setenv("COPILOT_SSE_HEARTBEAT_SECONDS", "1")
     monkeypatch.setenv("COPILOT_SESSION_TTL_SECONDS", "3")
+    # The suite exercises the API, not a model, so it runs the deterministic planner. That is
+    # now stated rather than obtained by leaving the Foundry variables unset: `planner_mode()`
+    # used to infer deterministic from missing configuration, which meant these tests passed
+    # identically whether the deployment had model access or had silently lost it.
+    # tests/test_planner_mode.py owns the mode-selection behaviour itself.
+    monkeypatch.setenv("COPILOT_PLANNER_MODE", "deterministic")
     from app.auth import reset_key_cache
 
     reset_key_cache()
