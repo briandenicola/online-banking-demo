@@ -37,6 +37,7 @@ set -euo pipefail
 
 readonly SECRET_NAMES=(
   jwt-private-key
+  authority-signing-key
   mediator-client-secret-authority
   openai-endpoint
   content-understanding-endpoint
@@ -165,9 +166,30 @@ else
 fi
 [[ ${#mediator_value} -eq 48 ]] || die "Generated mediator secret is ${#mediator_value} chars, expected 48."
 
+# The approval signing key (authority-service `Approval__SigningKey`).
+#
+# This secret was missing until 2026-09-08: authority-service's manifest has always
+# required it, but it appeared in neither this script nor any SecretProviderClass, so
+# the pod could only ever have failed with "couldn't find key authority-signing-key".
+# Nobody hit it because the service had never been deployed.
+#
+# It MUST NOT equal the JWT key. authority-service refuses to start if they match,
+# because a bearer token that can be minted must never also be able to forge an
+# approval signature — that would collapse "a human signed this" into "someone held
+# the token". The assertion below states that invariant here too, at the point of
+# creation, rather than trusting the service to be the only thing that checks.
+if [[ -n "${AUTHORITY_SIGNING_KEY:-}" ]]; then
+  authority_signing_value="${AUTHORITY_SIGNING_KEY}"
+else
+  authority_signing_value="$(LC_ALL=C head -c 2048 /dev/urandom | tr -dc 'A-Za-z0-9' | cut -c1-64)"
+fi
+[[ ${#authority_signing_value} -eq 64 ]] || die "Generated authority signing key is ${#authority_signing_value} chars, expected 64."
+[[ "${authority_signing_value}" != "${jwt_value}" ]] || die "Approval signing key must differ from the JWT signing key."
+
 
 declare -A SECRET_VALUES=(
   [jwt-private-key]="${jwt_value}"
+  [authority-signing-key]="${authority_signing_value}"
   [mediator-client-secret-authority]="${mediator_value}"
   [openai-endpoint]="https://${FOUNDRY_NAME}.services.ai.azure.com/api/projects/${PROJECT_NAME}"
   [content-understanding-endpoint]="${cus_endpoint}"

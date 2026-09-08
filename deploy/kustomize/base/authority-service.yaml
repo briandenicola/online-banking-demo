@@ -41,14 +41,14 @@ spec:
         - name: APPLICATIONINSIGHTS_CONNECTION_STRING
           valueFrom:
             secretKeyRef:
-              name: banking-secrets
+              name: authority-secrets
               key: appinsights-connection-string
         # The approval signing key MUST be distinct from the JWT key — the service refuses to
         # start if they are equal. A bearer token must never be able to forge a signature.
         - name: Approval__SigningKey
           valueFrom:
             secretKeyRef:
-              name: banking-secrets
+              name: authority-secrets
               key: authority-signing-key
         # The policy ships baked into the image. To change the ladder without a rebuild,
         # mount a ConfigMap over /app/config and repoint POLICY_FILE_PATH; the service fails
@@ -77,7 +77,7 @@ spec:
         - name: Jwt__MediatorClientSecret
           valueFrom:
             secretKeyRef:
-              name: banking-secrets
+              name: authority-secrets
               key: mediator-client-secret-authority
         # Redis connection for the audit publisher (§5.7) AND the out-of-band notification
         # sinks (§5.6). Without this the service silently falls back to the NULL audit publisher
@@ -87,7 +87,7 @@ spec:
         - name: Redis__ConnectionString
           valueFrom:
             secretKeyRef:
-              name: banking-secrets
+              name: authority-secrets
               key: redis-connection-string
         envFrom:
         - configMapRef:
@@ -142,7 +142,7 @@ spec:
           driver: secrets-store.csi.k8s.io
           readOnly: true
           volumeAttributes:
-            secretProviderClass: banking-secrets-provider
+            secretProviderClass: authority-secrets-provider
 ---
 apiVersion: v1
 kind: Service

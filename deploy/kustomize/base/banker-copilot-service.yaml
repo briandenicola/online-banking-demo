@@ -51,7 +51,7 @@ spec:
         - name: APPLICATIONINSIGHTS_CONNECTION_STRING
           valueFrom:
             secretKeyRef:
-              name: banking-secrets
+              name: copilot-secrets
               key: appinsights-connection-string
         # Verifies the banker's bearer token. Under #334 this is a symmetric
         # HMAC secret shared by every service, so holding it also confers the
@@ -71,7 +71,7 @@ spec:
         - name: AZURE_AI_PROJECT_ENDPOINT
           valueFrom:
             secretKeyRef:
-              name: banking-secrets
+              name: copilot-secrets
               key: openai-endpoint
         - name: AZURE_AI_MODEL_DEPLOYMENT
           value: "gpt-5.4-mini"
@@ -161,7 +161,7 @@ spec:
           driver: secrets-store.csi.k8s.io
           readOnly: true
           volumeAttributes:
-            secretProviderClass: banking-secrets-provider
+            secretProviderClass: copilot-secrets-provider
 ---
 apiVersion: v1
 kind: Service
