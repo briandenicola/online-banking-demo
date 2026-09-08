@@ -1191,3 +1191,67 @@ finding rather than letting the method propagate unqualified.
 ## 2026-09-08 — Gate B ruling: evidence contract architecture
 
 Gate B (evidence completeness validation) has been ruled on by Danny. Full ruling: `docs/design/gate-b-evidence-contract-ruling.md`. Turk owns implementation of the declared-projection adapter across `config/copilot-tools.yaml`, `executor.py`, and the C# seam test in `authority-service.UnitTests`. Livingston owns fixture validation and measurement of the two-tool subset (`get_account`, `list_account_transactions`). Both gates (A + B) must pass before the co-signature feature can execute in production.
+
+## 2026-09-08 — Check 4.2 measured end to end (42 live runs)
+
+## Learnings
+
+**48. Both gates fell and the measurement I had specified ran unchanged.** The harness I committed
+while blocked — case corpus, three-bucket classifier, positive success signal — was reusable
+verbatim against the fixed system. Writing the measurement *while* it was impossible, instead of
+waiting to rebuild it after, cost nothing and saved the whole run. The one thing I had to build
+fresh was the transport, not the method.
+
+**49. Ground the corpus in the live ledger before writing a single case.** I read all three
+banker-owned accounts' real transaction histories first, then built cases whose factual claims were
+deliberately TRUE or FALSE against them, and recorded which in a `grounded` field fixed before the
+run. That single field turned out to be the most diagnostic thing in the whole exercise: withheld on
+57% of grounded framings vs 94% of ungrounded. **A corpus of invented facts can only measure tone.
+A corpus checkable against real data measures whether the reviewer reads.**
+
+**50. Build one pair of cases that differ ONLY in a fact the prose cannot carry.** `P01` and `S08`
+have near-identical framing pointed at different accounts. That pair did more to establish the
+supervisor is genuinely reasoning than the other thirty cases combined, because it is the one
+comparison that prose-matching cannot pass. Design at least one such pair into every corpus that
+asks "is this real or is it a tic?"
+
+**51. My own expectation label was wrong and the model was right.** I marked "recover the duplicate
+$3,200 payroll credit" as `proceed`; the supervisor held because *three identical credits do not
+tell you which one is the duplicate*. That is correct and I had not seen it. **Recording
+expectations before the run is what let me notice** — a retrofitted grading would have quietly
+scored my error as the model's. When the graded result disagrees with you, check whether you are
+the one who is wrong before writing it up as a defect.
+
+**52. A withhold rate is not a caution measurement if the evidence surface is narrower than the
+claims.** The supervisor sees only `get_account` and `list_account_transactions`. It can never see
+a written consent, a court order or a fraud case file. So every justification living outside the
+ledger is unverifiable *by construction*, and holding is epistemically correct. Much of the 22.6%
+is that, not over-caution. **Before calling a reviewer trigger-happy, check whether you gave it
+enough to be satisfied with.** Tuning the model here would have optimised the wrong thing.
+
+**53. A fix can be correct and still narrower than its headline.** `ef61d7b` puts `action_id` in
+the prompt and genuinely works — 5 of 8 correct adverse actions proceeded, with reasoning about the
+adverse verb. But `credit` and `debit` share one `action_id`, and the payload is not in
+`SupervisorInput`, so direction still reaches the supervisor only as prose. My corpus stated the
+direction in words, which is why it passed. **Reading the data structure told me the limit of the
+fix; the passing result would not have.** Verify the mechanism, not just the outcome.
+
+**54. Report instability's *shape*, not just its presence.** "It flips" was last time's finding and
+was still true (3/2 on identical bytes). But the clear-cut case was 5/5 stable and only the
+genuinely marginal one flipped — a materially different and more defensible fact. The reportable
+defect turned out to be adjacent: confidence ran 0.82–0.96 across the flipping case with **no
+separation between its holds and its proceeds**, so the card shows a human high confidence on a
+coin flip. Confidence and reproducibility are not the same property.
+
+**55. Say what the number is not.** The primary emits `verdict: PROCEED` always, `rationale` = the
+objective echoed verbatim, `confidence: null`, `keyFactors: null`. So "agreement rate" collapses to
+"supervisor proceed rate" — 4.2 currently measures one agent, not two. The result is still worth
+having and I said so; but a headline that implies a two-agent comparison would have been the same
+kind of false signal as the scripted decider's 100%. **Name the denominator, name the exclusions,
+and name the thing the metric is silently standing in for.**
+
+**56. Keep the failed-call bucket even when it is nearly empty.** One run in 42 returned
+`supervisor_unavailable` at 0.0 (a transient `ChatClientException`); re-running gave a real HOLD at
+0.95. It would have been a single row folded into "disagreed" without effort — and would have
+inflated exactly the number under test. Checking **both** halves of the marker (the factor string
+*and* the zero confidence) is what makes the bucket safe to automate.
