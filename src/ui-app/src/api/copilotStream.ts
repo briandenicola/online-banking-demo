@@ -28,6 +28,7 @@
 
 import { getCopilotConfig, copilotUrl } from '../config/copilotConfig';
 import { logger } from '../utils/logger';
+import { toApproval, WireApproval } from './authorityWire';
 import {
   COPILOT_EVENT_KINDS,
   CopilotEvent,
@@ -114,6 +115,59 @@ function isKnownKind(kind: string): kind is CopilotEventKind {
 }
 
 /**
+ * Runs an `approval.*` frame's payload through `toApproval` — the codebase's one
+ * wire→client mapper (`authorityWire.ts`).
+ *
+ * WHY THIS LIVES HERE
+ * -------------------
+ * The REST path (`api/approvals.ts`) already maps every approval it returns. The
+ * SSE path used to skip the mapper entirely, so a live `approval.required` /
+ * `approval.updated` reached the reducer in raw WIRE shape while every other
+ * consumer got CLIENT shape. That asymmetry is the defect this function closes:
+ * the backend deliberately emits wire shape (commit c523311) precisely so that
+ * `flattenPayload`'s `material` flags — the disclosure gate ApprovalCard relies
+ * on — are produced in ONE place, in TypeScript, rather than reimplemented in
+ * Python or defeated by an empty `payload: []`.
+ *
+ * WHY IT DROPS LOUDLY RATHER THAN PASSING A MALFORMED PAYLOAD THROUGH
+ * ------------------------------------------------------------------
+ * The reducer reads `payload.approval.id` unguarded (`copilotStore.ts`). A frame
+ * without a usable approval would throw a TypeError there and kill the run — and,
+ * because the stream replays on reconnect, do so in a loop. We instead reject the
+ * frame at the boundary and log at ERROR. Absence is treated as an error, never
+ * coerced to a benign empty approval: a missing approval and a satisfied approval
+ * must never look alike. A dropped approval renders no card, so nothing becomes
+ * signable — the fail-safe direction — and the error log makes the drop audible.
+ */
+function shapeApprovalEnvelope(envelope: CopilotEvent): CopilotEvent | null {
+  if (envelope.kind !== 'approval.required' && envelope.kind !== 'approval.updated') {
+    return envelope;
+  }
+
+  const payload = (envelope as { payload?: unknown }).payload;
+  const wire =
+    payload && typeof payload === 'object'
+      ? (payload as Record<string, unknown>).approval
+      : undefined;
+
+  if (!wire || typeof wire !== 'object' || typeof (wire as { id?: unknown }).id !== 'string') {
+    logger.error(
+      `copilotStream: ${envelope.kind} frame (seq ${envelope.seq}) carries no usable approval; ` +
+        'dropped. The reducer reads payload.approval.id unguarded, so a malformed approval must be ' +
+        'rejected loudly here rather than crash the run — a missing approval must never be mistaken ' +
+        'for a satisfied one.'
+    );
+    return null;
+  }
+
+  const approval = toApproval(wire as WireApproval);
+  return {
+    ...(envelope as object),
+    payload: { ...(payload as Record<string, unknown>), approval },
+  } as CopilotEvent;
+}
+
+/**
  * Turns a raw frame into an envelope, or null.
  *
  * Unknown kinds are logged and dropped rather than thrown (§7.4): a server that
@@ -146,7 +200,7 @@ export function toEnvelope(frame: RawFrame): CopilotEvent | null {
     return null;
   }
 
-  return { ...(candidate as object), kind } as CopilotEvent;
+  return shapeApprovalEnvelope({ ...(candidate as object), kind } as CopilotEvent);
 }
 
 function defaultToken(): string | null {
