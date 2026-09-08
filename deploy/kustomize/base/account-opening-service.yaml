@@ -55,8 +55,6 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: content-understanding-endpoint
-        - name: JWT_ISSUER
-          value: "user-service"
         - name: COSMOS_DB_ENDPOINT
           valueFrom:
             configMapKeyRef:
@@ -200,8 +198,6 @@ spec:
             secretKeyRef:
               name: banking-secrets
               key: content-understanding-endpoint
-        - name: JWT_ISSUER
-          value: "user-service"
         - name: COSMOS_DB_ENDPOINT
           valueFrom:
             configMapKeyRef:

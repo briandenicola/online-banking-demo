@@ -53,13 +53,10 @@ spec:
             secretKeyRef:
               name: copilot-secrets
               key: appinsights-connection-string
-        # Verifies the banker's bearer token. Under #334 this is a symmetric
-        # HMAC secret shared by every service, so holding it also confers the
-        # ability to MINT tokens — see the Key Vault comment in
-        # infra/cloud/identity-copilot.tf. Required, and honestly the weakest
-        # point in the harness's containment until #334 lands.
-        - name: JWT_ISSUER
-          value: "user-service"
+        # (JWT verification is configured in one block below: JWT_JWKS_URI,
+        # JWT_AUDIENCE, JWT_ISSUER. This slot used to redeclare JWT_ISSUER, which
+        # `kubectl apply` warns "may be dropped" — harmless while both copies said
+        # user-service, and a silent divergence the first time one was edited.)
         # Model access for the planner loop, on the repo-wide FOUNDRY_* names that
         # ai-service and prompt-eval-service already use. This manifest previously
         # set AZURE_AI_PROJECT_ENDPOINT / AZURE_AI_MODEL_DEPLOYMENT — the names the
