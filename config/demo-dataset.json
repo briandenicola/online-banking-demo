@@ -1,5 +1,5 @@
 {
-  "$comment": [
+  "_comment": [
     "Demo dataset for `task local:demo:*` and `task cloud:demo:*` (issue #356).",
     "",
     "This file is the ONLY home for the demo's names, amounts and counts. scripts/demo/demo.sh",
@@ -43,7 +43,7 @@
     "passwordDefault": "Copilot-Phase3-Verify!2026"
   },
   "emailDomain": "banking-demo.com",
-  "$identityComment": [
+  "_identityComment": [
     "ORDER IS LOAD-BEARING. user-service auto-promotes the FIRST account registered in an empty",
     "environment to admin (UserService.CreateUserAsync). So the admin identity is registered",
     "first and DELIBERATELY absorbs that rule; every other role is then granted explicitly via",
@@ -111,46 +111,185 @@
       "retail": true
     }
   ],
-  "$accountComment": "AccountType is case-sensitive server-side (^(Checking|Savings|MoneyMarket|CD|Loan|Credit)$).",
+  "_accountComment": "AccountType is case-sensitive server-side (^(Checking|Savings|MoneyMarket|CD|Loan|Credit)$).",
   "accounts": [
+    {
+      "owner": "banker",
+      "accountType": "Checking",
+      "initialBalance": 12480.0,
+      "currency": "USD",
+      "label": "routine operating history",
+      "evidenceSubject": true
+    },
+    {
+      "owner": "banker",
+      "accountType": "Savings",
+      "initialBalance": 31250.0,
+      "currency": "USD",
+      "label": "near-threshold deposit pattern",
+      "evidenceSubjectAlt": true
+    },
+    {
+      "owner": "banker",
+      "accountType": "MoneyMarket",
+      "initialBalance": 4075.0,
+      "currency": "USD",
+      "label": "high volume, many small movements"
+    },
+    {
+      "owner": "banker",
+      "accountType": "Checking",
+      "initialBalance": 0.0,
+      "currency": "USD",
+      "label": "opened, never used — deliberately empty"
+    },
     {
       "owner": "retail",
       "accountType": "Checking",
       "initialBalance": 8400.0,
-      "currency": "USD"
+      "currency": "USD",
+      "label": "everyday spending"
     },
     {
       "owner": "retail",
       "accountType": "Savings",
       "initialBalance": 26500.0,
-      "currency": "USD"
+      "currency": "USD",
+      "label": "steady saver"
     },
     {
       "owner": "verify-target",
       "accountType": "Checking",
       "initialBalance": 3120.0,
-      "currency": "USD"
+      "currency": "USD",
+      "label": "locked customer — user.unlock subject"
     },
     {
       "owner": "casey",
       "accountType": "Checking",
       "initialBalance": 15750.0,
-      "currency": "USD"
+      "currency": "USD",
+      "label": "anomaly subject — offshore wire"
     },
     {
       "owner": "dana",
       "accountType": "Checking",
       "initialBalance": 2280.0,
-      "currency": "USD"
+      "currency": "USD",
+      "label": "low activity"
     }
   ],
-  "$transactionComment": [
+  "_transactionComment": [
     "Type is case-sensitive server-side (^(Debit|Credit|Transfer|Deposit|Withdrawal)$).",
     "The `anomalous` entries exist so ai-service's stream consumer produces genuinely SCORED and",
     "FLAGGED records. Their risk score is decided by the model, not by this file — the seeder",
     "polls for the result and uses whatever actually came back."
   ],
   "transactions": [
+    {
+      "owner": "banker",
+      "accountIndex": 0,
+      "amount": 4250.0,
+      "type": "Deposit",
+      "description": "Payroll deposit",
+      "category": "income"
+    },
+    {
+      "owner": "banker",
+      "accountIndex": 0,
+      "amount": -182.44,
+      "type": "Withdrawal",
+      "description": "Utility autopay",
+      "category": "utilities"
+    },
+    {
+      "owner": "banker",
+      "accountIndex": 0,
+      "amount": -64.1,
+      "type": "Withdrawal",
+      "description": "Coffee shop",
+      "category": "dining"
+    },
+    {
+      "owner": "banker",
+      "accountIndex": 0,
+      "amount": -1340.0,
+      "type": "Withdrawal",
+      "description": "Rent payment",
+      "category": "housing"
+    },
+    {
+      "owner": "banker",
+      "accountIndex": 0,
+      "amount": 220.0,
+      "type": "Credit",
+      "description": "Expense reimbursement",
+      "category": "income"
+    },
+    {
+      "owner": "banker",
+      "accountIndex": 1,
+      "amount": 9400.0,
+      "type": "Deposit",
+      "description": "Cash deposit — branch counter",
+      "category": "deposit"
+    },
+    {
+      "owner": "banker",
+      "accountIndex": 1,
+      "amount": 9350.0,
+      "type": "Deposit",
+      "description": "Cash deposit — ATM, next day",
+      "category": "deposit"
+    },
+    {
+      "owner": "banker",
+      "accountIndex": 1,
+      "amount": 9480.0,
+      "type": "Deposit",
+      "description": "Cash deposit — branch counter, third visit",
+      "category": "deposit"
+    },
+    {
+      "owner": "banker",
+      "accountIndex": 2,
+      "amount": -35.0,
+      "type": "Withdrawal",
+      "description": "Transit fare",
+      "category": "transport"
+    },
+    {
+      "owner": "banker",
+      "accountIndex": 2,
+      "amount": -12.99,
+      "type": "Withdrawal",
+      "description": "Streaming subscription",
+      "category": "entertainment"
+    },
+    {
+      "owner": "banker",
+      "accountIndex": 2,
+      "amount": -88.2,
+      "type": "Withdrawal",
+      "description": "Pharmacy",
+      "category": "health"
+    },
+    {
+      "owner": "banker",
+      "accountIndex": 2,
+      "amount": -410.0,
+      "type": "Withdrawal",
+      "description": "Auto insurance",
+      "category": "insurance"
+    },
+    {
+      "owner": "banker",
+      "accountIndex": 2,
+      "amount": 1500.0,
+      "type": "Credit",
+      "description": "Transfer in from savings",
+      "category": "transfer"
+    },
     {
       "owner": "retail",
       "accountIndex": 0,
@@ -234,13 +373,13 @@
       "category": "shopping"
     }
   ],
-  "$scoringComment": "How long to wait for ai-service to score the anomalous transactions before giving up.",
+  "_scoringComment": "How long to wait for ai-service to score the anomalous transactions before giving up.",
   "scoring": {
     "pollSeconds": 90,
     "pollIntervalSeconds": 5,
     "minScoredRequired": 1
   },
-  "$approvalComment": [
+  "_approvalComment": [
     "Every approval below is proposed against a REAL subject discovered during seeding.",
     "`after` drives the post-propose transition that puts the approval in the demanded state:",
     "  leave-pending  -> stays pending; L1 so the banker sees it under NEEDS YOU",
@@ -259,7 +398,7 @@
       "after": "leave-pending",
       "payload": {
         "accountId": {
-          "@ref": "primaryAccountId"
+          "@ref": "evidenceAccountId"
         },
         "amount": {
           "@threshold": "balance_adjustment_dual_control_amount",
@@ -271,18 +410,18 @@
       "evidence": {
         "get_account": {
           "accountId": {
-            "@ref": "primaryAccountId"
+            "@ref": "evidenceAccountId"
           },
           "balance": {
-            "@ref": "primaryAccountBalance"
+            "@ref": "evidenceAccountBalance"
           }
         },
         "list_account_transactions": {
           "accountId": {
-            "@ref": "primaryAccountId"
+            "@ref": "evidenceAccountId"
           },
           "count": {
-            "@ref": "primaryTransactionCount"
+            "@ref": "evidenceTransactionCount"
           }
         }
       },
@@ -326,7 +465,7 @@
       "signComment": "Fee reversal agreed with the customer; posting the debit correction.",
       "payload": {
         "accountId": {
-          "@ref": "primaryAccountId"
+          "@ref": "evidenceAccountId"
         },
         "amount": {
           "@threshold": "balance_adjustment_dual_control_amount",
@@ -338,18 +477,18 @@
       "evidence": {
         "get_account": {
           "accountId": {
-            "@ref": "primaryAccountId"
+            "@ref": "evidenceAccountId"
           },
           "balance": {
-            "@ref": "primaryAccountBalance"
+            "@ref": "evidenceAccountBalance"
           }
         },
         "list_account_transactions": {
           "accountId": {
-            "@ref": "primaryAccountId"
+            "@ref": "evidenceAccountId"
           },
           "count": {
-            "@ref": "primaryTransactionCount"
+            "@ref": "evidenceTransactionCount"
           }
         }
       },
@@ -383,10 +522,10 @@
         },
         "list_account_transactions": {
           "accountId": {
-            "@ref": "secondaryAccountId"
+            "@ref": "evidenceAltAccountId"
           },
           "count": {
-            "@ref": "secondaryTransactionCount"
+            "@ref": "evidenceAltTransactionCount"
           }
         }
       },
@@ -400,7 +539,7 @@
       "supersedeNote": "Agent re-planned after reading the fee schedule; the corrected amount is smaller.",
       "payload": {
         "accountId": {
-          "@ref": "primaryAccountId"
+          "@ref": "evidenceAccountId"
         },
         "amount": {
           "@threshold": "balance_adjustment_dual_control_amount",
@@ -411,7 +550,7 @@
       },
       "revisedPayload": {
         "accountId": {
-          "@ref": "primaryAccountId"
+          "@ref": "evidenceAccountId"
         },
         "amount": {
           "@threshold": "balance_adjustment_dual_control_amount",
@@ -423,18 +562,18 @@
       "evidence": {
         "get_account": {
           "accountId": {
-            "@ref": "primaryAccountId"
+            "@ref": "evidenceAccountId"
           },
           "balance": {
-            "@ref": "primaryAccountBalance"
+            "@ref": "evidenceAccountBalance"
           }
         },
         "list_account_transactions": {
           "accountId": {
-            "@ref": "primaryAccountId"
+            "@ref": "evidenceAccountId"
           },
           "count": {
-            "@ref": "primaryTransactionCount"
+            "@ref": "evidenceTransactionCount"
           }
         }
       },
@@ -448,7 +587,7 @@
       "after": "leave-pending",
       "payload": {
         "accountId": {
-          "@ref": "primaryAccountId"
+          "@ref": "evidenceAccountId"
         },
         "amount": {
           "@threshold": "balance_adjustment_dual_control_amount",
@@ -460,18 +599,18 @@
       "evidence": {
         "get_account": {
           "accountId": {
-            "@ref": "primaryAccountId"
+            "@ref": "evidenceAccountId"
           },
           "balance": {
-            "@ref": "primaryAccountBalance"
+            "@ref": "evidenceAccountBalance"
           }
         },
         "list_account_transactions": {
           "accountId": {
-            "@ref": "primaryAccountId"
+            "@ref": "evidenceAccountId"
           },
           "count": {
-            "@ref": "primaryTransactionCount"
+            "@ref": "evidenceTransactionCount"
           }
         }
       },
@@ -492,7 +631,7 @@
       "after": "leave-pending",
       "payload": {
         "accountId": {
-          "@ref": "primaryAccountId"
+          "@ref": "evidenceAccountId"
         },
         "amount": {
           "@threshold": "balance_adjustment_dual_control_amount",
@@ -504,18 +643,18 @@
       "evidence": {
         "get_account": {
           "accountId": {
-            "@ref": "primaryAccountId"
+            "@ref": "evidenceAccountId"
           },
           "balance": {
-            "@ref": "primaryAccountBalance"
+            "@ref": "evidenceAccountBalance"
           }
         },
         "list_account_transactions": {
           "accountId": {
-            "@ref": "primaryAccountId"
+            "@ref": "evidenceAccountId"
           },
           "count": {
-            "@ref": "primaryTransactionCount"
+            "@ref": "evidenceTransactionCount"
           }
         }
       },
@@ -536,7 +675,7 @@
       "after": "leave-pending",
       "payload": {
         "accountId": {
-          "@ref": "secondaryAccountId"
+          "@ref": "evidenceAltAccountId"
         },
         "amount": {
           "@threshold": "balance_adjustment_dual_control_amount",
@@ -548,18 +687,18 @@
       "evidence": {
         "get_account": {
           "accountId": {
-            "@ref": "secondaryAccountId"
+            "@ref": "evidenceAltAccountId"
           },
           "balance": {
-            "@ref": "secondaryAccountBalance"
+            "@ref": "evidenceAltAccountBalance"
           }
         },
         "list_account_transactions": {
           "accountId": {
-            "@ref": "secondaryAccountId"
+            "@ref": "evidenceAltAccountId"
           },
           "count": {
-            "@ref": "secondaryTransactionCount"
+            "@ref": "evidenceAltTransactionCount"
           }
         }
       },
@@ -580,7 +719,7 @@
       "after": "leave-pending",
       "payload": {
         "accountId": {
-          "@ref": "secondaryAccountId"
+          "@ref": "evidenceAltAccountId"
         },
         "amount": {
           "@threshold": "balance_adjustment_dual_control_amount",
@@ -592,18 +731,18 @@
       "evidence": {
         "get_account": {
           "accountId": {
-            "@ref": "secondaryAccountId"
+            "@ref": "evidenceAltAccountId"
           },
           "balance": {
-            "@ref": "secondaryAccountBalance"
+            "@ref": "evidenceAltAccountBalance"
           }
         },
         "list_account_transactions": {
           "accountId": {
-            "@ref": "secondaryAccountId"
+            "@ref": "evidenceAltAccountId"
           },
           "count": {
-            "@ref": "secondaryTransactionCount"
+            "@ref": "evidenceAltTransactionCount"
           }
         }
       },
@@ -621,7 +760,7 @@
       "after": "leave-pending",
       "payload": {
         "accountId": {
-          "@ref": "primaryAccountId"
+          "@ref": "evidenceAccountId"
         },
         "amount": {
           "@threshold": "balance_adjustment_dual_control_amount",
@@ -633,18 +772,18 @@
       "evidence": {
         "get_account": {
           "accountId": {
-            "@ref": "primaryAccountId"
+            "@ref": "evidenceAccountId"
           },
           "balance": {
-            "@ref": "primaryAccountBalance"
+            "@ref": "evidenceAccountBalance"
           }
         },
         "list_account_transactions": {
           "accountId": {
-            "@ref": "primaryAccountId"
+            "@ref": "evidenceAccountId"
           },
           "count": {
-            "@ref": "primaryTransactionCount"
+            "@ref": "evidenceTransactionCount"
           }
         }
       },
@@ -680,17 +819,17 @@
         },
         "list_account_transactions": {
           "accountId": {
-            "@ref": "primaryAccountId"
+            "@ref": "evidenceAccountId"
           },
           "count": {
-            "@ref": "primaryTransactionCount"
+            "@ref": "evidenceTransactionCount"
           }
         }
       },
       "facts": {}
     }
   ],
-  "$unreachableEscalators": {
+  "_unreachableEscalators": {
     "$comment": [
       "Escalators the issue's table asks for that CANNOT be produced through the public propose",
       "API as authority-service is currently wired. Recorded here rather than faked, because a",
@@ -704,5 +843,26 @@
     ],
     "self-dealing": "ActorContextFactory.Create is called without selfDealing:true from ApprovalsController, so context.selfDealing is always false.",
     "velocity": "ActorContext.SignaturesInWindow is never populated from storage, so actor.signaturesInWindow is always 0."
+  },
+  "proposePathProbe": {
+    "actionId": "account.balance.adjust",
+    "why": "The only action that clears the authorization gate today: both of its evidence tools are banker-readable, so whatever it fails on is the evidence contract and nothing else. See tests/verification/README.md.",
+    "readAs": "banker",
+    "pathParams": {
+      "accountId": "evidenceAccountId",
+      "userId": "lockedUserId",
+      "txId": "flaggedTransactionId",
+      "transactionId": "scoredTransactionId",
+      "transferId": "",
+      "applicationId": ""
+    }
+  },
+  "_blockedOnEvidenceContract": {
+    "summary": "Seeded approvals are DEFERRED. They are produced only by driving POST /api/authority/approvals, never by writing to the approval store, and that path currently refuses every proposal with evidence_incomplete.",
+    "gateA": "Six read tools sit behind admin-only or owner-scoped endpoints the acting banker cannot read. Owned by the application team.",
+    "gateB": "PolicyEvaluator.EvidenceComplete requires JSON objects carrying field names the read tools do not return (accountId/userId/count/status vs the actual id/isActive), and three tools return bare arrays, which cannot satisfy it under any renaming. Proven live by run run_5855e85caad34c12: account.balance.adjust touched no admin endpoint, both reads returned 200 with real data, and the proposal was still refused.",
+    "whyNotSimulated": "Writing approval rows straight into the store would put cards on screen in every state while the propose path stays dead. That is failure that looks exactly like success: it would demo cleanly, survive review, and be false. An empty queue and a loud error is the truth, and it is the thing that tells you the gates are still up.",
+    "unblockWhen": "get_account and list_account_transactions satisfy EvidenceComplete. demo:seed re-probes on every run and will seed the approvals automatically the moment they do — no edit needed.",
+    "reference": "tests/verification/README.md"
   }
 }

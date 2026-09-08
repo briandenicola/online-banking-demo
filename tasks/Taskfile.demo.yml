@@ -15,17 +15,29 @@ version: '3'
 # the same distinction, only one of which is checked.
 #
 # DEMO_TARGET is supplied by the including Taskfile; nothing here knows a hostname or a port.
+#
+# EXIT CODES — `seed` and `show` exit 3 when the propose path is closed.
+#
+# An approval can only be created by driving POST /api/authority/approvals, and there are two
+# server-side gates in front of it (authorization, and the evidence contract — see
+# tests/verification/README.md). While either is up, no approval can exist and the copilot task
+# queue is genuinely empty. The tasks report which gate is holding and exit non-zero, because an
+# environment whose queue cannot be populated is NOT ready to demo and must not look as if it is.
+#
+# The approvals are never simulated. Writing them into the store would put cards on screen while
+# the pipeline stayed dead — failure that looks exactly like success. Once the gates fall, re-run
+# `demo:seed` and the approvals seed themselves; no edit to this repo is needed.
 
 tasks:
   seed:
-    desc: Seed the demo dataset — identities, accounts, scored transactions, approvals (idempotent)
+    desc: 'Seed the demo dataset: identities, banker-owned accounts, transactions, approvals (idempotent; exits 3 if the propose path is closed)'
     dir: '{{.ROOT_DIR}}'
     cmds:
       - chmod +x scripts/demo/demo.sh scripts/demo/demo-lib.sh
       - ./scripts/demo/demo.sh seed --target {{.DEMO_TARGET}} {{.CLI_ARGS}}
 
   show:
-    desc: Report what the demo environment currently contains
+    desc: 'Report what the demo environment contains AND whether an approval can be created at all (exits 3 if not)'
     dir: '{{.ROOT_DIR}}'
     cmds:
       - chmod +x scripts/demo/demo.sh scripts/demo/demo-lib.sh

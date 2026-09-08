@@ -123,18 +123,58 @@ if tx_re:
 assert_(all(-1_000_000 < t["amount"] < 1_000_000 and t["amount"] != 0 for t in dataset["transactions"]),
         "every transaction amount is inside the server's accepted range and non-zero")
 
+declared = {i["username"] for i in dataset["identities"]}
 owners = {a["owner"] for a in dataset["accounts"]} | {t["owner"] for t in dataset["transactions"]}
-assert_(owners <= retail,
-        f"every account/transaction owner is a declared retail identity (stray: {sorted(owners - retail)})")
+assert_(owners <= declared,
+        f"every account/transaction owner is a declared identity (stray: {sorted(owners - declared)})")
 
 for t in dataset["transactions"]:
     n = len([a for a in dataset["accounts"] if a["owner"] == t["owner"]])
     assert_(t["accountIndex"] < n,
             f"transaction '{t['description']}' targets an account index that exists for {t['owner']}")
 
-descriptions = [t["description"] for t in dataset["transactions"]]
+descriptions = [(t["owner"], t["description"]) for t in dataset["transactions"]]
 assert_(len(descriptions) == len(set(descriptions)),
-        "transaction descriptions are unique — the seeder uses them as its idempotence key")
+        "transaction descriptions are unique per owner — the seeder uses them as its idempotence key")
+
+# get_account and list_account_transactions are ownership-scoped: a banker reading another
+# identity's account gets nothing back. An evidence account owned by a retail customer is
+# unreadable evidence, and it would look like a service bug rather than a seeding mistake.
+bankers = {i["username"] for i in dataset["identities"] if i["role"] == "banker"}
+subjects = [a for a in dataset["accounts"] if a.get("evidenceSubject") or a.get("evidenceSubjectAlt")]
+assert_(len(subjects) >= 1, "at least one account is marked as an evidence subject")
+assert_(all(a["owner"] in bankers for a in subjects),
+        "every evidence-subject account is owned by a banker — these reads are ownership-scoped "
+        f"(stray: {sorted({a['owner'] for a in subjects} - bankers)})")
+assert_(len([a for a in dataset["accounts"] if a.get("evidenceSubject")]) == 1,
+        "exactly one account is the primary evidence subject")
+
+# The propose-path probe must aim at an action that is actually reachable, or it would report a
+# closed gate that is really just a badly chosen probe.
+probe = dataset["proposePathProbe"]
+assert_(probe["actionId"] in policy["actionTypes"],
+        f"the propose-path probe targets a real action ('{probe['actionId']}')")
+assert_(probe["readAs"] in bankers,
+        "the propose-path probe reads as a banker — the identity a copilot run actually acts as")
+assert_(all(a["label"] for a in dataset["accounts"]),
+        "every account carries a label, so demo:show can say what it is for")
+
+# ---- Approvals must be PROPOSED, never written ---------------------------------------------
+# Writing approval rows straight into the store would populate the task queue while the propose
+# path stays dead: failure that looks exactly like success. The seeder must only ever drive the
+# public propose/sign/deny API.
+seeder = (pathlib.Path(dataset_path).resolve().parent.parent / "scripts" / "demo" / "demo.sh").read_text()
+# Comments are allowed to name the data stores — explaining what reset cannot reach is the point.
+# Only executable lines are scanned.
+code = "\n".join(line for line in seeder.splitlines() if not line.lstrip().startswith("#"))
+for forbidden in ("cosmosclient", "az cosmosdb", "mongosh", "kubectl exec", "redis-cli"):
+    assert_(forbidden not in code.lower(),
+            f"the seeder does not reach past the API to the data store ('{forbidden}')")
+assert_("/api/authority/approvals" in seeder,
+        "the seeder creates approvals through the public propose API")
+assert_("APPROVALS_DEFERRED" in seeder and "PROBE_VERDICT" in seeder,
+        "the seeder gates the approvals stage on a live propose-path probe rather than assuming "
+        "the path is open")
 
 # ---- Approvals against the authority policy ------------------------------------------------
 actions    = policy["actionTypes"]

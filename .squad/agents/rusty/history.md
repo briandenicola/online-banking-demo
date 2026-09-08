@@ -307,3 +307,46 @@ undeployable; verified rather than assumed.
     `Taskfile.demo.yml` into both with a different `DEMO_TARGET` gives `local:demo:*` and
     `cloud:demo:*` for free, and keeps one spelling of the local/cloud distinction rather than
     adding a second, unchecked one via a top-level namespace and a flag.
+
+41. **Seed data was never the blocker for the empty copilot task queue — I was half wrong.** I had
+    read it as primarily a data problem. Livingston seeded the environment for real and the queue
+    stayed empty, because the queue renders approvals and *no run can produce an approval*. There
+    are two independent server-side gates: Gate A (six read tools behind admin-only or
+    owner-scoped endpoints the acting banker cannot read) and Gate B (the evidence contract in
+    `config/authority-policy.yaml` demands objects with field names the tools do not return, and
+    three tools return bare arrays, which `EvidenceComplete` can never accept). Fixing either
+    alone unblocks nothing. Proof: run `run_5855e85caad34c12` — `account.balance.adjust`, no admin
+    endpoint touched, both reads 200 with real data, still refused `evidence_incomplete`.
+
+42. **Two individually reviewed config files can be mutually unsatisfiable.** `authority-policy.yaml`
+    and `copilot-tools.yaml` each read fine alone. Nothing tested the seam between them, so the
+    contract and the tool output disagreed silently for as long as the feature has existed. When
+    two config files describe two ends of one wire, the test belongs on the wire.
+
+43. **The tempting implementation of "approvals in every state" would make the demo lie.** Writing
+    approval rows straight into the store puts cards on screen in every state while the propose
+    path stays dead. It demos cleanly, survives review, and is false — the same class of defect as
+    the scripted supervisor. `demo.sh` therefore creates approvals ONLY by driving
+    `POST /api/authority/approvals`, probes the propose path first, and when it is closed it seeds
+    nothing, says which gate is holding, and exits 3. A guard test enforces both halves and was
+    tamper-tested.
+
+44. **`get_account` is ownership-scoped, so evidence accounts must belong to the acting banker.**
+    Accounts seeded onto retail customers are unreadable evidence and present later as a service
+    bug. The dataset now gives the banker four accounts with deliberately different histories
+    (routine, near-threshold structuring, high-volume, deliberately empty), one marked
+    `evidenceSubject`, and the guard test fails if that account is owned by anyone but a banker.
+
+45. **Idempotence has to survive accounts this seeder did not create.** account-service exposes no
+    label or name to key on, so each desired account now CLAIMS the first still-unclaimed existing
+    account of the same type and only creates one when nothing is left to claim. Verified against a
+    reproduction of the live environment (three hand-made banker accounts, eleven transactions):
+    reused all three, created only what was missing, disturbed nothing.
+
+46. **`jq` gotcha that cost me two debugging cycles.** In `index(.key)` and `has(.)`, the `.` inside
+    the argument is the *input to that function*, not the surrounding element. `$claimed |
+    index(.key)` indexes the claimed array with the claimed array's own `.key`. Bind first:
+    `. as $k | ($claimed | index($k))`. Same for `has()`.
+
+47. **Register should treat HTTP 409 as "already exists" unconditionally.** Matching on the message
+    text turns a re-seed into a hard failure the day someone rewords the string.

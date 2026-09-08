@@ -59,3 +59,35 @@ action's own rule; an escalator moved onto an already-L2 action. All ten failed 
 
 If the two files are genuinely independent, parsing one into the other's test invents a coupling
 that does not exist. Only do this where the dependency is real.
+
+## Extension: guard the *seam* between two config files
+
+The sharpest instance of this pattern in this repo came from two files that were each individually
+correct and mutually unsatisfiable:
+
+- `config/authority-policy.yaml` declares, per evidence key, the fields a proposal must carry.
+- `config/copilot-tools.yaml` declares, per tool, the upstream endpoint that produces them.
+
+Nothing compared them, so the contract asked for `accountId`/`count` while the tools returned
+`id` and a bare array. Every proposal was refused, for the entire life of the feature.
+
+`scripts/demo/evidence-contract.py` joins the two files into one view, and the runtime probe then
+calls the real endpoints and classifies each result as satisfying the contract, unreadable
+(authorization), or shape-mismatched (contract). Both halves are derived; neither restates a field
+name.
+
+**Rule of thumb: when two config files describe two ends of one wire, the test belongs on the wire,
+not on either end.**
+
+## Extension: a guard that a fixture cannot fake its own success
+
+Seed and fixture code is uniquely able to manufacture a state the product cannot actually reach.
+When it does, a broken pipeline presents as a working one. Two cheap static guards prevent it:
+
+1. Assert the seeder's executable lines contain no data-store client — no `CosmosClient`,
+   `az cosmosdb`, `mongosh`, `redis-cli`, `kubectl exec`. Scan code only; comments explaining what
+   the seeder deliberately cannot reach are valuable and must stay legal.
+2. Assert the seeder still contains its own health gate (here: a propose-path probe and a
+   deferral flag), so the gate cannot be quietly deleted the next time it is inconvenient.
+
+Both were tamper-tested: injecting a store client failed guard 1, renaming the gate failed guard 2.

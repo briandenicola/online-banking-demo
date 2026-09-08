@@ -22,6 +22,7 @@ fi
 info()    { echo "${C_BLUE}·${C_OFF} $*"; }
 success() { echo "${C_GREEN}✔${C_OFF} $*"; }
 warn()    { echo "${C_YELLOW}⚠${C_OFF} $*" >&2; }
+fail_line() { echo "${C_RED}✖${C_OFF} $*" >&2; }
 detail()  { echo "${C_DIM}  $*${C_OFF}"; }
 header()  { echo; echo "${C_BLUE}━━━ $* ━━━${C_OFF}"; }
 
