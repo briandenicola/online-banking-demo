@@ -10,9 +10,15 @@ deploy** — runs that reported `completed` while producing no approval will sta
 regression.**
 
 **Result: the supervisor agreed with the primary on 7 of 31 real verdicts — an agreement rate of
-22.6%.** Disagreement is not merely reachable; it is the *common* outcome, and on inspection the
-disagreements are specific, evidence-anchored and mostly correct. 42 runs were driven in total
-(32 distinct cases + 10 byte-identical repeats); every one of them reached L2, spawned the
+22.6% across 32 distinct cases**, in a sensitivity band of roughly **19–24%** (see §Reconciling 42
+runs). Disagreement is not merely reachable; it is the *common* outcome, and on inspection the
+disagreements are specific, evidence-anchored and mostly correct.
+
+**Read the denominator before quoting the rate.** 42 runs were driven in total: **32 distinct
+cases** (the headline denominator) plus **10 byte-identical repeats of two of those same cases**,
+which answer a different question — reproducibility — and are reported separately rather than
+pooled. Pooling all 42 gives 10/41 = 24.4%; §Reconciling 42 runs shows the full arithmetic and why
+the per-case figure is the right one for check 4.2. Every one of the 42 reached L2, spawned the
 supervisor and completed it. **All 42 were re-derived from their trace frames after the status
 defect came to light — 0 classifications changed** (`rederive_from_traces.py`,
 `rederived-2026-09-08.jsonl`).
@@ -43,12 +49,14 @@ Corpus of 32 distinct cases, `account.balance.adjust`, driven through
 | **instrument failures** | 0 | the measurement did not happen |
 | runs driven | 32 | |
 
-**Agreement rate: 7/31 = 22.6%.** The denominator is real model verdicts only. It excludes the
-one failed supervisor call and would exclude any instrument failure, of which there were none.
+**Agreement rate: 7/31 = 22.6%.** The denominator is the 32 distinct cases minus the one failed
+supervisor call. It would also exclude any instrument failure, of which there were none. The 10
+byte-identical repeats are **not** in this denominator — see §Reconciling 42 runs.
 
-Across all 42 runs including the stability repeats: 10 agreed, 31 disagreed, 1 failed call —
-10/41 = 24.4%. The headline figure is the 32-case corpus; the repeats are not independent
-samples and are not pooled into it.
+Across all 42 runs including the repeats: 10 agreed, 31 disagreed, 1 failed call — **10/41 =
+24.4%**. Both figures are correct; they answer different questions. The headline is the 32-case
+figure, because the repeats are five extra gradings of two cases already counted here, and pooling
+them would let the rate move with how many repeats were scheduled.
 
 ### The failed call was infrastructure, and it failed closed correctly
 
@@ -58,6 +66,73 @@ failed model call and excluded — **never as a disagreement.** Re-running the i
 returned a real `HOLD` at 0.95, so the failure was transient. Observed rate: **1 in 42 ≈ 2.4%.**
 The failsafe text a human would read is honest: *"Nothing here has been reviewed independently…
 Treat this as unreviewed."*
+
+---
+
+## Reconciling 42 runs with a denominator of 31
+
+Two figures appear in this record and they answer different questions. **The denominator was
+stated but not explained, which is a defect in the reporting — this section is the fix.** Nothing
+went missing, and the arithmetic below is checkable line by line against the committed files.
+
+| | runs | agreed | disagreed | unavailable | file |
+|---|---:|---:|---:|---:|---|
+| **A. Distinct-case corpus** | **32** | 7 | 24 | 1 | `results-e2e-2026-09-08.jsonl` |
+| **B. Byte-identical repeats** | **10** | 3 | 7 | 0 | `stability-e2e-2026-09-08.jsonl` |
+| **A + B (re-derived)** | **42** | 10 | 31 | 1 | `rederived-2026-09-08.jsonl` |
+
+The run ids in A and B are **disjoint** (32 + 10 = 42, zero overlap), and the re-derivation covers
+their union exactly. Two derived rates follow:
+
+- **Headline — 7/31 = 22.6%.** Set A only, minus the 1 failed supervisor call. *"Across distinct
+  cases, how often does the supervisor agree?"*
+- **Pooled — 10/41 = 24.4%.** Sets A + B, minus the same 1 failed call. *"Across every verdict
+  produced, including five repeats each of two cases, how often did it agree?"*
+
+**"0 classification changes" is a per-run statement**: each of the 42 re-derived into the same
+bucket it was originally graded into. That is true and it is what makes the headline safe. But I
+reported it beside a 31-denominator without saying the re-derivation ran over a wider set, and a
+reader is entitled to read that as eleven runs going quietly missing. That was my error, not a
+discrepancy in the data.
+
+### Which one check 4.2 should be read as, and why
+
+**22.6%, set A.** Set B is **five extra gradings of two cases that are already in set A** — `P06`
+and `S01`. Pooling would weight those two cases **6× each** while every other case counts once, so
+the rate would move with *how many repeats I happened to schedule*. That is a property of my
+harness, not of the system under test. A number that changes when I choose to repeat a case more
+often is not measuring the supervisor.
+
+The repeats exist to answer a different question — *is the verdict reproducible?* — and they are
+reported as their own result under §Byte-identical repeats. They are not a second sample of the
+action space.
+
+### The excluded runs did not flatter the number
+
+Worth stating because the natural suspicion is that the excluded runs were the inconvenient ones.
+They were not: set B ran **3 agreed / 7 disagreed = 30% agreement**, *higher* than the 22.6%
+headline. **Including them would have raised the reported rate to 24.4%.** Excluding them was the
+conservative choice, not a flattering one.
+
+### How solid is 22.6%? A band, not a point
+
+`P06` is the case the repeats showed is a **coin flip** (3 `PROCEED` / 2 `HOLD` on identical
+bytes; 4 of 6 `PROCEED` across all gradings). Its single draw in set A came up `PROCEED`. Had it
+come up `HOLD`, the headline would read **6/31 = 19.4%**.
+
+**So the honest statement is 22.6%, in a band of roughly 19–24%**, and the width of that band is
+itself a finding: it is caused by the non-determinism in §Byte-identical repeats, not by sampling
+error. Any of these figures is compatible with the conclusion that actually matters — disagreement
+is not merely reachable, it is the common outcome — and none of them should be quoted to three
+significant figures.
+
+### The arithmetic twin of the standing rule
+
+§Failure wearing the costume of success argues that every success signal must be positive and
+specific. It has a twin, and I broke it here: **every rate must carry its denominator and its
+exclusions, or it is the same lie in a different costume.** An unexplained `7/31` sitting next to
+"42 runs" is a number wearing the costume of a measurement. Both halves of the rule now apply to
+this document.
 
 ---
 

@@ -1295,3 +1295,36 @@ status fix deploys, runs that reported `completed` with no approval will report 
 failure count will rise. Without provenance on the number that reads as a regression in the very
 thing I just certified. **A rate without the build it was measured on is a trap for the next
 reader** — including for me.
+
+**63. I published a denominator that was true but not legible, and Brian had to ask.** The
+headline was `7/31` over 32 distinct cases; the re-derivation line beside it said `42 runs`. Both
+correct — the extra 10 were byte-identical repeats of two cases already counted, excluded because
+five gradings of one case is one data point measured five times. But I never said so, and "0
+classification changes" is a per-*run* claim sitting next to a per-*case* denominator. **A reader
+seeing 42 runs and a denominator of 31 will assume eleven runs went quietly missing, and will
+assume the missing ones were the inconvenient ones.** The data was fine; the reporting was not.
+
+**64. The standing rule I proposed has an arithmetic twin, and I broke it in the same document.**
+I argued all day that a success signal must be positive and specific rather than merely
+error-free — then published a rate whose denominator was accurate but unexplained. **Every rate
+must carry its denominator and its exclusions, or it is the same lie in a different costume.** The
+rule I write for the system applies to my own output first; an unexplained ratio is a number
+wearing the costume of a measurement.
+
+**65. When exclusions are questioned, show which direction they moved the number.** The 10
+excluded runs ran 30% agreement against a 22.6% headline — **including them would have RAISED my
+reported rate.** That single fact rebuts the natural suspicion far better than any explanation of
+methodology, and it costs one line to compute. **Always state whether an exclusion flattered or
+penalised your own conclusion**, because the reader cannot know you did not choose it.
+
+**66. Prefer a band to a point when your own repeats prove the point is unstable.** `P06` is a
+coin flip; its single draw in the corpus came up PROCEED, and had it come up HOLD the headline
+would read 19.4% instead of 22.6%. I had *already measured* that instability and still published
+a three-significant-figure point estimate. **If your stability probe says a case is a coin flip,
+the headline containing that case inherits the coin flip** — quote the band and name its cause.
+
+**67. Being asked to reconcile is not a failure; being asked twice would be.** Brian reconstructed
+the discrepancy correctly before asking, and asked anyway rather than assuming — because I had
+retracted a headline once before. **Credibility earned by self-correction is spent by unexplained
+arithmetic**, and it is much cheaper to publish the reconciliation table with the number than to
+be asked for it.
