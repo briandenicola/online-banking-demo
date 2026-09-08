@@ -16,7 +16,7 @@
  * control people mis-click.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Box, Button, Drawer, Snackbar, Stack, useMediaQuery, useTheme } from '@mui/material';
 import ErrorBoundary from '../ErrorBoundary';
 import TaskQueuePane from './TaskQueuePane';
@@ -149,12 +149,62 @@ const CopilotHarness: React.FC = () => {
     />
   );
 
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Fill the viewport from wherever this surface actually starts.
+   *
+   * This used to be `calc(100vh - 64px)`, where 64 was the app bar. That number
+   * was a second, silent statement of a fact the layout already knew, and it
+   * went stale the moment anything else was added above the surface: the
+   * comparison bar (~56px) and the demo banner both push the surface down, so
+   * the harness demanded more room than was left and the command bar — the only
+   * way to type anything — was pushed below the fold.
+   *
+   * Measuring the real offset means any chrome added above this component is
+   * handled without anyone remembering to update an arithmetic constant.
+   */
+  const [surfaceHeight, setSurfaceHeight] = useState('calc(100vh - 64px)');
+
+  useLayoutEffect(() => {
+    const element = rootRef.current;
+    if (!element) return undefined;
+
+    let lastTop = -1;
+
+    const measure = () => {
+      // Offset from the top of the document, not the viewport: a
+      // viewport-relative reading changes as the page scrolls, and feeding that
+      // back into height would oscillate.
+      const top = element.getBoundingClientRect().top + window.scrollY;
+
+      // Ignore sub-pixel churn, which is the other way this kind of loop starts.
+      if (Math.abs(top - lastTop) < 1) return;
+      lastTop = top;
+      setSurfaceHeight(`calc(100vh - ${Math.round(top)}px)`);
+    };
+
+    measure();
+
+    // Chrome above the surface can appear and disappear at runtime (the demo
+    // banner is conditional), so watch rather than measuring only on mount.
+    const observer = new ResizeObserver(measure);
+    observer.observe(document.body);
+    window.addEventListener('resize', measure);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, []);
+
   return (
     <Box
+      ref={rootRef}
       sx={{
         display: 'flex',
         flexDirection: 'column',
-        height: 'calc(100vh - 64px)',
+        height: surfaceHeight,
         overflow: 'hidden',
       }}
     >

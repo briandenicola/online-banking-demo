@@ -33,3 +33,23 @@ if (typeof (userEvent as { setup?: () => unknown }).setup !== 'function') {
     };
   };
 }
+
+/**
+ * jsdom does not implement ResizeObserver, which `CopilotHarness` uses to size
+ * the work surface against whatever chrome is above it. Every real browser has
+ * it, so this belongs in the test environment rather than being guarded for in
+ * component code — a component that quietly skips its own layout when an API is
+ * missing would hide exactly the bug this observer exists to prevent.
+ *
+ * The stub records observers without firing them. The initial measurement is a
+ * direct call, so sizing is still exercised; only re-measurement on resize is
+ * inert, and jsdom never resizes anything.
+ */
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  class ResizeObserverStub implements ResizeObserver {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+  globalThis.ResizeObserver = ResizeObserverStub;
+}
