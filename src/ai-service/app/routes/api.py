@@ -6,7 +6,19 @@ import redis.asyncio as redis
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from app.auth import UserContext, require_admin, verify_jwt
+from app.auth import (
+    UserContext,
+    require_admin,
+    require_capability_read,
+    require_observability_read,
+    verify_jwt,
+)
+
+#: The three reads below back the copilot's `risk.read` tools (`list_flagged_transactions`,
+#: `get_flagged_transaction`, `get_scored_transaction`). They are gated on that scope rather than
+#: on `admin` because the harness calls upstream with the requesting banker's token: gating a
+#: banker's own evidence on the platform role made the L2 flow impossible to complete.
+require_risk_read = require_capability_read("risk.read")
 from app.config import AGENT_FRAMEWORK_AVAILABLE
 from app.models import (
     AdminStats,
@@ -89,7 +101,7 @@ async def detect(
 
 @router.get("/api/admin/foundry-status")
 async def foundry_status(
-    user: UserContext = Depends(require_admin),
+    user: UserContext = Depends(require_observability_read),
     state: AnomalyState = Depends(get_anomaly_state),
 ):
     """Validate Foundry connectivity for transaction-categorizer and risk-assessor agents."""
@@ -137,7 +149,7 @@ async def foundry_status(
 
 @router.get("/api/admin/stats", response_model=AdminStats)
 async def get_admin_stats(
-    user: UserContext = Depends(require_admin),
+    user: UserContext = Depends(require_observability_read),
     state: AnomalyState = Depends(get_anomaly_state),
 ):
     """Return aggregated admin statistics."""
@@ -193,7 +205,7 @@ async def get_admin_stats(
 
 @router.get("/api/admin/transactions", response_model=list[ScoredTransaction])
 async def list_scored_transactions(
-    user: UserContext = Depends(require_admin),
+    user: UserContext = Depends(require_observability_read),
     limit: int = Query(50, ge=1, le=500),
     state: AnomalyState = Depends(get_anomaly_state),
 ):
@@ -212,7 +224,7 @@ async def list_scored_transactions(
 
 @router.get("/api/admin/flagged-transactions", response_model=list[FlaggedTransaction])
 async def list_flagged_transactions(
-    user: UserContext = Depends(require_admin),
+    user: UserContext = Depends(require_risk_read),
     state: AnomalyState = Depends(get_anomaly_state),
 ):
     """List all flagged transactions."""
@@ -231,7 +243,7 @@ async def list_flagged_transactions(
 @router.get("/api/admin/flagged-transactions/{tx_id}", response_model=FlaggedTransaction)
 async def get_flagged_transaction(
     tx_id: str,
-    user: UserContext = Depends(require_admin),
+    user: UserContext = Depends(require_risk_read),
     state: AnomalyState = Depends(get_anomaly_state),
 ):
     if not state.redis_client:
@@ -245,7 +257,7 @@ async def get_flagged_transaction(
 @router.get("/api/admin/scored-transactions/{tx_id}", response_model=ScoredTransaction)
 async def get_scored_transaction(
     tx_id: str,
-    user: UserContext = Depends(require_admin),
+    user: UserContext = Depends(require_risk_read),
     state: AnomalyState = Depends(get_anomaly_state),
 ):
     if not state.redis_client:

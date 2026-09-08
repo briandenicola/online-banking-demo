@@ -171,16 +171,6 @@ public class AdminController : ControllerBase
         _logger.LogInformation("Admin {AdminId} deleted user {UserId}", adminId, id);
         return Ok(new { message = "User deleted successfully" });
     }
-
-    [HttpGet("login-audits")]
-    public async Task<IActionResult> GetLoginAudits([FromQuery] int limit = 100)
-    {
-        if (limit <= 0 || limit > 1000)
-            limit = 100;
-
-        var audits = await _userService.GetLoginAuditsAsync(limit);
-        return Ok(audits);
-    }
 }
 
 public class ResetPasswordRequest

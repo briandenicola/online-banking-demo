@@ -2400,3 +2400,148 @@ survival+field-name+role+golden; agentName drift→golden only. 193 passed.
 
 LESSON banked: absent-field-as-benign nearly rode in on the demo's own service path (empty payload →
 disclosure gate silently satisfied). Same shape as the role defect, one layer deeper.
+
+---
+
+## Phase 3 check 4.3 — supervisor trace scope: the answer was "no defect", the value was three unheld guards
+
+Asked whether the blindness guarantee leaks on the AUDIT path (`approval.updated` combines both
+assessments into one persisted document). **It does not**, and I said so rather than inventing work:
+`fanout.py` awaits `supervisor.work(...)` and only THEN builds `updated_approval`. The combined
+record is assembled after both opinions exist. No read-back channel exists either — the supervisor
+holds a reader and a decider, is handed no approval/stream/sink, and `config/copilot-tools.yaml`
+declares **no tool that reads a trace**. Repeat invocations are safe for the same reason: the
+approval feeds only the post-hoc comparison, never the spawn. `/runs/{id}/trace` is owner-only via
+`_load_owned_session` (404, not 403).
+
+FAIL-vs-LIE: neither. An audit record that could NOT show both positions side by side would fail at
+its only job. **Zero production code changed** — `git diff app/` empty.
+
+**The real yield was the diagonal.** Answering the question surfaced three guards correct in logic
+and held by NO test:
+1. Ordering — guaranteed by statement order inside one function and nothing else.
+2. **The supervisor's own child trace `<run>::supervisor` was read by no test at all.** Every
+   existing sentinel scan reads `run_1`. Seeding the child's `run.started.intent` with the primary's
+   assessment — the most natural "make the trace readable for reviewers" edit there is — was
+   invisible to all 234 tests. Tamper B → exactly one red.
+3. **`get_run_trace`'s ownership check could be deleted with the full suite green**, letting any
+   authenticated banker read any other banker's plan, every read value, and both assessments. Tamper
+   C → exactly one red. THAT one would have made the demo lie, and it is Brian's stated
+   architecturally-visible class ("no user with god rights").
+
+`tests/test_supervisor_trace_scope.py` (3 tests, each anti-vacuous: the combined frame really
+exists, the child trace really has a `tool.completed`, the OWNER really gets 200). Epic §6.4.1 is
+the posture statement. 237 passed.
+
+Recorded one deliberate channel so it is not a later surprise: `reader_tool_ids` derives from
+`primary_evidence.keys()` — the read tool IDS the action required. Ids, not values; arguments bind
+from the banker's raw inputs. Bounded, and now written down.
+
+**LESSON banked (generalises past this service): where a document is assembled from two
+independently-formed inputs, the security property is the ORDERING, and ordering held only by
+statement order inside one function is not held.** Also: the honest answer to "is X a
+vulnerability?" is sometimes "no" — and the investigation still pays, because the question makes
+you read the paths nobody tests. The trace-auth gap was found while answering a different question.
+
+---
+
+## Supervisor read-only observability — per-endpoint grant, hierarchy untouched
+
+Supervisors needed background detail on L2 approvals without becoming admins. Granted 13 GET
+endpoints across ai-service, chatbot-service, user-service and prompt-eval-service. `supervisor`
+still implies only `banker`; `role-hierarchy.yaml`, `RoleHierarchy.cs` and the ratified-ladder
+tripwire were never opened.
+
+**The ASP.NET fact that shaped everything:** `[Authorize]` on a controller and on its actions is
+**ANDed, never ORed**. You cannot widen ONE action of an admin-gated controller — only loosen the
+class and narrow each action back. Which means after loosening, a NEW mutating action added without
+an attribute **inherits the permissive gate**. Absent-attribute-as-permission — the same shape as
+the role defect and the disclosure gate, third time this epic.
+
+So I split by stakes rather than applying one pattern:
+- **user-service**: MOVED `login-audits` to a new `AdminObservabilityController` (`[Route("api/admin")]`,
+  URL unchanged). `AdminController`'s blanket admin gate **never touched**. I was not willing to make
+  permissive the default on the class owning `promote` and `DELETE users/{id}`. The split is
+  structural — a mutator can't get the supervisor gate without being physically moved into a class
+  called `Observability`.
+- **prompt-eval-service**: mostly reads, lower stakes → class widened, mutators narrowed back, and
+  the fragility closed by an ENUMERATING test instead of trusting the next author.
+
+**Mechanism: one named symbol per language** (`BankingRoles.ObservabilityRead` in shared/Auth;
+`require_observability_read` in FastAPI). Not a policy (DI plumbing in every Program.cs, buys
+nothing — the role list IS the policy). Not inline strings (cheapest to write, defensible only in
+aggregate). A named symbol can be **enumerated by a test**; that is the whole reason to pay for it.
+
+**Test-shape lesson, sharp one:** `AdminSecurityTests` states in its own comments that "in unit
+tests, authorization attributes are not enforced." So calling `PromoteToAdmin` as a supervisor and
+watching it succeed proves NOTHING about the gate. **Reflection over `AuthorizeAttribute` metadata
+is the only thing in this .NET codebase that actually asserts who may call what.** Same instinct in
+Python: walk the router, assert a property of the whole surface, so a route added tomorrow is
+covered without anyone coming back here.
+
+**Diagonal — 6 tampers, 6 catches, all reverted.** The one that matters is #1: adding `supervisor`
+to `AdminController`'s class attribute is a SINGLE-WORD edit handing an L2 co-signer `promote` and
+`DELETE users/{id}` — and it left all 55 prior user-service tests green. Others: mutator added to
+the read-only controller; admin attribute dropped from `PromptsController.Delete`; the one-word
+`require_admin`→`require_observability_read` swap onto a PUT (3 reds, each for its own reason);
+`banker` widened into the Python tuple; `banker` widened into the shared C# constant.
+
+**Near-miss worth banking:** my first router scan used `app.routes`, which on this FastAPI version
+does NOT flatten included routers — it yields an opaque `_IncludedRouter` wrapper. The scan found
+ZERO routes and the read-only assertion passed **vacuously**. It was caught only because I had
+written the allow-list assertion as EQUALITY in both directions, which failed on "approved but not
+opened". A one-directional "nothing bad is present" assertion would have shipped green and defended
+nothing. Enumerate against the router, and always assert the haystack is non-empty.
+
+**Verified:** ai-service 143, chatbot 58, banker-copilot 237, user-service 56, prompt-eval 38,
+authority-service 224 + 129. All green. UI untouched (Linus owns it; his edits were in the tree and
+I left them alone).
+
+**Flagged, not mine:** `src/shared/Auth.Tests` fails 12/32 **at HEAD** — confirmed in a pristine
+`git worktree` at `9073b78`, identical before and after. `TokenScopingTests`/`RegistryGuardTests`,
+JWKS/key-material. That is the suite defending #334's "verify is not mint" property, and nobody owns
+it right now.
+
+### Capability scopes were declared, validated, and enforced nowhere (332-beta)
+
+The Banker Copilot could not complete either L2 action. Four read tools point at `/api/admin/...`
+and the harness calls upstream with the **requesting banker's own token**, so evidence gathering
+403'd, the planner never proposed, no approval existed, `requiredRung` was never `L2`, and the
+mandatory fan-out — the entire supervisor feature — never fired. A role gate on a *read* silently
+disabled a security control three layers away.
+
+**The seam already existed.** `config/authority-policy.yaml` declares `capabilityScopes`, and
+`PolicyLoader.ValidateCapabilityScopes` validates them — including rejecting any scope that names
+a seniority-0 role, which is how `admin` stays out. But nothing ever *enforced* a scope at a
+request path. Lesson worth generalising: **a config section with a validator and no consumer is
+not a half-built feature, it is a false assurance.** It reads like a control in review. Grep for
+the consumer before believing a declaration does anything.
+
+**Design that came out of it.** Gate a read on the scope it serves, not on the word in its URL.
+That unified two requests that would otherwise have grown two mechanisms — Brian's supervisor
+observability tabs and the banker's agent gathering evidence both reduce to "who may perform this
+read". `admin` is added *alongside* a scope as a platform grant, never *into* it.
+
+**Mirror, don't distribute — but test the mirror.** The services hold their own copy of the role
+tuples rather than loading policy at runtime (over-engineering for a demo). A mirror drifts in
+one dangerous direction: the ratified document says a role was removed while the running service
+keeps admitting it. Both languages now parse the YAML in a test and fail on disagreement. Cheap,
+and it keeps the document authoritative without runtime plumbing.
+
+**The path prefix was the actual defect.** `/api/admin/flagged-transactions` is a risk read. The
+URL encoded an *audience*, the audience changed, and the gate had been written from the folder
+name. Did not rename — four services, nginx, UI, e2e, no demo benefit — but noted it, because the
+next person will gate the next endpoint off its path too.
+
+**Found a worse bug while fixing this one, and did NOT fix it.** `GET
+/api/transactions/account/{accountId}` filters by the caller's own userId, so a banker reading a
+customer's account gets `200 []`. Two of the three actions will now clear the 403 and then gather
+no evidence *with a success status*. A 403 fails loudly; an empty 200 makes an agent reason
+confidently about evidence it never saw. Different seam (ownership, not role), architecture-level,
+escalated to Danny. Fixing it inside a role-gate change would have been the wrong shape.
+
+**Tamper diagonal (5, all reverted).** Widening `PUT .../override` to the read scope → 3 reds.
+`admin` into a scope tuple → 2 reds. Re-narrowing an endpoint back to admin (the outage
+regression) → 2 reds. `banker` onto `AdminController`'s class gate → 2 reds. Dropping `banker`
+from `IdentityRead` → 3 reds. The assembly-wide "every banker-reachable action is a GET" test
+earned its keep: it caught the god-rights edit that per-controller tests would have missed.
