@@ -220,5 +220,8 @@ async def test_backend_emits_the_golden_wire_envelopes():
     kinds = [e["kind"] for e in golden]
     assert kinds == ["approval.required", "approval.updated"], kinds
     updated = golden[1]["payload"]["approval"]["agentAssessment"]
-    assert updated["primary"]["verdict"] == "APPROVE"
-    assert updated["supervisor"]["verdict"] == "DECLINE"
+    # The verdict tokens are the server's OWN vocabulary, uppercased for the caption — not a
+    # translation. The previous pair ("APPROVE"/"DECLINE") froze a mapping that rendered
+    # `hold` as a refusal and `decline` as the mildest word on the screen.
+    assert updated["primary"]["verdict"] == "PROCEED"
+    assert updated["supervisor"]["verdict"] == "HOLD"

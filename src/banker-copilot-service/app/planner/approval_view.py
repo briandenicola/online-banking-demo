@@ -25,15 +25,36 @@ from typing import Any, Mapping
 PRIMARY_AGENT_NAME = "Primary agent"
 SUPERVISOR_AGENT_NAME = "Independent supervisor"
 
-# ``AgentAssessment.verdict`` (ui-app types.ts) is a free string the card renders directly;
-# the engine's internal token is ``recommendation``. Boundary ADAPTER, not a fork: recognised
-# recommendations map to the shipped labels and anything else lands on CONDITIONAL — "a human
-# must look", the safe default for the whole harness.
-_VERDICT_BY_RECOMMENDATION: dict[str, str] = {"proceed": "APPROVE", "hold": "DECLINE"}
+# ``AgentAssessment.verdict`` (ui-app types.ts) is the token the card renders; the engine's
+# internal token is ``recommendation``. They are now THE SAME WORD, deliberately.
+#
+# What was here before was a translation table — {"proceed": "APPROVE", "hold": "DECLINE"} with
+# everything else falling to "CONDITIONAL" — and it was wrong in the way that matters most:
+#
+#   * ``decline``, the STRONGEST objection the supervisor can make, matched no key and landed on
+#     the default arm, "CONDITIONAL" — the mildest word on the screen.
+#   * ``hold``, the middle verdict meaning "resolve something first", rendered as "DECLINE".
+#   * "APPROVE" and "CONDITIONAL" correspond to NO server verdict at all. "APPROVE" also
+#     contradicts the card's own rule that agents never approve, only propose.
+#   * The default arm made ``decline`` indistinguishable from "the model returned gibberish".
+#     A fallback that looks like a real verdict is how a broken pipeline reads as a mild one.
+#
+# So the adapter no longer translates. It UPPERCASES for the caption and refuses anything outside
+# the vocabulary. Presentation — label wording, colour, severity rank — belongs to the client and
+# now lives in exactly one place there (ui-app supervisorVerdict.ts), which keys on these tokens.
+#
+# The vocabulary is READ from supervisor_model rather than restated here. The import is deferred
+# because supervisor_model -> fanout -> approval_view is a real cycle at module-import time; by the
+# time a verdict is rendered every module is loaded. A restatement would be a third copy of the
+# rule that can drift from both of the two it claims to hold together.
+UNRECOGNISED_VERDICT = "UNRECOGNISED"
 
 
 def verdict_for(recommendation: str) -> str:
-    return _VERDICT_BY_RECOMMENDATION.get(recommendation.strip().casefold(), "CONDITIONAL")
+    from app.planner.supervisor_model import RECOMMENDATIONS
+
+    token = recommendation.strip().casefold()
+    return token.upper() if token in RECOMMENDATIONS else UNRECOGNISED_VERDICT
 
 
 def primary_wire_assessment(approval: Mapping[str, Any]) -> dict[str, Any]:

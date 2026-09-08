@@ -146,6 +146,50 @@ describe('disagreementOf', () => {
     expect(result.summary).toContain('Supervisor');
   });
 
+  it('names both verdicts using the server vocabulary, not the raw wire string', () => {
+    // The summary once interpolated `primary.verdict` directly, which printed the
+    // mistranslated wire label into prose — the same lie in a different medium.
+    const result = disagreementOf(demoApproval.assessments);
+    expect(result.summary).toBe('Primary recommends PROCEED. Supervisor recommends DECLINE.');
+    expect(result.summary).not.toMatch(/APPROVE|CONDITIONAL/);
+  });
+
+  it('never reports agreement when a verdict cannot be read', () => {
+    // The dangerous case: `(a||'').toUpperCase() !== (b||'').toUpperCase()` called
+    // two BROKEN verdicts identical and rendered "Independent review reached the
+    // same verdict" — the most misleading sentence this component can display.
+    const [primary, supervisor] = demoApproval.assessments;
+    const bothJunk = disagreementOf([
+      { ...primary, verdict: 'CONDITIONAL', confidence: 0.8 },
+      { ...supervisor, verdict: 'CONDITIONAL', confidence: 0.8 },
+    ]);
+    expect(bothJunk.kind).not.toBe('none');
+    expect(bothJunk.summary).not.toMatch(/same verdict/i);
+    expect(bothJunk.summary).toMatch(/could not be read/i);
+  });
+
+  it('never reports agreement when both verdicts are absent', () => {
+    const [primary, supervisor] = demoApproval.assessments;
+    const bothMissing = disagreementOf([
+      { ...primary, verdict: undefined, confidence: 0.8 },
+      { ...supervisor, verdict: undefined, confidence: 0.8 },
+    ]);
+    expect(bothMissing.kind).not.toBe('none');
+    expect(bothMissing.summary).not.toMatch(/same verdict/i);
+  });
+
+  it('still reports agreement when two REAL verdicts genuinely match', () => {
+    // Anti-vacuous counterpart: the guard above must not have made every pair
+    // disagree, which would light the divergence banner permanently.
+    const [primary, supervisor] = demoApproval.assessments;
+    const agreed = disagreementOf([
+      { ...primary, verdict: 'hold', confidence: 0.8 },
+      { ...supervisor, verdict: 'HOLD', confidence: 0.8 },
+    ]);
+    expect(agreed.kind).toBe('none');
+    expect(agreed.summary).toMatch(/same verdict/i);
+  });
+
   it('reports none when there is no supervisor opinion', () => {
     expect(disagreementOf([demoApproval.assessments[0]]).kind).toBe('none');
   });

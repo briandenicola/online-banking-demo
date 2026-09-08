@@ -68,6 +68,7 @@ import {
   validateReason,
 } from './approvalPolicy';
 import { AuthorityRungChip, ApprovalCountdown, ConfidenceBar, PayloadHashChip } from './CopilotPrimitives';
+import { verdictPresentation } from './supervisorVerdict';
 import { getCopilotConfig } from '../../config/copilotConfig';
 import { useCopilot, useNow } from './CopilotContext';
 import { signingIdentity } from './signingIdentity';
@@ -376,24 +377,32 @@ const OpinionColumn: React.FC<{
   assessment: AgentAssessment;
   divergentFactors: string[];
   independent?: boolean;
-}> = ({ assessment, divergentFactors, independent }) => (
+}> = ({ assessment, divergentFactors, independent }) => {
+  // Label, colour and rank all come from the ONE lookup keyed on the server's own
+  // vocabulary. The previous inline ternary compared against 'APPROVE' and
+  // 'DECLINE' — one of which the server never emits and the other of which it
+  // emitted for the WRONG verdict — and swept everything else, `decline`
+  // included, into the same amber "warning" arm.
+  const verdict = verdictPresentation(assessment.verdict);
+  return (
   <Paper variant="outlined" sx={{ p: 1.5, flex: 1, minWidth: 260 }}>
     <Typography variant="overline" sx={{ color: 'text.secondary' }}>
       {assessment.role === 'supervisor' ? 'Supervisor agent' : 'Primary agent'}
       {independent ? ' (independent)' : ''}
     </Typography>
     <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1, flexWrap: 'wrap' }}>
-      <Chip
-        size="small"
-        label={assessment.verdict || 'no verdict'}
-        color={
-          (assessment.verdict || '').toUpperCase() === 'DECLINE'
-            ? 'error'
-            : (assessment.verdict || '').toUpperCase() === 'APPROVE'
-              ? 'success'
-              : 'warning'
-        }
-      />
+      <Tooltip title={verdict.description}>
+        <Chip
+          size="small"
+          label={verdict.label}
+          color={verdict.color}
+          variant={verdict.variant}
+          aria-label={verdict.description}
+          data-testid={`verdict-chip-${assessment.role ?? 'unknown'}`}
+          data-verdict-color={verdict.color}
+          data-verdict-severity={verdict.severity}
+        />
+      </Tooltip>
       {typeof assessment.confidence === 'number' && <ConfidenceBar value={assessment.confidence} />}
     </Stack>
     {assessment.rationale && <Typography variant="body2">{assessment.rationale}</Typography>}
@@ -418,7 +427,8 @@ const OpinionColumn: React.FC<{
       </Stack>
     )}
   </Paper>
-);
+  );
+};
 
 /**
  * The disagreement banner.

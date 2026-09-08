@@ -275,7 +275,7 @@ async def test_the_second_opinion_never_advances_the_approval_toward_execution()
     assert approval["status"] == "pending"
     assert not approval.get("signatures")
     supervisor_assessment = approval["agentAssessment"]["supervisor"]
-    assert supervisor_assessment["verdict"] == "APPROVE"  # it agreed — and STILL nothing executed.
+    assert supervisor_assessment["verdict"] == "PROCEED"  # it agreed — and STILL nothing executed.
 
 
 @pytest.mark.asyncio
@@ -338,9 +338,9 @@ async def test_the_primary_assessment_survives_the_supervisor_update():
 
     primary = agent_assessment.get("primary")
     assert primary is not None, "the primary assessment was erased by the supervisor update"
-    # The primary PROPOSED, so it carries a proceed→APPROVE verdict the card can put opposite the
+    # The primary PROPOSED, so it carries a `proceed` verdict the card can put opposite the
     # supervisor's — without a primary verdict there is no disagreement to render.
-    assert primary["verdict"] == "APPROVE"
+    assert primary["verdict"] == "PROCEED"
 
 
 
@@ -359,5 +359,5 @@ async def test_approval_required_uses_the_shipped_approval_key():
     approval = required["payload"]["approval"]
     assert approval.get("id"), "reducer reads p.approval.id — it must be present"
     # The primary is enriched with a renderable verdict, without re-deriving from private reasoning.
-    assert approval["agentAssessment"]["verdict"] == "APPROVE"
+    assert approval["agentAssessment"]["verdict"] == "PROCEED"
     assert required["payload"]["requiredRung"] == "L2"

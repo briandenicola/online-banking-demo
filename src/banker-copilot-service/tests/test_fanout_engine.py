@@ -191,10 +191,13 @@ async def test_agreement_is_computed_after_the_fact():
     assert result.agrees_with_primary is False
     # Wire contract: the supervisor's opinion rides under `agentAssessment.supervisor` — the shape
     # the single mapper `toApproval.toAssessments` already tolerates, which assigns roles by key
-    # position. "hold" → DECLINE verdict; the UI computes disagreement from the two assessments.
+    # position. The verdict is the supervisor's OWN token, uppercased — "hold" is "HOLD", not
+    # "DECLINE". The old adapter renamed the middle verdict to the strongest one (and renamed the
+    # strongest to "CONDITIONAL"), so a supervisor asking for one more check read on screen as a
+    # flat refusal. The UI computes disagreement from the two assessments.
     updated = next(f for f in _frames(runs, "run_1") if f["kind"] == "approval.updated")
     supervisor_assessment = updated["payload"]["approval"]["agentAssessment"]["supervisor"]
-    assert supervisor_assessment["verdict"] == "DECLINE"
+    assert supervisor_assessment["verdict"] == "HOLD"
     completed = next(f for f in _frames(runs, "run_1") if f["kind"] == "subagent.completed")
     assert completed["payload"]["status"] == "complete"
 

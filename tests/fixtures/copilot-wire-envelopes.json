@@ -39,7 +39,7 @@
             "ev_3"
           ],
           "agentName": "Primary agent",
-          "verdict": "APPROVE",
+          "verdict": "PROCEED",
           "rationale": "Aggregate sits above the AML-14 trigger.",
           "citedEvidenceIds": [
             "ev_1",
@@ -128,7 +128,7 @@
               "ev_3"
             ],
             "agentName": "Primary agent",
-            "verdict": "APPROVE",
+            "verdict": "PROCEED",
             "rationale": "Aggregate sits above the AML-14 trigger.",
             "citedEvidenceIds": [
               "ev_1",
@@ -138,7 +138,7 @@
           "supervisor": {
             "agentId": "run_demo::supervisor",
             "agentName": "Independent supervisor",
-            "verdict": "DECLINE",
+            "verdict": "HOLD",
             "confidence": 0.62,
             "rationale": "The customer runs a haulage business; this reads as vendor settlement, not structuring.",
             "keyFactors": [

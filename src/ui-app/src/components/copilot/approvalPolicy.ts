@@ -24,6 +24,7 @@ import {
   TerminalReason,
 } from './types';
 import { getCopilotConfig } from '../../config/copilotConfig';
+import { normaliseVerdict, verdictPresentation } from './supervisorVerdict';
 
 // ---------------------------------------------------------------------------
 // Terminal reasons — all four must render distinctly
@@ -151,8 +152,19 @@ export function disagreementOf(assessments: AgentAssessment[]): Disagreement {
     return { kind: 'none', summary: '', divergentFactors: [] };
   }
 
-  const verdictDiffers =
-    (primary.verdict || '').toUpperCase() !== (supervisor.verdict || '').toUpperCase();
+  // Compare on the server's OWN vocabulary, not on raw wire strings. Two points:
+  //
+  //  1. A token that is not a verdict cannot be said to agree with anything. The
+  //     old `(a||'').toUpperCase() !== (b||'').toUpperCase()` reported AGREEMENT
+  //     when both sides were absent or unreadable — so a wholly broken pipeline
+  //     rendered as "Independent review reached the same verdict", which is the
+  //     single most dangerous sentence this component can display.
+  //  2. It also reported agreement between two *identical* unrecognised strings,
+  //     which is agreement by coincidence, not by review.
+  const primaryVerdict = normaliseVerdict(primary.verdict);
+  const supervisorVerdict = normaliseVerdict(supervisor.verdict);
+  const verdictUnreadable = primaryVerdict === null || supervisorVerdict === null;
+  const verdictDiffers = verdictUnreadable || primaryVerdict !== supervisorVerdict;
 
   const pc = typeof primary.confidence === 'number' ? primary.confidence : undefined;
   const sc = typeof supervisor.confidence === 'number' ? supervisor.confidence : undefined;
@@ -179,9 +191,11 @@ export function disagreementOf(assessments: AgentAssessment[]): Disagreement {
   const summary =
     kind === 'none'
       ? 'Independent review reached the same verdict.'
-      : verdictDiffers
-        ? `Primary recommends ${primary.verdict}. Supervisor recommends ${supervisor.verdict}.`
-        : 'The two agents agree on the verdict but differ sharply in confidence.';
+      : verdictUnreadable
+        ? `A verdict could not be read (primary: ${verdictPresentation(primary.verdict).label}, supervisor: ${verdictPresentation(supervisor.verdict).label}). Treat this as unreviewed, not as agreement.`
+        : verdictDiffers
+          ? `Primary recommends ${verdictPresentation(primary.verdict).label}. Supervisor recommends ${verdictPresentation(supervisor.verdict).label}.`
+          : 'The two agents agree on the verdict but differ sharply in confidence.';
 
   return { kind, summary, divergentFactors };
 }

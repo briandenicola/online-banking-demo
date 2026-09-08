@@ -102,7 +102,11 @@ export const demoApproval: Approval = {
       agentId: 'agent_primary',
       agentName: 'Transaction review',
       role: 'primary',
-      verdict: 'Recommend hold',
+      // The action is `transaction.hold.place`. The primary PROPOSED it, so its verdict is
+      // `proceed` — proceed with placing the hold. Prose verdicts ("Recommend hold") were
+      // invented vocabulary the server never emits, and on an adverse action they read
+      // backwards: "hold" is the noun in the action, not the verdict.
+      verdict: 'proceed',
       confidence: 0.81,
       rationale:
         'Amounts sit just under the $8,500 single-wire review threshold and aggregate above the AML-14 structuring trigger.',
@@ -117,7 +121,10 @@ export const demoApproval: Approval = {
       agentId: 'agent_supervisor',
       agentName: 'Independent review',
       role: 'supervisor',
-      verdict: 'Recommend release',
+      // "Recommend release" argued AGAINST placing the hold — that is `decline`, the
+      // strongest objection available, not a mild condition. Under the old label adapter
+      // this exact opinion reached the screen as "CONDITIONAL".
+      verdict: 'decline',
       confidence: 0.62,
       rationale:
         'Counterparty is a freight vendor and the customer runs a haulage business; the pattern matches invoice settlement, not structuring.',
