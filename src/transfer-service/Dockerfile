@@ -7,6 +7,10 @@ COPY Directory.Packages.props ./
 # Copy shared projects
 COPY src/shared/Contracts/*.csproj ./shared/Contracts/
 COPY src/shared/Observability/*.csproj ./shared/Observability/
+COPY src/shared/Auth/*.csproj ./shared/Auth/
+# src/shared/Auth embeds ../../../config/jwt-audiences.yaml as a resource, which
+# resolves to /config from /src/shared/Auth inside this image.
+COPY config/jwt-audiences.yaml /config/jwt-audiences.yaml
 
 # Copy transfer-service project
 COPY src/transfer-service/*.csproj ./transfer-service/
@@ -15,6 +19,7 @@ RUN dotnet restore "./transfer-service/transfer-service.csproj"
 # Copy everything else
 COPY src/shared/Contracts/. ./shared/Contracts/
 COPY src/shared/Observability/. ./shared/Observability/
+COPY src/shared/Auth/. ./shared/Auth/
 COPY src/transfer-service/. ./transfer-service/
 
 WORKDIR /src/transfer-service
