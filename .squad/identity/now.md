@@ -1,8 +1,63 @@
 # Now — what the team is focused on
 
-**Updated:** 2026-09-04
+**Updated:** 2026-09-08 (Monday)
 **Epic:** #332 Banker Copilot — a hosted agentic harness for the banker/admin side.
-**Branch:** `squad/332-banker-copilot` (all work here; `main` holds the ratified design docs)
+**Branch:** `squad/332-phase3-supervisor` — **PR #352, open against `main`, NOT merged**
+
+---
+
+## READ THIS FIRST — where we actually are (2026-09-08)
+
+**The mandate from Brian, today, verbatim in effect:**
+
+> *"i've built the environment for this new feature we've built and i'm ready to deploy it for
+> testing. no merging to main until we fully test end to end."*
+
+**Do not merge PR #352.** Not when CI is green — it already is. Not when the suites pass — they
+already do. The gate is a **working end-to-end run against the deployed stack**, nothing less.
+Green CI is what we have *instead of* evidence, not evidence.
+
+**Phases 1–2 are merged. Phase 3 is complete and in PR #352.** CI on #352:
+
+| Job | Result |
+|---|---|
+| .NET build and test | pass |
+| Go build and test | pass |
+| Python build and test | pass |
+| ui-app build and test | pass |
+| `ui-app quarantined suites` | **fail — `continue-on-error: true`, red BY DESIGN.** 13 pre-existing failures in `account-opening/DocumentUpload.test.tsx` and `account-opening/AgentPipeline.test.tsx`. Not ours, not a blocker, do not "fix" it. |
+
+**The single most important thing to understand before you touch anything:**
+
+Until this past weekend the live path **crashed on the first approval of every run**.
+`copilotStore.ts` did `p.approval.id` unguarded while the backend emitted `{request: ...}`.
+**206 UI tests passed straight through that bug**, because `demoFixture.ts:424` emits `approval:`
+and therefore agreed with the reducer rather than with the service. The demo proved the reducer;
+it never once proved the service.
+
+So: **every green suite in this document is unit-level or golden-file-level. Nothing here has ever
+run over HTTP.** Treat "the tests pass" as a statement about the tests.
+
+### Do this, in this order
+
+1. **Start the stack — `task local:run`.** Not `docker compose up -d`. The checklist used to say
+   otherwise and it is wrong; see the Monday section. Images are built but have **never been
+   started anywhere**. Expect first-run breakage and treat it as expected, not as alarming.
+2. **Checklist §1.1 — `writeTools: 0` from the deployed image.** Unit tests assert this over the
+   in-process registry. This asserts it over what the running container exposes. If these two
+   disagree, the deployed image is not the audited code — **stop, and reconcile before anything
+   below.**
+3. **§2.7 + §5.1 — the flagship moment over the wire.** Banker intent → L2 action → supervisor
+   second opinion → dual-control card renders **both** assessments. Plausible for the first time
+   (SSE now routes through `toApproval`), never once exercised over HTTP.
+4. **§4.2 — does the supervisor ever *genuinely disagree*?** The highest-value check in the epic and
+   the one whose **failure looks exactly like success**: a supervisor that agrees 100% of the time
+   gives you green screens and a smooth demo while the invariant is hollow. The golden fixture
+   proves the machinery *can* express disagreement; whether the live decider ever *does* is unknown.
+   **Watch the agreement rate, not the pass/fail.**
+5. Only after 1–4 genuinely pass end to end, ask Brian about merging. **Never merge on your own.**
+
+Checklist lives at `docs/design/banker-copilot-deployment-verification.md`.
 
 ---
 
@@ -306,9 +361,12 @@ reason. Prove it by tampering each condition alone and reading the diagonal.
 
 ### Honest non-ticks
 
-- `fanout.py` is imported by **nothing outside its own tests** — no route reaches
-  `build_supervisor_input`. The engine is built and unit-proven; **wiring is Phase 4**. Agreed by
-  Turk and the coordinator, recorded so nobody mistakes it for done.
+- ~~`fanout.py` is imported by **nothing outside its own tests** — no route reaches
+  `build_supervisor_input`. The engine is built and unit-proven; **wiring is Phase 4**.~~
+  **FALSE — struck 2026-09-08.** It was already wired at `6b0db49`: `loop.py:197` calls
+  `run_second_opinion`. This claim originated in a QA report, was repeated by the coordinator
+  without verification, and Turk disproved it with the line number. Recorded rather than deleted
+  because the *failure mode* matters: an unverified claim was restated until it read as fact.
 - No Foundry endpoint here: the fan-out loop under a real model is unexercised, as is whether the
   supervisor ever genuinely *disagrees*. A 100%-agreement supervisor is a rubber stamp and would
   present as success — this is item 4.2 of the deployment checklist and the highest-value thing to
@@ -326,10 +384,140 @@ surfaces get different counting rules and the comparison Phase 5 exists to enabl
 
 ---
 
+## Weekend of 2026-09-06/07 — six commits since Phase 3, all pushed, all in PR #352
+
+`6b0db49` Phase 3 · `c1ddd12` mutation repair · `0392969` `a0d0589` `c523311` envelope ·
+`86bbf9b` SSE mapper · `125cdcd` container build.
+
+### The wire contract — SETTLED. Do not relitigate.
+
+There is **ONE mapper**: `toApproval` at `src/ui-app/src/api/authorityWire.ts:292`. REST called it
+7×; **SSE bypassed it entirely — zero calls. That asymmetry was the root defect.** `86bbf9b` routes
+SSE through it. The supervisor rides as `agentAssessment.supervisor`, and `toAssessments`
+(`authorityWire.ts:232-259`) derives `role` **structurally from the key**, which kills the role bug
+by construction rather than by a check.
+
+**The backend must NOT client-shape the payload.** This was litigated and settled the hard way:
+the coordinator ruled that it should, Turk overturned the ruling with code, and the coordinator
+verified all three of his claims and conceded. Backend shaping forces either a duplicated
+`flattenPayload` in Python or an emitted `payload: []` — and **`[].every()` is `true` in
+JavaScript**, so an empty payload makes `disclosureSatisfied` *vacuously true* and silently
+defeats the disclosure gate. Backend emits **wire** shape. The UI maps. Once.
+
+The handshake is frozen in `tests/fixtures/copilot-wire-envelopes.json` — **a single shared
+statement of the shape, read by both the Python and the UI tests**, holding a real primary-`APPROVE`
+vs supervisor-`DECLINE` disagreement. Verified to **throw when absent** (deleted it to check).
+Regenerate only via `COPILOT_REGEN_GOLDEN=1`, and **never to make a test pass** — that inverts it
+from an oracle into a mirror.
+
+### Mutation testing — repaired, and it found something real
+
+Three faults: mutmut was installed **unpinned** so 3.x arrived silently and broke a 2.x invocation
+(now `mutmut==3.7.0`); **`|| true` masked the failure**, making a run that never started look
+identical to one with nothing to report (removed — verified mutmut exits 0 with survivors and
+non-zero only when it cannot run); and `conftest.py` computed `REPO_ROOT` by fixed depth while two
+sibling modules **restated** it at a different depth, all three breaking when mutmut 3.x copies
+source into a deeper `mutants/` sandbox. Now one walk-up helper that **raises** when it finds no
+marker; the duplicates **import** it.
+
+First real run: **873 mutants, 517 killed, 356 survived.** One was a genuine defect — in
+`_confine_to_one_segment` (`app/tools/executor.py:92`), flipping `or`→`and` makes the
+control-character check **unsatisfiable**, and all 177 tests stayed green. Now pinned with each half
+of the `or` isolated plus a positive control.
+
+**Equivalent mutant, recorded so nobody wastes a day on it:** `quote(raw, safe="")` → `quote(raw)`
+survives *correctly* — `/` is already refused by `_SEGMENT_BREAKERS`, so no input distinguishes them.
+
+### Container build — was broken repo-wide, and NOT by this epic
+
+`user-service` failed identically on `main`. Three compounding causes: `src/shared/Auth` was
+referenced by all six .NET csprojs and COPYed by none of their Dockerfiles; the `.dockerignore`
+allowlist never listed `authority-service`, `banker-copilot-service`, `src/shared/Auth`, or the
+config files; and `shared/Auth` embeds `config/jwt-audiences.yaml` resolving to `/config` in-image,
+so allowlisting was necessary but not sufficient — nothing COPYed it there. `125cdcd` fixes all
+three. Result: **all 13 images, zero errors.**
+
+**ACR remains UNPROVEN.** Images were built **locally with BuildKit**. `az acr build` compiles
+ignore rules to anchored regexes in Python (`_archive_utils.py`) with different semantics, and our
+allowlist re-includes *individual files* inside a directory excluded by `*`. Rules deliberately
+carry **no trailing slashes** (`az acr build` only strips them for `!` negations, so `foo/`
+silently never matches — this once took a context from 323 MiB to 0.2 MiB). That reasoning is
+sound but **untested**. One `task cloud:build` against `modelosprey55220acr` settles it; watch that
+the upload context stays ~1 MiB.
+
+### Verified baselines as of `125cdcd` (re-measured, not carried forward)
+
+| Suite | Result |
+|---|---|
+| .NET | **482 passed** |
+| Python — banker-copilot | **193 collected** (was 177 at Phase 3) |
+| ui-app blocking | **20 suites / 212 tests** (was 19/206), using CI's exact quarantine regexes |
+
+---
+
+## Monday 2026-09-08 — deploy for testing
+
+**Environment is built.** Azure logged in (`BJD_Core_Subscription`,
+`ccfc5dda-43af-4b5e-8cc2-1dda18f2382e`), kubectl context `model-osprey-55220-aks`, ACRs include
+**`modelosprey55220acr`** (Premium, same RG as AKS). Docker 27.3.1 running locally; all 13 images
+built. **The stack has never been started.**
+
+**Use `task`, never ad-hoc commands.** `task local:run` = `docker compose --env-file .env up -d
+--build` **with an `_init-env` dependency**. Bare `docker compose up -d` skips both the env file and
+`_init-env` — the coordinator made exactly this mistake on Friday. Targets live in
+`tasks/Taskfile.{local,cloud,e2e,lint}.yml`.
+
+**KNOWN DOC BUG, not yet fixed:** `docs/design/banker-copilot-deployment-verification.md` §"Running
+the stack" says `task build` then `docker compose up -d`. **That is the wrong command** and it will
+teach every reader the same mistake. Fix it to `task local:run`. Brian was asked and the session
+ended before he answered — **confirm with him first.**
+
+### Change control — Brian's rules, in force
+
+- **Confirm before ANY action touching his machine or Azure** — builds, containers, deploys,
+  deletes. Reading files unprompted is fine. This rule exists because the coordinator removed 16 of
+  his containers, built 13 images and tried to start the whole stack, none of it asked for. He said:
+  *"i don't want you to go off ever and do things without my oversight."*
+- **PR always. Never merge to `main` directly, and not at all until end-to-end testing passes.**
+- **Skip coverage metrics entirely** — mutation testing only.
+- Ensure a fix lands **in the code**, not just in local machine state.
+- Don't overengineer.
+
+### Still unproven — the honest list
+
+- The stack has never run. Live SSE, co-signature round-trip, and Cosmos trace durability are all
+  unexercised over HTTP.
+- Whether the supervisor genuinely disagrees (§4.2). **Failure here presents as success.**
+- ACR build path (above).
+- Two pre-existing health endpoints fail open (`budget-service`, `chatbot-service`) — flagged,
+  out of scope, do not scope-creep into them.
+- `.squad/decisions/inbox/` (gitignored) holds Turk's and Linus's decision records; they should be
+  promoted into tracked `records/` and indexed.
+
+---
+
 ## Standing notes
 
 - Background agents do NOT survive a CLI crash; work on disk does. Recovery is: read this file,
   run the builds/tests, re-spawn lanes with full context.
+- **Docker images HAVE now been built** (all 13, `125cdcd`) — the older note saying otherwise is
+  superseded. They have still never been *started*.
+- **THE RECURRING LESSON — duplication is the bug.** Every major defect this epic has produced lived
+  in a **seam between two independently-stated facts, each internally coherent**: two statements of
+  the repo root; two statements of the approval envelope; the demo fixture stating the shape the
+  reducer wanted while the service stated another. The fix is never to reconcile the two copies —
+  it is to **delete one side** so there is nothing left to drift.
+- **The fail-open-on-absent-field family — found ~6 times now.** `callerMaySign === true` vs
+  `!== false` (differs only on `undefined`); a role-less assessment rendering as primary;
+  `[].every()` being `true`; `NullAuditPublisher` logging no warning; Cosmos returning zero rows
+  rather than an error. Counter-example done right: `manifest.py:287` defaults to `True`
+  *specifically so that absence raises*. When you see a new field, ask what an **absent** one does.
+- **A guard protected only in aggregate erodes silently.** Where several conditions defend one
+  invariant, each needs a test that fails for **its own reason**. Break each condition **alone** and
+  read the diagonal.
+- **Verify, don't relay.** Two claims in this file's history were wrong because a report was
+  repeated without checking (`fanout.py` unwired; the backend-shaping ruling). Both were caught by a
+  specialist who brought line numbers. Bring line numbers.
 - Unproven and honestly flagged: Cosmos trace durability, workload-identity RBAC, authority
   round-trip, UI e2e, real-model tool choice, deployed gateway, and the SSE path (needs one
-  `curl -N` at MVP). Docker images have never been built — no daemon in this environment.
+  `curl -N`). **Docker daemon and images are no longer a blocker — see Monday section.**
