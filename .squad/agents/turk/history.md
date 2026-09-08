@@ -2334,3 +2334,32 @@ closed from `config/harness-limits.yaml`; no literals in the engine. Boot still 
 **Believed, not proved:** that Linus's actual TS reducer renders `opinions[]` unchanged — I matched
 §4.2 field-for-field but did not run the UI. Flagged in the decision record as a contract question
 for the coordinator if the UI disagrees; I did NOT fork the envelope on a guess.
+
+---
+
+## Phase 3 addendum — envelope arbitration (shipped TS wins) + role defect
+
+Coordinator arbitrated the `approval.updated` envelope after verifying `0392969`. My §4.2-shaped
+emit was right against the DOC and wrong against the CODE — the doc had drifted. Shipped
+`types.ts:445` is `{approval: Approval}` with `Approval.assessments: AgentAssessment[]`; the word
+`opinions` is nowhere in `types.ts`; the reducer reads `event.payload.approval`. My
+`{request:{opinions:[]}}` would have been dropped on the floor — the flagship opinion invisible,
+the exact failure relocated one layer out. **Lesson reinforced: "believed, not proved" against an
+unrun UI is where this bit me. Matching a prose doc field-for-field is not proof; the executable
+contract is.**
+
+Applied per ruling (delete a side, don't reconcile):
+- `approval.updated` → `{approval: updated_approval}`, supervisor appended to `assessments[]` as an
+  `AgentAssessment` (`_supervisor_assessment`, was `_supervisor_agent_opinion`).
+- **Role defect:** `AgentAssessment.role?` is optional and `ApprovalCard.tsx:382` renders a
+  role-less assessment AS THE PRIMARY. Set `role: "supervisor"` explicitly + unconditionally.
+- Corrected doc §4.2 to the shipped shape with a "code is authoritative" note.
+
+New guards, tamper diagonal: N (emit key `approval`→`request`) → field-name contract test red;
+Role (`del` the role key) → role-pin test red. Reverted → **190 passed**.
+
+**FLAG left for coordinator:** live SSE render still incomplete — `copilotStream.ts` applies no
+`toApproval` and `putApproval` replaces, so `event.payload.approval` must already be client-shaped;
+the backend holds the wire shape and `approval.required` (loop.py) shares the gap. Demo uses
+`demoFixture.ts` so not Monday-critical. Did NOT synthesise the primary assessment here (that is
+`approval.required`'s job — would fork responsibility).

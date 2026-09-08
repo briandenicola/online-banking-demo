@@ -189,13 +189,14 @@ async def test_agreement_is_computed_after_the_fact():
 
     # Primary proposed (recommendation "proceed"); supervisor said "hold" → disagreement.
     assert result.agrees_with_primary is False
-    # §4.2: the structural opinion surfaces on the approval as an AgentOpinion (role='supervisor').
-    # "hold" maps to the DECLINE verdict; the UI computes disagreement from the two opinions[].
+    # Shipped contract (types.ts): the structural opinion surfaces on the approval as an
+    # AgentAssessment (role='supervisor') under approval.assessments[]. "hold" → DECLINE verdict;
+    # the UI computes disagreement from the two assessments[].
     updated = next(f for f in _frames(runs, "run_1") if f["kind"] == "approval.updated")
-    supervisor_opinion = next(
-        o for o in updated["payload"]["request"]["opinions"] if o["role"] == "supervisor"
+    supervisor_assessment = next(
+        a for a in updated["payload"]["approval"]["assessments"] if a["role"] == "supervisor"
     )
-    assert supervisor_opinion["verdict"] == "DECLINE"
+    assert supervisor_assessment["verdict"] == "DECLINE"
     completed = next(f for f in _frames(runs, "run_1") if f["kind"] == "subagent.completed")
     assert completed["payload"]["status"] == "complete"
 

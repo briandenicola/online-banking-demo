@@ -221,15 +221,15 @@ async def test_no_supervisor_authored_frame_echoes_the_primary_sentinel():
             f"{frame['kind']} echoed the primary sentinel"
         )
 
-    # ``approval.updated`` carries the whole ApprovalRequest, which LEGITIMATELY includes the
-    # primary's own agentAssessment (the contract keeps the primary opinion on the approval). The
-    # blind guarantee is narrower and sharper: the SUPERVISOR's appended opinion — its verdict,
-    # rationale, factors and cited evidence — must contain no primary token.
+    # ``approval.updated`` carries the whole Approval, which LEGITIMATELY includes the primary's
+    # own assessment (the contract keeps the primary on the approval). The blind guarantee is
+    # narrower and sharper: the SUPERVISOR's appended assessment — its verdict, rationale, factors
+    # and cited evidence — must contain no primary token.
     updated = next(f for f in frames if f["kind"] == "approval.updated")
-    supervisor_opinion = next(
-        o for o in updated["payload"]["request"]["opinions"] if o["role"] == "supervisor"
+    supervisor_assessment = next(
+        a for a in updated["payload"]["approval"]["assessments"] if a["role"] == "supervisor"
     )
-    assert PRIMARY_SENTINEL not in json.dumps(supervisor_opinion)
+    assert PRIMARY_SENTINEL not in json.dumps(supervisor_assessment)
 
     # And the primary DID surface it — proving the sentinel was live and the scan is meaningful.
     assert any(
@@ -272,9 +272,46 @@ async def test_the_second_opinion_never_advances_the_approval_toward_execution()
     assert "approval.terminal" not in kinds
 
     updated = next(f for f in frames if f["kind"] == "approval.updated")
-    request = updated["payload"]["request"]
-    # The supervisor added an OPINION (evidence), not a signature, and did not advance the state.
-    assert request["status"] == "pending"
-    assert not request.get("signatures")
-    supervisor_opinion = next(o for o in request["opinions"] if o["role"] == "supervisor")
-    assert supervisor_opinion["verdict"] == "APPROVE"  # it agreed — and STILL nothing executed.
+    approval = updated["payload"]["approval"]
+    # The supervisor added an ASSESSMENT (evidence), not a signature, and did not advance state.
+    assert approval["status"] == "pending"
+    assert not approval.get("signatures")
+    supervisor_assessment = next(a for a in approval["assessments"] if a["role"] == "supervisor")
+    assert supervisor_assessment["verdict"] == "APPROVE"  # it agreed — and STILL nothing executed.
+
+
+@pytest.mark.asyncio
+async def test_approval_updated_payload_uses_the_shipped_field_names():
+    """Cross-language drift is what hid the second opinion once already: the doc said
+    `{request:{opinions[]}}` while the shipped reducer reads `event.payload.approval` and the card
+    reads `approval.assessments[]`. This asserts the EMITTED payload's field NAMES against the
+    shipped `types.ts` contract, so the two sides parting again fails here, loudly and cheaply."""
+    spy = _SpyDecider()
+    runs, _ = await _drive("L2", spy)
+    updated = next(f for f in _frames(runs, "run_1") if f["kind"] == "approval.updated")
+
+    # types.ts: ApprovalUpdatedPayload = { approval: Approval }; Approval.assessments: AgentAssessment[].
+    assert "approval" in updated["payload"], "reducer reads event.payload.approval — not 'request'"
+    assert "request" not in updated["payload"], "the doc's 'request' key is dropped on the floor by the UI"
+    approval = updated["payload"]["approval"]
+    assert "assessments" in approval, "ApprovalCard reads approval.assessments[] — not 'opinions'"
+    supervisor = next(a for a in approval["assessments"] if a.get("agentName") == "Independent supervisor")
+    # The AgentAssessment field names the card actually consumes (types.ts:207-216).
+    for field_name in ("agentId", "agentName", "role", "verdict", "confidence", "rationale", "keyFactors", "citedEvidenceIds"):
+        assert field_name in supervisor, f"AgentAssessment.{field_name} missing — the card reads it"
+
+
+@pytest.mark.asyncio
+async def test_the_supervisor_assessment_declares_its_role_explicitly():
+    """ApprovalCard.tsx renders a role-less assessment AS the primary agent. So the supervisor's
+    dissent, if it omitted `role`, would paint as the primary on the dual-control card — absent
+    field reading as the benign case, the exact shape this epic has been bitten by four times. The
+    role must be present and equal to 'supervisor' on the EMITTED payload."""
+    spy = _SpyDecider()
+    runs, _ = await _drive("L2", spy)
+    updated = next(f for f in _frames(runs, "run_1") if f["kind"] == "approval.updated")
+    assessments = updated["payload"]["approval"]["assessments"]
+
+    supervisor = [a for a in assessments if a.get("role") == "supervisor"]
+    assert len(supervisor) == 1, "exactly one assessment must self-identify as the supervisor"
+    assert supervisor[0]["role"] == "supervisor"

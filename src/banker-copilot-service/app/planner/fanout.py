@@ -550,18 +550,20 @@ class FanOutEngine:
                 "finalSeq": child_stream.last_seq + 1,
             },
         )
-        # §4.2 ApprovalUpdatedPayload: {request: ApprovalRequest}. The supervisor's opinion is
-        # appended to opinions[] as an AgentOpinion (role='supervisor') — the ONE contract home
-        # for a structured second opinion (ApprovalRequest doc: "supervisor present iff
-        # requiredRung === 'L2'"). It is EVIDENCE for a human, never a signature: no signature is
-        # added and the state is left exactly as it arrived. Agreement is not emitted — the UI
-        # computes disagreement from the two opinions[] entries (DualControlApprovalCardProps).
-        updated_request = dict(approval)
-        existing_opinions = list(updated_request.get("opinions") or [])
-        updated_request["opinions"] = existing_opinions + [
-            _supervisor_agent_opinion(subagent_run_id, opinion, reader_tool_ids)
+        # Shipped contract (ui-app `types.ts`): ApprovalUpdatedPayload = { approval: Approval }, and
+        # Approval.assessments is AgentAssessment[] (the reducer at copilotStore.ts reads
+        # `event.payload.approval`; the card at ApprovalCard.tsx filters `assessments` on
+        # role === 'supervisor'). The DOC's §4.2 said `{request}` / `opinions[]` — it had drifted
+        # from the code, and the code wins (it renders pixels and is test-covered). The supervisor
+        # is appended to assessments[] as an AgentAssessment. It is EVIDENCE for a human, never a
+        # signature: no signature is added and the state is left exactly as it arrived. Agreement
+        # is not emitted — the UI derives disagreement from the two assessments[] (disagreementOf).
+        updated_approval = dict(approval)
+        existing_assessments = list(updated_approval.get("assessments") or [])
+        updated_approval["assessments"] = existing_assessments + [
+            _supervisor_assessment(subagent_run_id, opinion, reader_tool_ids)
         ]
-        await stream.emit("approval.updated", {"request": updated_request})
+        await stream.emit("approval.updated", {"approval": updated_approval})
 
         return FanOutResult(
             second_opinion=opinion,
@@ -578,10 +580,10 @@ def _primary_recommendation(approval: Mapping[str, Any]) -> str:
     return str(assessment.get("recommendation") or "proceed")
 
 
-# §4.2 AgentOpinion.verdict is a closed enum; SecondOpinion.recommendation is the engine's
-# internal token. This is a boundary ADAPTER, not a fork of the contract: the recognised
-# recommendations map to the enum and anything a real model returns lands on CONDITIONAL —
-# "a human must look", which is the safe default for the whole harness.
+# Shipped `types.ts` AgentAssessment.verdict is a free string the card renders directly;
+# SecondOpinion.recommendation is the engine's internal token. This is a boundary ADAPTER, not a
+# fork: the recognised recommendations map to the shipped verdict labels and anything a real model
+# returns lands on CONDITIONAL — "a human must look", the safe default for the whole harness.
 _VERDICT_BY_RECOMMENDATION: dict[str, str] = {"proceed": "APPROVE", "hold": "DECLINE"}
 
 
@@ -589,13 +591,19 @@ def _verdict_for(recommendation: str) -> str:
     return _VERDICT_BY_RECOMMENDATION.get(recommendation.strip().casefold(), "CONDITIONAL")
 
 
-def _supervisor_agent_opinion(
+def _supervisor_assessment(
     agent_id: str, opinion: "SecondOpinion", cited_evidence_ids: tuple[str, ...]
 ) -> dict[str, Any]:
-    """Map the structural ``SecondOpinion`` onto §4.2 ``AgentOpinion`` (role='supervisor').
+    """Map the structural ``SecondOpinion`` onto the shipped ``AgentAssessment`` (ui-app
+    ``types.ts``), role='supervisor'.
 
-    Nothing here is authored prose the supervisor could have echoed the primary into: the
-    verdict is derived from its structural recommendation, the rationale is its own structural
+    ``role`` is set EXPLICITLY and UNCONDITIONALLY. Every field of AgentAssessment is optional,
+    and ``ApprovalCard.tsx`` renders a role-less assessment as "Primary agent" — so an omitted
+    role would paint the supervisor's dissent AS the primary on the dual-control card, at the
+    demo's peak. Absent-field-as-benign-case is the exact shape this epic has been bitten by.
+
+    Nothing here is authored prose the supervisor could have echoed the primary into: the verdict
+    is derived from its structural recommendation, the rationale is its own structural
     counter-argument, and the cited evidence is the ids of the tools it re-ran itself.
     """
     return {
