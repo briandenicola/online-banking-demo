@@ -2146,3 +2146,50 @@ unaudited surface sitting beside a governed one is an **incentive**, not just an
 heavy approval load the rational move becomes "just use the other UI" and the ladder degrades to
 opt-in. In a demo nobody is under load, so the incentive is inert. That framing is what makes the
 caveat defensible now and obviously urgent later.
+
+---
+
+## 2026-09-08 — Gate B, the evidence contract seam (`danny-evidence-contract-ruling.md`)
+
+Ruled **for Turk's declared projection**, with three amendments. Two config files, each reviewed
+and correct in isolation, mutually unsatisfiable, untested on both sides — 6 of 6 L2-reachable
+actions refused at propose, so the co-signature feature had never once executed.
+
+**The thing worth remembering:** the fix everyone agreed on would have shipped a lie. Turk,
+Livingston and Brian all converged on "project the tool output into the contract shape." Correct
+for `get_account` and `list_account_transactions`. But `list_login_audits` has **no `userId`
+anywhere** — not in the response, not in the arguments, not in the path; the upstream filters by
+recency only, and *the tool's own description says so*. Its projection could only source `userId`
+from the proposal payload, producing an approval record asserting "user X's recent logins, N of
+them" over a global unfiltered list. **A formatting fix becomes a false statement in an audit
+artifact about a security action** — and `user.unlock` is where a reviewer leans on it hardest.
+Found only by reading the tool's *parameters* rather than its response shape, which is the field
+everyone else was looking at.
+
+**Generalisable rule I want to reuse:** a projection is legitimate only where the subject identity
+is *already determined by the call that was made*. `$args` is safe (it describes the HTTP call that
+happened, and the trace can check it); the proposal payload never is (the proposer stamps its own
+conclusion onto its own evidence). That single line decides the grammar, and it is what quarantines
+`list_login_audits` instead of papering over it.
+
+**Overruled Turk on test placement, and the reason generalises.** He proposed the seam test on the
+Python side. A Python test asserting "the projected object has the required fields" re-implements
+`EvidenceComplete` in a second language — a *third* document holding a seam between two, which
+silently stops holding the moment the C# predicate is strengthened. Ruled it into
+`authority-service.UnitTests` (which already exists) so it calls the **real** predicate. Committing
+this repo's signature defect a third time, inside the fix for the second, was a live risk.
+
+**Also refused "neither config file should move much" as an absolute.** `get_user` wants `status`;
+the tool returns `isActive`. Renames are legitimate only when they *add* specificity to the same
+value (`id` → `accountId`); swapping one concept for another puts `true` in a field called `status`
+and calls it evidence. That one is a policy bug and the policy moves.
+
+**Scope held to two tools, one loader change, one test** — exactly `account.balance.adjust`'s
+evidence, the only L2 action clearing Gate A unaided. Deferred with names attached: the
+evidence↔payload identity cross-check (converts a proposer's claim into a checked one) and the
+per-key provenance envelope, both **required before `main`, not before the demo**.
+
+**Brian's test is a good instrument and I should keep using it.** *Does the defect make the demo
+FAIL, or make it LIE?* It disposed of relaxing `EvidenceComplete` in one line (the check would
+survive in the code and the narration as a tautology that can never fail), and it is what
+promoted the `list_login_audits` finding from a footnote to a ruling.

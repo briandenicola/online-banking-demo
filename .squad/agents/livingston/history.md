@@ -1187,3 +1187,7 @@ from zero `"Supervisor second opinion"` lines. Correct conclusion, but my probe 
 times on the same pod and none of them appear either. The inference holds for *the service*; it
 would silently mislead anyone reusing it as a general detector, so I wrote that down next to the
 finding rather than letting the method propagate unqualified.
+
+## 2026-09-08 — Gate B ruling: evidence contract architecture
+
+Gate B (evidence completeness validation) has been ruled on by Danny. Full ruling: `docs/design/gate-b-evidence-contract-ruling.md`. Turk owns implementation of the declared-projection adapter across `config/copilot-tools.yaml`, `executor.py`, and the C# seam test in `authority-service.UnitTests`. Livingston owns fixture validation and measurement of the two-tool subset (`get_account`, `list_account_transactions`). Both gates (A + B) must pass before the co-signature feature can execute in production.

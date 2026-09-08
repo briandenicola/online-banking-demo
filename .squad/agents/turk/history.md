@@ -2545,3 +2545,25 @@ escalated to Danny. Fixing it inside a role-gate change would have been the wron
 regression) → 2 reds. `banker` onto `AdminController`'s class gate → 2 reds. Dropping `banker`
 from `IdentityRead` → 3 reds. The assembly-wide "every banker-reachable action is a GET" test
 earned its keep: it caught the god-rights edit that per-controller tests would have missed.
+
+**Postscript — the authorization fix was necessary and not sufficient.** Livingston proved a second
+gate downstream: `PolicyEvaluator.EvidenceComplete` (`PolicyEvaluator.cs:211`) opens with
+`if (evidence[key] is not JObject supplied) return false`, and three read tools return bare arrays.
+No field rename can satisfy an object-shaped requirement with an array, so Gate B blocks 6 of 6 L2
+actions while Gate A blocked 4. Two config files, each individually reviewed, mutually
+unsatisfiable, with no test spanning the seam between them.
+
+Two lessons I want to keep. First: **when a fix is proven necessary, check separately whether it is
+sufficient** — I had verified my endpoints returned 200 and inferred the flow would proceed, which
+is exactly the reasoning error of testing one gate and claiming the pipeline. Second, and more
+general: every defect found on this repo today has been *unheld across a file boundary* rather than
+wrong within a file. Guards here are strong locally and absent at seams. That is where to look
+first, not last.
+
+Declined to expand scope into Gate B — different problem, deserves sizing rather than bolting onto
+an authorization change. Recorded my read (adapter, declared projection, cross-document test) and
+escalated the project-vs-relax choice to Danny as a narrow architectural call.
+
+## 2026-09-08 — Gate B ruling: evidence contract architecture
+
+Gate B (evidence completeness validation) has been ruled on by Danny. Full ruling: `docs/design/gate-b-evidence-contract-ruling.md`. Turk owns implementation of the declared-projection adapter across `config/copilot-tools.yaml`, `executor.py`, and the C# seam test in `authority-service.UnitTests`. Livingston owns fixture validation and measurement of the two-tool subset (`get_account`, `list_account_transactions`). Both gates (A + B) must pass before the co-signature feature can execute in production.

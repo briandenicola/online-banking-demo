@@ -806,3 +806,128 @@ A related class is recorded across the QA entries: **five tests that could not
 fail for the right reason**, all with full line coverage — including a security
 audit that passed vacuously on every machine but its author's. This is why this
 repo uses mutation testing and does not track coverage.
+
+---
+date: 2026-09-08
+author: Danny (Lead/Architect)
+status: ruled
+component: epic/banker-copilot — #332 Phase 3
+---
+
+# Gate B: the evidence contract seam — ARCHITECTURAL RULING
+
+**→ Full ruling: `docs/design/gate-b-evidence-contract-ruling.md`** (~21KB, preserved for reference)
+
+## Summary
+
+Gate B (evidence completeness validation) blocks **all L2 actions in production**. The co-signature feature has never executed once. After replacing the scripted supervisor with a real decision model, measurement proved that two independent gates must both pass: Gate A (evidence scope enforcement, fixed by Turk, commit `e737086`) and Gate B (evidence contract).
+
+**RULING: Adopt Turk's declared-projection adapter** (`evidenceProjection` in `config/copilot-tools.yaml`, Python-side, applied beside `redaction`) **with three amendments:**
+
+1. **Closed, non-computational grammar:** Four verbs only (`rename`, `bind`, `count`, `collect`). No literals, filters, defaults, or cross-tool refs. Must be lossless (no field drops).
+2. **`list_login_audits` gets NO projection** (§R5). Tool lacks `userId` parameter; a projection there would fabricate the subject identity, turning an unfiltered global audit list into a subject-scoped record — a false statement in an audit artifact. `user.lock` and `user.unlock` remain blocked.
+3. **`get_user.status` is policy-side correction** (§R6). `isActive` (boolean) ≠ `status` (state name). Correct the policy, not the tool.
+
+**Why alternatives lose:**
+- *Relax `EvidenceComplete` to accept bare arrays* — rejected, and worst option on table. `loop.py:330` already guarantees `evidence[tool_id]` exists; accepting arrays makes the check a tautology that passes while lying. Demo would pass, system lies.
+- *Change five service response shapes* — rejected. Breaks public APIs (UI + external consumers), mid-validation. Also ineffective (three tools return bare arrays → still need adapter).
+- *Do nothing* — rejected. L2-reachable actions refuse at propose, check 4.2 stays unmeasurable, feature never ships.
+
+**Test location: C# (`authority-service.UnitTests`)**, not Python. Runs the real `EvidenceComplete` against declared projections + recorded sample responses, enumerating every action's required evidence. Projection on Python side is implementation; seam is architecture.
+
+**Scope for this session:** Two tools only (`get_account`, `list_account_transactions` — the `account.balance.adjust` evidence set). Success signal: `approval.required` frame with `requiredRung: "L2"`, followed by `subagent.spawned` and supervisor logs. Unblocked: identity cross-check (§R4, before `main`), provenance envelope (§R3, before `main`), remaining tools + `list_login_audits` fix + loan tools.
+
+**Key finding (§R9):** Every defect on this repo today shares one root — **correct within its own file, unheld across a boundary**. Four times: scripted supervisor, `event-processor` README, Gate A, Gate B. This is one missing habit, not four bugs. Declared projections + seam test (§R7) establish the boundary structurally rather than by review.
+
+**Hand-off:** Turk (implementation), Livingston (fixtures + measurement), Danny (no implementation, no code change).
+
+---
+date: 2026-09-08
+author: Turk (Backend Dev)
+status: approved — commit `e737086`
+component: epic/banker-copilot — #332 Phase 3
+---
+
+# Gate A: enforce capability scopes on evidence reads
+
+L2 evidence gathering was failing because read tools were gated on `/api/admin/` path prefixes, and the harness calls upstream with the requesting banker's token, causing 403 → no evidence → no proposal → no supervisor call. The capability scopes (`risk.read`, `identity.read`) were already declared in `config/authority-policy.yaml` and validated by `PolicyLoader.ValidateCapabilityScopes`, but never enforced.
+
+**Decision:** Gate the reads on capability scope, not URL path.
+
+- Python: `require_capability_read("risk.read")` gates three `ai-service` evidence reads.
+- C#: `BankingRoles.IdentityRead` gates `/api/admin/login-audits`.
+- C#: Created `AdminObservabilityController` because ASP.NET `[Authorize]` on controller + action are ANDed, not ORed.
+
+**Self-identified error:** "I proved my fix necessary and asserted it sufficient without checking downstream." Gate A was fixed; Gate B remained blocking. Discovered during measurement phase.
+
+---
+date: 2026-09-08
+author: Livingston (Tester)
+status: approved — commit `ba7ce37`
+component: epic/banker-copilot — #332 Phase 3
+---
+
+# Check 4.2: supervisor agreement measurement (BLOCKED, unmeasurable)
+
+Check 4.2 is unmeasurable today. The mandatory L2 fan-out to invoke the supervisor model has never fired on a real copilot run (blocked by two independent gates), so `FoundryDecider` has never been called. A "0 disagreements" measurement would mean the supervisor never ran — precisely the false signal this exercise exists to kill.
+
+**Findings:**
+1. Gate A blocks with 403 (Path `/api/admin/` gated on banker role, supervisor denied)
+2. Gate B blocks with `evidence_incomplete` (even when Gate A fixed, required fields missing)
+
+An earlier draft reported component-level measurement ("7/34 agreed") from a probe with the fan-out seam stubbed. That is a **model-in-isolation test**, not a check 4.2 result. Relabelled throughout and retracted.
+
+**Supervisor polarity bug discovered.** Fixed in downstream changes.
+
+**UI fixture augmentation:** Added two self-inconsistent `role`/`effectiveRoles` fixtures to expose guards that were "absent by coincidence" — all prior fixtures happened to be consistent.
+
+---
+date: 2026-09-08
+author: Linus (Frontend)
+status: approved — commit `645b71b`
+component: epic/banker-copilot — #332 Phase 3
+---
+
+# Supervisors see read-only admin observability tabs (capability, not rank)
+
+A supervisor reviewing L2 approvals needs background (flagged transactions, audit trail, model status). The `/admin` route was gated on `isAdmin`, and supervisors are not admins. Per §5.8.2, `supervisor` and `admin` are orthogonal axes; making supervisor imply admin would let them rewrite the policy governing their own co-signature.
+
+**Decision:** `mayViewAdminObservability` capability backed by `ADMIN_OBSERVABILITY_ROLES = ['admin', 'supervisor']`. Named for the grant, not the holder.
+
+**UI hazard fixed:** Positional-tab bug in `adminTabs.ts`. Guard was "absent by coincidence" — all existing fixtures kept roles consistent. Added self-inconsistent fixtures to expose the gap.
+
+---
+date: 2026-09-08
+author: Rusty (Platform)
+status: approved — commit `4c9d8f5`
+component: epic/banker-copilot — #332 Phase 3
+---
+
+# `task demo:seed|show|reset` — rebuild for real proposal API integration
+
+Rebuilt the demo task so approvals can ONLY come from driving the real `propose` API; probes the path first and exits naming the gate rather than fabricating an empty queue.
+
+**Self-correction:** Initially said the empty queue was primarily a data problem; it was not. The issue was queue bypass (seed could mint approvals without going through the real proposal path).
+
+**Recommendation:** Split #356 into subtasks a/b/c; drop "queue populated on arrival" as an acceptance criterion (real system has populated it zero times in production).
+
+---
+date: 2026-09-08
+author: Coordinator (Scribe)
+status: in-progress
+component: epic/banker-copilot — #332 Phase 3
+---
+
+# Cross-cutting pattern: all defects today share one root
+
+Every defect found on this repo today was **correct within its own file and unheld across a boundary**. Four instances:
+
+1. **Scripted supervisor:** Always returns accept. Logic correct in isolation; no real decision model.
+2. **`event-processor` README:** States contract in isolation; consumer README never references it.
+3. **Gate A:** Capability scopes declared + validated in config; enforcement mechanism skipped entirely.
+4. **Gate B:** Evidence projection grammar needed but not enforced; contracts signed with bare arrays.
+
+This is not four bugs; it is **one missing habit, four times**: declaring two independently-true things and forgetting to hold them together. Generalization: **a guard protected only in aggregate erodes silently**. Where several conditions defend one invariant, each needs a test that fails for its own reason.
+
+**Structural fix:** Use declared, machine-checkable boundaries (schemas, closed grammars, required fixtures) instead of review norms. Seam tests live in the component that holds the authority, not in the component being authorized.
+

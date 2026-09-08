@@ -1378,3 +1378,7 @@ calling anything. Reading is how the last drift survived review. **Follow-up fil
 record: a cross-language contract test comparing the two role lists**, in the shape of
 `harnessRole.contract.test.ts` — not written yet because Turk's constants were still moving in the
 working tree while I worked.
+
+## 2026-09-08 — Gate B ruling: evidence contract architecture
+
+Gate B (evidence completeness validation) has been ruled on by Danny. Full ruling: `docs/design/gate-b-evidence-contract-ruling.md`. Turk owns implementation of the declared-projection adapter across `config/copilot-tools.yaml`, `executor.py`, and the C# seam test in `authority-service.UnitTests`. Livingston owns fixture validation and measurement of the two-tool subset (`get_account`, `list_account_transactions`). Both gates (A + B) must pass before the co-signature feature can execute in production.

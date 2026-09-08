@@ -350,3 +350,7 @@ undeployable; verified rather than assumed.
 
 47. **Register should treat HTTP 409 as "already exists" unconditionally.** Matching on the message
     text turns a re-seed into a hard failure the day someone rewords the string.
+
+## 2026-09-08 — Gate B ruling: evidence contract architecture
+
+Gate B (evidence completeness validation) has been ruled on by Danny. Full ruling: `docs/design/gate-b-evidence-contract-ruling.md`. Turk owns implementation of the declared-projection adapter across `config/copilot-tools.yaml`, `executor.py`, and the C# seam test in `authority-service.UnitTests`. Livingston owns fixture validation and measurement of the two-tool subset (`get_account`, `list_account_transactions`). Both gates (A + B) must pass before the co-signature feature can execute in production.
