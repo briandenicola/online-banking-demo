@@ -71,7 +71,7 @@ spec:
         - name: ROLE_HIERARCHY_PATH
           value: "/app/shared-config/role-hierarchy.yaml"
         - name: Jwt__JwksUri
-          value: "http://user-service:8080/.well-known/jwks.json"
+          value: "http://user-service/.well-known/jwks.json"
         # The one mediator client. Buys a broker token from user-service and nothing
         # else; deliberately absent from every other workload, above all the harness.
         - name: Jwt__MediatorClientSecret

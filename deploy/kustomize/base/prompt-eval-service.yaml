@@ -46,7 +46,7 @@ spec:
         - name: AI_SERVICE_URL
           value: "http://ai-service:80"
         - name: Jwt__JwksUri
-          value: "http://user-service:8080/.well-known/jwks.json"
+          value: "http://user-service/.well-known/jwks.json"
         envFrom:
         - configMapRef:
             name: banking-demo-config

@@ -39,7 +39,7 @@ spec:
         - name: FOUNDRY_MODEL
           value: "gpt-5.4-mini"
         - name: JWT_JWKS_URI
-          value: "http://user-service:8080/.well-known/jwks.json"
+          value: "http://user-service/.well-known/jwks.json"
         - name: JWT_AUDIENCE
           value: "banking-demo/ai"
         - name: JWT_ISSUER
@@ -91,7 +91,7 @@ spec:
         - name: AI_SERVICE_DEBUG_FOUNDRY
           value: "1"
         - name: JWT_JWKS_URI
-          value: "http://user-service:8080/.well-known/jwks.json"
+          value: "http://user-service/.well-known/jwks.json"
         - name: JWT_AUDIENCE
           value: "banking-demo/ai"
         - name: JWT_ISSUER

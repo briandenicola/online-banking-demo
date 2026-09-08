@@ -107,7 +107,7 @@ spec:
         - name: ROLE_HIERARCHY_PATH
           value: "/app/shared-config/role-hierarchy.yaml"
         - name: JWT_JWKS_URI
-          value: "http://user-service:8080/.well-known/jwks.json"
+          value: "http://user-service/.well-known/jwks.json"
         - name: JWT_AUDIENCE
           value: "banking-demo/copilot"
         - name: JWT_ISSUER
