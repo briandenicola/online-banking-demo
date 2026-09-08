@@ -143,11 +143,12 @@ async def test_l2_spawns_one_blind_supervisor_and_emits_nested_frames():
     assert "approval.updated" in kinds
 
     spawned = next(f for f in frames if f["kind"] == "subagent.spawned")
-    # §6.3: the subagent is offered the parent's reads, never propose_action.
-    assert "propose_action" not in spawned["payload"]["toolIds"]
-    # §6.4(1): raw entity ids only.
-    assert set(spawned["payload"]["entityIds"]) == {"acc_11", "tx_1"}
-    assert spawned["payload"]["parentRunId"] == "run_1"
+    # §4.2 SubagentSpawnedPayload: the trace rail renders from role/name/depth. The subagent's
+    # read allowlist (which excludes propose_action, §6.3) is proven directly against
+    # subagent_tool_ids() in the blind-construction suite, not smuggled into this frame.
+    assert spawned["payload"]["role"] == "supervisor"
+    assert spawned["payload"]["depth"] == 2
+    assert spawned["payload"]["name"] == "Independent second opinion"
 
 
 @pytest.mark.asyncio
@@ -188,8 +189,15 @@ async def test_agreement_is_computed_after_the_fact():
 
     # Primary proposed (recommendation "proceed"); supervisor said "hold" → disagreement.
     assert result.agrees_with_primary is False
+    # §4.2: the structural opinion surfaces on the approval as an AgentOpinion (role='supervisor').
+    # "hold" maps to the DECLINE verdict; the UI computes disagreement from the two opinions[].
+    updated = next(f for f in _frames(runs, "run_1") if f["kind"] == "approval.updated")
+    supervisor_opinion = next(
+        o for o in updated["payload"]["request"]["opinions"] if o["role"] == "supervisor"
+    )
+    assert supervisor_opinion["verdict"] == "DECLINE"
     completed = next(f for f in _frames(runs, "run_1") if f["kind"] == "subagent.completed")
-    assert completed["payload"]["agreesWithPrimary"] is False
+    assert completed["payload"]["status"] == "complete"
 
 
 @pytest.mark.asyncio
@@ -245,7 +253,7 @@ class _RecordingFanout:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def run_second_opinion(self, request, stream, approval, primary_evidence, depth=1):
+    async def run_second_opinion(self, request, stream, approval, primary_evidence, depth=1, parent_step_id=""):
         self.calls.append(approval.get("requiredRung"))
         return None
 

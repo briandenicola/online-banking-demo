@@ -193,7 +193,9 @@ class Planner:
                         and self._fanout is not None
                         and body.get("requiredRung") == "L2"
                     ):
-                        await self._fanout.run_second_opinion(request, stream, body, evidence)
+                        await self._fanout.run_second_opinion(
+                            request, stream, body, evidence, parent_step_id=step["id"]
+                        )
 
                 await stream.emit(
                     "step.completed",

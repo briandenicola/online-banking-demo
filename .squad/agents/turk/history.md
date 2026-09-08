@@ -2278,3 +2278,59 @@ the sole thing refusing it. Reverted both; UnitTests 129 green, authority-servic
 `build_supervisor_input` yet, and that is Phase 3 scope, not a defect. The engine is built, mirrors
 the oracle name-for-name, and is unit-proven; wiring a route into it is Phase 4. Flagging it plainly
 rather than dressing it up: today it is exercised only by its own tests.
+
+---
+
+## Phase 3 (wiring, pulled forward) — supervisor at a live route + §4.2 conformance
+
+Coordinator pulled the wiring forward for Brian's demo. Two corrections to the brief, reported
+plainly because honesty beats a tidy story:
+
+1. **The wiring was ALREADY committed (`6b0db49`), not absent.** `lifespan.py` builds the
+   `FanOutEngine` and injects it into `Planner`; `loop.py` calls `run_second_opinion` at
+   `requiredRung == "L2"`; that calls `build_supervisor_input`. The route reaches it. The premise
+   "nothing reaches it" was stale. I did not pretend to newly connect it.
+
+2. **The real gaps were downstream of "connected":**
+   - **Event payloads did not conform to §4.2.** The engine emitted the right *kinds* but
+     payloads the UI's typed reducer does not read: the `SecondOpinion` rode in
+     `subagent.completed.secondOpinion` and `approval.updated.agentAssessment`, neither of which
+     exists in the contract. The flagship opinion would have been invisible in the UI.
+   - **The caller boundary was unpinned.** Blind construction was proven only against
+     `build_supervisor_input` DIRECTLY. The caller (`run_second_opinion` building the intent) was
+     the unheld attack surface — "a guard protected only in aggregate erodes silently."
+
+**What I changed (`fanout.py`, `loop.py`, tests):**
+- `approval.updated` now emits `{request: ApprovalRequest}` with the supervisor appended to
+  `opinions[]` as an `AgentOpinion` (`role:'supervisor'`) — the §4.2 home ("supervisor present iff
+  requiredRung === 'L2'"). `SecondOpinion→AgentOpinion` is an adapter, not a fork: recommendation→
+  verdict enum (proceed→APPROVE, hold→DECLINE, else CONDITIONAL), counter-argument→rationale,
+  re-run tool ids→citedEvidenceIds. Agreement is NOT emitted — §4.2 derives disagreement
+  client-side from the two opinions[] (don't duplicate the derivation).
+- `subagent.spawned/progress/completed` reshaped to their EXACT §4.2 payloads. Dropped
+  entityIds/toolIds from the spawn frame (contract has no home; the §6.3 propose_action exclusion
+  is pinned directly on `subagent_tool_ids()` in the blind-construction suite, a better place).
+  Threaded `parent_step_id` from `loop.py` for `SubagentSpawnedPayload.parentStepId`.
+
+**New: `test_supervisor_boundary.py` (4 tests, pins the CALLER).** Drives the REAL Planner +
+FanOutEngine, seeds the primary's work product (evidence read + `agentAssessment.summary`) with a
+sentinel absent from the banker's request, captures the exact `SupervisorInput` via a decider spy,
+asserts the sentinel is nowhere in `spawn.serialize()` (and the banker's ids ARE — anti-vacuous).
+Subtlety recorded: `approval.updated.request` legitimately carries the PRIMARY's assessment (shared
+object), so the frame-scan is scoped to the supervisor's appended opinion, not the whole request.
+
+**Decider default = `deterministic_decider`** (no model, no Foundry). `lifespan.py` passes no
+decider arg. THIS is what fires in the demo. Real model injectable via ctor. Limits still fail-
+closed from `config/harness-limits.yaml`; no literals in the engine. Boot still `writeTools: 0`.
+
+**Tamper diagonal (each break → exactly one red, reverted):**
+- A: intent framing from `approval.agentAssessment.summary` → `..._spawn_input_carries_no_primary_token` RED.
+- B: `loop.py` gate widened to `requiredRung in ("L1","L2")` → `..._l1_does_not_spawn...` RED.
+- C: emit `approval.terminal state=executed` at confidence>=1.0 → `..._never_advances...` RED.
+- D: supervisor opinion rationale from primary summary → `..._no_supervisor_authored_frame_echoes...` RED.
+
+**Verified:** `banker-copilot-service` 188 passed (incl. 4 new + reshaped fanout tests);
+`test_zero_write_tools.py` 31 passed (boot contract intact). Only Python touched — no C# project.
+**Believed, not proved:** that Linus's actual TS reducer renders `opinions[]` unchanged — I matched
+§4.2 field-for-field but did not run the UI. Flagged in the decision record as a contract question
+for the coordinator if the UI disagrees; I did NOT fork the envelope on a guess.

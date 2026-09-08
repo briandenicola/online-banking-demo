@@ -403,6 +403,7 @@ class FanOutEngine:
         approval: Mapping[str, Any],
         primary_evidence: Mapping[str, Any],
         depth: int = 1,
+        parent_step_id: str = "",
     ) -> FanOutResult | None:
         """Spawn the blind L2 supervisor. Returns its result, or ``None`` if the
         depth ceiling forbids spawning (no grandchildren, §6.3)."""
@@ -445,17 +446,15 @@ class FanOutEngine:
         await stream.emit(
             "subagent.spawned",
             {
+                # §4.2 SubagentSpawnedPayload. The trace rail renders from these fields; the
+                # supervisor's structural conclusion is surfaced on the APPROVAL (opinions[]),
+                # not smuggled into the spawn frame. entityIds/toolIds are deliberately NOT
+                # here — the contract has no home for them and the UI reducer would drop them.
                 "subagentId": subagent_run_id,
+                "parentStepId": parent_step_id,
+                "name": "Independent second opinion",
                 "role": "supervisor",
-                "parentRunId": request.run_id,
-                "posture": SUPERVISOR_POSTURE,
-                "entityIds": list(spawn.entity_ids),
-                "toolIds": list(reader_tool_ids),
-                "limits": {
-                    "toolBudget": self._limits.per_subagent_tool_budget,
-                    "wallClockSeconds": self._limits.subagent_wall_clock_seconds,
-                    "depth": child_depth,
-                },
+                "depth": child_depth,
             },
         )
         await child_stream.emit(
@@ -468,10 +467,20 @@ class FanOutEngine:
             },
         )
 
+        tool_call_count = 0
+
         async def _on_read(tool_id: str, summary: dict[str, Any]) -> None:
+            nonlocal tool_call_count
+            tool_call_count += 1
             await stream.emit(
                 "subagent.progress",
-                {"subagentId": subagent_run_id, "read": summary},
+                {
+                    # §4.2 SubagentProgressPayload. ``note`` names the tool the supervisor
+                    # independently re-ran; it is a tool id, never the primary's read value.
+                    "subagentId": subagent_run_id,
+                    "note": f"independently re-ran {tool_id}",
+                    "toolCallCount": tool_call_count,
+                },
             )
             await child_stream.emit(
                 "tool.completed",
@@ -522,9 +531,14 @@ class FanOutEngine:
         await stream.emit(
             "subagent.completed",
             {
+                # §4.2 SubagentCompletedPayload. This is the trace-rail verdict caption — a
+                # short, server-derived summary of the STRUCTURAL opinion, never free prose the
+                # supervisor authored. The full structural opinion rides on the approval below.
                 "subagentId": subagent_run_id,
-                "secondOpinion": opinion.to_wire(),
-                "agreesWithPrimary": agrees,
+                "status": "complete",
+                "confidence": opinion.confidence,
+                "verdictSummary": _verdict_for(opinion.recommendation),
+                "durationMs": 0,
             },
         )
         await child_stream.emit(
@@ -536,17 +550,18 @@ class FanOutEngine:
                 "finalSeq": child_stream.last_seq + 1,
             },
         )
-        await stream.emit(
-            "approval.updated",
-            {
-                "approvalId": approval.get("approvalId") or approval.get("id"),
-                "agentAssessment": {
-                    "secondOpinion": opinion.to_wire(),
-                    "agreesWithPrimary": agrees,
-                    "supervisorSubagentId": subagent_run_id,
-                },
-            },
-        )
+        # §4.2 ApprovalUpdatedPayload: {request: ApprovalRequest}. The supervisor's opinion is
+        # appended to opinions[] as an AgentOpinion (role='supervisor') — the ONE contract home
+        # for a structured second opinion (ApprovalRequest doc: "supervisor present iff
+        # requiredRung === 'L2'"). It is EVIDENCE for a human, never a signature: no signature is
+        # added and the state is left exactly as it arrived. Agreement is not emitted — the UI
+        # computes disagreement from the two opinions[] entries (DualControlApprovalCardProps).
+        updated_request = dict(approval)
+        existing_opinions = list(updated_request.get("opinions") or [])
+        updated_request["opinions"] = existing_opinions + [
+            _supervisor_agent_opinion(subagent_run_id, opinion, reader_tool_ids)
+        ]
+        await stream.emit("approval.updated", {"request": updated_request})
 
         return FanOutResult(
             second_opinion=opinion,
@@ -561,6 +576,41 @@ def _primary_recommendation(approval: Mapping[str, Any]) -> str:
     # approval's assessment if present, so a future non-proposing primary still compares.
     assessment = approval.get("agentAssessment") or {}
     return str(assessment.get("recommendation") or "proceed")
+
+
+# §4.2 AgentOpinion.verdict is a closed enum; SecondOpinion.recommendation is the engine's
+# internal token. This is a boundary ADAPTER, not a fork of the contract: the recognised
+# recommendations map to the enum and anything a real model returns lands on CONDITIONAL —
+# "a human must look", which is the safe default for the whole harness.
+_VERDICT_BY_RECOMMENDATION: dict[str, str] = {"proceed": "APPROVE", "hold": "DECLINE"}
+
+
+def _verdict_for(recommendation: str) -> str:
+    return _VERDICT_BY_RECOMMENDATION.get(recommendation.strip().casefold(), "CONDITIONAL")
+
+
+def _supervisor_agent_opinion(
+    agent_id: str, opinion: "SecondOpinion", cited_evidence_ids: tuple[str, ...]
+) -> dict[str, Any]:
+    """Map the structural ``SecondOpinion`` onto §4.2 ``AgentOpinion`` (role='supervisor').
+
+    Nothing here is authored prose the supervisor could have echoed the primary into: the
+    verdict is derived from its structural recommendation, the rationale is its own structural
+    counter-argument, and the cited evidence is the ids of the tools it re-ran itself.
+    """
+    return {
+        "agentId": agent_id,
+        "agentName": "Independent supervisor",
+        "role": "supervisor",
+        "verdict": _verdict_for(opinion.recommendation),
+        "confidence": opinion.confidence,
+        "rationale": opinion.strongest_counter_argument,
+        "keyFactors": [
+            {"label": factor, "value": "independently corroborated"}
+            for factor in opinion.key_factors
+        ],
+        "citedEvidenceIds": list(cited_evidence_ids),
+    }
 
 
 def _recommendations_agree(primary_reco: str, supervisor_reco: str) -> bool:
