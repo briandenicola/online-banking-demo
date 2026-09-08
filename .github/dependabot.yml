@@ -165,3 +165,18 @@ updates:
     groups:
       terraform-minor-patch:
         update-types: [minor, patch]
+    # A provider MAJOR is not a dependency bump — it is a state migration.
+    # The AzureRM v4→v5 PR (#340) would have landed a provider that the already
+    # provisioned environment's state was not written by, so every subsequent
+    # `terraform output` — which `task cloud:deploy` depends on for the ACR name,
+    # the Cosmos endpoint and the workload-identity client ids — would have run
+    # against a provider that may demand a state upgrade first. The grouping
+    # above only groups minor/patch; ungrouped majors still arrive as their own
+    # PR, so the group alone does NOT suppress them. This does.
+    #
+    # Deliberately NOT a blanket major ignore for the whole ecosystem: it names
+    # the provider, so a major on some other terraform dependency still surfaces
+    # and gets a decision rather than being silently swallowed.
+    ignore:
+      - dependency-name: hashicorp/azurerm
+        update-types: [version-update:semver-major]

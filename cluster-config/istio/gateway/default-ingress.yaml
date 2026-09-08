@@ -133,6 +133,45 @@ spec:
         host: account-opening-service
         port:
           number: 80
+  # Authority endpoints → authority-service (epic #332).
+  # This is the ONLY component permitted to perform an agent-originated write.
+  # Kept on its own /api/authority/ prefix, not folded under /api/copilot/, so
+  # the enforcement boundary is legible in the URL and cannot be silently
+  # re-routed to the harness by route ordering. Mirrors the nginx location in
+  # infra/local/gateway.nginx.conf — the two gateways must agree, because a
+  # prefix that exists in only one of them is a feature that works locally and
+  # 404s in the cluster.
+  - match:
+    - uri:
+        prefix: /api/authority/
+    route:
+    - destination:
+        host: authority-service
+        port:
+          number: 80
+  # Copilot harness endpoints → banker-copilot-service (epic #332).
+  #
+  # timeout: 0s is load-bearing, not tidying. This prefix carries the session
+  # SSE trace stream (GET /api/copilot/sessions/{id}/stream), and Istio's
+  # DEFAULT route timeout is 15s — an SSE connection is idle between frames by
+  # design, so with the default every run's trace is severed mid-stream. Envoy
+  # terminates it as a normal response end, which is byte-for-byte
+  # indistinguishable from a clean end-of-stream: the browser sees a short but
+  # successful trace, the client's reconnect logic never fires, and a dead
+  # stream looks exactly like a working one. That is the failure
+  # docs/design/banker-copilot-ui.md §4.6 exists to prevent.
+  #
+  # No buffering knob is needed here (nginx has proxy_buffering off): Envoy
+  # streams responses and does not accumulate an unbounded body.
+  - match:
+    - uri:
+        prefix: /api/copilot/
+    route:
+    - destination:
+        host: banker-copilot-service
+        port:
+          number: 80
+    timeout: 0s
   # Default: serve UI
   - route:
     - destination:
