@@ -72,7 +72,7 @@ const navItems = [
 ];
 
 const AppShell: React.FC<AppShellProps> = ({ children }) => {
-  const { user, logout, isAdmin } = useAuthContext();
+  const { user, logout, isAdmin, isBanker } = useAuthContext();
   const { isEnabled } = useFeatureFlags();
   const navigate = useNavigate();
   const location = useLocation();
@@ -88,7 +88,7 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
   // the only way the "the harness is better" claim can be checked rather than
   // asserted. See docs/design/banker-copilot-ui.md §11.
   const showClassicAdmin = isAdmin && isEnabled('classicAdminTabs');
-  const showCopilot = isAdmin && isEnabled('bankerCopilot');
+  const showCopilot = isBanker && isEnabled('bankerCopilot');
 
   React.useEffect(() => {
     const loadAvatar = async () => {

@@ -26,7 +26,7 @@ import { FeatureFlagProvider, useFeatureFlags } from './contexts/FeatureFlagCont
 import { setComparisonEnabled } from './telemetry/comparison';
 
 const AppContent: React.FC = () => {
-  const { user, isAdmin } = useAuthContext();
+  const { user, isAdmin, isBanker } = useAuthContext();
   const { isEnabled } = useFeatureFlags();
 
   // Keep the comparison recorder in step with its flag. Instrumentation is a
@@ -82,7 +82,7 @@ const AppContent: React.FC = () => {
             }
           />
         )}
-        {isAdmin && (
+        {isBanker && (
           <Route
             path="/copilot"
             element={
