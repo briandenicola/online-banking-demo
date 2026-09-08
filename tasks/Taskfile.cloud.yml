@@ -20,6 +20,13 @@ includes:
     dir: '{{.ROOT_DIR}}'
     internal: false
 
+  demo:
+    taskfile: ./Taskfile.demo.yml
+    dir: '{{.ROOT_DIR}}'
+    internal: false
+    vars:
+      DEMO_TARGET: cloud
+
 tasks:
   default:
     desc: Show available tasks

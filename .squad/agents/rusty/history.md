@@ -256,3 +256,54 @@ pass. What I could NOT run: no Docker daemon and no live Redis/Azure, so an actu
 ping" are unproven — unit-tested with fakes only. Build task, kustomize base, and gateway routes
 already cover both Copilot services (no new microservice in Phase 3), so nothing new was
 undeployable; verified rather than assumed.
+
+32. **Two escalators in `config/authority-policy.yaml` cannot fire through the propose API at all.**
+    `EvaluationContext.BuildDocument()` overwrites `document["actor"]` from `ActorContext` and sets
+    `context.selfDealing` from `ActorContext.SelfDealing`. `ApprovalsController` always builds that
+    context with `_actors.Create(user, sessionId)`, where `SelfDealing` defaults to `false` and
+    `SignaturesInWindow` is never read back from storage. So `self-dealing` (reads
+    `context.selfDealing`) and `velocity` (reads `actor.signaturesInWindow`) are structurally
+    unreachable no matter what facts a caller supplies. No seeder can demonstrate them; this needs
+    an authority-service change. The other five escalators are fact-driven and do fire.
+
+33. **Escalator `raiseBy` steps up from the rung the action's OWN rules already produced.** Demoing
+    an escalator on `transaction.flag.review` over a large flagged amount goes L1 -> L2 (the
+    `large-flagged-amount` rule) -> L3 (the escalator), and L3 proposals are refused outright — so
+    the card the demo was built around never exists. Every escalator demo must sit on a payload
+    that is still L1 when the escalator fires. There is now a static guard for this that evaluates
+    each action's own rules against the seeded payload.
+
+34. **`get_flagged_transaction` takes the flagged-record id, not the transaction id.** The copilot
+    tool hits `/api/admin/flagged-transactions/{id}` where the id is the ai-service `scored_id`.
+    Seed evidence with the raw transaction id and the tool 404s mid-run.
+
+35. **`scripts/seed-data.sh` had three latent breakages**, all fixed: it posted to
+    `/api/users/login` (405 — step 2 could never have worked), and used lowercase `checking` /
+    `deposit` where the server DTO regexes are case-sensitive (`^(Checking|Savings|...)$`,
+    `^(Debit|Credit|Transfer|Deposit|Withdrawal)$`).
+
+36. **`admin` has seniority 0** in `config/role-hierarchy.yaml`, so it can neither propose, sign nor
+    deny. Anything that closes approvals — including `demo:reset` — must use the supervisor token.
+    Admin is only good for `/api/admin/*`.
+
+37. **The empty copilot task queue had two independent causes, not one.** `CopilotContext` loads
+    `scope=mine` (filtered on `requesterId == actor.userId`) plus `scope=awaiting-me`; with no
+    approvals requested by the banker both are empty regardless of authorization. The separate
+    authorization gap breaks evidence gathering *during a run*, not the listing. Fixing either
+    alone leaves the demo broken.
+
+38. **Reset against these services is necessarily partial.** No delete endpoint exists for accounts,
+    transactions, Redis-held scored/flagged records or terminal approvals. Consequence found the
+    hard way in testing: stale flagged records outlive the identities that produced them, so a
+    re-seed picks a subject whose account no longer resolves to any seeded customer. The seeder now
+    filters AI subjects to accounts owned by the current run, and reset prints exactly what it could
+    not remove instead of implying a clean slate.
+
+39. **A deliberately locked identity breaks its own re-seed.** The `user.unlock` subject cannot log
+    in, and role verification depends on logging in. Unlock first, verify, then re-lock at the
+    proper stage.
+
+40. **`local:`/`cloud:` are includes, so an included taskfile can be included twice.** Wiring
+    `Taskfile.demo.yml` into both with a different `DEMO_TARGET` gives `local:demo:*` and
+    `cloud:demo:*` for free, and keeps one spelling of the local/cloud distinction rather than
+    adding a second, unchecked one via a top-level namespace and a flag.

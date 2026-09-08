@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # seed-data.sh — Populate local development services with demo data
 # Prerequisites: docker-compose services running (user:6001, account:6002, transaction:6003, transfer:6004)
+#
+# This is the ORIGINAL local-only seeder (alice/bob/admin + accounts + transactions + transfers)
+# and is kept working for `task local:seed`. It creates no banker, no supervisor and no
+# approvals, so it does not populate the Copilot task queue.
+#
+# For the Banker Copilot demo dataset — banking identities, locked customers, AI-scored
+# transactions and approvals in every state, against local OR the cluster — use
+# `task local:demo:seed` / `task cloud:demo:seed` (scripts/demo/demo.sh, issue #356).
 set -euo pipefail
 
 # --- Configuration ---
@@ -50,7 +58,7 @@ login_user() {
   local username="$1" password="$2"
 
   local response
-  response=$(curl -s -w "\n%{http_code}" -X POST "${USER_SERVICE}/api/users/login" \
+  response=$(curl -s -w "\n%{http_code}" -X POST "${USER_SERVICE}/api/auth/login" \
     -H "Content-Type: application/json" \
     -d "{\"username\":\"${username}\",\"password\":\"${password}\"}")
 
@@ -165,15 +173,15 @@ success "Admin authenticated"
 header "Step 3: Creating bank accounts"
 
 info "Creating Alice's accounts..."
-ALICE_CHECKING=$(create_account "$ALICE_TOKEN" "checking" 5000)
-ALICE_SAVINGS=$(create_account "$ALICE_TOKEN" "savings" 10000)
+ALICE_CHECKING=$(create_account "$ALICE_TOKEN" "Checking" 5000)
+ALICE_SAVINGS=$(create_account "$ALICE_TOKEN" "Savings" 10000)
 
 info "Creating Bob's accounts..."
-BOB_CHECKING=$(create_account "$BOB_TOKEN" "checking" 3000)
-BOB_SAVINGS=$(create_account "$BOB_TOKEN" "savings" 7500)
+BOB_CHECKING=$(create_account "$BOB_TOKEN" "Checking" 3000)
+BOB_SAVINGS=$(create_account "$BOB_TOKEN" "Savings" 7500)
 
 info "Creating Admin's accounts..."
-ADMIN_CHECKING=$(create_account "$ADMIN_TOKEN" "checking" 1000)
+ADMIN_CHECKING=$(create_account "$ADMIN_TOKEN" "Checking" 1000)
 
 # Extract account IDs and numbers for subsequent operations
 ALICE_CHECKING_ID=$(json_field "$ALICE_CHECKING" "id")
@@ -188,16 +196,16 @@ BOB_CHECKING_NUM=$(json_field "$BOB_CHECKING" "accountNumber")
 header "Step 4: Generating sample transactions"
 
 info "Alice's transactions..."
-create_transaction "$ALICE_TOKEN" "$ALICE_CHECKING_ID" 1500.00 "deposit"    "Payroll deposit"           "income"
-create_transaction "$ALICE_TOKEN" "$ALICE_CHECKING_ID" 45.99   "withdrawal" "Grocery store purchase"    "groceries"
-create_transaction "$ALICE_TOKEN" "$ALICE_CHECKING_ID" 120.00  "withdrawal" "Electric bill payment"     "utilities"
-create_transaction "$ALICE_TOKEN" "$ALICE_SAVINGS_ID"  500.00  "deposit"    "Monthly savings transfer"  "savings"
+create_transaction "$ALICE_TOKEN" "$ALICE_CHECKING_ID" 1500.00 "Deposit"    "Payroll deposit"           "income"
+create_transaction "$ALICE_TOKEN" "$ALICE_CHECKING_ID" 45.99   "Withdrawal" "Grocery store purchase"    "groceries"
+create_transaction "$ALICE_TOKEN" "$ALICE_CHECKING_ID" 120.00  "Withdrawal" "Electric bill payment"     "utilities"
+create_transaction "$ALICE_TOKEN" "$ALICE_SAVINGS_ID"  500.00  "Deposit"    "Monthly savings transfer"  "savings"
 
 info "Bob's transactions..."
-create_transaction "$BOB_TOKEN" "$BOB_CHECKING_ID" 2200.00 "deposit"    "Freelance payment"        "income"
-create_transaction "$BOB_TOKEN" "$BOB_CHECKING_ID" 89.50   "withdrawal" "Restaurant dinner"        "dining"
-create_transaction "$BOB_TOKEN" "$BOB_CHECKING_ID" 250.00  "withdrawal" "Car insurance premium"    "insurance"
-create_transaction "$BOB_TOKEN" "$BOB_SAVINGS_ID"  1000.00 "deposit"    "Emergency fund deposit"   "savings"
+create_transaction "$BOB_TOKEN" "$BOB_CHECKING_ID" 2200.00 "Deposit"    "Freelance payment"        "income"
+create_transaction "$BOB_TOKEN" "$BOB_CHECKING_ID" 89.50   "Withdrawal" "Restaurant dinner"        "dining"
+create_transaction "$BOB_TOKEN" "$BOB_CHECKING_ID" 250.00  "Withdrawal" "Car insurance premium"    "insurance"
+create_transaction "$BOB_TOKEN" "$BOB_SAVINGS_ID"  1000.00 "Deposit"    "Emergency fund deposit"   "savings"
 
 # --- Step 5: Create a transfer between Alice and Bob ---
 header "Step 5: Creating inter-account transfer"
