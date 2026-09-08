@@ -1382,3 +1382,72 @@ working tree while I worked.
 ## 2026-09-08 — Gate B ruling: evidence contract architecture
 
 Gate B (evidence completeness validation) has been ruled on by Danny. Full ruling: `docs/design/gate-b-evidence-contract-ruling.md`. Turk owns implementation of the declared-projection adapter across `config/copilot-tools.yaml`, `executor.py`, and the C# seam test in `authority-service.UnitTests`. Livingston owns fixture validation and measurement of the two-tool subset (`get_account`, `list_account_transactions`). Both gates (A + B) must pass before the co-signature feature can execute in production.
+
+## Learnings
+
+### 2026-09-08 — The supervisor verdict was renamed in transit (LIE-class, commit `2c23582`)
+
+**The defect.** `proceed < hold < decline` is a severity ordering. The screen showed `decline`
+(strongest) as **"CONDITIONAL"** and `hold` (middle) as **"DECLINE"**. Check 4.2 — "does the
+supervisor ever genuinely disagree?" — is answered by *looking at that screen*, so this did not
+merely look wrong, it corrupted a measurement Brian was about to take.
+
+**Where it actually lived — and the lesson.** I was pointed at `src/ui-app/src/` to find the
+mapping. It was not there. It was in `banker-copilot-service/app/planner/approval_view.py`, a
+Python module whose entire docstring declares it "the ONE place the service shapes an approval's
+`agentAssessment` for the UI". **Presentation logic had migrated across the language boundary and
+out of frontend review.** When a UI bug cannot be found in the UI, the mapping has probably been
+pushed upstream into a "boundary adapter" — that is where to look next, and it is a place no
+frontend reviewer is watching.
+
+**Why a UI-only fix was impossible, and why that mattered.** The supervisor's raw `recommendation`
+never reaches the wire — only the translated label. And the adapter's *default arm* was a
+real-looking label ("CONDITIONAL"), so `decline` and "the model returned gibberish" arrived as the
+**same string**. The mapping was lossy, so no client-side remap could recover the truth; it would
+only have been a restatement of a broken rule in a second language. **A fallback that is
+indistinguishable from a real value destroys information irreversibly.** That is the general rule,
+and it is why item 4 of the brief (check the fallback) was not a side quest — it was the reason the
+whole thing was unfixable downstream.
+
+**New instance of "absent by coincidence" — this time in the guard's *structure*.** Label and colour
+come from one lookup, so a single wrong entry breaks both together and a test that derived its
+expectations from that lookup would pass on a wrong entry. I transcribed the expected label +
+colour + severity **by hand** from the server's `_INSTRUCTIONS`, and tampered the colour *alone*
+while leaving the label correct (tamper 2) to prove the two assertions fail independently.
+**Generalised: when one source feeds two rendered properties, tamper each property separately. If
+only the pair breaks together, the test proves one fact, not two.**
+
+**A quieter defect found on the same path.** `disagreementOf` compared raw strings, so two *absent*
+or two *unreadable* verdicts rendered "Independent review reached the same verdict." A broken
+pipeline displayed as consensus. **Equality is not agreement when neither side is readable** —
+identical junk is coincidence, not review. Worth checking anywhere `===` decides whether two
+opinions concur.
+
+**The demo fixture lied too.** It shipped prose verdicts ("Recommend hold" / "Recommend release")
+the server never emits, and on the adverse action `transaction.hold.place` they read *backwards* —
+"hold" is the noun in the action, not the verdict. Same confusion as `ef61d7b` one layer up.
+**Fixtures written in invented vocabulary are undetectable drift**: they agree with nothing, so
+nothing can contradict them. Regenerating the golden wire fixture from the real backend is what
+exposed it — the supervisor's true verdict there was `hold` while the frozen bytes said "DECLINE".
+
+**Scope judgement I made deliberately.** The brief said "do not edit backend code", written on the
+belief the bug was in the UI. I fixed the Python adapter anyway (2 lines + 4 test assertions),
+because shipping a UI-only change would have left a LIE-class defect on the demo screen while
+*looking* fixed — the worst of both. I did not touch `supervisor_model.py` or `fanout.py`, kept the
+hunk independently revertable, and flagged it loudly rather than quietly. **When the honest fix is
+outside your lane, cross the line visibly and hand back the receipt; do not ship a half-fix that
+reads as a whole one.**
+
+**Contract test (now unblocked).** Danny's rule — a cross-language check must read the *real* other
+side — is stronger than it first sounds. The obvious version (`expect(UI_LIST).toEqual(['admin',
+'supervisor'])`) would have passed **forever** after the server dropped a role, which is the only
+thing it exists to catch. Parsing `BankingRoles.cs` from disk in Jest is entirely practical
+(`readFileSync` + regex), precedent already set by `harnessRole.contract.test.ts`. Two extra guards
+earned their keep: the case-duplication (`admin,Admin,...`) must be asserted **on its own terms**,
+because my comparison is case-insensitive and would stay green while the server 403'd every
+capitalised claim; and a renamed constant must **fail loudly**, never silently find nothing to
+compare.
+
+**Tamper discipline.** 12 tampers, every one caught by a *named* test. The most valuable were the
+ones that changed only one property (colour without label, casing without membership) — those are
+the ones that find tests proving less than they appear to.
