@@ -45,6 +45,7 @@ ALL_SUPERVISOR_ENV = (
 SPAWN = SupervisorInput(
     task_framing="Release a hold on account 400123 so a wire can settle today.",
     entity_ids=("acct-400123",),
+    action_id="account.hold.release",
 )
 
 
@@ -153,6 +154,59 @@ def test_the_prompt_carries_the_framing_and_the_evidence():
     assert "Release a hold on account 400123" in prompt
     assert "acct-400123" in prompt
     assert '"status": "frozen"' in prompt
+
+
+def test_the_prompt_names_the_action_being_judged():
+    """Measured defect, not a hypothetical. Against the deployed model, a well-documented
+    application REJECTION returned `decline` 4/4 at 0.99 confidence -- the model reasoned
+    correctly about the tampered documents and sanctions hit, then judged *opening* the
+    account rather than *rejecting* it, because free-text framing was all it had. The seam
+    recorded violent agreement as disagreement, which is the precise failure check 4.2
+    exists to detect.
+
+    "Proceed" is meaningless unless the thing to proceed WITH is stated.
+    """
+    prompt = build_prompt(SPAWN, {})
+    assert "account.hold.release" in prompt
+    assert "ACTION UNDER REVIEW" in prompt
+
+
+def test_the_verdict_vocabulary_is_anchored_to_that_action():
+    """The action id being present is not enough -- the verdicts have to be defined
+    relative to it, and the adverse case has to be called out. A model reading
+    "proceed - the action is defensible" next to framing about rejecting an application
+    will still resolve the verb the wrong way round.
+    """
+    prompt = build_prompt(SPAWN, {})
+    assert "ACTION UNDER REVIEW" in prompt
+    # The verdicts must point at the named action, not at an inferred one.
+    assert "THAT action" in prompt
+    # And the adverse-verb trap must be named explicitly, since that is the case that broke.
+    assert "adverse" in prompt.lower()
+
+
+def test_the_action_survives_into_the_bytes_the_supervisor_is_spawned_with():
+    """serialize() IS the spawn contract -- the blindness scan runs on exactly these bytes.
+    An action that reaches the prompt but not the spawn record would leave the trace unable
+    to show what was judged.
+    """
+    assert '"actionId": "account.hold.release"' in SPAWN.serialize()
+
+
+def test_the_action_is_carried_from_the_bankers_intent_not_the_proposal():
+    """§6.4(1) admits the action id because it is the banker's own declared action, fixed at
+    request time and known before the primary does any work -- the same class of input as
+    task_framing. Sourcing it from the proposal body instead would route primary output into
+    supervisor construction, which is the one thing blind construction forbids.
+    """
+    from app.planner.fanout import BankerIntent
+
+    intent = BankerIntent(
+        task_framing="Reject this application; the documents appear tampered.",
+        entity_ids=("app-77",),
+        action_id="application.reject",
+    )
+    assert build_supervisor_input(intent).action_id == "application.reject"
 
 
 def test_evidence_reaches_the_model_as_data_not_instructions():
@@ -305,6 +359,8 @@ def test_the_spawn_the_engine_builds_is_what_this_decider_consumes():
     class Intent:
         task_framing = "Reverse a posted fee on account 400123."
         entity_ids = ("acct-400123",)
+        action_id = "transaction.fee.reverse"
 
     prompt = build_prompt(build_supervisor_input(Intent()), {})
     assert "Reverse a posted fee" in prompt
+    assert "transaction.fee.reverse" in prompt

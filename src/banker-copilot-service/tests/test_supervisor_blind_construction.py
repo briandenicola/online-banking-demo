@@ -66,9 +66,24 @@ def test_the_primary_has_no_argument_to_travel_through():
 
 def test_the_supervisor_input_field_set_is_total():
     """The set of fields on the spawn input is the set of things the supervisor may know. No
-    ``primary``, ``plan``, ``recommendation`` or ``context`` handle exists on it."""
+    ``primary``, ``plan``, ``recommendation`` or ``context`` handle exists on it.
+
+    This assertion is exhaustive on purpose: widening the supervisor's knowledge must be a
+    deliberate, reviewed edit to this line and not something a field addition can do quietly.
+
+    ``action_id`` was added deliberately (see ``SupervisorInput``). It is admissible under
+    §6.4(1) because it is the banker's own declared action, fixed at request time and known
+    before the primary does any work — the same class of input as ``task_framing``. It was
+    added because omitting it was a measured live defect: the supervisor judged the wrong
+    verb on adverse actions and the seam recorded agreement as disagreement.
+    """
     spawn = build_supervisor_input(INTENT)
-    assert set(spawn.__dataclass_fields__) == {"task_framing", "entity_ids", "posture"}
+    assert set(spawn.__dataclass_fields__) == {
+        "task_framing",
+        "entity_ids",
+        "action_id",
+        "posture",
+    }
     assert spawn.posture == SUPERVISOR_POSTURE
     # Frozen: nothing can staple the primary onto it after construction.
     with pytest.raises(Exception):

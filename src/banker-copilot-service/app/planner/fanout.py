@@ -72,6 +72,7 @@ class BankerIntent:
 
     task_framing: str
     entity_ids: tuple[str, ...]
+    action_id: str = ""
 
     def __post_init__(self) -> None:
         if not self.task_framing.strip():
@@ -149,10 +150,24 @@ class SupervisorInput:
     entity ids only. Note what is NOT here: no ``primary``, no ``plan``, no
     ``recommendation``, no ``context`` handle through which any of those could be
     reached. The field set IS the set of things the supervisor may know, made total.
+
+    ``action_id`` is admissible under §6.4(1) and is NOT a blindness regression: it is
+    the banker's own declared action, fixed at request time and known before the primary
+    does any work. It is the same class of input as ``task_framing``.
+
+    It is here because omitting it was a live defect, not a nicety. Measured against the
+    deployed model, on an *adverse* action — rejecting an application with tampered
+    documents — the supervisor reasoned correctly about the evidence and then returned
+    ``decline`` four times out of four at 0.99 confidence, because with only free-text
+    framing to go on it judged *opening* the account rather than *rejecting* it. Violent
+    agreement was recorded as disagreement. A recommendation of "proceed" is meaningless
+    unless the thing to proceed WITH is stated, and inferring the verb from prose is
+    exactly the guess this contract exists to prevent.
     """
 
     task_framing: str
     entity_ids: tuple[str, ...]
+    action_id: str = ""
     posture: str = SUPERVISOR_POSTURE
 
     def serialize(self) -> str:
@@ -161,6 +176,7 @@ class SupervisorInput:
             {
                 "framing": self.task_framing,
                 "entityIds": list(self.entity_ids),
+                "actionId": self.action_id,
                 "posture": self.posture,
             },
             sort_keys=True,
@@ -177,7 +193,11 @@ def build_supervisor_input(intent: BankerIntent) -> SupervisorInput:
     change this signature, and that change is what ``builder_accepts_only_intent``
     and the blind-construction suite are positioned to catch.
     """
-    return SupervisorInput(task_framing=intent.task_framing, entity_ids=tuple(intent.entity_ids))
+    return SupervisorInput(
+        task_framing=intent.task_framing,
+        entity_ids=tuple(intent.entity_ids),
+        action_id=intent.action_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +455,10 @@ class FanOutEngine:
         intent = BankerIntent(
             task_framing=request.objective,
             entity_ids=extract_entity_ids(raw_inputs),
+            # The banker's declared action, fixed at request time. Read from the REQUEST,
+            # never from the proposal body — the body is downstream of the primary, and
+            # sourcing it there would route primary output into supervisor construction.
+            action_id=getattr(request, "action_id", "") or "",
         )
         spawn = build_supervisor_input(intent)
 
