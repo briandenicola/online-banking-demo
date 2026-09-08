@@ -48,58 +48,95 @@ Phase 2 branch) and holds **16 merged PRs**: #352 plus 15 dependabot.
 
 ---
 
-## READ THIS FIRST — where we actually are (2026-09-08)
+## READ THIS FIRST — where we actually are (2026-09-08, late afternoon)
 
-**The mandate from Brian, today, verbatim in effect:**
+**Testing target is AZURE, not local.** Brian, today: *"we're in phase 3 and I want to test it in
+Azure - not locally (I don't know why the last session kept wanting to test locally)."* Earlier
+revisions of this document sent readers to `task local:run`. **That was wrong.** Verification runs
+against the deployed cluster: `https://onlinebankingdemo.bjdazure.tech` (public DNS, valid TLS,
+no `-k` needed), namespace `banking-demo`, AKS `model-osprey-55220-aks`, RG `model-osprey-55220-rg`.
 
-> *"i've built the environment for this new feature we've built and i'm ready to deploy it for
-> testing. no merging to main until we fully test end to end."*
+**Do not merge to `main`.** The gate is Brian's own validation of the deployed feature.
 
-**Do not merge PR #352.** Not when CI is green — it already is. Not when the suites pass — they
-already do. The gate is a **working end-to-end run against the deployed stack**, nothing less.
-Green CI is what we have *instead of* evidence, not evidence.
+### The two findings that dominate everything else
 
-**Phases 1–2 are merged. Phase 3 is complete and in PR #352.** CI on #352:
+**1. The supervisor was a script, not a model. FIXED, deployed, live.**
 
-| Job | Result |
-|---|---|
-| .NET build and test | pass |
-| Go build and test | pass |
-| Python build and test | pass |
-| ui-app build and test | pass |
-| `ui-app quarantined suites` | **fail — `continue-on-error: true`, red BY DESIGN.** 13 pre-existing failures in `account-opening/DocumentUpload.test.tsx` and `account-opening/AgentPipeline.test.tsx`. Not ours, not a blocker, do not "fix" it. |
+`deterministic_decider` returned `"proceed"` whenever its own reads succeeded. The primary
+*proposed* the action, so its position was also `"proceed"`. **Agreement was therefore 100% by
+construction** — disagreement was only reachable via an infrastructure read failure — and the UI
+rendered this as a `0.8`-confidence independent review. Check 4.2's failure mode, exactly as
+`planner_mode()`'s own docstring predicted: *"Reviewers checking supervisor disagreement would have
+been measuring a script and reading it as agreement."*
 
-**The single most important thing to understand before you touch anything:**
+Fixed in `87a0ee4`: `app/planner/supervisor_model.py` (`FoundryDecider`, fail-closed to `hold` /
+`confidence 0.0` / `supervisor_unavailable` on every failure path), wired in `lifespan.py`, gated
+by a **declared** `COPILOT_SUPERVISOR_MODE` that raises rather than silently degrading. 32 tests,
+four guards tamper-tested. Live inference proven from inside the pod (private endpoint
+`10.23.4.20` → workload identity → RBAC → `gpt-5.4-mini`). Pod startup logs
+`"supervisor_mode": "foundry"`.
 
-Until this past weekend the live path **crashed on the first approval of every run**.
-`copilotStore.ts` did `p.approval.id` unguarded while the backend emitted `{request: ...}`.
-**206 UI tests passed straight through that bug**, because `demoFixture.ts:424` emits `approval:`
-and therefore agreed with the reducer rather than with the service. The demo proved the reducer;
-it never once proved the service.
+> **Related, still unruled:** the **planner itself has never called a model either.**
+> `FoundryChatClient` is imported at `loop.py:43` with `# noqa: F401` and nothing else.
+> `Planner.run` uses `_plan_steps()`, a deterministic policy-derived plan. That may be correct by
+> design — steps *are* policy-derived — but `planner_mode: foundry` proves config exists, not that
+> a model runs. **Brian has not yet ruled on whether this matters for the demo.**
 
-So: **every green suite in this document is unit-level or golden-file-level. Nothing here has ever
-run over HTTP.** Treat "the tests pass" as a statement about the tests.
+**2. THE CURRENT BLOCKER — no Copilot run can complete at all.**
+
+Four read tools point at **admin-only** upstream endpoints, and the copilot calls upstream with the
+**banker's** bearer token:
+
+| toolId | upstream | blocks |
+|---|---|---|
+| `list_login_audits` | `/api/admin/login-audits` (user-service) | **`user.unlock` (L2)** |
+| `get_scored_transaction` | `/api/admin/scored-transactions/{txId}` (ai-service) | **`transaction.score.override` (L2)** |
+| `get_flagged_transaction` | `/api/admin/flagged-transactions/{txId}` | `transaction.flag.review` (L1) |
+| `list_flagged_transactions` | `/api/admin/flagged-transactions` | case discovery |
+
+Proven live, trace `run_5ed954af071b4ebc`:
+`list_login_audits → "upstream returned 403"` → `step.failed "evidence gathering failed"` → run
+failed. Chain: evidence 403s → planner never proposes → no approval → `requiredRung` never `L2` →
+**the mandatory fan-out never fires → the supervisor model is never invoked.** Confirmed by zero
+`"Supervisor second opinion"` lines in the pod despite runs being driven at it.
+
+**Both L2 actions are blocked, so check 4.2 is unmeasurable until this is fixed.** Turk owns it.
+Candidate mechanism already in the codebase: every tool declares a `capabilityScope`
+(`identity.read`, `risk.read`, …) and `config/authority-policy.yaml` has a `capabilityScopes`
+section. **Do not fix this by granting `banker` admin** — that is the god-rights failure in a new
+costume, and `RoleHierarchy.cs:64-71` (admin = seniority 0, implies nothing) is ratified and must
+not be modified.
+
+**This is very likely the real cause of the empty copilot queue (#356), not missing seed data.**
+The queue was assumed to need data; in fact no run could ever complete to put anything in it.
+Both halves are now in flight — Turk on authorization, Rusty on `task demo:seed|show|reset`.
 
 ### Do this, in this order
 
-1. **Start the stack — `task local:run`.** Not `docker compose up -d`. The checklist used to say
-   otherwise and it is wrong; see the Monday section. Images are built but have **never been
-   started anywhere**. Expect first-run breakage and treat it as expected, not as alarming.
-2. **Checklist §1.1 — `writeTools: 0` from the deployed image.** Unit tests assert this over the
-   in-process registry. This asserts it over what the running container exposes. If these two
-   disagree, the deployed image is not the audited code — **stop, and reconcile before anything
-   below.**
-3. **§2.7 + §5.1 — the flagship moment over the wire.** Banker intent → L2 action → supervisor
-   second opinion → dual-control card renders **both** assessments. Plausible for the first time
-   (SSE now routes through `toApproval`), never once exercised over HTTP.
-4. **§4.2 — does the supervisor ever *genuinely disagree*?** The highest-value check in the epic and
-   the one whose **failure looks exactly like success**: a supervisor that agrees 100% of the time
-   gives you green screens and a smooth demo while the invariant is hollow. The golden fixture
-   proves the machinery *can* express disagreement; whether the live decider ever *does* is unknown.
-   **Watch the agreement rate, not the pass/fail.**
-5. Only after 1–4 genuinely pass end to end, ask Brian about merging. **Never merge on your own.**
+1. **Land Turk's authorization fix**, then confirm a run reaches a proposal. Signal:
+   `kubectl logs -n banking-demo -l app=banker-copilot-service | grep -c "Supervisor second opinion"`
+   must be **> 0**.
+2. **Land Rusty's `task demo:seed`** (#356) so the two L2 actions have real subjects — specifically
+   a genuinely *locked* user and a *scored* transaction. **Brian runs the first seed himself.**
+3. **Then measure §4.2.** Livingston's harness is committed (`9073b78`) and re-runnable. Standard:
+   30+ runs, and **`hold` + `confidence 0.0` + `supervisor_unavailable` is a FAILED MODEL CALL, not
+   a disagreement** — it must be counted as a third category or the number lies again.
+4. **§7.2, 7.4–7.7 need Brian at a browser with two identities.** 7.4 is a visual judgement only he
+   can make. Blocked until seed data lands.
 
 Checklist lives at `docs/design/banker-copilot-deployment-verification.md`.
+
+### Verification scoreboard (live, this session)
+
+~24 pass · **4.2 blocked** · 4.1 source-confirmed · **6.2 documented** (see below) · 9 cut ·
+7.2/7.4–7.7 pending Brian at a browser.
+
+**6.2 — ruled document-don't-build, done in `2ed48a0`.** `event-processor` has *no persistence
+whatsoever*: `go.mod` carries Redis/OTEL/`azidentity` only, and `processMessage` emits `slog`
+records to stdout. Its README claimed Cosmos audit-log storage in **five** places. That made it the
+dangerous class of defect — not incomplete but *lying* — so the claims were corrected and the
+checklist's unpassable "Audit rows appear" restated. **Do not cite this service as the audit system
+of record.**
 
 ---
 
