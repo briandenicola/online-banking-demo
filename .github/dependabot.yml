@@ -50,6 +50,17 @@ updates:
       nuget-minor-patch:
         update-types: [minor, patch]
 
+  # authority-service — the sole executor of agent-originated writes (epic #332).
+  # Absent until 2026-09-08, so the one service on the critical write path was
+  # the one service receiving no dependency updates at all.
+  - package-ecosystem: nuget
+    directory: /src/authority-service
+    schedule:
+      interval: weekly
+    groups:
+      nuget-minor-patch:
+        update-types: [minor, patch]
+
   # Python (pip) — each service
   - package-ecosystem: pip
     directory: /src/ai-service
@@ -77,6 +88,17 @@ updates:
 
   - package-ecosystem: pip
     directory: /src/account-opening-service
+    schedule:
+      interval: weekly
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
+
+  # banker-copilot-service — the agent loop (epic #332). Registers zero write
+  # tools, but it is the component a prompt-injection payload reaches first, so
+  # its dependency surface is security-relevant even though it cannot write.
+  - package-ecosystem: pip
+    directory: /src/banker-copilot-service
     schedule:
       interval: weekly
     groups:
@@ -154,6 +176,17 @@ updates:
 
   - package-ecosystem: docker
     directory: /src/ui-app
+    schedule:
+      interval: weekly
+
+  # Base-image updates for the two services added by epic #332.
+  - package-ecosystem: docker
+    directory: /src/authority-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /src/banker-copilot-service
     schedule:
       interval: weekly
 
