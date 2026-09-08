@@ -2,7 +2,49 @@
 
 **Updated:** 2026-09-08 (Monday)
 **Epic:** #332 Banker Copilot — a hosted agentic harness for the banker/admin side.
-**Branch:** `squad/332-phase3-supervisor` — **PR #352, open against `main`, NOT merged**
+**Branch:** **`332-beta`** — the integration branch. **All work merges here. `main` is not touched.**
+`squad/332-phase3-supervisor` (PR #352) is contained in it and is no longer where work happens.
+
+---
+
+## THE BRANCH RULE (Brian, 2026-09-08) — read before you push anything
+
+> *"i want 332-beta to be the branch that all work to be merged into. Nothing to touch main until
+> i deploy and test and validate the feature works as i want in 332-beta."*
+
+**`332-beta` is the only integration target.** Every branch — squad lanes, dependabot, fixes found
+during deployment testing — merges into `332-beta`. Nothing merges to `main`, and `main` is not a
+base for new work. The gate to `main` is **Brian's own validation of the deployed feature**, not
+CI, not a passing suite, and not a coordinator's judgement that it looks done.
+
+`332-beta` was cut from `squad/332-phase3-supervisor` (which already contained `main` and the
+Phase 2 branch) and holds **16 merged PRs**: #352 plus 15 dependabot.
+
+- **#346/#347/#348 conflicted** — `agent-framework-core` and `agent-framework-foundry` each rewrite
+  the same two-line block of the same `pyproject.toml` in three services. Resolved to the **union**
+  (core 1.17.0 + foundry 1.11.0). The resolution asserts both sides are byte-identical before
+  collapsing the conflict, so it cannot silently discard a real difference.
+- **#340 (AzureRM `~> 4` → `~> 5`) is deliberately OUT.** A provider major is a state migration, not
+  a dependency bump: the environment's state was written by v4, and every `terraform output` that
+  `task cloud:deploy` reads (ACR name, Cosmos endpoint, workload-identity client ids) would then run
+  against a provider that may demand a state upgrade first. Now pinned in `.github/dependabot.yml`
+  by provider name — **note the existing `terraform-minor-patch` group does NOT suppress majors**;
+  ungrouped majors still arrive as their own PR, which is exactly how #340 appeared.
+- **No PR is open against `main`, and none will be.** Brian, 2026-09-08: *"no PRs will be open
+  against main."* All 16 were **closed, not retargeted** — GitHub rejects a base change once the
+  head is already contained in the new base (`There are no new commits between base branch
+  '332-beta' and head branch ...`), so closing with a comment pointing at `332-beta` is the only
+  available move. The commits are all in `332-beta`; nothing was lost. #340 was closed with
+  `@dependabot ignore this major version`.
+- **Dependabot is PAUSED** — `open-pull-requests-limit: 0` on all 28 entries in
+  `.github/dependabot.yml`, because a bump arriving mid-validation changes the code under test
+  without changing what is being tested, and the ACR images would quietly stop matching the branch.
+  **Security updates are deliberately NOT paused.** Resume by deleting those 28 lines — but note
+  Dependabot targets the repo's DEFAULT branch, so resuming while `main` is default puts new PRs
+  straight back on `main`.
+- `authority-service` and `banker-copilot-service` had **no dependabot coverage at all** until
+  2026-09-08 — the sole executor of agent-originated writes and the component a prompt-injection
+  payload reaches first were the two services receiving no updates. Now covered (nuget/pip/docker).
 
 ---
 

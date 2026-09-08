@@ -1,10 +1,36 @@
 version: 2
+
+# DEPENDABOT IS PAUSED — version updates only, temporarily. 2026-09-08.
+#
+# `open-pull-requests-limit: 0` on every entry below stops Dependabot opening
+# version-update PRs. This is a pause, not a policy: epic #332 is being
+# integrated on `332-beta` and validated against the deployed Azure environment,
+# and a dependency bump arriving mid-validation changes the code under test
+# without changing the thing being tested — the images in ACR would silently
+# stop matching the branch.
+#
+# Why this and not the UI "pause" button: this is the pause expressed in the
+# repo, so it is visible in review, survives a fork or a clone, and is undone by
+# deleting 28 lines rather than by remembering that someone once clicked
+# something.
+#
+# NOTE what this does NOT stop: **security** updates are unaffected by this
+# limit and will still open PRs. That is deliberate — a pause for convenience
+# must not silently become a pause on vulnerability fixes.
+#
+# ALSO NOTE: Dependabot opens PRs against the repository's DEFAULT branch. While
+# `main` is default, lifting this pause without changing that will put new PRs
+# back on `main`, which is exactly what Brian asked to stop.
+#
+# TO RESUME once `332-beta` is validated and merged: delete every
+# `open-pull-requests-limit: 0` line. Keep the `ignore` rule on hashicorp/azurerm.
 updates:
   # GitHub Actions
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
       actions-minor-patch:
         update-types: [minor, patch]
@@ -14,6 +40,7 @@ updates:
     directory: /src/user-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
       nuget-minor-patch:
         update-types: [minor, patch]
@@ -22,6 +49,7 @@ updates:
     directory: /src/account-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
       nuget-minor-patch:
         update-types: [minor, patch]
@@ -30,6 +58,7 @@ updates:
     directory: /src/transaction-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
       nuget-minor-patch:
         update-types: [minor, patch]
@@ -38,6 +67,7 @@ updates:
     directory: /src/transfer-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
       nuget-minor-patch:
         update-types: [minor, patch]
@@ -46,6 +76,7 @@ updates:
     directory: /src/prompt-eval-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
       nuget-minor-patch:
         update-types: [minor, patch]
@@ -57,6 +88,7 @@ updates:
     directory: /src/authority-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
       nuget-minor-patch:
         update-types: [minor, patch]
@@ -66,6 +98,7 @@ updates:
     directory: /src/ai-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
       pip-minor-patch:
         update-types: [minor, patch]
@@ -74,6 +107,7 @@ updates:
     directory: /src/budget-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
       pip-minor-patch:
         update-types: [minor, patch]
@@ -82,6 +116,7 @@ updates:
     directory: /src/chatbot-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
       pip-minor-patch:
         update-types: [minor, patch]
@@ -90,6 +125,7 @@ updates:
     directory: /src/account-opening-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
       pip-minor-patch:
         update-types: [minor, patch]
@@ -101,6 +137,7 @@ updates:
     directory: /src/banker-copilot-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
       pip-minor-patch:
         update-types: [minor, patch]
@@ -110,6 +147,7 @@ updates:
     directory: /src/event-processor
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
       go-minor-patch:
         update-types: [minor, patch]
@@ -119,6 +157,7 @@ updates:
     directory: /src/ui-app
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
       npm-minor-patch:
         update-types: [minor, patch]
@@ -128,73 +167,87 @@ updates:
     directory: /src/user-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
 
   - package-ecosystem: docker
     directory: /src/account-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
 
   - package-ecosystem: docker
     directory: /src/transaction-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
 
   - package-ecosystem: docker
     directory: /src/transfer-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
 
   - package-ecosystem: docker
     directory: /src/prompt-eval-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
 
   - package-ecosystem: docker
     directory: /src/ai-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
 
   - package-ecosystem: docker
     directory: /src/budget-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
 
   - package-ecosystem: docker
     directory: /src/chatbot-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
 
   - package-ecosystem: docker
     directory: /src/account-opening-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
 
   - package-ecosystem: docker
     directory: /src/event-processor
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
 
   - package-ecosystem: docker
     directory: /src/ui-app
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
 
   # Base-image updates for the two services added by epic #332.
   - package-ecosystem: docker
     directory: /src/authority-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
 
   - package-ecosystem: docker
     directory: /src/banker-copilot-service
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
 
   # Terraform
   - package-ecosystem: terraform
     directory: /infra/cloud
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
       terraform-minor-patch:
         update-types: [minor, patch]
