@@ -33,6 +33,3 @@ if (typeof (userEvent as { setup?: () => unknown }).setup !== 'function') {
     };
   };
 }
-
-/**
- * jsdom does not implement
