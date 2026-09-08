@@ -88,6 +88,15 @@ def supervisor_wire_assessment(
     prose the supervisor could have echoed the primary into — the verdict is derived from its
     structural recommendation, the rationale is its own counter-argument, and the cited evidence is
     the ids of the tools it re-ran itself.
+
+    ``keyFactors`` carries the supervisor's OWN stated factors and nothing else. Each used to be
+    paired with the constant string "independently corroborated", which was not a value read off
+    anything — no corroboration is performed, and the sentinel ``supervisor_unavailable`` that
+    ``_failsafe`` emits when the model could not be reached rendered as
+    "supervisor_unavailable — independently corroborated". A factor is a STATEMENT, not a
+    measurement, so it carries a label and no value; the client decides how to show it.
+    ``concern`` is likewise omitted rather than defaulted: this decider does not classify its own
+    factors, and defaulting the field would let the card assert a judgement nobody made.
     """
     return {
         "agentId": agent_id,
@@ -95,6 +104,6 @@ def supervisor_wire_assessment(
         "verdict": verdict_for(recommendation),
         "confidence": confidence,
         "rationale": counter_argument,
-        "keyFactors": [{"label": factor, "value": "independently corroborated"} for factor in key_factors],
+        "keyFactors": [{"label": factor} for factor in key_factors],
         "citedEvidenceIds": list(cited_evidence_ids),
     }

@@ -143,12 +143,10 @@
             "rationale": "The customer runs a haulage business; this reads as vendor settlement, not structuring.",
             "keyFactors": [
               {
-                "label": "counterparty is an established freight vendor",
-                "value": "independently corroborated"
+                "label": "counterparty is an established freight vendor"
               },
               {
-                "label": "pattern matches invoice settlement",
-                "value": "independently corroborated"
+                "label": "pattern matches invoice settlement"
               }
             ],
             "citedEvidenceIds": [

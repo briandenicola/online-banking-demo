@@ -69,6 +69,7 @@ import {
 } from './approvalPolicy';
 import { AuthorityRungChip, ApprovalCountdown, ConfidenceBar, PayloadHashChip } from './CopilotPrimitives';
 import { verdictPresentation } from './supervisorVerdict';
+import { factorPresentation } from './supervisorFactors';
 import { getCopilotConfig } from '../../config/copilotConfig';
 import { useCopilot, useNow } from './CopilotContext';
 import { signingIdentity } from './signingIdentity';
@@ -408,22 +409,57 @@ const OpinionColumn: React.FC<{
     {assessment.rationale && <Typography variant="body2">{assessment.rationale}</Typography>}
     {assessment.keyFactors && assessment.keyFactors.length > 0 && (
       <Stack spacing={0.25} sx={{ mt: 1 }}>
-        {assessment.keyFactors.map((factor) => (
-          <Stack key={factor.label} direction="row" spacing={1} sx={{ alignItems: 'baseline' }}>
-            <Typography variant="caption" sx={{ minWidth: 110, color: 'text.secondary' }}>
-              {factor.label}
-            </Typography>
-            <Typography variant="caption" sx={{ fontWeight: factor.concern ? 700 : 400 }}>
-              {factor.value}
-              {factor.concern ? ' ✗' : ' ✓'}
-            </Typography>
-            {divergentFactors.includes(factor.label) && (
-              <Typography variant="caption" sx={{ color: 'error.main', fontWeight: 700 }}>
-                ← DIVERGENT
+        {assessment.keyFactors.map((factor) => {
+          const f = factorPresentation(factor);
+          // A failed supervisor call is not a factor. It is rendered as the failure it
+          // is — error-coloured, bold, ahead of any real factor in weight — and never
+          // with a tick, a value, or a divergence flag.
+          if (f.unavailable) {
+            return (
+              <Typography
+                key={factor.label}
+                variant="caption"
+                data-testid="factor-unavailable"
+                aria-label={f.description}
+                sx={{ color: 'error.main', fontWeight: 700 }}
+              >
+                ⚠ {f.text}
               </Typography>
-            )}
-          </Stack>
-        ))}
+            );
+          }
+          return (
+            <Stack key={factor.label} direction="row" spacing={1} sx={{ alignItems: 'baseline' }}>
+              <Typography
+                variant="caption"
+                data-testid="factor-row"
+                aria-label={f.description}
+                sx={{
+                  // Without a measured value the statement IS the row, so it is not
+                  // squeezed into a 110px label column with nothing beside it.
+                  minWidth: f.value ? 110 : undefined,
+                  color: f.value ? 'text.secondary' : 'text.primary',
+                  fontWeight: factor.concern === true ? 700 : 400,
+                }}
+              >
+                {f.text}
+                {/* No glyph when the agent did not classify the factor. A ✓ on an
+                    unstated judgement is an assertion nobody made. */}
+                {f.value ? null : f.glyph ? ` ${f.glyph}` : null}
+              </Typography>
+              {f.value && (
+                <Typography variant="caption" sx={{ fontWeight: factor.concern === true ? 700 : 400 }}>
+                  {f.value}
+                  {f.glyph ? ` ${f.glyph}` : null}
+                </Typography>
+              )}
+              {divergentFactors.includes(factor.label) && (
+                <Typography variant="caption" sx={{ color: 'error.main', fontWeight: 700 }}>
+                  ← DIVERGENT
+                </Typography>
+              )}
+            </Stack>
+          );
+        })}
       </Stack>
     )}
   </Paper>

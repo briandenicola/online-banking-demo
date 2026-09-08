@@ -107,14 +107,19 @@ export const demoApproval: Approval = {
       // invented vocabulary the server never emits, and on an adverse action they read
       // backwards: "hold" is the noun in the action, not the verdict.
       verdict: 'proceed',
-      confidence: 0.81,
       rationale:
         'Amounts sit just under the $8,500 single-wire review threshold and aggregate above the AML-14 structuring trigger.',
-      keyFactors: [
-        { label: 'Aggregate', value: '$24,500 / 48h', concern: true },
-        { label: 'Counterparty age', value: '6 days', concern: true },
-        { label: 'Account history', value: '11 years, no prior flags' },
-      ],
+      // No `keyFactors` and no `confidence` — DELIBERATELY, because the service sends
+      // neither. `loop.py` proposes with `agentAssessment: {summary, evidenceToolIds}`
+      // and `primary_wire_assessment` adds verdict/rationale/citedEvidenceIds only.
+      //
+      // The fixture used to invent both: three `{label, value, concern}` measurement
+      // pairs and a 0.81 confidence. That is what taught the UI a shape the service has
+      // never produced — and it made `divergentFactors` (which compares against these)
+      // and the confidence comparison look exercised when live they are respectively
+      // stuck-on and dead. Both are named and deferred in the decision record. This card
+      // is asymmetric because the PRODUCT is asymmetric; papering over that with fixture
+      // data is how the gap stayed invisible.
       citedEvidenceIds: ['ev_1', 'ev_3'],
     },
     {
@@ -129,8 +134,13 @@ export const demoApproval: Approval = {
       rationale:
         'Counterparty is a freight vendor and the customer runs a haulage business; the pattern matches invoice settlement, not structuring.',
       keyFactors: [
-        { label: 'Customer sector', value: 'Haulage' },
-        { label: 'Prior vendor payments', value: '4 similar in 12 months' },
+        // Flat statements, which is what a decider actually holds: `SecondOpinion.
+        // key_factors` is a `tuple[str, ...]` of the supervisor's own short factors.
+        // The `value` field is absent because the service has nothing to put in it —
+        // it used to send the constant "independently corroborated", which was not
+        // read off anything.
+        { label: 'counterparty is an established freight vendor' },
+        { label: 'pattern matches invoice settlement' },
       ],
       citedEvidenceIds: ['ev_2'],
     },
@@ -361,7 +371,12 @@ export const demoEvents: CopilotEvent[] = [
       subagentId: 'sa_1',
       status: 'complete',
       confidence: 0.81,
-      verdictSummary: 'Pattern matches AML-14 structuring',
+      // No `verdictSummary`. The ONLY producer of this field in the service is
+      // `fanout.py`, which fills it with a verdict token for the SUPERVISOR. A
+      // specialist has no verdict, so prose here ('Pattern matches AML-14 structuring')
+      // taught the UI that the field is free-form narration when live it is a
+      // one-word structural caption. (That the planner emits no specialist
+      // `subagent.completed` at all is a wider demo-vs-service gap — noted, not fixed.)
       durationMs: 2_000,
     },
   },
@@ -391,7 +406,13 @@ export const demoEvents: CopilotEvent[] = [
       subagentId: 'sa_sup',
       status: 'complete',
       confidence: 0.62,
-      verdictSummary: 'Recommend release — vendor settlement pattern',
+      // `fanout.py` sends `verdict_for(opinion.recommendation)` here and documents it as
+      // "a short, server-derived summary of the STRUCTURAL opinion, never free prose the
+      // supervisor authored". The fixture carried authored prose ('Recommend release —
+      // vendor settlement pattern') and TracePane renders this field in quotation marks,
+      // so the demo showed a sentence attributed to the supervisor that the service is
+      // explicitly built never to emit. Third fixture-vs-service divergence found today.
+      verdictSummary: 'DECLINE',
       durationMs: 2_200,
     },
   },

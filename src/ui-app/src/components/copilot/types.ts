@@ -200,7 +200,20 @@ export interface SignatureSlot {
 
 export interface AgentKeyFactor {
   label: string;
-  value: string;
+  /**
+   * OPTIONAL, and absent is the normal case. A supervisor factor is a STATEMENT the
+   * agent made — "counterparty is an established freight vendor" — not a
+   * dimension-and-measurement pair. The service used to fill this with the constant
+   * "independently corroborated" to satisfy the type; nothing was corroborated. If a
+   * producer genuinely has a measured value it may send one, but nothing may invent
+   * one to fill the field.
+   */
+  value?: string;
+  /**
+   * Tri-state ON PURPOSE. `true` = the agent flagged this against the action, `false` =
+   * it explicitly did not, `undefined` = the agent did not say. The card must render
+   * nothing for `undefined`: a ✓ on an unstated judgement is an assertion nobody made.
+   */
   concern?: boolean;
 }
 

@@ -20,6 +20,7 @@ import {
   Approval,
   ApprovalState,
   AgentAssessment,
+  AgentKeyFactor,
   AuthorityRung,
   Escalator,
   EvidenceRef,
@@ -226,6 +227,42 @@ function toEvidence(evidence: Record<string, unknown> | undefined): EvidenceRef[
   });
 }
 
+/**
+ * Normalises `keyFactors` instead of casting it.
+ *
+ * This was `Array.isArray(x) ? x as AgentKeyFactor[] : undefined` — a cast, which
+ * asserts a shape rather than checking one. It is part of how the fixture taught
+ * the UI a `{label, value}` measurement pair the service never produced: nothing
+ * on this path would have objected to any array at all.
+ *
+ * A factor is accepted as a bare string (the shape the deciders actually hold it
+ * in) or as an object with a label. `value` and `concern` are forwarded ONLY when
+ * genuinely present — never defaulted, because the card distinguishes "not a
+ * concern" from "the agent did not say", and a default would erase that.
+ */
+function toKeyFactors(raw: unknown): AgentKeyFactor[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+
+  const factors: AgentKeyFactor[] = [];
+  for (const entry of raw) {
+    if (typeof entry === 'string') {
+      if (entry.trim() !== '') factors.push({ label: entry });
+      continue;
+    }
+    if (!entry || typeof entry !== 'object') continue;
+    const detail = entry as Record<string, unknown>;
+    if (typeof detail.label !== 'string' || detail.label.trim() === '') continue;
+    factors.push({
+      label: detail.label,
+      ...(typeof detail.value === 'string' && detail.value.trim() !== ''
+        ? { value: detail.value }
+        : {}),
+      ...(typeof detail.concern === 'boolean' ? { concern: detail.concern } : {}),
+    });
+  }
+  return factors;
+}
+
 function toAssessments(raw: Record<string, unknown> | null | undefined): AgentAssessment[] {
   if (!raw || typeof raw !== 'object') return [];
 
@@ -244,9 +281,7 @@ function toAssessments(raw: Record<string, unknown> | null | undefined): AgentAs
           ? Number(value.confidence)
           : undefined,
     rationale: typeof value.rationale === 'string' ? value.rationale : undefined,
-    keyFactors: Array.isArray(value.keyFactors)
-      ? (value.keyFactors as AgentAssessment['keyFactors'])
-      : undefined,
+    keyFactors: toKeyFactors(value.keyFactors),
     citedEvidenceIds: Array.isArray(value.citedEvidenceIds)
       ? (value.citedEvidenceIds as string[])
       : undefined,

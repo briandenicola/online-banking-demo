@@ -19,6 +19,7 @@ in the demo. Here we inject a spy decider so the test can capture the exact spaw
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -361,3 +362,64 @@ async def test_approval_required_uses_the_shipped_approval_key():
     # The primary is enriched with a renderable verdict, without re-deriving from private reasoning.
     assert approval["agentAssessment"]["verdict"] == "PROCEED"
     assert required["payload"]["requiredRung"] == "L2"
+
+
+def test_a_key_factor_carries_the_supervisors_statement_and_nothing_invented():
+    """The card renders `keyFactors` as scannable rows, so anything put in them is read as
+    something the supervisor established.
+
+    Each factor used to be paired with the CONSTANT string "independently corroborated" — not a
+    value read off anything; a literal in a list comprehension. Nothing is corroborated and
+    nothing is checked. Worst case: `_failsafe` emits the single factor `supervisor_unavailable`
+    when the model could not be reached, understood or trusted, so a FAILED call rendered as
+    "supervisor_unavailable — independently corroborated", and (because `concern` was never set
+    and the card read `concern ? '✗' : '✓'`) with a green tick beside it.
+
+    A factor is a STATEMENT, not a measurement. It carries a label and nothing else; the client
+    decides how to show it.
+    """
+    from app.planner.approval_view import supervisor_wire_assessment
+
+    assessment = supervisor_wire_assessment(
+        "run_1::supervisor",
+        "decline",
+        0.62,
+        "counter",
+        ("counterparty is an established freight vendor", "pattern matches invoice settlement"),
+        ("get_flagged_transaction",),
+    )
+
+    # Anti-vacuous: there really are factors to inspect.
+    assert len(assessment["keyFactors"]) == 2
+
+    for factor in assessment["keyFactors"]:
+        assert factor["label"], "the supervisor's own statement is the whole factor"
+        assert "value" not in factor, "a value must never be invented to satisfy the client type"
+        # `concern` is TRI-state on the client: true / false / not stated. Defaulting it here
+        # would let the card append a tick to a judgement this decider never made.
+        assert "concern" not in factor, "this decider does not classify its own factors"
+
+    assert "corroborated" not in json.dumps(assessment), "nothing here corroborates anything"
+
+
+def test_the_failsafe_sentinel_reaches_the_card_verbatim():
+    """The client recognises `supervisor_unavailable` and renders it as the failed call it is,
+    pinned by `supervisorFailsafe.contract.test.ts`. If the adapter rewrote or dropped it, that
+    recognition would fail OPEN — the row would go back to reading as an ordinary factor."""
+    from app.planner.approval_view import supervisor_wire_assessment
+    from app.planner.supervisor_model import _failsafe
+
+    opinion = _failsafe("the model could not be reached")
+    assessment = supervisor_wire_assessment(
+        "run_1::supervisor",
+        opinion.recommendation,
+        opinion.confidence,
+        opinion.strongest_counter_argument,
+        opinion.key_factors,
+        (),
+    )
+
+    assert assessment["keyFactors"] == [{"label": "supervisor_unavailable"}]
+    # A failed call withholds; it must never arrive as the mildest verdict.
+    assert assessment["verdict"] == "HOLD"
+    assert assessment["confidence"] == 0.0

@@ -21,6 +21,7 @@ import {
   validateReason,
 } from '../approvalPolicy';
 import { demoApproval } from '../demoFixture';
+import { SUPERVISOR_UNAVAILABLE_FACTOR } from '../supervisorFactors';
 import { getCopilotConfig, resetCopilotConfig } from '../../../config/copilotConfig';
 import { Approval, PayloadField, TERMINAL_REASONS } from '../types';
 
@@ -192,6 +193,71 @@ describe('disagreementOf', () => {
 
   it('reports none when there is no supervisor opinion', () => {
     expect(disagreementOf([demoApproval.assessments[0]]).kind).toBe('none');
+  });
+
+  describe('divergentFactors', () => {
+    const [primary, supervisor] = demoApproval.assessments;
+
+    it('is empty when the primary structurally has no factors', () => {
+      // The defect: `primaryFactors` was ALWAYS empty on the real wire (loop.py
+      // proposes with {summary, evidenceToolIds}), so `match` was always undefined
+      // and every supervisor factor was pushed here — bold red "← DIVERGENT" on
+      // 100% of runs. An indicator that always fires carries no information.
+      const result = disagreementOf([
+        { ...primary, keyFactors: undefined },
+        { ...supervisor, keyFactors: [{ label: 'a' }, { label: 'b' }] },
+      ]);
+      expect(result.divergentFactors).toEqual([]);
+    });
+
+    it('is empty on the shipped demo approval', () => {
+      expect(disagreementOf(demoApproval.assessments).divergentFactors).toEqual([]);
+    });
+
+    it('is empty when the supervisor has no factors either', () => {
+      expect(
+        disagreementOf([
+          { ...primary, keyFactors: [{ label: 'a', concern: true }] },
+          { ...supervisor, keyFactors: [] },
+        ]).divergentFactors
+      ).toEqual([]);
+    });
+
+    it('STILL detects a genuine divergence when both agents stated factors', () => {
+      // Anti-vacuous: without this, simply deleting the comparison would pass
+      // every assertion above. The feature is guarded, not removed.
+      const result = disagreementOf([
+        { ...primary, keyFactors: [{ label: 'aggregate', concern: true }] },
+        { ...supervisor, keyFactors: [{ label: 'aggregate', concern: false }] },
+      ]);
+      expect(result.divergentFactors).toEqual(['aggregate']);
+    });
+
+    it('detects a factor the primary never raised at all', () => {
+      const result = disagreementOf([
+        { ...primary, keyFactors: [{ label: 'aggregate', concern: true }] },
+        { ...supervisor, keyFactors: [{ label: 'customer sector' }] },
+      ]);
+      expect(result.divergentFactors).toEqual(['customer sector']);
+    });
+
+    it('reports nothing when both agents raised the same factors and agree', () => {
+      const result = disagreementOf([
+        { ...primary, keyFactors: [{ label: 'aggregate', concern: true }] },
+        { ...supervisor, keyFactors: [{ label: 'aggregate', concern: true }] },
+      ]);
+      expect(result.divergentFactors).toEqual([]);
+    });
+
+    it('never flags the failed-supervisor sentinel as a divergence', () => {
+      // A supervisor that never answered has not disagreed about anything. This
+      // is the case where the old code shouted loudest and meant least.
+      const result = disagreementOf([
+        { ...primary, keyFactors: [{ label: 'aggregate', concern: true }] },
+        { ...supervisor, keyFactors: [{ label: SUPERVISOR_UNAVAILABLE_FACTOR }] },
+      ]);
+      expect(result.divergentFactors).toEqual([]);
+    });
   });
 });
 

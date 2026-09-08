@@ -25,6 +25,7 @@ import {
 } from './types';
 import { getCopilotConfig } from '../../config/copilotConfig';
 import { normaliseVerdict, verdictPresentation } from './supervisorVerdict';
+import { isSupervisorUnavailable } from './supervisorFactors';
 
 // ---------------------------------------------------------------------------
 // Terminal reasons — all four must render distinctly
@@ -173,10 +174,30 @@ export function disagreementOf(assessments: AgentAssessment[]): Disagreement {
   const divergentFactors: string[] = [];
   const supervisorFactors = supervisor.keyFactors || [];
   const primaryFactors = primary.keyFactors || [];
-  for (const factor of supervisorFactors) {
-    const match = primaryFactors.find((f) => f.label === factor.label);
-    if (!match || Boolean(match.concern) !== Boolean(factor.concern)) {
-      divergentFactors.push(factor.label);
+  // Factor-level divergence is only computable when BOTH agents stated factors.
+  //
+  // The primary structurally sends none — `loop.py` proposes with
+  // `agentAssessment: {summary, evidenceToolIds}` and `primary_wire_assessment`
+  // adds no factors — so `primaryFactors` was always empty, `match` was always
+  // undefined, and EVERY supervisor factor was pushed here and rendered bold red
+  // "← DIVERGENT". An indicator that fires on 100% of runs carries exactly zero
+  // information, and it fired hardest on the runs where the supervisor had
+  // returned nothing at all.
+  //
+  // Silence is the honest output when there is nothing to compare against. This
+  // is not the feature being deleted: the loop below is unchanged and lights up
+  // the moment the primary emits factors (named and deferred in the decision
+  // record — `loop.py`'s propose call is the site).
+  const comparable = supervisorFactors.length > 0 && primaryFactors.length > 0;
+  if (comparable) {
+    for (const factor of supervisorFactors) {
+      // The failsafe sentinel is not an opinion about the action, so it cannot
+      // diverge from one. It is rendered as a failed call in its own right.
+      if (isSupervisorUnavailable(factor)) continue;
+      const match = primaryFactors.find((f) => f.label === factor.label);
+      if (!match || Boolean(match.concern) !== Boolean(factor.concern)) {
+        divergentFactors.push(factor.label);
+      }
     }
   }
 
