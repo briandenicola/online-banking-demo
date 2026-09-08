@@ -150,7 +150,7 @@ curl -N -H "authorization: Bearer $BANKER" \
 | # | Check | Pass | A failure here means |
 |---|---|---|---|
 | 6.1 | Every approval transition publishes to the Redis stream | Events present | — |
-| 6.2 | `event-processor` consumes and persists them | Audit rows appear | The Go consumer has only been tested against a stub stream. |
+| 6.2 | `event-processor` consumes and emits a structured audit record | Log record per recognised event | The Go consumer has only been tested against a stub stream. |
 | 6.3 | `InsufficientFundsAttempt` and `UserRegistered` are audited | Present | These were published and never consumed for the entire life of the repo before Phase 1. |
 | 6.4 | Traces persist to `copilot-traces` and replay faithfully | Replay reproduces the run | The eval contract shipped with the harness specifically so this would be checkable. |
 
@@ -158,6 +158,14 @@ curl -N -H "authorization: Bearer $BANKER" \
 writes through the classic tabs emit **no audit event**. Closed as accepted, not
 fixed — the Phase 5 comparison therefore compares an audited surface against a
 partially unaudited one. Do not "discover" this Monday and treat it as a bug.
+
+**Known accepted gap (6.2, ruled by Brian — document, do not build):** `event-processor`
+has **no persistence at all**. Verified independently: `go.mod` carries Redis, OpenTelemetry
+and `azidentity` only — zero Cosmos SDK — and `processMessage` emits `slog` records to stdout.
+Durability is container log retention plus Application Insights, nothing queryable as a system
+of record. The service README asserted Cosmos audit-log storage in **five** places; those claims
+were false and have been corrected, because a doc that overstates the audit posture is worse
+than the gap itself. Do not cite this service as the audit system of record.
 
 ---
 
