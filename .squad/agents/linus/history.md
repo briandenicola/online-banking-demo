@@ -1451,3 +1451,36 @@ compare.
 **Tamper discipline.** 12 tampers, every one caught by a *named* test. The most valuable were the
 ones that changed only one property (colour without label, casing without membership) — those are
 the ones that find tests proving less than they appear to.
+
+### 2026-05 — the key-factor row: three lies in one line (commit `7fbc1f2`)
+
+- **A type can be honest and still be a lie.** `AgentKeyFactor {label, value, concern}` is a
+  perfectly reasonable shape for a *measurement*. The service emits a flat tuple of model
+  free-text — a *statement*. The adapter bridged the gap by inventing a constant. The lesson is
+  that when a producer's shape is narrower than a consumer's type, the honest move is to narrow
+  the type (make the field optional), never to fill the field. **A field you must fabricate to
+  populate is a field that does not belong on that record.**
+- **Tri-state collapsed into two is a lie with no bug in it.** `concern ? '✗' : '✓'` has no
+  defect you can point at. It is wrong only because `undefined` exists. Any boolean rendered as
+  a binary needs an explicit third arm the moment it can be absent — and the normaliser must
+  never default it, or the third arm becomes unreachable and the guard becomes vacuous by
+  construction.
+- **An indicator that fires 100% of the time is worse than no indicator.** It costs the reader
+  attention, teaches them to ignore the channel, and it fired hardest on exactly the runs that
+  carried the least information. When one side of a comparison is *structurally* empty, the
+  comparison is not "returning nothing useful" — it is broken. Guard the comparison; don't
+  delete it, or you lose the feature the day the other side starts producing.
+- **Anti-vacuity, third time.** After guarding divergence to "both sides stated factors", every
+  new test passed — and would also have passed with the comparison deleted entirely. Added the
+  "STILL detects a genuine divergence" cases before believing the suite. **A guard that only
+  proves silence proves nothing; pair every "it stays quiet" test with an "it still fires" test
+  built from a fixture that genuinely differs.**
+- **Fixture-vs-service divergence, third instance on the same card.** `demoFixture` agreed with
+  the *renderer* instead of with the *service*. That is the whole mechanism behind every LIE-class
+  defect found in this epic: the fixture is written by whoever is looking at the screen, so it
+  encodes what looks right rather than what arrives. **Regenerating the golden fixture from the
+  real backend has now exposed a divergence every single time I have done it. It is the highest
+  yield technique in this repo and should be the first move, not the last.**
+- **Deleting fixture data can be the fix.** Removing the primary's `keyFactors` and `confidence`
+  makes the demo card visibly asymmetric. That asymmetry is real — the product has it. Papering
+  over a gap in a fixture hides the gap from the only people who could close it.
