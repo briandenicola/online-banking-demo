@@ -18,12 +18,14 @@ from app.config import (
     ConfigurationError,
     SERVICE_NAME,
     allow_inmemory_on_cosmos_failure,
+    env_with_legacy,
     load_settings,
 )
 from app.events.bus import CosmosTraceSink, InMemoryTraceSink, RunStreamRegistry
-from app.planner.fanout import FanOutEngine
+from app.planner.fanout import FanOutEngine, deterministic_decider
 from app.planner.limits import load_fanout_limits
 from app.planner.loop import Planner, planner_mode
+from app.planner.supervisor_model import FoundryDecider, supervisor_mode
 from app.stores.sessions import CosmosSessionStore, InMemorySessionStore
 from app.tools.executor import ToolExecutor
 from app.tools.manifest import load_manifest
@@ -141,11 +143,26 @@ async def lifespan(app: FastAPI):
         tool_budget=fanout_limits.per_subagent_tool_budget,
         wall_clock_s=fanout_limits.subagent_wall_clock_seconds,
     )
+    # The supervisor's decider (§6.4). Declared, never inferred — the scripted decider
+    # always recommends `proceed` when its reads succeed, so wiring it by accident makes
+    # agreement 100% by construction and renders the co-signature as independent review
+    # that never happened. `supervisor_mode()` raises rather than degrade silently.
+    app.state.supervisor_mode = supervisor_mode()
+    if app.state.supervisor_mode == "foundry":
+        decider = FoundryDecider(
+            endpoint=env_with_legacy("FOUNDRY_PROJECT_ENDPOINT", "AZURE_AI_PROJECT_ENDPOINT", "").strip(),
+            model=env_with_legacy("FOUNDRY_MODEL", "AZURE_AI_MODEL_DEPLOYMENT", "").strip(),
+        )
+    else:
+        decider = deterministic_decider
+    app.state.supervisor_decider = decider
+
     app.state.fanout = FanOutEngine(
         registry=registry,
         executor=app.state.executor,
         runs=app.state.runs,
         limits=fanout_limits,
+        decider=decider,
     )
 
     app.state.planner = Planner(
@@ -161,11 +178,14 @@ async def lifespan(app: FastAPI):
     logger.info(
         "Planner ready",
         mode=app.state.planner_mode,
+        supervisor_mode=app.state.supervisor_mode,
         max_iterations=settings.planner_max_iterations,
     )
 
     yield
 
+    if isinstance(app.state.supervisor_decider, FoundryDecider):
+        await app.state.supervisor_decider.aclose()
     await app.state.http.aclose()
 
 

@@ -112,6 +112,12 @@ def _base_env(monkeypatch):
     # identically whether the deployment had model access or had silently lost it.
     # tests/test_planner_mode.py owns the mode-selection behaviour itself.
     monkeypatch.setenv("COPILOT_PLANNER_MODE", "deterministic")
+    # Same reasoning for the supervisor's decider, and the same reason it must be stated:
+    # the scripted decider always recommends `proceed` when its reads succeed, so obtaining
+    # it by leaving the Foundry variables unset is how a suite ends up measuring a script
+    # and reading the resulting 100% agreement as review.
+    # tests/test_supervisor_model.py owns the mode-selection behaviour itself.
+    monkeypatch.setenv("COPILOT_SUPERVISOR_MODE", "deterministic")
     from app.auth import reset_key_cache
 
     reset_key_cache()

@@ -77,6 +77,12 @@ spec:
         # means the pod fails to start rather than quietly degrading.
         - name: COPILOT_PLANNER_MODE
           value: "foundry"
+        # The supervisor's second opinion, for the same reason and with the same
+        # consequence. The scripted decider recommends `proceed` whenever its own reads
+        # succeed, and the primary proposed the action — so a pod that quietly ran the
+        # script would show 100% agreement and render it as an independent co-signature.
+        - name: COPILOT_SUPERVISOR_MODE
+          value: "foundry"
         - name: COSMOS_DB_ENDPOINT
           valueFrom:
             configMapKeyRef:
