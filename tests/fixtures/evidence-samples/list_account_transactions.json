@@ -1,0 +1,101 @@
+{
+  "toolId": "list_account_transactions",
+  "provenance": {
+    "capturedFrom": "NOT CAPTURED FROM A LIVE RUN \u2014 hand-built from the shipped response type.",
+    "derivedFrom": [
+      "src/transaction-service/Models/Transaction.cs (the serialized element type)",
+      "src/transaction-service/Controllers/TransactionsController.cs GetAccountTransactions -> Ok(accountTransactions), a BARE ARRAY",
+      "config/copilot-tools.yaml list_account_transactions.target = GET transaction-service /api/transactions/account/{accountId}"
+    ],
+    "relatedRuns": [
+      "run_5855e85caad34c12",
+      "run_5ed954af071b4ebc"
+    ],
+    "runNote": "Those runs (tests/verification/, Livingston's Gate A / Gate B measurement) REFUSED at propose with evidence_incomplete. That is why no live evidence object exists to record yet: they are cited as the provenance of the GAP, not of this shape.",
+    "warning": "Hand-written fixtures are how a seam test passes against a system that does not exist. This sample proves the two config documents are mutually satisfiable against a shape we BELIEVE the service returns. It does NOT prove transaction-service still returns that shape. A live capture is a post-demo contract test.",
+    "shapeNote": "The bare array is the whole point of this fixture: it carries no accountId and no arity, which is exactly why the raw response cannot satisfy requiredFields [accountId, count] and why a projection exists at all."
+  },
+  "arguments": {
+    "accountId": "acct-1001"
+  },
+  "response": [
+    {
+      "id": "txn-5001",
+      "accountId": "acct-1001",
+      "userId": "user-77",
+      "amount": -125.4,
+      "currency": "USD",
+      "type": "debit",
+      "status": "completed",
+      "description": "Card purchase - GROCER 118",
+      "timestamp": "2026-09-01T14:03:11.000Z",
+      "relatedTransactionId": null
+    },
+    {
+      "id": "txn-5002",
+      "accountId": "acct-1001",
+      "userId": "user-77",
+      "amount": 2400.0,
+      "currency": "USD",
+      "type": "credit",
+      "status": "completed",
+      "description": "Payroll deposit",
+      "timestamp": "2026-09-02T08:00:00.000Z",
+      "relatedTransactionId": null
+    },
+    {
+      "id": "txn-5003",
+      "accountId": "acct-1001",
+      "userId": "user-77",
+      "amount": -60.0,
+      "currency": "USD",
+      "type": "debit",
+      "status": "completed",
+      "description": "ATM withdrawal",
+      "timestamp": "2026-09-04T18:41:07.000Z",
+      "relatedTransactionId": null
+    }
+  ],
+  "projected": {
+    "accountId": "acct-1001",
+    "count": 3,
+    "items": [
+      {
+        "id": "txn-5001",
+        "accountId": "acct-1001",
+        "userId": "user-77",
+        "amount": -125.4,
+        "currency": "USD",
+        "type": "debit",
+        "status": "completed",
+        "description": "Card purchase - GROCER 118",
+        "timestamp": "2026-09-01T14:03:11.000Z",
+        "relatedTransactionId": null
+      },
+      {
+        "id": "txn-5002",
+        "accountId": "acct-1001",
+        "userId": "user-77",
+        "amount": 2400.0,
+        "currency": "USD",
+        "type": "credit",
+        "status": "completed",
+        "description": "Payroll deposit",
+        "timestamp": "2026-09-02T08:00:00.000Z",
+        "relatedTransactionId": null
+      },
+      {
+        "id": "txn-5003",
+        "accountId": "acct-1001",
+        "userId": "user-77",
+        "amount": -60.0,
+        "currency": "USD",
+        "type": "debit",
+        "status": "completed",
+        "description": "ATM withdrawal",
+        "timestamp": "2026-09-04T18:41:07.000Z",
+        "relatedTransactionId": null
+      }
+    ]
+  }
+}

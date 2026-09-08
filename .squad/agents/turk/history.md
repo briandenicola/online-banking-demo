@@ -2567,3 +2567,47 @@ escalated the project-vs-relax choice to Danny as a narrow architectural call.
 ## 2026-09-08 — Gate B ruling: evidence contract architecture
 
 Gate B (evidence completeness validation) has been ruled on by Danny. Full ruling: `docs/design/gate-b-evidence-contract-ruling.md`. Turk owns implementation of the declared-projection adapter across `config/copilot-tools.yaml`, `executor.py`, and the C# seam test in `authority-service.UnitTests`. Livingston owns fixture validation and measurement of the two-tool subset (`get_account`, `list_account_transactions`). Both gates (A + B) must pass before the co-signature feature can execute in production.
+
+## Learnings — 2026-09-08, implementing the Gate B evidence projection
+
+Implemented Danny's ruling: the declared four-verb `evidenceProjection`, two tools only, plus the
+C# seam test over the real `PolicyEvaluator`. 288 Python / 135 C# tests green in a clean worktree.
+Four things worth keeping.
+
+**1. A boundary you can only document, you will eventually cross. Make it unspellable.**
+§R5 says a projection may only assert a subject the call was scoped by. I could have written that
+in a comment. Instead I made `bind` accept only parameters listed in the tool's own
+`parameters.required`. `list_login_audits` has `required: []`, so the fabricated `userId` now
+aborts startup with the reason in the error text. The rule that stops the lie and the rule the
+loader enforces are the same rule. Prefer that shape whenever the ruling gives you a principle
+rather than a case.
+
+**2. Tamper-testing found two holes in my own guards — both of the "absent by coincidence" kind.**
+Deleting a projection from the manifest left the C# suite green, because it was reading the
+committed fixture: the artifact had outlived the declaration that produced it, and was still
+happily attesting to it. And unwiring `project(...)` from `executor.py` left the *entire* Python
+suite green with the whole fix inert, because every test exercised the engine or the fixtures
+directly and nothing held the call site. **When you add a mechanism, test the wiring separately
+from the mechanism.** Generalising: a checked-in artifact must never be the only witness to the
+declaration that generated it, and a test suite that only ever calls a component directly proves
+nothing about whether production calls it.
+
+**3. When a ruling names a location, implement the intent and flag the deviation out loud.**
+§R7 said "apply the declared projection in the C# test". Done literally, that is a C# copy of the
+four-verb grammar — the third drifting document §R7 exists to prevent, just moved. I split it: the
+Python test proves the fixture's `projected` is what the shipped engine produces; the C# test feeds
+it to the real `EvidenceComplete`. Each runs one real component, joined by one artifact, neither
+re-implements the other. I wrote the deviation into the decision file rather than letting it read
+as compliance.
+
+**4. My own note from this morning came back around.** "Every defect found on this repo today was
+unheld across a file boundary." Both holes above were exactly that, in the code I wrote to fix
+boundary-unheldness. The habit is not "add a test", it is "name the boundary, then ask what would
+still pass if the thing on the other side vanished."
+
+Held the line on the success signal: I proved the projection satisfies both config documents
+against a **hand-built** recorded shape, and I did not claim Gate B is open. The fixtures are
+derived from the services' C# response types, not captured live — the only runs that could have
+captured them are the runs that refused. If `account-service` does not return `id`/`balance` at the
+top level, Gate B stays shut and my seam test would not know. Named that as the largest residual
+risk rather than reporting green.

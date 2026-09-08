@@ -1,0 +1,41 @@
+{
+  "toolId": "get_account",
+  "provenance": {
+    "capturedFrom": "NOT CAPTURED FROM A LIVE RUN \u2014 hand-built from the shipped response type.",
+    "derivedFrom": [
+      "src/account-service/Models/Account.cs (the serialized type)",
+      "src/account-service/Controllers/AccountsController.cs GetAccount -> Ok(account)",
+      "config/copilot-tools.yaml get_account.target = GET account-service /api/accounts/{accountId}"
+    ],
+    "relatedRuns": [
+      "run_5855e85caad34c12",
+      "run_5ed954af071b4ebc"
+    ],
+    "runNote": "Those runs (tests/verification/, Livingston's Gate A / Gate B measurement) REFUSED at propose with evidence_incomplete. That is why no live get_account evidence object exists to record yet: they are cited as the provenance of the GAP, not of this shape.",
+    "warning": "Hand-written fixtures are how a seam test passes against a system that does not exist. This sample proves the two config documents are mutually satisfiable against a shape we BELIEVE the service returns. It does NOT prove account-service still returns that shape. A live capture is a post-demo contract test."
+  },
+  "arguments": {
+    "accountId": "acct-1001"
+  },
+  "response": {
+    "id": "acct-1001",
+    "userId": "user-77",
+    "accountNumber": "1000000001",
+    "accountType": "checking",
+    "balance": 4820.55,
+    "currency": "USD",
+    "createdAt": "2026-01-14T09:12:44.000Z",
+    "isActive": true
+  },
+  "projected": {
+    "id": "acct-1001",
+    "userId": "user-77",
+    "accountNumber": "1000000001",
+    "accountType": "checking",
+    "balance": 4820.55,
+    "currency": "USD",
+    "createdAt": "2026-01-14T09:12:44.000Z",
+    "isActive": true,
+    "accountId": "acct-1001"
+  }
+}

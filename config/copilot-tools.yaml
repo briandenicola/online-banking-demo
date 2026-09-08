@@ -143,6 +143,14 @@ tools:
       additionalProperties: false
     capabilityScope: transactions.read
     redaction: []
+    # The upstream returns a bare array, which asserts nothing about whose transactions these
+    # are. `accountId` is not in the response and never will be — it exists only in the bound
+    # argument, which is why this projection is expressible only on the calling side.
+    # Lossless: `items` carries the full array through to the approval record.
+    evidenceProjection:
+      accountId: { bind: $args.accountId }
+      count: { count: $ }
+      items: { collect: $ }
 
   # ------------------------------------------------------------ accounts ----
   - toolId: get_account
@@ -164,6 +172,10 @@ tools:
       additionalProperties: false
     capabilityScope: accounts.read
     redaction: []
+    # The response already carries `balance`; only the identity needs naming. `id` on an account
+    # response IS the account id — the rename adds specificity and discards nothing.
+    evidenceProjection:
+      accountId: { rename: id }
 
   # ----------------------------------------------------------- transfers ----
   - toolId: get_transfer
