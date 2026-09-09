@@ -147,7 +147,13 @@ def _registry() -> _FakeRegistry:
     )
 
 
+# The limits the run in flight was given. Only the positive control below reads it — a stand-in
+# for the config a leaky prompt builder would have to reach for.
+_CURRENT_LIMITS: dict = {"value": None}
+
+
 async def _run(assessor, limits, *, required=("get_flagged_transaction",), failing=()):
+    _CURRENT_LIMITS["value"] = limits
     registry = _registry()
     executor = _Executor(failing=failing)
     authority = _Authority(required)
@@ -191,14 +197,57 @@ async def test_the_assessors_prompt_is_byte_identical_at_budget_0_and_budget_3()
     configuration nobody runs. Whether a request is HONOURED is the budget's business; whether it
     may be MADE is not, and the prompt must not know which stage it is in.
     """
-    stage_one_prompts: list[str] = []
-    stage_two_prompts: list[str] = []
+    await _assert_prompt_is_budget_independent()
 
-    await _run(judging_assessor(seen=stage_one_prompts), shipped_assessment_limits())
-    await _run(judging_assessor(seen=stage_two_prompts), STAGE_TWO)
 
-    assert stage_one_prompts, "the assessor was never called — the loop is inert"
-    assert stage_one_prompts[0] == stage_two_prompts[0]
+async def _first_prompt_at(limits) -> str:
+    """Drive the REAL planner at `limits` and return the first prompt the assessor was handed."""
+    seen: list[str] = []
+    await _run(judging_assessor(seen=seen), limits)
+    assert seen, "the assessor was never called — the loop is inert"
+    return seen[0]
+
+
+async def _assert_prompt_is_budget_independent() -> None:
+    """The comparison itself, named once so the positive control below can run the SAME one."""
+    assert await _first_prompt_at(shipped_assessment_limits()) == await _first_prompt_at(STAGE_TWO)
+
+
+@pytest.mark.asyncio
+async def test_the_byte_equality_check_actually_trips_on_a_budget_dependent_prompt(monkeypatch):
+    """The positive control for the assertion above: proof it can FAIL.
+
+    A guard nobody has seen fail is a guard nobody has tested. Here the ONLY thing changed is the
+    prompt builder — swapped for one that interpolates the budget, which is exactly the leak
+    §P5.1 forbids — and the same comparison is then run unmodified. If it still passed, the
+    equality above would be decorative and the two-stage measurement would rest on nothing.
+
+    It earns its place alongside the cheaper guards beside it. The mention-scan and the AST walk
+    are earlier and more specific, and both are defeatable by paraphrase: a prompt that said
+    "you may name three" trips neither. Byte-equality is the only one of the three that fails on
+    the EFFECT regardless of the route taken to it, so it is the backstop, and a backstop is not
+    redundant merely because a cheaper guard usually fires first.
+
+    (For the record, since I previously said otherwise: byte-equality did not "fail to catch" the
+    budget-interpolation tamper. That tamper was an incomplete edit — the caller never passed the
+    budget through, so the prompt genuinely was identical at both budgets and the assertion was
+    correct to pass. The scan caught the intent one move before the wiring existed. That is
+    layering working, not a hole.)
+    """
+    import app.planner.primary_model as primary_model
+
+    honest = primary_model.build_prompt
+
+    def leaky(objective, action_id, payload, evidence):
+        # Stands in for a builder that was handed the ceiling. It reaches for the budget the way
+        # such a builder would have to — through the config the loop reads.
+        budget = _CURRENT_LIMITS["value"].per_run_additional_tool_budget
+        return honest(objective, action_id, payload, evidence) + f"\nYou may request {budget}."
+
+    monkeypatch.setattr(primary_model, "build_prompt", leaky)
+
+    with pytest.raises(AssertionError):
+        await _assert_prompt_is_budget_independent()
 
 
 def test_the_prompt_never_mentions_the_budget_in_any_form():
