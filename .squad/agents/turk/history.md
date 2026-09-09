@@ -2658,3 +2658,66 @@ changed. Reinstating the hardcoded `"completed"` in `sessions.py` would not have
 I added an end-to-end test that starts a run through HTTP, has authority-service refuse it,
 and reads the run back the way Livingston's harness does. The rule I keep relearning: put the
 assertion downstream of the changed line, then prove it by breaking that line.
+
+---
+
+## Learnings — the primary assessment and the evidence ceiling (#332, Danny's §P ruling)
+
+**1. The defect was a default, and both defaults lived downstream of the missing thing.**
+`_run_propose_step` sent `{"summary": request.objective}` as the agent's assessment, and
+`primary_wire_assessment` then defaulted the absent verdict to `"proceed"` and promoted the
+banker's own objective into the `rationale`. Neither line is wrong on its face; together they
+render "Primary agent — PROCEED" with a justification, for an agent that never assessed
+anything. Nothing errored. Brian's test answers itself: it **LIES**. What I keep taking from
+this: a default is how an absence becomes invisible, and the place to look for a lie is not
+where the value is used but where a missing value is quietly replaced.
+
+**2. "Budget, not branch" is a real distinction and it changed how I wrote the code.**
+The ruling forbids `if ceiling_enabled:`. My instinct was to guard the additions call at
+budget 0 — it does nothing, why call it? Because then stage 1 would exercise a path stage 2
+does not, and the whole staged measurement would be attributing a delta to the wrong change.
+So the budget is a **number that bounds a loop**, everything runs at 0, and the refusals it
+produces are the measurement. I held it with an AST walk that fails if any planner module
+writes an `if` whose test mentions the budget, because the comment saying "do not branch here"
+is exactly the comment a future edit deletes.
+
+**3. A test that a fixture could satisfy proves nothing about the code I changed.**
+Third time. The trap here was obvious once named: hand the planner a ready-made
+`PrimaryAssessment` and every assertion passes with the assessor unwired. So the test double
+stubs **only the network** — `build_prompt` and `parse_primary_assessment` really run — and
+the anti-inertness test asserts a distinctive rationale in the body sent to
+authority-service, downstream of the wiring. I also made the golden-wire stub **echo what was
+proposed** instead of returning a canned assessment; the golden now moves if the assessor
+stops working, which a canned block would have hidden.
+
+**4. Danny found a leak in a module that does not mention the thing it leaks into.**
+`FanOutEngine` derived the supervisor's reads from `sorted(primary_evidence.keys())`. Correct
+only by coincidence — the required set and the gathered set were equal — and the coincidence
+ends the instant discretionary evidence lands in that dict. The lesson is about *how* it
+would have broken: no diff touching the supervisor, no test failing, blindness defeated by a
+**data-flow change elsewhere**. Filtering inside the engine would have been a promise; I
+deleted the parameter, so an edit that wants the primary's evidence back has to change a
+signature, and a test asserts that signature. Promises are not controls; signatures are.
+
+**5. Agreement had to become tri-state before the primary could fail.**
+`_primary_recommendation` ended in `or "proceed"`. Harmless while the primary had no verdict
+at all — and a manufactured position the moment it can fail, because the supervisor's honest
+`hold` then renders as dissent between two agents, one of which never spoke. `not_comparable`
+is the third arm, excluded from every denominator. Same species as #1: the boolean was fine
+until absence became possible, and nobody would have noticed because the wrong answer looks
+like a normal answer.
+
+**6. Two refusal reasons that would have been one, and the measurement needs both.**
+A request refused on the final permitted pass is `iterations_exhausted`, not
+`budget_exhausted`. Conflating them reports unspent budget as spent, and stage 1 exists to
+produce exactly that number. Cheap to get right up front, invisible to get wrong.
+
+**7. Ten tampers, ten named tests.** Every guard broken, confirmed a *named* test failed,
+reverted, confirmed green: the defaulted verdict, the summary→rationale promotion, a dropped
+citation, the manufactured primary position, branching on the budget, a budget in the prompt,
+the supervisor read list re-pointed at the primary's evidence, dropped refusals, the two id
+lists merged, model-supplied arguments, `converged` defaulted true, a mislabelled refusal, an
+emptied quarantine, and the model consulted before the required reads. The one that taught me
+something: interpolating the budget into the prompt was caught by the "prompt never mentions
+the budget" test but *not* by the byte-equality test, because the caller did not yet pass it.
+The weaker, earlier guard was the one that fired. Both are worth having.
