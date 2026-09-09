@@ -2761,3 +2761,42 @@ channel is a promise; an absent parameter is a fact.*
 **All three departures from the ruling were accepted, and the reason is transferable:** each one
 *narrowed* something the text left wide, and each named the line it was departing from. Narrowing
 with the citation attached is auditable. Widening, or silence, is not.
+
+### Banker reads a customer's account (ruling §B, `3b23945`)
+
+**When the data has to be shaped so a defect does not show, the workaround has become the design.**
+The seeder gave the *banker* the accounts. That looked like demo data. It was a workaround for
+`GetAccountTransactions`, which read the CALLER's transactions and narrowed them by accountId — so
+for any non-owner it returned `200 []` by construction, for every account in the bank. The
+workaround stayed invisible precisely because it made everything pass. **Ask what a piece of test
+or seed data is compensating for.**
+
+**A success response can assert a fact nobody asked about.** `Ok(emptyList)` said *this account has
+no transaction history*, derived from a query that never asked the question, and then travelled
+through a correct projection and a correct completeness gate to a supervisor. Three correct
+components in series, each faithful to its input, carrying a falsehood the whole way because the
+first answered a question it had not been asked. **Faithful components do not make a truthful
+system; only the first one asking the right question does.**
+
+**Deriving authority from the result set has an empty case, and the empty case is the defect
+again.** After rewriting the query I still had `!rows.All(owned)` — which is TRUE for zero rows, so
+an unprivileged stranger asking about an empty ledger would have got `200 []` once more, one field
+over from the bug I had just deleted. **Whenever a permission is computed from data, write down
+what it decides when there is no data.**
+
+**Two existing tests asserted the defect as the requirement**, one of them named
+`..._OtherUsersAccount_ReturnsEmpty`. A test named after the wrong behaviour is the strongest
+evidence that the behaviour was never examined. Replaced them and recorded what they said where
+they stood, because deleting them would have deleted the only trace.
+
+**A startup guard's blast radius is the measure of whether it is real.** §B3.2 said the ledger may
+not be required without `get_account`. The SHIPPED policy violated it in three actions — with the
+guard in and the policy unamended, authority-service does not start. Tampering one policy line
+failed 60+ tests across the suite, which is exactly what a startup abort should look like.
+
+**My own harness produced a false green.** I mirrored the transaction-service tree to /tmp to work
+around a root-owned `obj/`, and restored files between tampers with `rsync -a` — which PRESERVES
+MTIMES, so MSBuild kept the tampered DLL and a clean checkout "failed". Four minutes chasing a
+phantom. **A revert is not verified until the thing that consumes it has actually rebuilt**, and
+this is the fourth flavour of absent-by-coincidence I have hit: deleted projection, unwired
+`project()`, un-awaited coroutine, and now an un-rebuilt binary.
