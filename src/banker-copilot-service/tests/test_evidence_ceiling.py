@@ -759,3 +759,121 @@ async def test_withholding_ends_the_run_failed_with_primary_declined(monkeypatch
     assert authority.proposed == []
     assert next(f for f in frames if f["kind"] == "run.done")["payload"]["status"] == "failed"
     assert next(f for f in frames if f["kind"] == "run.error")["payload"]["code"] == "primary_declined"
+
+
+# ------------------------------------------------ §P5.3 bindability, against the REAL manifest ----
+
+
+def _real_registry():
+    """The registry built from the SHIPPED manifest, not the fakes above.
+
+    The bug this section holds could not be seen through a fake: the fakes in this file all
+    declare `required` equal to their properties, so they never exercise the one shape the
+    manifest actually contains — a tool whose parameters are all optional.
+    """
+    from conftest import MANIFEST_PATH
+
+    from app.config import load_settings
+    from app.tools.manifest import load_manifest
+    from app.tools.registry import build_registry
+
+    return build_registry(load_manifest(str(MANIFEST_PATH)), load_settings())
+
+
+def _real_request():
+    return PlannerRequest(
+        session=_Session(context={}),
+        run_id="run_1",
+        objective="Review the application.",
+        action_id="transaction.hold.place",
+        payload={},
+        facts={},
+        bearer_token="******",
+    )
+
+
+def test_a_tool_whose_parameters_are_all_optional_is_bindable():
+    """`required: []` means every parameter is OPTIONAL — the tool binds with no arguments.
+
+    This was recorded as `unbindable`, because `schema.get("required") or <all properties>`
+    treats an empty list as absent and fell through to the conservative branch. It errs closed,
+    so there is no authority consequence: the damage is that the RECORDED REASON IS FALSE, and a
+    real request vanishes from the stage-1 demand count. Stage 1 exists to produce that count and
+    it is what sets the stage-2 budget, so an undercount in the direction that makes the ceiling
+    look less needed is precisely the defect shape this feature keeps producing.
+
+    Asserted against the shipped manifest, because the three tools with this shape are facts
+    about the product, not about a fixture.
+    """
+    from app.planner.loop import _is_bindable
+
+    registry = _real_registry()
+    request = _real_request()
+
+    for tool_id in ("list_account_applications", "list_flagged_transactions"):
+        tool = registry.get(tool_id)
+        assert tool.parameters.get("required") == [], (
+            f"{tool_id} no longer has an all-optional parameter schema; this test needs a new "
+            "subject rather than deleting"
+        )
+        assert _is_bindable(tool, request) is True, f"{tool_id} was wrongly refused as unbindable"
+
+
+def test_a_tool_whose_required_parameter_cannot_be_filled_is_still_unbindable():
+    """The other side of the same line, so the fix above cannot be read as a general loosening.
+    The banker's inputs carry no `applicationId` here, so the tool stays refused — the model
+    names a tool id and never invents the argument."""
+    from app.planner.loop import _is_bindable
+
+    registry = _real_registry()
+    assert _is_bindable(registry.get("get_account_application"), _real_request()) is False
+
+
+def test_an_absent_required_key_is_still_read_conservatively():
+    """ABSENT is not EMPTY. Every tool in the shipped manifest declares `required`, so a schema
+    without it is malformed or hand-built, and admitting a tool on a schema nobody wrote is the
+    wrong way to be wrong."""
+    from app.planner.loop import _is_bindable
+
+    class _Undeclared:
+        parameters = {"properties": {"accountId": {"type": "string"}}}
+
+    assert _is_bindable(_Undeclared(), _real_request()) is False
+
+
+@pytest.mark.asyncio
+async def test_an_all_optional_tool_is_granted_and_counted_not_recorded_unbindable():
+    """Downstream of the fix, on the record itself: the request reaches the demand count.
+
+    A unit test on `_is_bindable` alone would pass with the ceiling unwired, so this drives the
+    real planner and asserts on what the approval carries.
+    """
+    registry = _real_registry()
+    executor = _Executor()
+    authority = _Authority(("get_account",))
+    runs = RunStreamRegistry(InMemoryTraceSink(), replay_window=500)
+    planner = Planner(
+        registry=registry,
+        executor=executor,
+        authority=authority,
+        max_iterations=12,
+        assessment_limits=STAGE_TWO,
+        assessor=judging_assessor(requested=("list_account_applications",)),
+        store=_Store(),
+    )
+    request = PlannerRequest(
+        session=_Session(context={}),
+        run_id="run_1",
+        objective="Review the account.",
+        action_id="transaction.hold.place",
+        payload={"accountId": "acc_1"},
+        facts={},
+        bearer_token="******",
+    )
+    await planner.run(request, runs.create("run_1", "sess_1"))
+
+    assessment = _assessment(authority)
+    assert assessment["refusedEvidenceRequests"] == []
+    assert assessment["discretionaryEvidenceToolIds"] == ["list_account_applications"]
+    # And it was read with NO arguments, because it needs none — not with an invented one.
+    assert ("list_account_applications", {}) in executor.calls

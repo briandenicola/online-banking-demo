@@ -918,7 +918,25 @@ def _is_bindable(tool, request: PlannerRequest) -> bool:
     if tool is None:
         return False
     schema = tool.parameters or {}
-    required = schema.get("required") or list((schema.get("properties") or {}).keys())
+
+    # ABSENT and EMPTY are different facts and this line used to conflate them, because
+    # `schema.get("required") or <fallback>` treats `[]` as falsy.
+    #
+    #   * `required: []` means every parameter is OPTIONAL, so the tool is bindable with no
+    #     arguments at all. `list_account_applications` is exactly this, and it was being
+    #     recorded `unbindable` — a FALSE stated reason, and a request silently dropped out of
+    #     the stage-1 demand count. It errs closed, so there is no authority consequence; the
+    #     consequence is to the measurement, and it undercounts in the direction that makes the
+    #     ceiling look less needed than it is. That is the shape of defect this feature keeps
+    #     producing, so it is named here rather than fixed quietly.
+    #   * `required` ABSENT is a schema the manifest loader would not have produced — every tool
+    #     in `config/copilot-tools.yaml` declares it — so it means a malformed or hand-built
+    #     schema, and the conservative reading is kept: treat every declared property as needed.
+    #     Guessing "all optional" there would admit a tool on a schema nobody wrote.
+    declared = list((schema.get("properties") or {}).keys())
+    raw_required = schema.get("required")
+    required = list(raw_required) if isinstance(raw_required, list) else declared
+
     bound = _bind_arguments(schema, request)
     return all(name in bound for name in required)
 
