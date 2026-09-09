@@ -1484,3 +1484,48 @@ the ones that find tests proving less than they appear to.
 - **Deleting fixture data can be the fix.** Removing the primary's `keyFactors` and `confidence`
   makes the demo card visibly asymmetric. That asymmetry is real — the product has it. Papering
   over a gap in a fixture hides the gap from the only people who could close it.
+
+### Session — the primary gets a real position (tri-state agreement on the approval card)
+
+- **A dormant branch is not a safe branch; it is an unexploded one.** `Math.abs(pc - sc) >= 0.2`
+  had shipped, been reviewed and been green for weeks — because the primary sent no confidence, so
+  the condition could never be true. The regenerated golden fixture supplied one and it fired on
+  the first frame, turning a clean verdict divergence into a different kind, which then bought a
+  different signing dwell. **Self-reported confidence was silently gating friction on an L2 banking
+  action and no test had ever executed that line.** Grep for comparisons against fields that are
+  currently always absent: each one is a behaviour change scheduled for whenever the other side
+  starts populating, and it lands with no diff to review.
+- **"Safe by coincidence", fourth instance, same card.** `!match ||` in the factor comparison was
+  held silent only by an outer guard plus an empty input. The primary started emitting free-text
+  labels and every supervisor factor rendered bold red DIVERGENT — two models never choose
+  identical wording. Same root as the dormant branch above: **the comparison was never wrong, it
+  was never RUN.** I now treat "this code has no test that reaches it" as equivalent to "this code
+  is wrong", because I cannot tell the two apart from the outside.
+- **Read the ruling, don't re-derive it.** The server already computed `agree | diverge |
+  not_comparable` and put it on the wire; the client was independently re-deriving the same rule in
+  a *different vocabulary* (`none|verdict|confidence|both`). Two definitions of one rule in two
+  languages is exactly how "the supervisor verdict was renamed in transit" happened. **When the
+  server states a conclusion, the client's job is to render it, not to recompute it.** The client
+  now reads the token; an absent or unknown token is `not_comparable`, never `agree`.
+- **Failing closed silently is still failing silently.** That fallback is correct but invisible: a
+  service that stopped sending the field would show a plausible card forever. So the *absence* is
+  asserted from the other side — a contract test parses `fanout.py` and fails if the key stops
+  being written. **Any defensive default needs a test on the thing it defends against, or the
+  defence becomes the bug's hiding place.**
+- **Tamper testing found the holes in the FEEDER, not the guard.** 22 tampers, 19 caught. All 3
+  misses were upstream of a well-guarded renderer: the mapper could drop the `failure` sentinel,
+  default confidence to `0`, and the server could turn its "not a verdict" sentinel INTO a verdict
+  (`UNRECOGNISED_VERDICT = "hold"` — the original defect, restored from the far side of the wire
+  where no UI test can see it). **Next time, tamper the inputs before the logic. I had been
+  breaking the code I had just written, which is the code I was least likely to have got wrong.**
+- **My tamper harness lied to me for four rounds.** First it produced no output at all (`subprocess`
+  without `shell=True`); then it parsed jest's per-test `✕` lines, which jest only prints when a
+  SINGLE suite runs — with five suites it prints `● name › name` instead, so every multi-suite
+  tamper reported NOT CAUGHT. **A harness that reports "not caught" must be proven able to report
+  "caught" before any of its output is believed.** I now run it once on a known-broken state and
+  once on a clean tree before trusting a campaign. Same anti-vacuity rule as the tests themselves,
+  applied one level up — and I have now been bitten by it at every level: fixture, test, harness.
+- **`git checkout -- <file>` destroyed an hour of uncommitted work** while I was debugging the
+  harness. Nothing recovers that. **Commit before tampering.** Tampering is deliberate corruption
+  of the working tree; doing it over uncommitted work means the only clean copy is the one you are
+  about to break.
