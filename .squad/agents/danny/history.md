@@ -2328,3 +2328,30 @@ on the **authority** axis (step selection stays deterministic; the supervisor's 
 gates nothing, per ratified §6.4(6)). Saying which axis the loop is on is more useful than
 claiming the harness "decides", and it is §P11's own test applied to my own amendment: *does this
 artifact claim more than the mechanism behind it can support?*
+
+### 2026-09-09 — Auditing the primary assessment and evidence ceiling (§P12)
+
+- **A widened signature is only a widened control when a new parameter can INCREASE what the
+  function permits.** I nearly rejected Turk's `additional_evidence` on arity alone. The real test
+  is directional: four of his five added parameters can only shrink the granted set, and the one
+  he *removed* — the objective — was a door I had left open for a later edit to reason about
+  intent inside a pure classifier. The suspicion ("the ruled signature could not do its job" is
+  what precedes a control widening) was correct to hold; the answer was that my signature was the
+  weaker one.
+- **Delete the parameter rather than filter it.** Third payment for the same move
+  (`build_supervisor_input(intent)`, §R5's `bind`, now `FanOutEngine`). Written into the ruling as
+  a standing standard: a filtered channel is a promise, an absent parameter is a fact.
+- **Layered guards fire at different stages of one mistake; that is not redundancy.** The tamper
+  that "beat" the byte-equality test was an incomplete edit that could not yet cause the defect —
+  the prompts genuinely were equal. Correcting the premise mattered more than ruling on the test.
+  But the residue was real: I cannot let others assume a guard can fail, so I required a positive
+  control instead of deleting the backstop.
+- **A false label in a record is not cosmetic when the record IS the product.** `_is_bindable`'s
+  `or` fallback errs closed, so it has no authority consequence — and it still had to be fixed
+  before deploy, because it files a real request under the wrong reason and stage 1 exists to
+  count requests.
+- **Confirm the unflagged interpretation too.** `_proposal_permitted` blocking only `decline` was
+  not flagged and is *compelled* by two other sections. Unwritten correctness is the kind that
+  gets "fixed" later; I required the reasoning at the call site, not in the ruling.
+- All three of Turk's departures from my text narrowed something I had left wide, and each named
+  the line it departed from. That is what a good implementation of a ruling looks like.

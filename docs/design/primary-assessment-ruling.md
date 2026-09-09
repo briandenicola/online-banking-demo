@@ -481,12 +481,16 @@ first because everything below is only safe in their presence.**
    all.** Ordering is the control: if the model is never asked until the required set is in hand,
    a model failure, a timeout or a garbage reply **cannot** reduce evidence below policy. There
    is nothing to check, because there is no sequence in which it happens.
-2. **The additions function returns ADDITIONS, never a plan.** Signature control:
-   `additional_evidence(objective, action_id, gathered) -> tuple[str, ...]`. It cannot express
-   "instead of", it cannot reorder and it cannot drop — the same move as
-   `build_supervisor_input(intent)`. An unknown tool id is refused by name and recorded, not
-   fatal: a model naming a tool that does not exist is a model being wrong, not a config being
-   wrong.
+2. **The additions function returns ADDITIONS, never a plan.** It cannot express "instead of",
+   it cannot reorder and it cannot drop — the same move as `build_supervisor_input(intent)`. An
+   unknown tool id is refused by name and recorded, not fatal: a model naming a tool that does
+   not exist is a model being wrong, not a config being wrong.
+   *(**Amended at audit, §P12.2.** I originally spelled this
+   `additional_evidence(objective, action_id, gathered)`. That signature was wrong — it could not
+   see the request it was meant to classify, and it carried the objective, which would have let a
+   later edit reason about intent inside a function whose whole value is that it cannot. The
+   shipped signature takes the parsed request plus four constraints, each of which can only
+   **reduce** the granted set. It is a narrower control than the one I wrote.)*
 
 **Now the bounds.** An unbounded loop in a banking demo is worse than no loop, and I want the
 numbers defended rather than picked.
@@ -601,7 +605,7 @@ least be **attributable and legible** — applied to the evidence axis instead o
 |---|---|
 | `requiredEvidenceToolIds` | the policy's `requiredEvidence` — a **control** |
 | `discretionaryEvidenceToolIds` | what the model chose to add — a **choice** |
-| `refusedEvidenceRequests` | `[{toolId, reason}]` — `budget_exhausted` \| `unknown_tool` \| `unbindable` \| `quarantined` \| `read_refused_403` |
+| `refusedEvidenceRequests` | `[{toolId, reason}]` — closed vocabulary, one home. `budget_exhausted` \| `unknown_tool` \| `unbindable` \| `quarantined` \| `read_refused_403` \| `already_gathered` \| `iterations_exhausted` *(last two added at audit, §P12.3)* |
 | `assessmentIterations`, `converged` | how many passes, and whether it stopped because it was satisfied |
 
 All four are **server-observed**, never model-asserted, exactly as `evidenceToolIds` is today
@@ -1030,3 +1034,189 @@ support?** The second one is what catches the defects that never throw.
 **Ratified untouched by this ruling:** `build_supervisor_input` and the blindness suite; the
 `RoleHierarchy` tripwires; the Gate B projection grammar and its two tests; Turk's derived
 terminal status; Linus's tri-state `concern` and the both-sides factor guard.
+
+---
+
+# §P12 — Audit of the implementation (added after Turk's four commits)
+
+Turk implemented §P1–§P7 in `b1d3d94`, `e5a11ee`, `29a2b4a`, `c62e945`. I have read the shipped
+code against my own text and run the suite locally: **402 passing**. Nothing has run against
+Azure. This section is the audit; where it corrects the ruling, the ruling above is edited in
+place and points here.
+
+**Headline: GO for stage 1** (budget 0). One two-line fix should land first — §P12.7 — because it
+corrupts the one number stage 1 exists to produce. Everything else is ticketed.
+
+## §P12.1 — `requestedEvidence` as a declared array: CONFIRMED
+
+I wrote that the model's request would be read from its `unverified` prose. That was a mistake of
+the exact class this feature keeps repeating: an **implicit contract**, in which the meaning of a
+field is recovered by pattern-matching free text, and every downstream reader has to guess the
+same way. Turk gave the request its own declared, closed channel.
+
+The tell that this is right: with a declared array, a request that names a nonexistent tool is
+*refused by name and recorded*. With prose parsing, the same request is **silently invisible** —
+indistinguishable from a model that asked for nothing. Stage 1 exists to count requests. A channel
+whose failure mode is an undercount would have quietly falsified it.
+
+Confirmed as a correction to the ruling, not a deviation from it.
+
+## §P12.2 — The widened `additional_evidence` signature: CONFIRMED, and it is a narrowing
+
+This is the one I was asked to check hardest, and the suspicion was the right one: *"the ruled
+signature could not do its job"* is the sentence that normally precedes a control widening. It is
+not what happened here.
+
+The control I ruled was never the arity. It was the **return type**: the function hands back
+additions, so no caller can spell "instead of", "reorder" or "drop", and the floor is therefore
+held one layer up by ordering rather than by this function's good behaviour. That return is
+intact — `(granted, refused)`, granted disjoint from gathered.
+
+What changed is the inputs, and the direction of the change matters:
+
+- **Removed:** `objective`. My signature let this function see the banker's intent. A function
+  that can see intent is a function a later edit can make *reason* about intent — the one thing a
+  pure classifier must never do. Its removal closes a door I had left open.
+- **Added:** `requested`, `known_tool_ids`, `bindable_tool_ids`, `budget`, `quarantined`. Every
+  one of these except `requested` can only **shrink** the granted set. `requested` is the model's
+  claim and is bounded by the other four. **No parameter carries authority**; none can lower the
+  floor, because the floor is not this function's business.
+
+A widened signature is a widened control only when a new parameter can *increase* what the
+function permits. None here can. Confirmed.
+
+**But one gap, from the same standard.** `quarantined` has a default and is overridable, so a
+caller can pass `()` and empty the §R5 quarantine. No production call site does — and nothing
+holds that. The signature test pins the parameter names; it does not pin the call. By the standard
+in §P12.5, this parameter is a *filtered channel where an absent one would do*. Before stage 2:
+either add a test that holds the production call site to the module constant, or drop the
+parameter and let the function read the constant directly. **Not a stage-1 blocker** — at budget
+0 nothing is granted regardless — but it must not survive to stage 2. Ticketed,
+deferred-before-`main`.
+
+## §P12.3 — Two refusal reasons beyond my five: BOTH CONFIRMED
+
+- `already_gathered` names something my ruling *required* be excluded but never gave a name to. A
+  recorded exclusion beats a silent one; without it the request vanishes and the demand count
+  drops.
+- `iterations_exhausted` is compelled by my own argument. Recording an unspent budget as
+  `budget_exhausted` would report demand that was never tested against the cap as demand the cap
+  rejected — corrupting stage 1's number in the direction that would most flatter stage 2.
+
+The vocabulary is closed at seven in one home (`REFUSAL_REASONS`). Closed and complete beats short
+and lossy. The table in §P5.5 is amended above.
+
+## §P12.4 — Ruling over brief on `confidence`: CORRECT PRECEDENCE
+
+Where the brief and the ruling disagreed, the ruling governs; where the ruling is wrong, it gets
+amended in place and the amendment governs. Turk followed the ruling and said so, which is the
+behaviour I want. `self_reported_confidence` is the internal name; the wire rename to
+`selfReportedConfidence` crosses the language boundary and the golden wire and stays
+**deferred-before-`main`, ticketed** (§P7.2, §P9). The deferral is what I intended.
+
+What was required *now* is not the name — it is that nothing ranks, sorts, colour-scales, gates or
+thresholds on the number. I checked; nothing does.
+
+## §P12.5 — The fan-out deviation: CONFIRMED, and this is now the standard
+
+I ruled the supervisor's read list be **derived** from the action's `requiredEvidence`. Turk
+removed `primary_evidence` from `FanOutEngine.run_second_opinion` **entirely** — *"filtering would
+have been a promise."* He is right and my version was weaker. A derived list still accepts the
+primary's evidence dict at the boundary, so the leak stays reachable by anyone who later passes
+the wrong argument, and the guarantee degrades from a fact into a convention with a test on it.
+
+**The standard, written down because this is the third time it has paid:**
+
+> When a control depends on some value never reaching some place, **delete the parameter rather
+> than filter it.** A filtered channel is a promise; an absent parameter is a fact. Prefer making
+> the lie unrepresentable over making it checked — and where you cannot, say plainly which of the
+> two you achieved.
+
+Its three payments: `build_supervisor_input(intent)`, which cannot name the proposal; §R5's `bind`
+may only name a *required* parameter, which made the `list_login_audits` lie unspellable and aborts
+startup; and now this. In each case a test was the alternative, and in each case the deleted
+parameter also deleted the need for the test.
+
+## §P12.6 — The byte-equality prompt test: KEEP, and prove it can fail
+
+The premise needs correcting first. The tamper that byte-equality missed was **not the defect it
+was designed for** — it was an incomplete edit that could not yet cause that defect. Interpolating
+a budget the caller does not pass produces a prompt that is the same at every budget, so the
+prompts really were equal and the assertion really should have passed. The mention-scan caught the
+*intent* one move before the wiring existed. That is two guards firing at two stages of one
+mistake, which is layering working, not redundancy.
+
+But the underlying worry is legitimate and I will not wave it away: **the three guards are not
+interchangeable, and only one of them is load-bearing.**
+
+- The mention-scan and the AST no-branch test are *early and specific* — they name the offending
+  line. Both are defeatable by paraphrase ("you may ask for up to three more reads" trips nothing).
+- Byte-equality is *late and unconditional*. It fails on the **effect** — the prompt actually
+  differing between budgets — no matter which route produced it: a threaded parameter, a global, a
+  config read inside the builder, an appended paragraph, an env var. It is the backstop, and it is
+  the only guard that cannot be paraphrased around.
+
+Deleting the backstop because a cheaper guard fired first is the same reasoning that would have
+deleted Gate B's `EvidenceComplete` assertion for never having failed. **Keep it.**
+
+The honest residue is that we cannot currently *see* it fail, and "I assume this can fail" is not
+a standard I let anyone else use. So, required before stage 2 and cheap enough to do now: add a
+**positive control** — construct a deliberately budget-dependent prompt builder in the test and
+assert the same equality trips. Turk already used this pattern in Gate B, where the raw response
+must fail the very check its projection passes. A guard demonstrated to fail on the thing it names
+is load-bearing. One assumed to is decoration wearing a green tick.
+
+## §P12.7 — One defect found, fix before the stage-1 number is quoted
+
+`_is_bindable` computes `required = schema.get("required") or list(properties.keys())`. That `or`
+conflates two different facts: *"the schema declares no `required` key"* and *"the schema declares
+`required: []`"*. The second means **every parameter is optional** — the tool is bindable with no
+arguments at all. The fallback treats it as though every parameter were mandatory.
+
+Live effect: `list_account_applications` (`required: []`, properties `[status]`) is recorded as
+`unbindable` when it is in fact bindable. It errs **closed**, so there is no authority consequence
+— but the *recorded reason is false*, and at stage 1 a request for that tool is filed as
+`unbindable` instead of `budget_exhausted`. That is not a cosmetic label. It removes a real
+request from the demand count, and the demand count is the entire product of stage 1.
+
+Distinguish the two cases explicitly rather than with `or`. It is smaller than this paragraph.
+Fix it before deploy.
+
+## §P12.8 — One interpretation Turk did not flag, which I confirm
+
+`_proposal_permitted` under the reversible `withhold` seam blocks `decline` **only** — not `hold`,
+and not a failed assessment (`verdict is None` proposes). That is correct and, more than that, it
+is *compelled*:
+
+- §P5.6 rules that non-convergence proposes with an adverse assessment, and non-convergence
+  typically arrives as `hold`. Blocking `hold` would make §P5.6 and §P6 contradict each other the
+  moment Brian flipped the seam.
+- Withholding on `primary_unavailable` would convert an **infrastructure failure into a veto** —
+  the exact substitution §P4 exists to prevent.
+
+The code says only "under the default `propose`, this is always True." Put the two sentences above
+at that call site. The next person to read it will otherwise reasonably conclude the narrow
+condition is an oversight and "fix" it. Not a blocker.
+
+## §P12.9 — Two notes that are not code changes
+
+- **For Livingston.** At budget 0, `converged: false` will be the *common* stage-1 outcome — any
+  request at all yields `converged=False, assessmentIterations=1`. That is honest, but it reads
+  like "hit the cap" and it is not; the refusal reasons disambiguate. Say so where the number is
+  reported, and report **requests made** as its own figure. That figure is stage 1's real product.
+- **Before stage 2 only.** Discretionary reads add up to three more tool payloads to the approval
+  body, and `collect: $` carries whole arrays. Check the stored item against the Cosmos item limit
+  before the budget is raised. I verified the C# side does not otherwise object: `EvidenceComplete`
+  checks only the *named required* keys and is indifferent to extra ones, so stage 2's extra
+  evidence will not produce a 422 at propose.
+
+## §P12.10 — Verdict
+
+**GO for stage 1**, ceiling budget 0, after §P12.7. Confirmed: §P12.1, §P12.2, §P12.3, §P12.4,
+§P12.5, §P12.8. Ticketed **deferred-before-`main`**: the `quarantined` override (§P12.2), the
+byte-equality positive control (§P12.6), the `_proposal_permitted` comment (§P12.8), the
+`selfReportedConfidence` wire rename (§P12.4), and the stage-2 payload-size check (§P12.9).
+
+The thing worth saying plainly about this implementation: on all three points where Turk departed
+from my text, he departed by **narrowing** something I had left wide, and he said which line he
+was departing from. That is the opposite of the failure mode this feature has produced five times.
