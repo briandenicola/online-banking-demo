@@ -447,6 +447,15 @@ class Planner:
                 elif step["kind"] == "propose":
                     if not _proposal_permitted(self._adverse_proposal, record.assessment):
                         # §P6, the seam, at its ONE call site. Default `propose` never lands here.
+                        #
+                        # Under `withhold` this blocks ONLY `decline`, and that narrowness is
+                        # compelled rather than an oversight (confirmed in the primary-assessment
+                        # audit). `escalate` and `proceed_with_conditions` are adverse READINGS
+                        # that both END IN A HUMAN DECISION, which is the thing a proposal exists
+                        # to reach; withholding on them would send the case to the admin tabs,
+                        # which leave no audit record — the harsher outcome, reached by the safer-
+                        # sounding rule. `decline` is the only verdict where the primary is saying
+                        # the action should not happen at all.
                         await stream.emit(
                             "run.error",
                             {
