@@ -17,6 +17,26 @@ task cloud:demo:reset -- --reseed
 Takes roughly 4-6 minutes. The scoring poll now waits for a *qualifying* subject, so the
 "waiting for ai-service…" lines will run ~35-60s and that is normal, not a hang.
 
+**If the wait runs long:** the only measured datapoint is 35s against a 300s ceiling, and
+Foundry's 429 throttling varies. Under ~2 minutes is ordinary. Beyond that it is throttling,
+not a hang — the poll prints `N flagged at or above the 25000 dual-control line` on every
+line, so watch that number rather than the clock.
+
+**If the seed dies saying no flagged transaction reached the dual-control line**, the
+offshore wire scored below the 0.7 flagging bar this morning. That is a model outcome, not a
+bug. Recover with:
+
+```
+task cloud:demo:reset -- --reseed --allow-unescalated
+```
+
+`{{.CLI_ARGS}}` forwards everything after the single `--` verbatim, so both flags go on one
+line. You then get a working demo with `flag-review-denied` as an **L1** card instead of L2,
+and the run is **not measurement-grade** — fine for a UI walkthrough, not for Livingston.
+
+⚠️ **This escape path has been exercised against stubbed HTTP but never against live Azure.**
+Tonight's reseed took the happy path. If you need it tomorrow it will be its first real run.
+
 **Why you must reseed even though tonight's seed worked:** approvals now live 8 hours.
 Tonight's seed was created at 23:37 UTC, so it expires at **07:37 UTC / 02:37 CDT** — before
 any reasonable morning. The 8-hour TTL does not make a seed survive overnight; it makes a
