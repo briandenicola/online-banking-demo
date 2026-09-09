@@ -1,0 +1,32 @@
+{
+  "sampleClass": "failed-read",
+  "toolId": "get_account",
+  "outcome": {
+    "status": 404,
+    "meaning": "absent \u2014 no such account"
+  },
+  "provenance": {
+    "capturedFrom": "LIVE CAPTURE from the deployed cluster.",
+    "capturedAt": "2026-09-09T21:41:00+00:00",
+    "capturedFrom_detail": "https://onlinebankingdemo.bjdazure.tech via the `banker` identity, read-only GET, explicitly approved by Brian (@briandenicola). NOTHING WAS CREATED OR DELETED to produce this 404: the account id is a well-formed v4 GUID chosen to be obviously synthetic, and it was never seeded.",
+    "accountId": "00000000-0000-4000-8000-000000000000",
+    "accountIdIsFabricated": "00000000-0000-4000-8000-000000000000 \u2014 a syntactically valid UUIDv4 that no seed produces. Deliberately all-zero rather than random so that a future reader cannot mistake it for a real id that was later deleted.",
+    "whyBankerAndWhyThisEndpoint": "The caller is a `banker`, who by banker-customer-read-ruling.md \u00a7B1 may read ANY account. So the 404 cannot be a disguised denial \u2014 the only remaining reason is absence, which is what makes this a clean 404 sample. It is captured on get_account and NOT on list_account_transactions deliberately: per \u00a7B3.2 the transactions endpoint cannot distinguish 'no such account' from 'clean history', so a nonexistent id there yields zero rows and, for a non-privileged caller, a 403 \u2014 labelling that a 404 would be a mislabelled fixture.",
+    "derivedFrom": [
+      "LIVE: GET https://onlinebankingdemo.bjdazure.tech/api/accounts/00000000-0000-4000-8000-000000000000 as `banker`, HTTP 404.",
+      "src/account-service/Controllers/AccountsController.cs GetAccount -> NotFound() when GetAccountByIdAsync returns null, retained by banker-customer-read-ruling.md \u00a7B2.3.",
+      "The body is ASP.NET Core's RFC 9110 ProblemDetails, emitted automatically for a bare NotFound() \u2014 it is NOT a hand-written error contract, which is why it looks unlike the 403's terse {\"error\":\"Forbidden\"}."
+    ],
+    "warning": "THIS SAMPLE HAS NO `projected` BLOCK AND MUST NEVER ACQUIRE ONE. The declared projection for get_account is {accountId: {rename: id}}, and this body has no `id` \u2014 applying it RAISES, which is correct and is asserted by src/banker-copilot-service/tests/test_evidence_projection.py. That raise is the mechanism banker-customer-read-ruling.md \u00a7B3.1 depends on: a nonexistent account cannot yield a complete evidence set, so propose refuses LOUDLY rather than approving an adjustment against an account that does not exist. NOTE THE ASYMMETRY THIS SAMPLE PRESERVES: the two error bodies have different shapes because they come from different layers (framework ProblemDetails vs a controller-authored object). Anything that consumes these must not assume one error contract. WHAT THIS DOES NOT PROVE. It does not prove the status code is stable, and it does not prove the copilot HANDLES the failure correctly \u2014 it records only what the service returned. The handling side is banker-customer-read-ruling.md \u00a7B3.1's concern and is not held here.",
+    "redaction": "The live `traceId` returned by the cluster HAS BEEN REDACTED \u2014 it is a W3C traceparent identifying a real request against real infrastructure. The field is retained with a placeholder because its PRESENCE is part of the observed shape. No bearer token or password appears in this file. The account id is fabricated and belongs to nobody."
+  },
+  "arguments": {
+    "accountId": "00000000-0000-4000-8000-000000000000"
+  },
+  "response": {
+    "type": "https://tools.ietf.org/html/rfc9110#section-15.5.5",
+    "title": "Not Found",
+    "status": 404,
+    "traceId": "[REDACTED \u2014 live W3C traceparent from the deployed cluster. It identifies a real request against real infrastructure and is not reproducible, so it is removed rather than committed. The FIELD is retained because its presence is part of the observed shape: ASP.NET Core emits RFC 9110 ProblemDetails with a traceId for a bare NotFound(), and a reader must be able to see that the 404 body carries one.]"
+  }
+}

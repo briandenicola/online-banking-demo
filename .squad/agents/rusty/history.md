@@ -577,3 +577,83 @@ check resolves each payload the way the seeder does, then asserts every numeric 
 **Tamper-tested twice**, per house rule: reverting `newScore` to `0.25` fails with the non-money
 message; setting `approvals[0].payload.amount["@delta"] = -30.5` fails with the money message.
 Both restored.
+
+---
+
+## Learnings (2026-09-09 — the seeder waits for what it will require, `332-beta`)
+
+**The defect, in one line (Danny §R10).** *A seeder must wait for the thing it will later
+require. Any predicate used to SELECT a subject must be the same predicate that TERMINATES
+the wait.* The old `collect_ai_subjects` poll broke on `n_usable >= minScoredRequired` and
+then chose a flagged subject on a property — `.amount >= dual-control line` — it had never
+waited for. `flag-review-denied` therefore landed on L1 or L2 by luck, and nothing anywhere
+asserted which.
+
+**Why I made the predicate a named function.** `qualifying_flagged_pool()` is called from
+the break condition *and* from the selection. Two inline `jq` expressions would have been
+shorter and would have drifted apart on the first edit — which is the same class of bug one
+level up. If the predicate is the fix, the predicate must be one object.
+
+**jq sorts a string above every number.** `"9350" >= 25000` is `true`. Every `.amount`
+comparison and every `sort_by` key in the new pool goes through `tonumber`. Without it the
+guard would have passed its own tests and silently admitted below-the-line rows — a fix that
+reads correct and does nothing. Case 7 of the termination proof exists for exactly this.
+
+**A static guard narrower than the runtime it stands for will reject a correct design.**
+Danny asked me to verify that declaring `escalator: large-flagged-amount` gets the runtime
+assertion for free. It does — `PolicyEvaluator` puts action-local *rules* into the same
+`firedEscalators` list as global escalators, tagged `action_rule`. But
+`test-demo-dataset.sh` built its accepted set from `policy["escalators"]` only, so the static
+check would have failed a declaration the runtime can prove. The instinct to reach for
+`expectedRung` instead — i.e. to change the design to satisfy the test — was wrong, and the
+advisor stopped me doing it. **Fix the guard's scope, not the design.**
+
+**Proving a poll terminates is not something you reason about.** The single real risk in
+this change was turning a 45s wait into a guaranteed 300s timeout. I extracted the shipping
+`qualifying_flagged_pool()` and the shipping break expression out of `demo.sh` by text, and
+drove them: qualifier on iteration 3 (terminates, picks the 61200 row where the old condition
+would have taken 9350), qualifier never (runs out cleanly into the die), zero flagged rows,
+`--allow-unescalated`, orphan-account rows, the `-amount`/`-riskScore` tie-break from both
+input orders, string amounts, and the `gte` boundary at exactly 25000. Then a second harness
+ran the **real `collect_ai_subjects`** against stubbed HTTP and exercised all four exit
+branches. `--allow-unescalated` was **executed**, not just written.
+
+**The opt-out is not the thing Danny rejected.** He rejected *silent* default variance.
+A flag the operator types, that prints what is degraded and that the run is not
+measurement-grade, is the opposite. `--allow-unescalated` deliberately does NOT become a
+scoring opt-out: with zero flagged rows it still dies and points at `--allow-unscored`.
+
+**Environment limits, stated.** `bash -n` clean; `tests/demo/test-demo-dataset.sh` 10 groups,
+214 assertions, 0 failures; new converse guard tamper-tested (removing the `escalator`
+declaration fails it with the intended message, restored). The first tamper attempt was
+**invalid and I nearly recorded it as a pass** — the test resolves `demo.sh` relative to the
+dataset's `parent.parent`, so a fixture in `/tmp` aborted on `FileNotFoundError` before ever
+reaching my assertion. A red result is not evidence until you read *why* it is red. What I
+did NOT do: no live reseed, no `task cloud:demo:reset`, no Azure or kubectl write, no commit.
+**Brian's reseed remains the proof.**
+
+## Durable guards (carried into future work)
+
+### Guard (a): Flagged row lookup key is `.id`, not `.transactionId`
+
+**Rule:** `.id` is the Redis lookup key for flagged transactions; `.transactionId` is NOT.
+
+- `.id` = scoring-event UUID, minted per scoring event (`anomaly_service.py:879`). Use for **references**: payload fields, evidence API calls, anything a read tool resolves.
+- `.transactionId` = the banking transaction id, carried on rows. Legitimate for **correlation** only.
+- A read on `.id` returns 200 (or 404 if the row was purged). A read on `.transactionId` returns 404 even for rows that exist.
+
+**Do NOT "fix" a seeder to use `.transactionId` even if it "looks more meaningful".** The error would not become visible until the read fails in production.
+
+**Why it matters:** only **14 of 128** flagged rows carry a non-empty `.transactionId`. The 114 that don't cannot be identity-matched. A design that rests on this field is weaker than one that rests on `amount`/`accountId`, which fresh rows always populate.
+
+### Guard (b): A seeder must wait for what it will later require
+
+**Rule:** Any predicate used to **select** a subject must be the same predicate that **terminates** the wait.
+
+**Failure mode:** Filtering on a property the poll did not wait for is a race with an assertion bolted onto the end. If the poll breaks on `n_usable >= 1` and the filter requires `.amount >= 25000`, you are racing the moment a second transaction scores against the moment its amount is computed. ~21 of 23 runs will fail.
+
+**Implementation:** The same function must be called from both the break condition and from the selection. That is the whole point.
+
+**Die distinction:** The `die` must name its cause. "nothing flagged at all" (stream/Foundry/FLAGGING_THRESHOLD problem) vs "flagged but nothing qualifies" (model scored low, or poll window too small) send debuggers to different services.
+
+**Opt-out:** If the qualifying subject depends on a model score, a hard `die` on low-score days leaves the operator with no demo. An escape hatch with a typed flag (`--allow-unescalated` style) that degrades the run and prints what is degraded is legitimate. A *silent* default variance is not.

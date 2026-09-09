@@ -386,6 +386,14 @@
   ],
   "_scoringComment": "How long to wait for ai-service to score the anomalous transactions before giving up. Azure AI Foundry rate-limits scoring: every call takes an HTTP 429 and a ~3s retry before succeeding, so a full seed of ~23 transactions needs roughly 140s of scoring time. 90s could not finish and failed as though the consumer were dead.",
   "scoring": {
+    "_comment": [
+      "pollSeconds must cover the FULL scoring drain, not the first result. The poll now waits",
+      "for a flagged transaction at or above flagged_transaction_dual_control_amount, and the",
+      "qualifying wires sit late in the seeded block. Under Foundry 429 throttling each scoring",
+      "call costs ~5-6s, so the drain is roughly linear in the seeded transaction count: 23",
+      "transactions take ~115-140s. 300 leaves ~2x margin. Revisit this value if the seeded",
+      "transaction count grows past ~40, where the drain alone approaches 240s."
+    ],
     "pollSeconds": 300,
     "pollIntervalSeconds": 5,
     "minScoredRequired": 1
@@ -507,6 +515,7 @@
     },
     {
       "key": "flag-review-denied",
+      "escalator": "large-flagged-amount",
       "proposer": "banker2",
       "actionId": "transaction.flag.review",
       "after": "deny",

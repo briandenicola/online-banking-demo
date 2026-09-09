@@ -2858,3 +2858,98 @@ False claim removed: "costs no shipping caller." Replaced with truth: no *produc
 
 **2026-09-09 (Scribe)** — Canonicalizer guard added to test-demo-dataset.sh. Note for following work: the canonicalizer forbids floating-point numbers in non-money fields and requires strings for any fractional part on non-money values. Guard is applied to resolved payloads (after placeholder substitution), not literals. Resolves placeholders using jq arithmetic, exactly as the seeder does. Covers `approvals[*].payload`, `approvals[*].revisedPayload`, and `proposePathProbe.payload`. Rule parsed from `Canonicalizer.cs` and `moneyFields` from policy YAML — no hand-maintained list.
 
+
+## Learnings — 2026-09-09, recapturing the evidence fixtures live (403 and 404 for the first time)
+
+**The tool I was pointed at was not a capture tool, and reading it first saved me from misusing it.**
+`scripts/demo/evidence-contract.py` never touches the network. It derives the *contract* from
+`authority-policy.yaml` + `copilot-tools.yaml`, and under `--samples --write` it regenerates each
+fixture's `projected` block by importing the SHIPPED loader and projection engine. So the division is:
+I capture the `response` by hand (curl, live), and the tool computes `projected`. Hand-writing a
+`projected` block would defeat the entire point — the block exists to be un-hand-editable. Correct
+sequence: write `response` + `provenance` + `arguments`, run `--samples --write`, then re-run plain
+`--samples` and confirm `stale: false`.
+
+**The fixture directory has two consumers with incompatible appetites, and that dictated the layout.**
+`test_evidence_projection.py` globs `evidence-samples/*.json` and demands EVERY file project cleanly.
+`EvidenceContractSeamTests.Sample(toolId)` reads `{toolId}.json` at the top level only, and separately
+asserts quarantined keys have NO file. A 403/404 sample cannot satisfy the first — a 403 body has no
+`id` to rename and no array to collect, so `project()` raises, which is *correct behaviour* but a red
+test. Three bad options and one good one:
+- `get_account_forbidden.json` at top level → globbed by Python, fails.
+- `toolId` set to something invented → "has a sample but no manifest entry", fails.
+- loosen the Python test to skip error samples → weakens the guard for everyone.
+- **`evidence-samples/failed-reads/*.json`** → Python's glob is non-recursive and C#'s lookup is
+  top-level, so both consumers stay green **without being edited**. This is the one I took.
+
+**A fixture no test reads is §R9 again.** Parking the new samples in a subdirectory would have made
+them inert decoration. So I added assertions that `project()` **raises** on both — the inverse of the
+success-sample assertion, and load-bearing rather than ceremonial: it is the mechanism §B3.1 depends
+on. If someone later makes the projection tolerant of an error body so the demo "works", that test
+fails instead of the system silently minting a fabricated evidence row for a read that never
+succeeded. The 403/404 samples deliberately carry **no `projected` block**, and each says so in its
+own `warning`.
+
+**Danny's §B2.2 empty-ledger 403 is now observed, not asserted.** dana, the TRUE OWNER of her Savings
+account, is refused `403` on `GET /api/transactions/account/{her own account}` because the ledger has
+zero rows and `ownsEveryRow` requires `Count > 0`. I cross-checked in the same session that she really
+is the owner (`GET /api/accounts/{id}` as dana → 200, her userId) so the 403 could not be dismissed as
+a mis-scoped token. The upheld behaviour is now falsifiable.
+
+**Endpoint choice for the 404 was not free, and I nearly got it wrong.** A nonexistent id on the
+*transactions* endpoint returns zero rows and therefore `403`, not `404` (§B3.2: that endpoint cannot
+distinguish "no such account" from "clean history"). Capturing there and labelling it 404 would have
+committed a mislabelled fixture. The 404 belongs on `get_account`, driven as **banker** — who by §B1
+may read any account, so the 404 cannot be a disguised denial and absence is the only explanation left.
+
+**The two error bodies have different shapes and that is real, not noise.** `403` is the controller's
+own terse `{"error":"Forbidden"}`; `404` is ASP.NET Core's RFC 9110 ProblemDetails emitted for a bare
+`NotFound()`, carrying `type/title/status/traceId`. Anything consuming these must not assume one error
+contract. The live `traceId` was **redacted** (it is a real W3C traceparent) but the FIELD retained,
+because its presence is part of the observed shape.
+
+**Repo-wide grep, stated explicitly this time — the lesson from today's earlier false claim.** I
+searched the WHOLE repo (`grep -rn` from the root, excluding only `.git/`), not just `src/`, for both
+`evidence-samples` and the superseded account id `58ada63b…`. Consumers of the fixture directory:
+exactly two test files, plus `evidence-contract.py`, plus prose in `.squad/` and `docs/design/`.
+**But the same grep found something that is not mine:** `tests/verification/e2e_cases.py` (2 refs) and
+`supervisor_cases.py` (1 ref) still pin `A1 = 58ada63b-…` — a **pre-reseed account id that no longer
+exists**, described as "Checking, $32,897.40, 7 txns". After the reseed, casey's Checking is
+`149443f9-…`, $79,050, **2** transactions. Those files are the measurement harness, not my fixtures,
+and I did not touch them — silently re-pinning case definitions mid-measurement is precisely what the
+rulings warn against. Reported to Brian and written to the decisions inbox instead.
+
+**Seed counts moved, and the number in the fixture is smaller than the brief implied.** casey has 10
+transactions across THREE accounts; her Checking — the anomaly subject, carrying the $61,200 offshore
+wire — has only **2**. The old fixture's `count: 7` was one banker-owned account. I verified the
+banker's view equals casey's own view (2 == 2) before trusting it, which is also a live confirmation
+that the §B2.2 privileged branch returns the full ledger rather than a caller-narrowed one.
+
+**The control I nearly skipped.** My first 403 fixture asserted *why* the denial happened (`Count > 0`)
+without ever controlling for the competing explanation — that the endpoint simply denies
+non-privileged callers wholesale. I had applied exactly that rigour to the 404's endpoint choice and
+then failed to apply it one fixture over. The discriminator, same session and same token: dana →
+her own **non-empty** Checking = **200, 6 rows**; dana → her own **empty** Savings = **403**. Same
+caller, same role, same endpoint, one variable. That isolates the cause to the zero-row term and
+also confirms §E1.3 empirically — the narrowing costs the zero-row case and nothing wider. Rule for
+next time: **a captured error is a status code until you have varied the one thing you claim caused
+it.** Provenance prose that names a cause is a claim, and a claim needs its control in the same file.
+
+## Open items (recorded, not fixed by this work)
+
+### Verification harness pinned to pre-reseed account/transaction ids
+
+**Status:** OPEN — affects Livingston's verification run.
+
+**What:** `tests/verification/e2e_cases.py` and `tests/verification/supervisor_cases.py` each hard-code account and transaction IDs from a pre-reseed world:
+
+- `e2e_cases.py`: 2 refs to `58ada63b-…` (old Checking id: $32,897.40, 7 transactions)
+- `supervisor_cases.py`: 1 ref to the same id
+
+**Post-reseed reality:** casey's Checking is now `149443f9-…`, with $79,050 and **2** transactions. These case definitions are no longer valid.
+
+**Why it was discovered:** Full repo grep for the old account id to find all consumers of the live verification fixtures. Turned up the verification harness definition itself. The fixture regeneration did not cause this — the reseed did — but the test suite would now fail.
+
+**Why I did not fix it:** Silently re-pinning case definitions mid-measurement is the failure mode the rulings warn against. This is Livingston's call and the ownership boundary of the measurement harness, not my boundaries. Flagged instead of edited.
+
+**Next action:** Livingston should verify, update, and re-run.

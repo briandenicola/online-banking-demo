@@ -38,6 +38,7 @@ TARGET="${DEMO_TARGET:-local}"
 DO_RESEED="false"
 INCLUDE_ADMIN="false"
 ALLOW_UNSCORED="false"
+ALLOW_UNESCALATED="false"
 DO_PROBE="false"
 
 DATASET=""
@@ -71,6 +72,9 @@ Usage: demo.sh <seed|show|reset> [options]
                          (a cold re-seed then relies on the first-user-becomes-admin rule)
   --allow-unscored       seed only: continue when ai-service produced no scored transactions,
                          using real transaction ids and a declared placeholder score
+  --allow-unescalated    seed only: continue when no flagged transaction reaches the
+                         dual-control line. flag-review-denied then seeds as an L1 card
+                         instead of L2, and the run is NOT measurement-grade.
   --probe                show only: drive a REAL copilot run to prove an approval can be
                          created. This WRITES — it creates an approval, because that is the
                          only honest answer to the question. Exits 3 if the run does not
@@ -102,6 +106,7 @@ parse_args() {
       --reseed) DO_RESEED="true"; shift ;;
       --include-admin) INCLUDE_ADMIN="true"; shift ;;
       --allow-unscored) ALLOW_UNSCORED="true"; shift ;;
+      --allow-unescalated) ALLOW_UNESCALATED="true"; shift ;;
       --probe) DO_PROBE="true"; shift ;;
       -h|--help) usage; exit 0 ;;
       *) die "Unknown option '$1'." ;;
@@ -514,6 +519,32 @@ lock_target_user() {
 # =============================================================================================
 # AI scoring — real subjects for transaction.score.override and transaction.flag.review
 # =============================================================================================
+# qualifying_flagged_pool <flaggedJson> <ownedAccountIdsJson> <dualControlAmount>
+#
+# The flagged rows on accounts THIS RUN seeded whose amount is at or above the live
+# dual-control line, sorted -amount then -riskScore as tie-break, so the choice between two
+# qualifiers is total rather than incidental.
+#
+# This one function is called from BOTH the poll's break condition and the selection below,
+# deliberately. See docs/design/seeded-approval-rung-nondeterminism-ruling.md §R10: a seeder
+# must wait for the thing it will later require, and any predicate used to SELECT a subject
+# must be the same predicate that TERMINATES the wait. A filter applied after a poll that
+# waited for something else is not a filter, it is a race with an assertion bolted on the end.
+#
+# .amount goes through tonumber because jq sorts and compares a STRING above every number:
+# an untyped "9350" >= 25000 is true, which would let a below-the-line row qualify silently
+# and re-create the exact defect this function exists to close.
+qualifying_flagged_pool() {
+  local flagged="$1" owned="$2" line="$3"
+  jq --argjson owned "$owned" --argjson line "$line" '
+    [ .[]
+      | select(.accountId as $a | $owned | index($a))
+      | select(((.amount // 0) | tonumber? // -1) >= $line)
+    ]
+    | sort_by(-((.amount // 0) | tonumber? // 0), -((.riskScore // 0) | tonumber? // 0))
+  ' <<<"$flagged"
+}
+
 collect_ai_subjects() {
   header "AI-scored subjects"
 
@@ -525,6 +556,16 @@ collect_ai_subjects() {
   wait_total=$(jget_from "$DATASET" '.scoring.pollSeconds')
   interval=$(jget_from "$DATASET" '.scoring.pollIntervalSeconds')
   min_required=$(jget_from "$DATASET" '.scoring.minScoredRequired')
+
+  # The dual-control line is a POLICY value and is read live, never restated here.
+  # load_thresholds is idempotent and the approvals stage calls it again for free.
+  load_thresholds
+  local dual_control
+  dual_control=$(jq -r '.flagged_transaction_dual_control_amount // empty' <<<"$THRESHOLDS")
+  [[ -n "$dual_control" ]] || die \
+    "The authority policy publishes no 'flagged_transaction_dual_control_amount' threshold, so
+    no qualifying flagged subject can be identified and flag-review-denied's rung cannot be
+    pinned. config/authority-policy.yaml and this seeder have diverged."
 
   # The set of accounts this run's customers actually own, resolved ONCE before the wait.
   #
@@ -538,7 +579,7 @@ collect_ai_subjects() {
   local owned
   owned=$(seeded_account_ids)
 
-  local waited=0 scored='[]' flagged='[]' n_usable=0
+  local waited=0 scored='[]' flagged='[]' n_usable=0 qualifying='[]' n_qualifying=0
   while (( waited <= wait_total )); do
     http GET /api/admin/transactions "" "$admin_token"
     if [[ "$HTTP_STATUS" == "200" ]]; then
@@ -552,10 +593,23 @@ collect_ai_subjects() {
 
     n_usable=$(jq --argjson owned "$owned" \
       '[.[] | select(.accountId as $a | $owned | index($a))] | length' <<<"$scored")
-    if (( n_usable >= min_required )); then
+    qualifying=$(qualifying_flagged_pool "$flagged" "$owned" "$dual_control")
+    n_qualifying=$(jq 'length' <<<"$qualifying")
+
+    # BOTH conditions, never either. n_usable governs scoredTransactionId; the qualifying
+    # subject governs flag-review-denied's RUNG, and the old break condition waited only for
+    # the first — so the subject was whichever flagged row happened to exist at that instant,
+    # and the card landed on L1 or L2 by luck. Waiting for the first N scored rows and then
+    # filtering for a large one is the race §R10 names.
+    #
+    # --allow-unescalated is the operator's deliberate opt-out: they have already accepted an
+    # L1 card, so making them sit out the full poll for a qualifier they have agreed to do
+    # without would only cost them time on the morning of a demo.
+    if (( n_usable >= min_required )) \
+       && { (( n_qualifying > 0 )) || [[ "$ALLOW_UNESCALATED" == "true" ]]; }; then
       break
     fi
-    detail "waiting for ai-service to score this run's transactions — ${n_usable}/${min_required} on seeded accounts, $(jq 'length' <<<"$scored") scored in total (${waited}s/${wait_total}s)"
+    detail "waiting for ai-service to score this run's transactions — ${n_usable}/${min_required} on seeded accounts, ${n_qualifying} flagged at or above the ${dual_control} dual-control line, $(jq 'length' <<<"$scored") scored in total (${waited}s/${wait_total}s)"
     sleep "$interval"
     waited=$((waited + interval))
   done
@@ -595,8 +649,45 @@ collect_ai_subjects() {
   flagged_pool=$(jq --argjson owned "$owned" \
     '[.[] | select(.accountId as $a | $owned | index($a))] | sort_by(-(.riskScore // 0))' <<<"$flagged")
 
-  [[ "$(jq 'length' <<<"$flagged_pool")" -eq 0 ]] && flagged_pool="$pool"
+  # The fallback that used to stand here — flagged_pool="$pool" when nothing was flagged — is
+  # deliberately gone (§R10). A merely-scored row is not a flagged row, and substituting one
+  # produced a subject that get_flagged_transaction 404s on, live, in front of the audience.
+  if [[ "$(jq 'length' <<<"$flagged_pool")" -eq 0 ]]; then
+    die "ai-service flagged no transaction at all on an account this run seeded within ${wait_total}s.
+    The subject for transaction.flag.review would not be a flagged transaction, and
+    get_flagged_transaction would 404 on it live during the demo.
+    Check the ai-service stream consumer and its FLAGGING_THRESHOLD, then re-run.
+    To continue anyway with real transaction ids and a placeholder score: --allow-unscored"
+  fi
 
+  # The subject flag-review-denied is built on. It must clear the dual-control line or the card
+  # seeds L1 and quietly demonstrates the opposite of the point being made.
+  local subject_pool="$qualifying"
+  if (( n_qualifying == 0 )); then
+    if [[ "$ALLOW_UNESCALATED" != "true" ]]; then
+      die "ai-service flagged $(jq 'length' <<<"$flagged_pool") transaction(s) on accounts this run seeded
+    within ${wait_total}s, but none of them reaches the ${dual_control} dual-control line.
+    flag-review-denied would seed as an L1 card, and the large-flagged-amount escalator the
+    demo is built around would not fire — the card would prove the opposite of the point.
+    Either the model scored the large wires below ai-service's FLAGGING_THRESHOLD, or
+    scoring.pollSeconds is too low for the current transaction count.
+    To continue anyway with the largest flagged subject available, as an L1 card: --allow-unescalated"
+    fi
+    warn "Continuing without a qualifying flagged subject (--allow-unescalated). No flagged"
+    warn "transaction on a seeded account reaches the ${dual_control} dual-control line, so"
+    warn "flag-review-denied will seed as L1, NOT the L2 the demo narrates."
+    warn "This run is therefore NOT measurement-grade: do not baseline a rung off it."
+    subject_pool=$(jq \
+      'sort_by(-((.amount // 0) | tonumber? // 0), -((.riskScore // 0) | tonumber? // 0))' \
+      <<<"$flagged_pool")
+  fi
+
+  # '.id', NOT '.transactionId', and this is not a bug. A flagged row carries both, and they
+  # are different things: '.id' is the SCORING EVENT's uuid and is the Redis key suffix
+  # ai-service resolves get_flagged_transaction / get_scored_transaction on
+  # (src/ai-service/app/routes/api.py:244). '.transactionId' is the banking transaction's own
+  # id, is empty on most rows, and 404s on both read tools. Changing this to '.transactionId'
+  # breaks every evidence read in the demo. See the ruling §R11.
   set_ref_from  "$pool"        0 scoredTransactionId '.id'
   set_ref_num   "$pool"        0 scoredRiskScore     '.riskScore'
   set_ref_num   "$pool"        0 scoredAmount        '.amount'
@@ -606,12 +697,12 @@ collect_ai_subjects() {
   local primary_account
   primary_account=$(jq -r '.[0].accountId // empty' <<<"$flagged_pool")
 
-  local second_index=0
-  [[ "$(jq 'length' <<<"$flagged_pool")" -gt 1 ]] && second_index=1
-  set_ref_from  "$flagged_pool" "$second_index" secondFlaggedTransactionId '.id'
-  set_ref_num   "$flagged_pool" "$second_index" secondFlaggedAmount        '.amount'
+  set_ref_from  "$subject_pool" 0 secondFlaggedTransactionId '.id'
+  set_ref_num   "$subject_pool" 0 secondFlaggedAmount        '.amount'
   local secondary_account
-  secondary_account=$(jq -r --argjson i "$second_index" '.[$i].accountId // empty' <<<"$flagged_pool")
+  secondary_account=$(jq -r '.[0].accountId // empty' <<<"$subject_pool")
+
+  info "flag-review-denied subject: $(jq -r '.[0].amount' <<<"$subject_pool") against the ${dual_control} dual-control line"
 
   resolve_account_refs "$primary_account" primary
   resolve_account_refs "${secondary_account:-$primary_account}" secondary

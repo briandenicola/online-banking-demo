@@ -1,0 +1,30 @@
+{
+  "sampleClass": "failed-read",
+  "toolId": "list_account_transactions",
+  "outcome": {
+    "status": 403,
+    "meaning": "forbidden \u2014 entitlement could not be established"
+  },
+  "provenance": {
+    "capturedFrom": "LIVE CAPTURE from the deployed cluster.",
+    "capturedAt": "2026-09-09T21:41:00+00:00",
+    "capturedFrom_detail": "https://onlinebankingdemo.bjdazure.tech via the `dana` identity, read-only GET, explicitly approved by Brian (@briandenicola). No write of any kind was issued; nothing was created to produce this denial \u2014 the empty account is seeded (config/demo-dataset.json, \"opened, never used \u2014 deliberately empty\").",
+    "accountId": "e6d8d9da-0395-46f5-bbc6-5c4f74e7f1ce",
+    "accountOwner": "dana (0a541523-c58f-4974-959c-2705a6ef948e) \u2014 AND THE CALLER IS DANA. This is the whole point of the sample: the caller is the TRUE OWNER of the account and is refused anyway.",
+    "whyThisIsA403AndNotABug": "docs/design/empty-ledger-narrowing-ruling.md \u00a7E1, UPHELD by Danny on 2026-09-09. transaction-service does not own accounts, so for a caller holding neither `banker` nor `supervisor` the only available evidence of entitlement is the returned rows themselves. The controller computes `ownsEveryRow = accountTransactions.Count > 0 && accountTransactions.All(t => t.UserId == userId)`. The `Count > 0` term means a ZERO-ROW ledger yields no evidence of ownership, so entitlement is UNKNOWN, and unknown errs closed. The alternative \u2014 200 with an empty array \u2014 was explicitly REFUSED (\u00a7E1.1) because it is a true-looking answer produced by an accident of the query, which is the \u00a7B2.2 defect one field over. The seeder was corrected; the service was not.",
+    "derivedFrom": [
+      "LIVE: GET https://onlinebankingdemo.bjdazure.tech/api/transactions/account/e6d8d9da-0395-46f5-bbc6-5c4f74e7f1ce as `dana`, HTTP 403.",
+      "src/transaction-service/Controllers/TransactionsController.cs GetAccountTransactions, the \u00a7B2.2 authorization block -> Forbid/403 when neither the role permit nor ownsEveryRow holds.",
+      "CROSS-CHECK, same capture session: dana IS the owner \u2014 GET /api/accounts/e6d8d9da-0395-46f5-bbc6-5c4f74e7f1ce as `dana` returns 200 with userId 0a541523-c58f-4974-959c-2705a6ef948e, and the account appears in dana's own GET /api/accounts list with balance 0. So the 403 is not a mis-scoped token; it is the narrowing, observed.",
+      "DISCRIMINATOR, same capture session, same token: GET /api/transactions/account/4b41d623-f40e-4b44-9719-2277eaee17f2 as `dana` \u2014 her own NON-EMPTY Checking \u2014 returns HTTP 200 with 6 rows, while her EMPTY Savings returns 403. Same caller, same role, same endpoint; the ONLY variable is whether the ledger has rows. This isolates the cause to the `Count > 0` term specifically and rules out the competing explanation that the endpoint denies non-privileged callers wholesale. Without this control the 403 above would be a denial with an ASSUMED cause."
+    ],
+    "warning": "THIS SAMPLE HAS NO `projected` BLOCK AND MUST NEVER ACQUIRE ONE. There is no successful response to project; the declared projection for list_account_transactions (bind/count/collect) cannot be applied to this object and RAISES, which is the correct outcome and is asserted by src/banker-copilot-service/tests/test_evidence_projection.py. A `projected` block here would be a fabricated evidence row asserting a ledger state that was never read \u2014 the exact false-audit-statement the Gate B ruling (\u00a7R5) and \u00a7B2.1 both refuse. It lives in failed-reads/ rather than beside the success samples because the Gate B consumers (EvidenceContractSeamTests, test_evidence_projection) enumerate the success samples and require every one of them to project cleanly. WHAT THIS DOES NOT PROVE. It does not prove the status code is stable, and it does not prove the copilot HANDLES the failure correctly \u2014 it records only what the service returned. The handling side is banker-customer-read-ruling.md \u00a7B3.1's concern and is not held here.",
+    "redaction": "No bearer token, password or live correlation id appears in this file. The response body carries none \u2014 it is the service's own terse {\"error\":\"Forbidden\"}. The account and user ids are DEMO SEED ids, regenerated on every reseed."
+  },
+  "arguments": {
+    "accountId": "e6d8d9da-0395-46f5-bbc6-5c4f74e7f1ce"
+  },
+  "response": {
+    "error": "Forbidden"
+  }
+}

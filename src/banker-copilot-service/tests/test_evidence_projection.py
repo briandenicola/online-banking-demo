@@ -460,3 +460,65 @@ async def test_a_response_that_does_not_match_its_declared_projection_fails_loud
         await executor.invoke("get_account", {"accountId": "acct-1001"}, "token")
 
     assert exc.value.code == "evidence_projection_failed"
+
+
+# ------------------------------------------------ the failed-read samples ----
+#
+# Captured live on 2026-09-09 (banker-customer-read-ruling.md §B4.1 asked for both; until the
+# §B2 ruling shipped, neither response was producible, which is why the failed-read path had no
+# fixture at all). They live in `failed-reads/` rather than beside the success samples because
+# every consumer above enumerates the success samples and requires each one to project CLEANLY —
+# and these, correctly, cannot.
+#
+# The assertion is the inverse of the one above: the shipped projection must RAISE on each. That
+# is not a technicality. It is the mechanism §B3.1 depends on — a read that failed must not be
+# able to become an evidence row, because a projected object asserts a fact about the world and
+# a 403/404 body contains no such fact. Held here so the upheld behaviour is falsifiable rather
+# than merely asserted: if someone later makes the projection tolerant of an error body, this
+# fails instead of silently minting fabricated evidence.
+
+_FAILED_READS = _SAMPLES / "failed-reads"
+
+
+def _failed_reads():
+    return sorted(_FAILED_READS.glob("*.json"))
+
+
+def test_the_failed_read_samples_exist():
+    """Guards the guard, exactly as `test_there_are_recorded_samples_at_all` does above."""
+    captured = {p.name for p in _failed_reads()}
+
+    assert "get_account.404.json" in captured, "no recorded 404 sample"
+    assert "list_account_transactions.403.json" in captured, "no recorded 403 sample"
+
+
+@pytest.mark.parametrize("path", _failed_reads(), ids=lambda p: p.stem)
+def test_a_failed_read_cannot_be_projected_into_evidence(path):
+    sample = json.loads(path.read_text())
+    manifest = load_manifest(str(_ROOT / "config" / "copilot-tools.yaml"))
+    tool = next((t for t in manifest.tools if t.tool_id == sample["toolId"]), None)
+
+    assert tool is not None, f"{sample['toolId']} has a sample but no manifest entry"
+    assert sample["outcome"]["status"] >= 400, "a failed-read sample must record a failure"
+
+    # No `projected` block, and it must never acquire one: see each sample's own `warning`.
+    assert "projected" not in sample, (
+        f"{path.name} has a `projected` block. A failed read has nothing to project; a projected "
+        "object here would be a fabricated evidence row asserting a state that was never read."
+    )
+
+    with pytest.raises(ProjectionError):
+        project(sample["response"], tool.evidence_projection, sample["arguments"])
+
+
+@pytest.mark.parametrize("path", _failed_reads(), ids=lambda p: p.stem)
+def test_every_failed_read_sample_records_where_it_came_from(path):
+    provenance = json.loads(path.read_text()).get("provenance") or {}
+
+    assert provenance.get("capturedFrom")
+    assert provenance.get("derivedFrom")
+    assert provenance.get("warning")
+    assert provenance.get("redaction"), (
+        "these samples were captured against a live deployment, so each must state what was "
+        "removed before it was committed — the 404 body carried a real W3C traceId."
+    )

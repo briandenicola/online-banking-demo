@@ -2465,3 +2465,135 @@ Six rulings and all follow-ups documented. Two open items flagged from Linus's w
 
 **Reseed unblocked.** Stage 1 measurement is the next gate.
 
+
+### 2026-09-09 — item 7: seeded approval rung non-determinism (`flag-review-denied`)
+
+Written to `docs/design/seeded-approval-rung-nondeterminism-ruling.md`. Brian's hypothesis was
+right in mechanism and understated the damage.
+
+- **The arithmetic was the whole ruling.** Threshold `25000.00`; of 23 seeded transactions
+  exactly two clear it (`61200`, `48500`, both `anomalous: true`), the other 21 top out at
+  `9480`. `minScoredRequired: 1` means the poll exits at the *first* scored transaction, so
+  21 of 23 possible winners give L1. I could not have ruled on this by reasoning about
+  "a race" — I had to read both numbers. Same shape as #140's `maxConcurrentSubagents: 4`.
+- **Confirming a hypothesis is not the end of the job; look one line further.** The rung was
+  the symptom Brian could see. One line above the ref assignment, `demo.sh:598` silently
+  falls back from the flagged pool to the scored pool. Flagging needs `riskScore >= 0.7`,
+  scoring needs nothing. So the seeded "flagged transaction" can be one
+  `get_flagged_transaction` 404s on, at the demo. **The observable defect was the less
+  serious of the two.** If I had stopped at "hypothesis confirmed" I would have shipped a
+  ruling that fixed the noise and left the break.
+- **My own prior ruling already governed it.** *A fixture may never assert a field the service
+  cannot produce* (§F5, written this morning about `demoFixture`). Same failure, different
+  layer — a fixture agreeing with the race instead of the service. Worth noticing that the
+  general rule found its second instance within a day; that is evidence it was worth
+  generalising rather than fixing in place.
+- **The advisor stopped me writing the wrong fix.** I was about to recommend rewriting the
+  payload amount as `@threshold`+`@delta` to match its nine neighbours. That pins the rung and
+  breaks the payload/service agreement — `amount` is a `hashField` and must equal a real
+  transaction's amount. **Pin the selection, not the value.** The elegant-looking fix would
+  have introduced deliberately the exact defect I was ruling against. The uniform pattern
+  across the other approvals was the trap: they pin values because their subjects are pinned
+  too.
+- **Two well-built guards, one shared blind spot.** `demo.sh:1091` asserts a declared escalator
+  actually fired; `test-demo-dataset.sh:408` asserts threshold-derived amounts stay below the
+  line. Both are good. Both are blind to a value that appears only at runtime — the first
+  because `flag-review-denied` declares no escalator, the second because an `@ref` is not a
+  `@threshold` expression. **A guard's coverage is defined by what it can see, not by what it
+  checks.** The cheapest fix is to declare the escalator and inherit the existing assertion.
+- **Answering "can we measure" required a distinction I nearly skipped.** Rung drift alone
+  would have been a *yes, measure and record the variance*. I ruled no only because the seed
+  cannot be shown to be in the merely-noisy state rather than the broken one — and I gave
+  Brian a one-call test to settle it instead of guessing which. **Refusing to guess is cheaper
+  than a wrong ruling, but only if the refusal comes with the experiment that resolves it.**
+  A "cannot determine" with no next step is just a stalled decision.
+- **Checked the sibling class and it was narrower than feared — say so plainly.** Only
+  `flag-review-denied` can drift on rung. I was ready for a class defect and found one bug plus
+  a design gap. Reporting the smaller true answer beats the larger dramatic one.
+  `l2-score-override-pending` is the near-miss: stable rung (`rules: []`), varying subject and
+  evidence. Flagged for Livingston in case stage 1 reads evidence values.
+- **Killed one of Brian's worries outright.** §7.x does not expect L2 — §7.1's L2 is a live
+  proposal, §7.5 needs only `HUMAN_DENIED`, which `after: deny` sets regardless. Writing down
+  the *negative* finding matters as much as the positive one; otherwise it gets re-raised.
+
+### 2026-09-09 — item 7 REVISED after the §R6 diagnostic came back
+
+Revision 1 appended to `docs/design/seeded-approval-rung-nondeterminism-ruling.md` (§R9-§R14).
+My §R6 answer flipped and my §R7 fix contained a defect. Both worth keeping.
+
+- **I diagnosed right and prescribed a fix that could not run.** §R4's principle ("pin the
+  selection, not the value") survived the diagnostic untouched. §R7.1's *implementation* of it —
+  filter the pool after the poll — would have died ~21 runs in 23, because `minScoredRequired: 1`
+  means the poll has already exited with one transaction in the pool and only 2 of 23 clear
+  $25,000. **I had every number needed to catch this and never multiplied them together**, because
+  I stopped once the principle felt settled. A principle is not a fix. The arithmetic lives in
+  the gap between them, and that gap is exactly where I stopped looking.
+- **The trap has a general name and I want it reusable:** *a seeder must wait for the thing it
+  will later require; any predicate used to SELECT must be the predicate that TERMINATES the
+  wait.* Filtering on a property the poll did not wait for is a race with an assertion bolted on.
+  This generalises past seeders to any poll-then-assert code.
+- **§R6 was a correct process producing an unhelpful answer.** Refusing to certify a seed I could
+  not distinguish between two states was defensible, and the practical effect was blocking
+  Livingston for the length of one read-only call. **The escape hatch was the load-bearing part
+  of that ruling, not the "no".** Next time I cannot decide: weight a cheap experiment as
+  *resolving* the question, not as a caveat attached to a block. The block was the packaging; the
+  experiment was the content, and I inverted their prominence.
+- **The stronger design rested on the weaker field.** Option (iii) — name the subject in the
+  dataset, match by identity — pins more than the fix I chose. I rejected it because `.id` is
+  `str(uuid.uuid4())` minted per scoring event, so matching must go via `.transactionId`, and
+  only 14 of 128 flagged rows carry one. **Check what a design rests on before preferring it for
+  what it achieves.** Elegance is a property of the foundation, not the outcome.
+- **A do-not-change guard stated too broadly becomes the next bug.** The Coordinator asked me to
+  record "`.id` is correct, `.transactionId` is NOT". True for *lookup* — but stated as a blanket
+  ban it forbids the correlation use that option (iii) would legitimately need. I split it into a
+  two-row table: `.id` for references, `.transactionId` for correlation. **A guard must forbid
+  the error, not the field.**
+- **The control case is what caught the Coordinator's false negative.** Their matcher reported
+  the subject absent; it was only suspicious because run A's *known-present* subject also came
+  back absent. **When a check gives the same surprising answer for a case whose answer you
+  already know, the check is the suspect.** A control case is nearly free and it stood between a
+  matcher bug and a discarded seed. Adopting this as standard practice for any diagnostic I ask
+  someone to run.
+- **Refused to weaken a product default to make a demo convenient.** The 20-minute
+  `ttl_balance_adjust` kills 8 of the 10 seeded approvals — the whole NEEDS YOU queue — inside a
+  walkthrough that cannot finish that fast. The tempting fix is editing the default. That is the
+  §R7 error in a different costume. The `env:` override mechanism already exists and I *verified
+  the loader honours it* before recommending it (`PolicyLoader.cs:156-160`, env → default, no
+  third source) — the advisor was right to make me check, since "the YAML declares `env:`" is not
+  evidence anything reads it. That check is the difference between a recommendation and the
+  fourth false written premise this week.
+- **Raising a TTL silently disables verification check 2.5.** The sweeper check is observable
+  only *because* the TTL is short. Third instance in one ruling of the same shape: **a guard
+  whose coverage depends on a value somebody else is about to change.** §R3 was the first two.
+  I now look for this automatically whenever I recommend changing a threshold.
+- **"Usable today" and "usable tomorrow" are different claims.** The seed passes now and expires
+  in 20 minutes, so it buys nothing for Brian's morning UI test. That single fact moved my fix
+  from a parallel workstream onto the blocking path. **I also wrote that my own ruling does not
+  discharge it** — Rusty's work is done when a reseed completes and the card reads L2, not when
+  I have reasoned that it will.
+
+## Durable guards (carried into future work)
+
+### Guard (a): Flagged row lookup key is `.id`, not `.transactionId`
+
+**Rule:** `.id` is the Redis lookup key for flagged transactions; `.transactionId` is NOT.
+
+- `.id` = scoring-event UUID, minted per scoring event (`anomaly_service.py:879`). Use for **references**: payload fields, evidence API calls, anything a read tool resolves.
+- `.transactionId` = the banking transaction id, carried on rows. Legitimate for **correlation** only.
+- A read on `.id` returns 200 (or 404 if the row was purged). A read on `.transactionId` returns 404 even for rows that exist.
+
+**Do NOT "fix" a seeder to use `.transactionId` even if it "looks more meaningful".** The error would not become visible until the read fails in production.
+
+**Why it matters:** only **14 of 128** flagged rows carry a non-empty `.transactionId`. The 114 that don't cannot be identity-matched. A design that rests on this field is weaker than one that rests on `amount`/`accountId`, which fresh rows always populate.
+
+### Guard (b): A seeder must wait for what it will later require
+
+**Rule:** Any predicate used to **select** a subject must be the same predicate that **terminates** the wait.
+
+**Failure mode:** Filtering on a property the poll did not wait for is a race with an assertion bolted onto the end. If the poll breaks on `n_usable >= 1` and the filter requires `.amount >= 25000`, you are racing the moment a second transaction scores against the moment its amount is computed. ~21 of 23 runs will fail.
+
+**Implementation:** The same function must be called from both the break condition and from the selection. That is the whole point.
+
+**Die distinction:** The `die` must name its cause. "nothing flagged at all" (stream/Foundry/FLAGGING_THRESHOLD problem) vs "flagged but nothing qualifies" (model scored low, or poll window too small) send debuggers to different services.
+
+**Opt-out:** If the qualifying subject depends on a model score, a hard `die` on low-score days leaves the operator with no demo. An escape hatch with a typed flag (`--allow-unescalated` style) that degrades the run and prints what is degraded is legitimate. A *silent* default variance is not.

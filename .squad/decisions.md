@@ -3090,3 +3090,337 @@ Reseed completed end to end. `Seed complete` message observed.
 
 1. **Stale documentation upstream** — `src/banker-copilot-service/README.md:191` still lists "filters by the caller's own userId" as an open upstream gap under "Known gaps in the upstreams", which §B2.2 (`9a346e3`) closed. The endpoint now queries by `accountId` and a `CustomerFinancialRead` holder sees the account's ledger. Not Turk's boundaries; reported rather than edited. **Recommend owner strike or amend item 1 in that list.**
 
+
+---
+
+# Decision — seeded `flag-review-denied` rung non-determinism (REVISED after diagnostic)
+
+**Author:** Danny (Lead/Architect) · **Date:** 2026-09-09 · **Branch:** `332-beta`
+**Full ruling:** `docs/design/seeded-approval-rung-nondeterminism-ruling.md`
+(original §R1-§R8, **REVISION 1 §R9-§R14** supersedes §R6 and amends §R7)
+**Evidence:** `docs/design/seeded-approval-rung-diagnostic-result.md`
+**Implementer:** Rusty · **Status:** BLOCKING PATH — must land tonight
+
+## 1. Livingston MAY measure — §R6 is superseded
+
+The diagnostic confirms state **(b-i)**. The current subject is genuinely flagged
+(`riskScore 0.72`, real `flags`, `flaggedAt` inside the run); the §598 fallback did
+not fire. §R1's arithmetic is confirmed live: run A `61200` → `large-flagged-amount`
+fired → L2; run B `9350` → nothing fired → L1.
+
+**YES, Livingston may take the stage-1 measurement on the current seed**, provided it
+does **not** read `flag-review-denied`'s rung or its evidence amounts. My earlier "no"
+was wrong; the reasoning was defensible on what I had, but it blocked work that did
+not need blocking. The escape hatch, not the "no", was the load-bearing part.
+
+## 2. My §R7 contained a trap — RULED: option (ii)
+
+The Coordinator is right that §R7.1 (filter the pool) + §R7.2 (delete the fallback)
+combine into **a seeder that reliably dies**: `minScoredRequired: 1` breaks the poll
+first-past-the-post, 429 throttling means ~1 transaction in the pool at that moment,
+and only 2 of 23 clear $25,000. Dies ~21 times in 23.
+
+**The defect, and the generalisable finding:**
+
+> A seeder must wait for the thing it will later require. Any predicate used to
+> **select** a subject must be the same predicate that **terminates** the wait.
+> Filtering on a property the poll did not wait for is not a filter — it is a race
+> with an assertion bolted onto the end.
+
+**Ruled: option (ii).** Move the predicate into the poll's break condition
+(`demo.sh:541-560`). Continue until *both* `n_usable >= minScoredRequired` **and** a
+flagged row on a seeded account has `.amount >= flagged_transaction_dual_control_amount`.
+Select from that qualifying set, sorted `-amount` then `-riskScore`.
+`minScoredRequired` does **not** need raising — option (i) waits longer for the same
+wrong thing.
+
+**Option (iii) (name the subject in the dataset, match by identity) considered and
+rejected on evidence:** it is theoretically stronger but rests on the weakest field.
+`.id` is `str(uuid.uuid4())` minted per scoring event (`anomaly_service.py:879`), so
+identity matching must use `.transactionId` — and only **14 of 128** flagged rows carry
+a non-empty one. (ii) rests on `amount`/`accountId`, which fresh rows populate and the
+existing `owned` filter already depends on.
+
+**Die-on-reseed risk, ruled explicitly:** the qualifying subject depends on a model
+score ≥ 0.7. If tomorrow's reseed scores the wire at 0.68, a hard `die` leaves Brian
+with **no demo at all** — worse than an L1 card. So: **`die` is the default, plus an
+explicit labelled opt-out** (`--allow-unescalated`, following the existing
+`--allow-unscored` precedent) that warns the run is not measurement-grade. This is not
+the option (b) I rejected — (b) was *silent* default variance; a typed flag that prints
+what is degraded is the opposite.
+
+**Timing:** ~5-6s per scoring call under 429 → ~115-140s to drain 23 transactions; the
+qualifying wires sit late in their blocks. **Expect ~2-3 minutes** for the scoring stage
+(vs ~45s today). **`scoring.pollSeconds: 300` is adequate and must NOT be lowered**;
+revisit past ~40 transactions. The `die` must distinguish "no flagged subjects at all"
+(stream/Foundry problem) from "none reached the dual-control line" (model scored low, or
+`pollSeconds` too small) — they send debuggers to different services.
+
+## 3. DO-NOT-CHANGE guard — `.id` is the lookup key
+
+Confirmed from source. `api.py:244` resolves on Redis key
+`FLAGGED_TRANSACTION_PREFIX{tx_id}`; that suffix is `scored_id`, exposed as **`.id`**.
+`demo.sh`'s use of `.id` is **correct and must not be "fixed" to `.transactionId`.**
+
+**Refinement the guard needs:** the rule is *"`.id` is the lookup key"*, **not** *"never
+read `.transactionId`"*. `.id` = scoring-event uuid → use for **references** (payload,
+evidence, anything a read tool resolves). `.transactionId` = the banking transaction id →
+legitimate for **correlation** only. Stated as a blanket ban it would forbid the identity
+matching option (iii) would need. My chosen fix depends on neither field.
+
+Also: a transaction scored twice yields two rows, different `.id`, same `.transactionId`.
+
+## 4. NEW — the 20-minute TTL is a separate defect
+
+**The binding TTL is 1200s / 20 minutes**, not 30-60: `ttl_balance_adjust` is 1200 and
+**8 of the 10 seeded approvals are `account.balance.adjust`** (`l1-pending-needs-you`,
+`l1-signed`, `l1-superseded`, all five `esc-*`). The 2 survivors match exactly
+(`user.unlock` 1800s, `score.override` 3600s). **The entire NEEDS YOU queue and every
+escalator card has a twenty-minute life.**
+
+- **Reseed immediately before the walkthrough IS the intended workflow — yes.** A demo
+  seed is perishable by design. **Tonight's usable seed buys nothing for tomorrow**, so
+  the §R10 fix is on the blocking path and must be proven **by an actual successful
+  reseed**, not by this document.
+- **Is the short TTL itself a problem? Yes.** The verification doc is 8 sections across
+  two identities; §7 alone is 5 checks in two browser sessions. That will exceed 20
+  minutes, and the escalator cards — the artifacts #332 rests on — will **expire
+  mid-demo** into `TTL_EXPIRED`.
+- **Fix in the environment, not the defaults.** 20 minutes is a defensible product
+  control and weakening it to suit a demo is the §R7 error in a different costume. Every
+  threshold declares an `env:` key and I verified `PolicyLoader` honours it — env var →
+  file default, no third source (`PolicyLoader.cs:156-160`). **Nothing currently sets any
+  `POLICY_TTL_*`.** The demo environment should set `POLICY_TTL_BALANCE_ADJUST`,
+  `POLICY_TTL_USER_UNLOCK`, `POLICY_TTL_TRANSACTION_FLAG_REVIEW` to ~4 hours. Config
+  only, no redeploy of logic.
+- **Watch-out:** verification check **2.5** (TTL sweeper → `TTL_EXPIRED`) is observable
+  today *only because the TTL is short*. Raising it silently disables that check. 2.5
+  must run against a purpose-seeded short-TTL approval or a separate pass.
+
+## 5. Unchanged
+
+§R5 siblings stands: rung drift is unique to `flag-review-denied`; all five `esc-*` are
+triply pinned; `l2-score-override-pending` has a stable rung but varying subject and
+evidence. The general rule stands — *a seeded fixture may discover its subject, but never
+its policy-deciding inputs.*
+
+---
+
+# Decision — the seeder now WAITS for its qualifying subject (implements Danny §R10)
+
+**Author:** Rusty (Platform) · **Date:** 2026-09-09 · **Branch:** `332-beta`
+**Implements:** `docs/design/seeded-approval-rung-nondeterminism-ruling.md` REVISION 1,
+§R10 ruled option (ii), §R10.1 opt-out, §R10.2 poll budget, §R11 guard
+**Evidence:** `docs/design/seeded-approval-rung-diagnostic-result.md`
+**Status:** implemented, statically and behaviourally verified, **not yet proven by a live
+reseed**. No Azure write of any kind was performed.
+
+## 1. What changed
+
+`scripts/demo/demo.sh`
+
+- New `qualifying_flagged_pool()` — the flagged rows on accounts **this run** seeded whose
+  `.amount` is at or above the live `flagged_transaction_dual_control_amount`, sorted
+  `-amount` then `-riskScore`. The threshold is read out of the live policy via
+  `load_thresholds` (now called from `collect_ai_subjects`, which is idempotent); nothing
+  restates `25000`.
+- The poll's break condition now requires **both** `n_usable >= scoring.minScoredRequired`
+  **and** `n_qualifying > 0`. `minScoredRequired` is unchanged at 1, per §R10.
+- **The same function is called from the break condition and from the selection.** That is
+  the whole point of the fix and it is why the function exists rather than two inline `jq`
+  expressions that could drift apart.
+- The fallback `flagged_pool="$pool"` is **deleted**, replaced by two dies with different
+  causes: *nothing flagged at all* (stream consumer / `FLAGGING_THRESHOLD`) versus *flagged
+  but nothing reaches the line* (model scored the wires low, or `pollSeconds` too small).
+- `--allow-unescalated` (§R10.1), shaped on the existing `--allow-unscored`: seeds the
+  largest available flagged subject, warns that `flag-review-denied` will be L1 not L2, and
+  warns the run is not measurement-grade.
+
+`config/demo-dataset.json`
+
+- `flag-review-denied` declares `"escalator": "large-flagged-amount"`.
+- `scoring._comment` states the linear relationship between seeded transaction count and
+  drain time, so the next person to add transactions sees why `pollSeconds: 300` is 300.
+
+`tests/demo/test-demo-dataset.sh`
+
+- The converse of the threshold-derived amount check (§R7.4): a payload field that feeds an
+  action-local rule predicate **and is an `@ref`** must declare the escalator it expects.
+  The rules are read out of the action, so a rule added to the policy tomorrow is covered
+  without touching the test.
+
+## 2. Danny's §R7.3 preference is correct, but the guard needed widening first
+
+§R7.3 asked me to verify before relying on `escalator: large-flagged-amount`. I did, and
+the answer is two-sided.
+
+- **Runtime: works as Danny predicted.** `large-flagged-amount` is an action-*local rule* on
+  `transaction.flag.review`, not a member of `policy.escalators`. But
+  `PolicyEvaluator.cs:88-101` adds action-local rules to the same `fired` list as global
+  escalators, tagged `action_rule`, so `demo.sh`'s existing assertion sees it. No new code.
+- **Static: would have failed.** `test-demo-dataset.sh` built its accepted set from
+  `policy["escalators"]` alone, so declaring an action-rule id would have been rejected as
+  "not in the policy" — a guard narrower than the runtime it is guarding. Widened to span
+  both sources, scoped per action, and the "no other rule fires first" assertion now excludes
+  the declared one.
+
+**The lesson worth keeping:** a static guard and the runtime assertion it stands in for must
+be derived from the same set. When they are derived from different scopes, the static guard
+rejects things the runtime can prove, and the temptation is to weaken the *design* to fit the
+test rather than fix the test.
+
+## 3. What I did NOT do
+
+No live reseed, no `task cloud:demo:reset`, no Azure or `kubectl` write, no commit, no branch
+operation. No edit to `authority-policy.yaml`, `src/authority-service/**`, ai-service's
+`FLAGGING_THRESHOLD`, `deploy/**`, or the evidence fixtures Turk just landed. The three files
+above are the only ones I touched.
+
+**Brian's reseed is still the proof.** Everything below is a statement about code paths, not
+about the live environment.
+
+## 4. The residual risk, named
+
+The seed now takes **~2-3 minutes** at the scoring stage instead of ~45s, because it waits
+for a class of transaction rather than the first one to arrive. That is the intended cost.
+If the model scores both large wires below `0.7` tomorrow morning, the seeder dies — and
+`--allow-unescalated` is the one keystroke that turns that into an L1 card rather than no
+demo. That flag exists because §R10.1 required it, and it has been executed, not merely
+written.
+
+---
+
+# Decision proposal — a second class of evidence sample: the failed read
+
+**Author:** Turk (Backend Dev) · **Date:** 2026-09-09 · **Branch:** `332-beta`
+**Status:** PROPOSED — implemented in the working tree, not committed (Scribe holds the index).
+**Discharges:** `banker-customer-read-ruling.md` §B4.1 (both halves: regenerate the two fixtures,
+capture the `403` and the `404`).
+**Depends on:** `empty-ledger-narrowing-ruling.md` §E1 (the 403 this captures is the upheld one).
+
+---
+
+## D1 — The decision, in one line
+
+**Evidence samples now come in two classes. Success samples stay at
+`tests/fixtures/evidence-samples/*.json` and must project cleanly. Failed reads live at
+`tests/fixtures/evidence-samples/failed-reads/*.json`, carry NO `projected` block, and are held by
+the inverse assertion: the shipped projection must RAISE on them.**
+
+## D2 — Why a subdirectory rather than a naming convention
+
+The directory has two consumers with incompatible appetites, and neither was edited:
+
+- `test_evidence_projection.py` globs `evidence-samples/*.json` (non-recursive) and requires every
+  file to resolve to a manifest tool and reproduce its `projected` block.
+- `EvidenceContractSeamTests.Sample(toolId)` reads `{toolId}.json` at the **top level only**, and
+  separately asserts a quarantined key has **no** sample file.
+
+A 403 body has no `id` to rename and no array to collect, so `project()` raises. That is the correct
+behaviour, but under the existing glob it is a red test. Naming the file `get_account_forbidden.json`
+does not help — it is still globbed. Loosening the Python test to skip error samples would weaken a
+guard that currently protects everyone. The subdirectory is the only option that adds the new class
+**without touching either consumer's existing assertions**.
+
+## D3 — The new samples are load-bearing, not decoration
+
+A fixture no test reads is Gate B §R9 repeating itself. So `test_evidence_projection.py` gains a
+section asserting that `project()` **raises** on each failed read, that neither carries a `projected`
+block, and that each records its provenance and what was redacted.
+
+This is the mechanism `banker-customer-read-ruling.md` §B3.1 depends on: a read that failed must not
+be able to become an evidence row. If someone later makes the projection tolerant of an error body so
+that a demo stops erroring, the test fails **instead of** the system quietly minting a fabricated
+evidence row asserting a ledger state nobody ever read.
+
+## D4 — What was captured, and the two choices that were not free
+
+Live, read-only, against the deployed cluster, with Brian's explicit authorisation. No write of any
+kind; nothing was created to produce either failure.
+
+| Sample | Caller | Request | Result |
+|---|---|---|---|
+| `get_account.json` | banker | `GET /api/accounts/149443f9…` (casey, a CUSTOMER) | 200 |
+| `list_account_transactions.json` | banker | `GET /api/transactions/account/149443f9…` | 200, **2** rows |
+| `failed-reads/list_account_transactions.403.json` | **dana** | `GET /api/transactions/account/e6d8d9da…` (**dana's own** empty Savings) | **403** |
+| `failed-reads/get_account.404.json` | banker | `GET /api/accounts/00000000-0000-4000-8000-000000000000` | **404** |
+
+**The 404 had to be on `get_account`, not on the transactions endpoint.** A nonexistent id there
+yields zero rows and therefore a `403` (§B3.2 — that endpoint cannot distinguish "no such account"
+from "clean history"). Capturing it there and labelling it `404` would have committed a mislabelled
+fixture. It is driven as **banker**, who by §B1 may read any account, so the 404 cannot be a disguised
+denial: absence is the only remaining explanation.
+
+**The 403 is driven by the TRUE OWNER, which is what makes it worth having.** dana owns the account —
+cross-checked in the same session, `GET /api/accounts/{id}` as dana returns 200 with her userId — and
+is refused anyway, because zero rows cannot establish entitlement. §E1's upheld behaviour is now
+**observed rather than asserted**.
+
+## D5 — The error contract is not one contract
+
+`403` is the controller's own `{"error":"Forbidden"}`. `404` is ASP.NET Core's RFC 9110
+ProblemDetails for a bare `NotFound()`, with `type/title/status/traceId`. Anything that consumes
+failed reads must not assume a single error shape. Noted in both fixtures.
+
+**Redaction:** the live `traceId` was removed — it is a real W3C traceparent against real
+infrastructure — but the **field** was retained with an explanatory placeholder, because its presence
+is part of the observed shape. Seeded account/user/transaction GUIDs are retained: they are
+regenerated on every reseed, identify nothing outside the demo, and the projection depends on them.
+
+## D6 — A finding that is NOT mine to fix
+
+Grepping the **whole repo** (root, excluding `.git/`) for the superseded account id turned up the
+measurement harness:
+
+- `tests/verification/e2e_cases.py` — 2 refs, `A1 = "58ada63b-…"  # Checking, $32,897.40, 7 txns`
+- `tests/verification/supervisor_cases.py` — 1 ref
+
+**That account no longer exists.** After the reseed, casey's Checking is `149443f9-…`, $79,050, with
+**2** transactions, not 7. Those case definitions are pinned to a pre-reseed world. The `.jsonl`
+result files also carry it, but those are frozen transcripts and are correct as they stand.
+
+I did not touch any of them: silently re-pinning case definitions mid-measurement is the failure mode
+the rulings repeatedly warn against, and it is Livingston's call, not mine. **Flagging it for
+whoever owns the e2e harness.**
+
+## D7 — Verification
+
+- `authority-service.UnitTests` — **139 passed, 0 failed** (the 6 `EvidenceContractSeamTests` among
+  them, including the negative control that requires the RAW response to FAIL the policy).
+- `test_evidence_projection.py` — **52 passed, 0 failed** (was 46; the 6 new ones are D3).
+- `evidence-contract.py . --samples` reports `stale: false` for both success samples, i.e. the
+  committed `projected` blocks are what the shipped engine produces.
+
+**No fixture shape changed.** `get_account` projects the same nine keys; `list_account_transactions`
+projects the same `{accountId, count, items}`. Only `count` moved, 7 → 2, and that is the seed, not
+the contract.
+
+## D8 — What this still does not prove
+
+Nothing in this repo re-reads the live services. These are recorded shapes, and they prove the two
+config documents remain mutually satisfiable against a shape that was true at capture time on one
+deployment. The live contract test named in Gate B §R8 is still outstanding.
+
+## D9 — The discriminator: the 403's cause is controlled for, not assumed
+
+A denial with an assumed cause is not evidence. So the 403 was isolated in the same session, with
+the same token:
+
+| Caller | Account | Rows | Result |
+|---|---|---|---|
+| dana | her own Checking `4b41d623…` | 6 | **200** |
+| dana | her own **empty** Savings `e6d8d9da…` | 0 | **403** |
+
+Same caller, same role, same endpoint. **The only variable is whether the ledger has rows.** That
+isolates the cause to the `Count > 0` term specifically and rules out the competing explanation —
+that the endpoint denies non-privileged callers wholesale, which would have made the fixture's
+`whyThisIsA403AndNotABug` prose a mislabel. Recorded in the fixture's own `derivedFrom`.
+
+This also confirms `empty-ledger-narrowing-ruling.md` §E1.3 empirically: dana reads her populated
+account normally. The narrowing costs exactly the zero-row case and nothing wider.
+
+## D10 — Housekeeping
+
+`.squad/identity/now.md:66` lists this capture as outstanding, pending Brian's approval for a live
+Azure read. **That approval was given and the item is discharged by this note** — all four fixtures
+exist and both consumers are green. Whoever owns `now.md` should tick it.

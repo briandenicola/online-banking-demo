@@ -2,46 +2,46 @@
   "toolId": "get_account",
   "provenance": {
     "capturedFrom": "LIVE CAPTURE from the deployed cluster.",
-    "capturedAt": "2026-09-08T21:06:50.423630+00:00",
-    "capturedFrom_detail": "https://onlinebankingdemo.bjdazure.tech via the `banker` identity, read-only GET, approved by Brian (@briandenicola).",
-    "accountId": "58ada63b-6022-40d3-9896-795f8a5cc57b",
-    "accountOwner": "the acting banker (0c5bcca9-6b4e-41cd-ac75-6a518443fb89) \u2014 see the caveat below",
-    "supersedes": "a hand-built sample derived from the C# response type. The shapes agreed; this replaces belief with observation.",
+    "capturedAt": "2026-09-09T21:41:00+00:00",
+    "capturedFrom_detail": "https://onlinebankingdemo.bjdazure.tech via the `banker` identity, read-only GET, explicitly approved by Brian (@briandenicola) for this recapture. No write of any kind was issued.",
+    "accountId": "149443f9-448b-48d9-b7b4-131e75650dec",
+    "accountOwner": "casey (c4f15021-dc1f-4aba-b662-84d1f2cbb20b), a CUSTOMER \u2014 not the acting banker. This is the point of the recapture: it is the path the product actually takes.",
+    "supersedes": "the 2026-09-09T08:12 fixture, itself a 2026-09-08T21:06:50Z live capture taken as banker against a BANKER-OWNED account (58ada63b-6022-40d3-9896-795f8a5cc57b). That path no longer runs; per banker-customer-read-ruling.md \u00a7B4.1 a fixture captured on a path nobody runs is a measurement of a configuration nobody runs. Re-CAPTURED live, not edited.",
+    "seedGeneration": "Captured after the 2026-09-09 reseed (repo at ed44486), which is the first seed to complete end to end. The previous fixtures predate it.",
     "derivedFrom": [
-      "LIVE: GET https://onlinebankingdemo.bjdazure.tech/api/accounts/58ada63b-6022-40d3-9896-795f8a5cc57b as `banker`, HTTP 200.",
-      "src/account-service/Controllers/AccountsController.cs GetAccount -> Ok(account)",
+      "LIVE: GET https://onlinebankingdemo.bjdazure.tech/api/accounts/149443f9-448b-48d9-b7b4-131e75650dec as `banker`, HTTP 200.",
+      "src/account-service/Controllers/AccountsController.cs GetAccount -> Ok(account), reached via the CustomerFinancialRead role permit added by banker-customer-read-ruling.md \u00a7B2.3",
       "src/account-service/Models/Account.cs serialized by System.Text.Json (AddControllers, no AddNewtonsoftJson) => camelCase on the wire"
     ],
-    "warning": "A LIVE CAPTURE PROVES MORE THAN A HAND-BUILT SAMPLE, BUT IT IS STILL THE HAPPY PATH. This account is owned by the ACTING BANKER, and both endpoints scope reads to the caller. A banker reading a CUSTOMER's account behaves differently and asymmetrically: get_account returns 404 (loud - evidence missing, propose refuses) while list_account_transactions returns 200 with an EMPTY ARRAY (silent). The projection would then assert {accountId, count: 0, items: []} - 'this account has no transaction history' - when the truth is 'the banker cannot see them'. count: 0 is present and non-null, so EvidenceComplete PASSES and the approval record carries a false statement. This sample cannot detect that, and neither can the seam test. Deferred deliberately (Brian, 2026-09-08); named before `main`. It also does not prove the shape is stable - only that it was true at capture time.",
-    "supersededByRuling": {
-      "supersededBy": "docs/design/banker-customer-read-ruling.md (\u00a7B4.1)",
-      "status": "STALE PROVENANCE \u2014 SHAPE SURVIVES, PATH DOES NOT. The response body, the projection and the resulting shape are unchanged by that ruling, so the Gate B seam tests remain valid and are not blocked. But this was captured AS BANKER AGAINST A BANKER-OWNED ACCOUNT, and after the ruling the product no longer takes that path: the banker owns nothing and reads a CUSTOMER's account. A fixture captured on a path that no longer runs is a measurement of a configuration nobody runs.",
-      "behaviourDescribedInWarningNoLongerExists": "The `warning` above describes the pre-ruling behaviour and is retained as the record of the defect, not as a description of the shipping product. A banker reading a customer's account now succeeds; a caller with no authority is refused 403 by both endpoints; and an empty array from list_account_transactions now means the ledger is empty and nothing else.",
-      "regenerationRequired": "Recapture live as banker against a CUSTOMER-owned account, and capture the two fixtures that did not exist because they were unproducible: the 403 on a forbidden read and the 404 on an absent account. Live capture only \u2014 an edit of this file would replace observation with belief. NOT YET DONE: it touches Azure and needs Brian's approval, and the environment was mid-reseed. Deferred-before-`main`, ticketed."
-    }
+    "warning": "WHAT THIS DOES NOT PROVE. This is a live capture of the SHIPPING path \u2014 banker reading a CUSTOMER-owned account (casey) \u2014 and it supersedes the 2026-09-08 capture, which was taken as banker against a BANKER-OWNED account, a configuration the product no longer runs after docs/design/banker-customer-read-ruling.md. Three limits remain. (1) It is still the HAPPY PATH: 200 with rows. The failed-read path is captured separately and deliberately is NOT here \u2014 see tests/fixtures/evidence-samples/failed-reads/. (2) It proves the shape was true at capture time against one deployment; it does not prove the shape is stable, and no test in this repo re-reads the live service. (3) The 2026-09-08 warning described an asymmetry \u2014 get_account 404 vs list_account_transactions 200-with-empty-array \u2014 where an empty array could satisfy EvidenceComplete while asserting something false. That specific defect is FIXED: a banker now reads a customer's account successfully, and per docs/design/empty-ledger-narrowing-ruling.md a non-privileged caller who cannot prove entitlement is refused 403 rather than handed an empty array. An empty array from this tool now means the ledger is empty and nothing else. That is a stronger position, not a safe one: a captured payload invites more trust than it has earned.",
+    "relatedFailedReadSamples": [
+      "tests/fixtures/evidence-samples/failed-reads/list_account_transactions.403.json",
+      "tests/fixtures/evidence-samples/failed-reads/get_account.404.json"
+    ],
+    "redaction": "No bearer token, password or live correlation id appears in this file. The account, user and transaction ids are DEMO SEED ids, already committed in this repo's fixtures and regenerated on every reseed; they identify nothing outside the demo and the projection depends on them, so they are retained."
   },
   "arguments": {
-    "accountId": "58ada63b-6022-40d3-9896-795f8a5cc57b"
+    "accountId": "149443f9-448b-48d9-b7b4-131e75650dec"
   },
   "response": {
-    "id": "58ada63b-6022-40d3-9896-795f8a5cc57b",
-    "userId": "0c5bcca9-6b4e-41cd-ac75-6a518443fb89",
-    "accountNumber": "ACC88973534",
+    "id": "149443f9-448b-48d9-b7b4-131e75650dec",
+    "userId": "c4f15021-dc1f-4aba-b662-84d1f2cbb20b",
+    "accountNumber": "ACC19513162",
     "accountType": "Checking",
-    "balance": 32897.4,
+    "balance": 79050,
     "currency": "USD",
-    "createdAt": "2026-09-08T19:22:31.7766187Z",
+    "createdAt": "2026-09-09T21:33:10.7563455Z",
     "isActive": true
   },
   "projected": {
-    "id": "58ada63b-6022-40d3-9896-795f8a5cc57b",
-    "userId": "0c5bcca9-6b4e-41cd-ac75-6a518443fb89",
-    "accountNumber": "ACC88973534",
+    "id": "149443f9-448b-48d9-b7b4-131e75650dec",
+    "userId": "c4f15021-dc1f-4aba-b662-84d1f2cbb20b",
+    "accountNumber": "ACC19513162",
     "accountType": "Checking",
-    "balance": 32897.4,
+    "balance": 79050,
     "currency": "USD",
-    "createdAt": "2026-09-08T19:22:31.7766187Z",
+    "createdAt": "2026-09-09T21:33:10.7563455Z",
     "isActive": true,
-    "accountId": "58ada63b-6022-40d3-9896-795f8a5cc57b"
+    "accountId": "149443f9-448b-48d9-b7b4-131e75650dec"
   }
 }

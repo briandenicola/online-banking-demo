@@ -316,8 +316,15 @@ assert_("APPROVALS_DEFERRED" in seeder and "PROBE_VERDICT" in seeder,
 # ---- Approvals against the authority policy ------------------------------------------------
 actions    = policy["actionTypes"]
 thresholds = policy["thresholds"]
-escalators = {e["id"] for e in policy["escalators"]}
 evidence   = policy["evidence"]
+
+# A dataset "escalator" declaration is checked at runtime against the approval's firedEscalators
+# (demo.sh, seed_approvals). PolicyEvaluator fills that list from BOTH sources — action-local
+# rules land in it with kind "action_rule" and global escalators with kind "escalator" — so the
+# set of names this guard will accept must span both, or it rejects a declaration the runtime
+# assertion is perfectly capable of proving. Derived, never restated.
+global_escalators = {e["id"] for e in policy["escalators"]}
+action_rules      = {a_id: {r["id"] for r in a.get("rules", [])} for a_id, a in actions.items()}
 
 def walk(node):
     if isinstance(node, dict):
@@ -356,8 +363,9 @@ for approval in dataset["approvals"]:
 
     declared = approval.get("escalator")
     if declared:
-        assert_(declared in escalators,
-                f"{key}: declared escalator '{declared}' exists in the policy")
+        assert_(declared in global_escalators or declared in action_rules.get(action_id, set()),
+                f"{key}: declared escalator '{declared}' exists in the policy — either as a "
+                f"global escalator or as a rule on '{action_id}' itself")
         # Escalators use raiseBy, which steps up from the rung the ACTION'S OWN RULES already
         # produced. Demonstrate one on an action that is already L2 and the +1 lands on L3,
         # where the agent may not even propose — the seeder gets a 403 and the card the demo
@@ -391,10 +399,32 @@ for approval in dataset["approvals"]:
                         "lte": a_val <= t_val, "lt": a_val < t_val}[op]
             return False
 
-        triggered = [r["id"] for r in action.get("rules", []) if fires(r)]
+        triggered = [r["id"] for r in action.get("rules", []) if fires(r) and r["id"] != declared]
         assert_(not triggered,
-                f"{key}: no action-local rule fires on this payload before the escalator does "
-                f"(would fire: {triggered}, pushing the result to L3)")
+                f"{key}: no OTHER action-local rule fires on this payload before the declared "
+                f"escalator does (would fire: {triggered}, pushing the result to L3)")
+
+    # ---- The converse of the threshold-derived amount check (ruling §R7.4/§R10) -------------
+    # The amount guard further down stops a payload from being pushed ABOVE a dual-control line
+    # by a bad delta. This is the other half: a payload field that FEEDS a rung-deciding
+    # predicate must be statically determined, or else the approval must declare the escalator
+    # it expects so the runtime assertion in seed_approvals pins the rung.
+    #
+    # An {"@ref": ...} is discovered live during seeding. Feeding one into a predicate without
+    # declaring the outcome is what made flag-review-denied land on L1 or L2 by luck across
+    # runs, with nothing anywhere asserting which. The rules are read out of the action, so a
+    # rule added to the policy tomorrow is covered without touching this file.
+    for rule in action.get("rules", []):
+        field = rule.get("when", {}).get("field")
+        value = approval["payload"].get(field)
+        if not isinstance(value, dict) or "@ref" not in value:
+            continue    # a literal or an @threshold is pinned before the seeder ever runs
+        assert_(approval.get("escalator") is not None,
+                f"{key}: payload.{field} is the runtime-discovered ref "
+                f"'{value['@ref']}' and it feeds the '{rule['id']}' rule, so this approval's "
+                f"rung is decided by whatever the seeder happened to find. Derive the field "
+                f"from @threshold, or declare the escalator it expects so the runtime check "
+                f"in seed_approvals asserts it.")
 
 for node in walk(dataset["approvals"]):
     if "@threshold" in node:
