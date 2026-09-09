@@ -70,6 +70,7 @@ policy  = yaml.safe_load(pathlib.Path(policy_path).read_text())
 
 failures = []
 passes   = []
+thresholds_all = policy["thresholds"]
 
 def assert_(condition, message):
     (passes if condition else failures).append(message)
@@ -137,27 +138,105 @@ descriptions = [(t["owner"], t["description"]) for t in dataset["transactions"]]
 assert_(len(descriptions) == len(set(descriptions)),
         "transaction descriptions are unique per owner — the seeder uses them as its idempotence key")
 
-# get_account and list_account_transactions are ownership-scoped: a banker reading another
-# identity's account gets nothing back. An evidence account owned by a retail customer is
-# unreadable evidence, and it would look like a service bug rather than a seeding mistake.
-bankers = {i["username"] for i in dataset["identities"] if i["role"] == "banker"}
+# ---- Ownership: the customers hold the money, the banker holds none -----------------------
+# docs/design/banker-customer-read-ruling.md §B5.7-8. The banker-owned accounts existed only
+# because GetAccountTransactions filtered by the CALLER's userId, so a banker reading someone
+# else's account got `200 []` — a success asserting a falsehood. The data was shaped so the
+# defect would not show. Danny required the shape be GONE, not merely unused, "so nothing can
+# quietly fall back", so this asserts absence rather than disuse.
+bankers     = {i["username"] for i in dataset["identities"] if i["role"] == "banker"}
+supervisors = {i["username"] for i in dataset["identities"] if i["role"] == "supervisor"}
+staff       = bankers | supervisors | {i["username"] for i in dataset["identities"] if i["role"] == "admin"}
+
+staff_accounts = sorted({a["owner"] for a in dataset["accounts"] if a["owner"] in staff})
+assert_(not staff_accounts,
+        "no account is owned by a banker, supervisor or admin — the banker works the CUSTOMER's "
+        f"case, and the old shape is absent rather than unused (stray owners: {staff_accounts})")
+staff_tx = sorted({t["owner"] for t in dataset["transactions"] if t["owner"] in staff})
+assert_(not staff_tx,
+        f"no transaction is owned by staff either (stray owners: {staff_tx})")
+
 subjects = [a for a in dataset["accounts"] if a.get("evidenceSubject") or a.get("evidenceSubjectAlt")]
 assert_(len(subjects) >= 1, "at least one account is marked as an evidence subject")
-assert_(all(a["owner"] in bankers for a in subjects),
-        "every evidence-subject account is owned by a banker — these reads are ownership-scoped "
-        f"(stray: {sorted({a['owner'] for a in subjects} - bankers)})")
+assert_(all(a["owner"] not in staff for a in subjects),
+        "every evidence-subject account is owned by a CUSTOMER — the demo is a banker adjusting "
+        "a customer's account, not their own")
 assert_(len([a for a in dataset["accounts"] if a.get("evidenceSubject")]) == 1,
         "exactly one account is the primary evidence subject")
 
-# The propose-path probe must aim at an action that is actually reachable, or it would report a
-# closed gate that is really just a badly chosen probe.
+# seed_accounts claims the first unclaimed existing account of a type, and demo:show re-derives
+# the evidence subject by type alone. Two accounts of one type under one owner would make "which
+# one" depend on server ordering — silently, and differently on every environment.
+type_pairs = [(a["owner"], a["accountType"]) for a in dataset["accounts"]]
+dupes = sorted({p for p in type_pairs if type_pairs.count(p) > 1})
+assert_(not dupes,
+        f"no owner holds two accounts of the same type (ambiguous: {dupes})")
+
+# The narrative shapes Livingston measured the supervisor reasoning against. Ownership moved;
+# these did not, and a reseed that quietly drops them takes the reasoning with it.
+assert_(any(a["initialBalance"] == 0 and not [t for t in dataset["transactions"]
+            if t["owner"] == a["owner"]
+            and t["accountIndex"] == [x for x in dataset["accounts"] if x["owner"] == a["owner"]].index(a)]
+            for a in dataset["accounts"]),
+        "one account is deliberately empty — zero balance AND zero transactions")
+
+# ---- The propose-path probe DRIVES the path; it does not predict it ------------------------
 probe = dataset["proposePathProbe"]
 assert_(probe["actionId"] in policy["actionTypes"],
         f"the propose-path probe targets a real action ('{probe['actionId']}')")
 assert_(probe["readAs"] in bankers,
-        "the propose-path probe reads as a banker — the identity a copilot run actually acts as")
+        "the propose-path probe acts as a banker — the identity a copilot run actually acts as")
+probe_action = policy["actionTypes"].get(probe["actionId"], {})
+assert_(probe_action.get("agentMayPropose") is True and probe_action.get("baseRung") != "L3",
+        "the probed action is one the agent may actually propose")
+assert_(set(probe["payload"]) >= set(probe_action.get("hashFields", [])),
+        "the probe payload covers every hashed field of the action it drives (missing: "
+        f"{sorted(set(probe_action.get('hashFields', [])) - set(probe['payload']))})")
+assert_(probe.get("successFrame") == "approval.required",
+        "success is the POSITIVE frame approval.required, not the absence of an error")
+
+# Money is a fixed-scale decimal STRING on this wire; a JSON number in a money position is
+# refused payload_not_canonicalizable. The probe therefore may not carry a bare number, and the
+# amount it derives is checked against the policy's own threshold rather than a restated one.
+money_fields = set(probe_action.get("moneyFields", []))
+for field in money_fields & set(probe["payload"]):
+    value = probe["payload"][field]
+    assert_(isinstance(value, dict) and ("@ref" in value or "@threshold" in value),
+            f"the probe's money field '{field}' is resolved at runtime, never a literal JSON "
+            "number — Canonicalizer rejects a float in a money position")
+
+amount_node = probe.get("amount", {})
+threshold_name = amount_node.get("@threshold")
+assert_(threshold_name in thresholds_all,
+        f"the probe amount names a real policy threshold ('{threshold_name}')")
+if threshold_name in thresholds_all:
+    base = float(thresholds_all[threshold_name]["default"])
+    value = base + amount_node.get("@delta", 0)
+    assert_(value >= base,
+            f"the probe amount stays AT OR ABOVE the dual-control line ({value} >= {base}) so "
+            "the run reaches L2 and the supervisor fan-out actually runs")
+
 assert_(all(a["label"] for a in dataset["accounts"]),
         "every account carries a label, so demo:show can say what it is for")
+
+# ---- The probe must drive the real path, and keep saying so --------------------------------
+# This is a tamper guard. The previous probe inspected raw response shapes and predicted a
+# refusal; the prediction outlived the defect and blocked a real operator on a gate that was
+# already open. Driving the path cannot go stale that way, so reverting to shape inspection has
+# to fail here rather than quietly pass.
+seeder_text = (pathlib.Path(dataset_path).resolve().parent.parent
+               / "scripts" / "demo" / "demo.sh").read_text()
+for fragment, why in [
+    ("/api/copilot/sessions", "opens a real copilot session"),
+    ("/runs", "starts a real run"),
+    ("/trace", "reads the real trace back"),
+    ('.kind == $k', "classifies on the trace's frame kinds"),
+    ("run.error", "reports the refusal the service actually gave"),
+]:
+    assert_(fragment in seeder_text,
+            f"the propose-path probe {why} ('{fragment}')")
+assert_("approval.required" in seeder_text or probe["successFrame"] in seeder_text,
+        "the probe's success condition is the positive approval.required frame")
 
 # ---- Approvals must be PROPOSED, never written ---------------------------------------------
 # Writing approval rows straight into the store would populate the task queue while the propose

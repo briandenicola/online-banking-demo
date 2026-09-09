@@ -111,72 +111,83 @@
       "retail": true
     }
   ],
-  "_accountComment": "AccountType is case-sensitive server-side (^(Checking|Savings|MoneyMarket|CD|Loan|Credit)$).",
+  "_accountComment": [
+    "AccountType is case-sensitive server-side (^(Checking|Savings|MoneyMarket|CD|Loan|Credit)$).",
+    "",
+    "NO ACCOUNT IS OWNED BY A BANKER OR A SUPERVISOR, deliberately and permanently.",
+    "docs/design/banker-customer-read-ruling.md §B6: the banker-owned accounts existed only",
+    "because GetAccountTransactions filtered by the CALLER's userId, so a banker reading a",
+    "customer's account got 200 [] — a success asserting a falsehood. The data was shaped so a",
+    "defect would not show, which made the workaround the design. Now the customers own the",
+    "accounts and the histories, and the banker works their cases.",
+    "",
+    "Each owner's accountTypes are UNIQUE. seed_accounts claims the first unclaimed existing",
+    "account of a type, and demo:show re-derives the evidence subject by type, so two accounts",
+    "of one type under one owner would make 'which one' depend on server ordering.",
+    "",
+    "The histories are load-bearing, not decoration. Livingston measured the supervisor",
+    "reasoning about real ledger contents — it proceeded on an account that genuinely held",
+    "three near-identical credits and held on one that did not. Keep the empty account, the",
+    "near-threshold pattern and the duplicate-looking pattern; only the ownership moved."
+  ],
   "accounts": [
     {
-      "owner": "banker",
+      "owner": "casey",
       "accountType": "Checking",
-      "initialBalance": 12480.0,
+      "initialBalance": 15750,
+      "currency": "USD",
+      "label": "anomaly subject — offshore wire"
+    },
+    {
+      "owner": "casey",
+      "accountType": "Savings",
+      "initialBalance": 31250,
+      "currency": "USD",
+      "label": "near-threshold deposit pattern — three near-identical cash credits",
+      "evidenceSubjectAlt": true
+    },
+    {
+      "owner": "casey",
+      "accountType": "MoneyMarket",
+      "initialBalance": 4075,
+      "currency": "USD",
+      "label": "high volume, many small movements"
+    },
+    {
+      "owner": "dana",
+      "accountType": "Checking",
+      "initialBalance": 12480,
       "currency": "USD",
       "label": "routine operating history",
       "evidenceSubject": true
     },
     {
-      "owner": "banker",
+      "owner": "dana",
       "accountType": "Savings",
-      "initialBalance": 31250.0,
-      "currency": "USD",
-      "label": "near-threshold deposit pattern",
-      "evidenceSubjectAlt": true
-    },
-    {
-      "owner": "banker",
-      "accountType": "MoneyMarket",
-      "initialBalance": 4075.0,
-      "currency": "USD",
-      "label": "high volume, many small movements"
-    },
-    {
-      "owner": "banker",
-      "accountType": "Checking",
-      "initialBalance": 0.0,
+      "initialBalance": 0,
       "currency": "USD",
       "label": "opened, never used — deliberately empty"
     },
     {
       "owner": "retail",
       "accountType": "Checking",
-      "initialBalance": 8400.0,
+      "initialBalance": 8400,
       "currency": "USD",
       "label": "everyday spending"
     },
     {
       "owner": "retail",
       "accountType": "Savings",
-      "initialBalance": 26500.0,
+      "initialBalance": 26500,
       "currency": "USD",
       "label": "steady saver"
     },
     {
       "owner": "verify-target",
       "accountType": "Checking",
-      "initialBalance": 3120.0,
+      "initialBalance": 3120,
       "currency": "USD",
       "label": "locked customer — user.unlock subject"
-    },
-    {
-      "owner": "casey",
-      "accountType": "Checking",
-      "initialBalance": 15750.0,
-      "currency": "USD",
-      "label": "anomaly subject — offshore wire"
-    },
-    {
-      "owner": "dana",
-      "accountType": "Checking",
-      "initialBalance": 2280.0,
-      "currency": "USD",
-      "label": "low activity"
     }
   ],
   "_transactionComment": [
@@ -187,47 +198,7 @@
   ],
   "transactions": [
     {
-      "owner": "banker",
-      "accountIndex": 0,
-      "amount": 4250.0,
-      "type": "Deposit",
-      "description": "Payroll deposit",
-      "category": "income"
-    },
-    {
-      "owner": "banker",
-      "accountIndex": 0,
-      "amount": -182.44,
-      "type": "Withdrawal",
-      "description": "Utility autopay",
-      "category": "utilities"
-    },
-    {
-      "owner": "banker",
-      "accountIndex": 0,
-      "amount": -64.1,
-      "type": "Withdrawal",
-      "description": "Coffee shop",
-      "category": "dining"
-    },
-    {
-      "owner": "banker",
-      "accountIndex": 0,
-      "amount": -1340.0,
-      "type": "Withdrawal",
-      "description": "Rent payment",
-      "category": "housing"
-    },
-    {
-      "owner": "banker",
-      "accountIndex": 0,
-      "amount": 220.0,
-      "type": "Credit",
-      "description": "Expense reimbursement",
-      "category": "income"
-    },
-    {
-      "owner": "banker",
+      "owner": "casey",
       "accountIndex": 1,
       "amount": 9400.0,
       "type": "Deposit",
@@ -235,7 +206,7 @@
       "category": "deposit"
     },
     {
-      "owner": "banker",
+      "owner": "casey",
       "accountIndex": 1,
       "amount": 9350.0,
       "type": "Deposit",
@@ -243,7 +214,7 @@
       "category": "deposit"
     },
     {
-      "owner": "banker",
+      "owner": "casey",
       "accountIndex": 1,
       "amount": 9480.0,
       "type": "Deposit",
@@ -251,7 +222,7 @@
       "category": "deposit"
     },
     {
-      "owner": "banker",
+      "owner": "casey",
       "accountIndex": 2,
       "amount": -35.0,
       "type": "Withdrawal",
@@ -259,7 +230,7 @@
       "category": "transport"
     },
     {
-      "owner": "banker",
+      "owner": "casey",
       "accountIndex": 2,
       "amount": -12.99,
       "type": "Withdrawal",
@@ -267,7 +238,7 @@
       "category": "entertainment"
     },
     {
-      "owner": "banker",
+      "owner": "casey",
       "accountIndex": 2,
       "amount": -88.2,
       "type": "Withdrawal",
@@ -275,7 +246,7 @@
       "category": "health"
     },
     {
-      "owner": "banker",
+      "owner": "casey",
       "accountIndex": 2,
       "amount": -410.0,
       "type": "Withdrawal",
@@ -283,12 +254,77 @@
       "category": "insurance"
     },
     {
-      "owner": "banker",
+      "owner": "casey",
       "accountIndex": 2,
       "amount": 1500.0,
       "type": "Credit",
       "description": "Transfer in from savings",
       "category": "transfer"
+    },
+    {
+      "owner": "casey",
+      "accountIndex": 0,
+      "amount": 2100.0,
+      "type": "Deposit",
+      "description": "Consulting invoice",
+      "category": "income"
+    },
+    {
+      "owner": "casey",
+      "accountIndex": 0,
+      "amount": 61200.0,
+      "type": "Withdrawal",
+      "description": "Wire transfer to offshore account",
+      "category": "transfer",
+      "anomalous": true
+    },
+    {
+      "owner": "dana",
+      "accountIndex": 0,
+      "amount": 4250.0,
+      "type": "Deposit",
+      "description": "Payroll deposit",
+      "category": "income"
+    },
+    {
+      "owner": "dana",
+      "accountIndex": 0,
+      "amount": -182.44,
+      "type": "Withdrawal",
+      "description": "Utility autopay",
+      "category": "utilities"
+    },
+    {
+      "owner": "dana",
+      "accountIndex": 0,
+      "amount": -64.1,
+      "type": "Withdrawal",
+      "description": "Coffee shop",
+      "category": "dining"
+    },
+    {
+      "owner": "dana",
+      "accountIndex": 0,
+      "amount": -1340.0,
+      "type": "Withdrawal",
+      "description": "Rent payment",
+      "category": "housing"
+    },
+    {
+      "owner": "dana",
+      "accountIndex": 0,
+      "amount": 220.0,
+      "type": "Credit",
+      "description": "Expense reimbursement",
+      "category": "income"
+    },
+    {
+      "owner": "dana",
+      "accountIndex": 0,
+      "amount": 780.0,
+      "type": "Deposit",
+      "description": "Refund",
+      "category": "income"
     },
     {
       "owner": "retail",
@@ -338,31 +374,6 @@
       "description": "International wire — new beneficiary",
       "category": "transfer",
       "anomalous": true
-    },
-    {
-      "owner": "casey",
-      "accountIndex": 0,
-      "amount": 2100.0,
-      "type": "Deposit",
-      "description": "Consulting invoice",
-      "category": "income"
-    },
-    {
-      "owner": "casey",
-      "accountIndex": 0,
-      "amount": 61200.0,
-      "type": "Withdrawal",
-      "description": "Wire transfer to offshore account",
-      "category": "transfer",
-      "anomalous": true
-    },
-    {
-      "owner": "dana",
-      "accountIndex": 0,
-      "amount": 780.0,
-      "type": "Deposit",
-      "description": "Refund",
-      "category": "income"
     },
     {
       "owner": "verify-target",
@@ -518,6 +529,14 @@
           },
           "amount": {
             "@ref": "secondFlaggedAmount"
+          }
+        },
+        "get_account": {
+          "accountId": {
+            "@ref": "evidenceAltAccountId"
+          },
+          "balance": {
+            "@ref": "evidenceAltAccountBalance"
           }
         },
         "list_account_transactions": {
@@ -817,6 +836,14 @@
             "@ref": "scoredRiskScore"
           }
         },
+        "get_account": {
+          "accountId": {
+            "@ref": "evidenceAccountId"
+          },
+          "balance": {
+            "@ref": "evidenceAccountBalance"
+          }
+        },
         "list_account_transactions": {
           "accountId": {
             "@ref": "evidenceAccountId"
@@ -846,23 +873,51 @@
   },
   "proposePathProbe": {
     "actionId": "account.balance.adjust",
-    "why": "The only action that clears the authorization gate today: both of its evidence tools are banker-readable, so whatever it fails on is the evidence contract and nothing else. See tests/verification/README.md.",
+    "why": [
+      "The probe DRIVES this action end to end through the copilot — login, session, run,",
+      "trace — because the only honest probe of 'can an approval be created' is to create one.",
+      "",
+      "It used to inspect the RAW upstream response shape and predict a refusal. That",
+      "prediction outlived the defect: Turk's declared evidenceProjection (0e19c15) gives",
+      "get_account an accountId and turns the bare transaction array into {accountId, count,",
+      "items} INSIDE the executor, so the raw shape no longer has to satisfy EvidenceComplete.",
+      "The probe went on failing a gate that was open, refused to seed, and left a real",
+      "operator staring at a false blocker. A guard that shouts about the wrong thing is the",
+      "same defect class as the fake success it was built to prevent."
+    ],
     "readAs": "banker",
-    "pathParams": {
-      "accountId": "evidenceAccountId",
-      "userId": "lockedUserId",
-      "txId": "flaggedTransactionId",
-      "transactionId": "scoredTransactionId",
-      "transferId": "",
-      "applicationId": ""
-    }
+    "objective": "Review the customer's account and its recent activity, then post the corrective balance adjustment the case file calls for.",
+    "amount": {
+      "@threshold": "balance_adjustment_dual_control_amount",
+      "@delta": 1500
+    },
+    "amountNote": [
+      "Resolved live from the policy, then rendered as a fixed-scale decimal STRING at the",
+      "scale the policy itself publishes. A JSON number in a money position is refused",
+      "payload_not_canonicalizable before the request ever leaves banker-copilot-service.",
+      "@delta keeps it ABOVE the dual-control line so the run reaches L2 and the supervisor",
+      "fan-out actually runs; below the line it is L1 and proves strictly less."
+    ],
+    "payload": {
+      "accountId": {
+        "@ref": "evidenceAccountId"
+      },
+      "amount": {
+        "@ref": "probeAmount"
+      },
+      "direction": "debit",
+      "reason": "Duplicate posting identified during case review; reversing the second copy."
+    },
+    "successFrame": "approval.required",
+    "successFrameNote": "Success is this POSITIVE frame, never the absence of an error and never the terminal status field. A run that dies before emitting anything has no errors either.",
+    "runTimeoutSeconds": 240,
+    "pollIntervalSeconds": 5
   },
-  "_blockedOnEvidenceContract": {
-    "summary": "Seeded approvals are DEFERRED. They are produced only by driving POST /api/authority/approvals, never by writing to the approval store, and that path currently refuses every proposal with evidence_incomplete.",
-    "gateA": "Six read tools sit behind admin-only or owner-scoped endpoints the acting banker cannot read. Owned by the application team.",
-    "gateB": "PolicyEvaluator.EvidenceComplete requires JSON objects carrying field names the read tools do not return (accountId/userId/count/status vs the actual id/isActive), and three tools return bare arrays, which cannot satisfy it under any renaming. Proven live by run run_5855e85caad34c12: account.balance.adjust touched no admin endpoint, both reads returned 200 with real data, and the proposal was still refused.",
-    "whyNotSimulated": "Writing approval rows straight into the store would put cards on screen in every state while the propose path stays dead. That is failure that looks exactly like success: it would demo cleanly, survive review, and be false. An empty queue and a loud error is the truth, and it is the thing that tells you the gates are still up.",
-    "unblockWhen": "get_account and list_account_transactions satisfy EvidenceComplete. demo:seed re-probes on every run and will seed the approvals automatically the moment they do — no edit needed.",
+  "_proposePathDeferral": {
+    "summary": "Seeded approvals are DEFERRED whenever the probe run does not reach its success frame. They are produced only by driving the real propose path, never by writing to the approval store.",
+    "whyNotSimulated": "Writing approval rows straight into the store would put cards on screen in every state while the pipeline stayed dead. That is failure that looks exactly like success: it would demo cleanly, survive review, and be false. An empty queue and a loud error is the truth.",
+    "whatTheProbeReports": "The refusal the environment actually produced — the run.error code and message, or the upstream status of the read that failed. Those are facts from this run, not a prediction from a config file that may already have been fixed.",
+    "unblockWhen": "The probe run reaches approval.required. demo:seed re-probes on every run and seeds the approvals the moment it does — no edit to this repo is needed.",
     "reference": "tests/verification/README.md"
   }
 }

@@ -38,6 +38,7 @@ TARGET="${DEMO_TARGET:-local}"
 DO_RESEED="false"
 INCLUDE_ADMIN="false"
 ALLOW_UNSCORED="false"
+DO_PROBE="false"
 
 DATASET=""
 # NOT initialised to "" — DEMO_BASE_URL is one of the documented environment overrides, and
@@ -48,13 +49,14 @@ EMAIL_DOMAIN=""
 
 declare -A TOKENS=()      # username -> bearer token
 declare -A ACCOUNT_IDS=() # "<owner>:<datasetIndex>" -> real account id, claimed or created
-EVIDENCE_ACCOUNT=""       # the banker-owned account the propose-path probe reads
-EVIDENCE_ACCOUNT_ALT=""   # a second banker-owned account, for approvals that need a distinct one
+EVIDENCE_ACCOUNT=""       # the CUSTOMER account the propose-path probe drives a run against
+EVIDENCE_ACCOUNT_ALT=""   # a second customer account, for approvals that need a distinct one
 declare -A LOCKED_NOW=()  # username -> set when the admin list reports the account locked
 declare -A USER_IDS=()    # username -> user id
 declare -A ROLES=()       # username -> role as the issued token reports it
 REFS='{}'                 # runtime-discovered values for {"@ref": ...}
 THRESHOLDS='{}'           # live policy thresholds for {"@threshold": ...}
+THRESHOLDS_RAW='{}'       # the same thresholds as PUBLISHED strings, so money keeps its scale
 
 # =============================================================================================
 # Arguments
@@ -69,6 +71,10 @@ Usage: demo.sh <seed|show|reset> [options]
                          (a cold re-seed then relies on the first-user-becomes-admin rule)
   --allow-unscored       seed only: continue when ai-service produced no scored transactions,
                          using real transaction ids and a declared placeholder score
+  --probe                show only: drive a REAL copilot run to prove an approval can be
+                         created. This WRITES — it creates an approval, because that is the
+                         only honest answer to the question. Exits 3 if the run does not
+                         reach its success frame.
   -h, --help             This message
 
 Environment:
@@ -96,6 +102,7 @@ parse_args() {
       --reseed) DO_RESEED="true"; shift ;;
       --include-admin) INCLUDE_ADMIN="true"; shift ;;
       --allow-unscored) ALLOW_UNSCORED="true"; shift ;;
+      --probe) DO_PROBE="true"; shift ;;
       -h|--help) usage; exit 0 ;;
       *) die "Unknown option '$1'." ;;
     esac
@@ -138,8 +145,8 @@ retail_usernames() {
 
 # Every identity the dataset gives an account to, in declaration order. Derived from the accounts
 # list rather than from a role flag, so moving an account to a different owner needs no code
-# change — which matters, because get_account is ownership-scoped and the evidence-bearing
-# accounts have to belong to the acting banker.
+# change — which is exactly what banker-customer-read-ruling.md §B6 required: the accounts moved
+# from the banker to the customers and this function did not have to know.
 account_owners() {
   jq -r '.accounts[].owner' <<<"$DATASET" | awk '!seen[$0]++'
 }
@@ -350,8 +357,11 @@ seed_accounts() {
   [[ -n "$EVIDENCE_ACCOUNT" ]] || warn "No account is marked evidenceSubject; the propose-path probe has nothing to read."
 }
 
-# get_account is ownership-scoped, so every account an approval cites as evidence must belong to
-# the acting banker. These references are what the approval payloads resolve against.
+# The accounts an approval cites as evidence belong to CUSTOMERS (Casey and Dana), and the
+# banker reads them by holding the banker role — banker-customer-read-ruling.md §B1. They are
+# read here with the owner's token because the owner can always read their own; what the ruling
+# changed is that the banker can too, which is what the copilot run depends on.
+# These references are what the approval payloads resolve against.
 resolve_evidence_refs() {
   [[ -n "$EVIDENCE_ACCOUNT" ]] && resolve_account_refs "$EVIDENCE_ACCOUNT" evidence
   [[ -n "$EVIDENCE_ACCOUNT_ALT" ]] && resolve_account_refs "$EVIDENCE_ACCOUNT_ALT" evidenceAlt
@@ -479,7 +489,19 @@ collect_ai_subjects() {
   interval=$(jget_from "$DATASET" '.scoring.pollIntervalSeconds')
   min_required=$(jget_from "$DATASET" '.scoring.minScoredRequired')
 
-  local waited=0 scored='[]' flagged='[]'
+  # The set of accounts this run's customers actually own, resolved ONCE before the wait.
+  #
+  # Scored and flagged records outlive the identities that produced them: reset deletes a user
+  # but nothing deletes their accounts, transactions or Redis-held scores. So the only count
+  # worth waiting on is the count of subjects OWNED BY THIS RUN. Waiting on the total is the
+  # same defect as the old propose-path probe — waiting for anything instead of the thing you
+  # need — and it fails in exactly the way that hurts most: fifty orphans clear the threshold
+  # instantly, the loop breaks before the fresh transactions have been scored at all, and the
+  # run dies three lines later on an ownership check that reads like a data-store problem.
+  local owned
+  owned=$(seeded_account_ids)
+
+  local waited=0 scored='[]' flagged='[]' n_usable=0
   while (( waited <= wait_total )); do
     http GET /api/admin/transactions "" "$admin_token"
     if [[ "$HTTP_STATUS" == "200" ]]; then
@@ -491,10 +513,12 @@ collect_ai_subjects() {
     http GET /api/admin/flagged-transactions "" "$admin_token"
     [[ "$HTTP_STATUS" == "200" ]] && flagged=$(jq 'if type == "array" then . else [] end' <<<"$HTTP_BODY")
 
-    if [[ "$(jq 'length' <<<"$scored")" -ge "$min_required" ]]; then
+    n_usable=$(jq --argjson owned "$owned" \
+      '[.[] | select(.accountId as $a | $owned | index($a))] | length' <<<"$scored")
+    if (( n_usable >= min_required )); then
       break
     fi
-    detail "waiting for ai-service to score the anomalous transactions (${waited}s/${wait_total}s)"
+    detail "waiting for ai-service to score this run's transactions — ${n_usable}/${min_required} on seeded accounts, $(jq 'length' <<<"$scored") scored in total (${waited}s/${wait_total}s)"
     sleep "$interval"
     waited=$((waited + interval))
   done
@@ -502,28 +526,30 @@ collect_ai_subjects() {
   local n_scored n_flagged
   n_scored=$(jq 'length' <<<"$scored")
   n_flagged=$(jq 'length' <<<"$flagged")
-  info "ai-service reports ${n_scored} scored, ${n_flagged} flagged"
+  info "ai-service reports ${n_scored} scored, ${n_flagged} flagged — ${n_usable} scored on accounts this run seeded"
 
-  if [[ "$n_scored" -lt "$min_required" ]]; then
+  if (( n_usable < min_required )); then
     if [[ "$ALLOW_UNSCORED" != "true" ]]; then
-      die "ai-service produced no scored transactions within ${wait_total}s.
+      if (( n_scored == 0 )); then
+        die "ai-service produced no scored transactions at all within ${wait_total}s.
     The subjects for transaction.score.override and transaction.flag.review would be invented,
     and the Copilot's read tools would 404 on them during the demo.
     Check the ai-service stream consumer and its Foundry connectivity, then re-run.
     To continue anyway with real transaction ids and a placeholder score: --allow-unscored"
+      fi
+      die "ai-service scored ${n_scored} transaction(s) within ${wait_total}s, but only ${n_usable}
+    belong to an account owned by a customer this run seeded, and ${min_required} are required.
+    The rest are almost certainly left over from an earlier demo whose identities have since
+    been reset — scores outlive the identities that produced them.
+    Either ai-service has not yet consumed this run's transactions (raise scoring.pollSeconds),
+    or its stream consumer is not running. Rebuild the data stores for a clean count.
+    To continue anyway with real transaction ids and a placeholder score: --allow-unscored"
     fi
-    warn "Continuing without AI scores (--allow-unscored). The score-override subject will be a"
-    warn "real transaction id with a PLACEHOLDER risk score; get_scored_transaction will 404."
+    warn "Continuing without usable AI scores (--allow-unscored). The score-override subject will"
+    warn "be a real transaction id with a PLACEHOLDER risk score; get_scored_transaction will 404."
     build_unscored_fallback_refs
     return
   fi
-
-  # Scored and flagged records outlive the identities that produced them: reset can delete a
-  # user but nothing deletes their accounts, transactions or Redis-held scores. So discard any
-  # subject whose account no longer belongs to a customer this run seeded, or the demo would be
-  # built on a record whose evidence tools cannot be satisfied.
-  local owned
-  owned=$(seeded_account_ids)
 
   # Highest risk first — that is what a banker would be looking at.
   local pool flagged_pool
@@ -532,16 +558,7 @@ collect_ai_subjects() {
   flagged_pool=$(jq --argjson owned "$owned" \
     '[.[] | select(.accountId as $a | $owned | index($a))] | sort_by(-(.riskScore // 0))' <<<"$flagged")
 
-  local n_usable
-  n_usable=$(jq 'length' <<<"$pool")
-  if [[ "$n_usable" -eq 0 ]]; then
-    die "ai-service reported ${n_scored} scored transaction(s), but none belong to an account
-    owned by a customer this run seeded. They are almost certainly left over from an earlier
-    demo whose identities have since been reset. Post fresh transactions, or rebuild the data
-    stores, then re-run."
-  fi
   [[ "$(jq 'length' <<<"$flagged_pool")" -eq 0 ]] && flagged_pool="$pool"
-  detail "${n_usable} of ${n_scored} scored subject(s) belong to seeded customers"
 
   set_ref_from  "$pool"        0 scoredTransactionId '.id'
   set_ref_num   "$pool"        0 scoredRiskScore     '.riskScore'
@@ -645,16 +662,43 @@ build_unscored_fallback_refs() {
 # Approvals
 # =============================================================================================
 load_thresholds() {
-  local any_token
-  any_token=$(jq -r '.identities[0].username' <<<"$DATASET")
-  http_or_die GET /api/authority/policy "" "${TOKENS[$any_token]}" \
+  # Idempotent: the propose-path probe needs the thresholds before the approvals stage does,
+  # and reading the policy twice would print the banner twice for no gain.
+  [[ "$THRESHOLDS" == "{}" ]] || return 0
+
+  local any_user any_token
+  any_user=$(jq -r '.identities[0].username' <<<"$DATASET")
+  any_token="${TOKENS[$any_user]:-}"
+  [[ -n "$any_token" ]] || die \
+    "No token for '${any_user}', so the authority policy cannot be read and no threshold can be
+    resolved. Has this environment been seeded? Run demo:seed."
+  http_or_die GET /api/authority/policy "" "$any_token" \
     "Could not read the authority policy. Thresholds cannot be resolved." 200
 
   # Every number the dataset needs comes from HERE, resolved live. Nothing restates a threshold.
   THRESHOLDS=$(jq '[.thresholds[] | {key: .name, value: (.value | tonumber? // 0)}] | from_entries' <<<"$HTTP_BODY")
+  # The RAW published strings too. A money threshold publishes its own scale in its decimals
+  # ("1000.00" -> 2), and money must be sent as a fixed-scale decimal string. Deriving the scale
+  # from the policy is the difference between following the policy and restating it.
+  THRESHOLDS_RAW=$(jq '[.thresholds[] | {key: .name, value: (.value | tostring)}] | from_entries' <<<"$HTTP_BODY")
   local version
   version=$(jget '.policyVersion')
   info "Policy ${version} — $(jq 'length' <<<"$THRESHOLDS") thresholds resolved live"
+}
+
+# money_from_threshold <thresholdName> <delta> — the live threshold plus delta, rendered as a
+# fixed-scale decimal STRING at the scale the policy publishes.
+#
+# Money is a decimal string on this wire, never an ES6 double: Canonicalizer rejects a JSON
+# float in a money position outright (payload_not_canonicalizable), so a number here is refused
+# before it reaches authority-service at all.
+money_from_threshold() {
+  local name="$1" delta="${2:-0}" raw scale=0 frac
+  raw=$(jq -r --arg n "$name" '.[$n] // empty' <<<"$THRESHOLDS_RAW")
+  [[ -n "$raw" ]] || die "The authority policy publishes no threshold named '${name}'."
+  if [[ "$raw" == *.* ]]; then frac="${raw#*.}"; scale="${#frac}"; fi
+  # LC_ALL=C so a comma decimal separator cannot be emitted into a JSON money field.
+  LC_ALL=C printf '%.*f' "$scale" "$(jq -n --argjson a "$raw" --argjson d "$delta" '$a + $d')"
 }
 
 approval_session_id() { printf 'demo-seed-%s' "$1"; }
@@ -693,144 +737,256 @@ propose() {
 }
 
 # =============================================================================================
-# propose path — the gate diagnostic
+# propose path — drive it, do not predict it
 #
-# The copilot task queue renders approvals, and the ONLY honest way to create one is to drive
-# POST /api/authority/approvals. If that path is closed, the truthful state of the environment is
-# an empty queue. This section works out whether it is closed, and says which of the two known
-# gates is holding it, using nothing but read requests.
+# The copilot task queue renders approvals, and the only honest probe of "can an approval be
+# created" is TO CREATE ONE. So this drives the real path a banker drives: log in, open a
+# copilot session, start a run against a real action on a real seeded account, and read the
+# trace back.
+#
+# It used to inspect the RAW upstream response shape and predict a refusal from a config file.
+# That prediction outlived the defect — the declared evidenceProjection now reshapes both reads
+# INSIDE the executor, so the raw shape has not needed to satisfy EvidenceComplete since
+# 0e19c15 — and the probe went on naming a gate that was open, refused to seed, and handed an
+# operator a false blocker. A guard that shouts about the wrong thing is the same defect class
+# as the fake success it exists to prevent: a signal that is not specific to what failed.
+#
+# Success is the POSITIVE frame `approval.required`. Not the absence of an error, and not the
+# terminal status field: a run that dies before emitting anything has no errors either.
+#
+# SIDE EFFECT, stated rather than discovered: a successful probe creates a REAL approval. That
+# is the point — it is the first genuine card in the queue. `demo:show` therefore does not probe
+# unless asked (--probe), because a verb named "show" must not write.
 # =============================================================================================
 
-# Results of the last probe, one line per tool: "<toolId>\t<verdict>\t<detail>"
+# Results of the last probe, one line per observation: "<label>\t<verdict>\t<detail>"
 PROBE_RESULTS=""
-PROBE_VERDICT="unknown"   # open | gate-a | gate-b | unknown
+PROBE_VERDICT="unknown"   # open | gate-a | gate-b | refused | unknown
+PROBE_RUN_ID=""
+PROBE_APPROVAL_ID=""
+
+probe_record() { PROBE_RESULTS+="${1}"$'\t'"${2}"$'\t'"${3}"$'\n'; }
+
+# Classify a failed read by the status the upstream actually returned. `tool.failed` carries
+# "<code>: <toolId>: upstream returned <status>", so the status is a FACT from this run rather
+# than a guess about which endpoint the acting role can reach.
+probe_gate_for_status() {
+  case "$1" in
+    401|403|404) echo "gate-a" ;;
+    *)           echo "refused" ;;
+  esac
+}
 
 probe_propose_path() {
   PROBE_RESULTS=""
   PROBE_VERDICT="unknown"
+  PROBE_RUN_ID=""
+  PROBE_APPROVAL_ID=""
 
-  if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import yaml' >/dev/null 2>&1; then
-    PROBE_RESULTS=$'-\tunknown\tpython3 with PyYAML is needed to read the evidence contract'
-    return
-  fi
-
-  local contract action reader token
-  contract=$(python3 "${SCRIPT_DIR}/evidence-contract.py" "$REPO_ROOT") || {
-    PROBE_RESULTS=$'-\tunknown\tcould not read the evidence contract from config/'
-    return
-  }
-
-  action=$(jget_from "$DATASET" '.proposePathProbe.actionId')
-  reader=$(jget_from "$DATASET" '.proposePathProbe.readAs')
+  local action reader token objective
+  action=$(jget_from   "$DATASET" '.proposePathProbe.actionId')
+  reader=$(jget_from   "$DATASET" '.proposePathProbe.readAs')
+  objective=$(jget_from "$DATASET" '.proposePathProbe.objective')
   token="${TOKENS[$reader]:-}"
   if [[ -z "$token" ]]; then
-    PROBE_RESULTS=$'-\tunknown\tno token for the acting '"${reader}"
-    return
+    probe_record "login" "unknown" "no token for the acting '${reader}' — the run cannot be driven"
+    return 0
   fi
 
-  local tools
-  tools=$(jq -r --arg a "$action" '.actions[$a].evidence[]?' <<<"$contract")
-  if [[ -z "$tools" ]]; then
-    PROBE_RESULTS=$'-\tunknown\t'"${action} declares no required evidence"
-    return
+  load_thresholds
+
+  # The money value, live from the policy and rendered at the policy's own scale.
+  local t_name t_delta amount
+  t_name=$(jget_from "$DATASET" '.proposePathProbe.amount["@threshold"]')
+  t_delta=$(jq -r '.proposePathProbe.amount["@delta"] // 0' <<<"$DATASET")
+  amount=$(money_from_threshold "$t_name" "$t_delta")
+  REFS=$(jq --arg k probeAmount --arg v "$amount" '.[$k] = $v' <<<"$REFS")
+
+  local payload
+  if ! payload=$(resolve_placeholders "$(jq -c '.proposePathProbe.payload' <<<"$DATASET")" \
+                   "$THRESHOLDS" "$REFS" 2>/dev/null); then
+    probe_record "payload" "unknown" \
+      "the probe payload has an unresolved reference — no seeded account for it to act on"
+    return 0
   fi
 
-  local worst="ok" tool
-  while read -r tool; do
-    [[ -n "$tool" ]] || continue
-    local path fields verdict note
-    path=$(jq -r --arg t "$tool" '.tools[$t].path // empty' <<<"$contract")
-    fields=$(jq -c --arg t "$tool" '.tools[$t].requiredFields // []' <<<"$contract")
+  # ---- 1. open a session -------------------------------------------------------------------
+  http POST /api/copilot/sessions "$(jq -n --arg o "$objective" '{objective: $o}')" "$token"
+  if ! status_in "$HTTP_STATUS" 200 201; then
+    probe_record "copilot session" "$(probe_gate_for_status "$HTTP_STATUS")" \
+      "POST /api/copilot/sessions -> HTTP ${HTTP_STATUS} for '${reader}': ${HTTP_BODY}"
+    PROBE_VERDICT="$(probe_gate_for_status "$HTTP_STATUS")"
+    return 0
+  fi
+  local sid
+  sid=$(jget '.sessionId')
+  if [[ -z "$sid" ]]; then
+    probe_record "copilot session" "unknown" \
+      "POST /api/copilot/sessions returned ${HTTP_STATUS} but no sessionId"
+    return 0
+  fi
+  probe_record "copilot session" "ok" "${sid} — objective accepted"
 
-    if [[ -z "$path" ]]; then
-      verdict="gate-b"; note="no tool in config/copilot-tools.yaml serves this evidence key"
-      PROBE_RESULTS+="${tool}"$'\t'"${verdict}"$'\t'"${note}"$'\n'
-      worst="gate-b"; continue
-    fi
+  # ---- 2. start the run --------------------------------------------------------------------
+  local run_body
+  run_body=$(jq -n --arg a "$action" --argjson p "$payload" '{actionId: $a, payload: $p}')
+  http POST "/api/copilot/sessions/${sid}/runs" "$run_body" "$token"
+  if ! status_in "$HTTP_STATUS" 200 201 202; then
+    probe_record "run start" "$(probe_gate_for_status "$HTTP_STATUS")" \
+      "POST /api/copilot/sessions/{id}/runs -> HTTP ${HTTP_STATUS}: ${HTTP_BODY}"
+    PROBE_VERDICT="$(probe_gate_for_status "$HTTP_STATUS")"
+    return 0
+  fi
+  local rid
+  rid=$(jget '.runId')
+  if [[ -z "$rid" ]]; then
+    probe_record "run start" "unknown" "the run was accepted (${HTTP_STATUS}) but reported no runId"
+    return 0
+  fi
+  PROBE_RUN_ID="$rid"
+  probe_record "run start" "ok" "${rid} — ${action}, amount ${amount} (>= ${t_name})"
 
-    # Fill the path's parameters from the subjects this run actually created. A parameter with no
-    # subject is reported, not guessed — a probe against an invented id proves nothing.
-    local resolved="$path" missing="" name ref value
-    while read -r name; do
-      [[ -n "$name" ]] || continue
-      ref=$(jq -r --arg n "$name" '.proposePathProbe.pathParams[$n] // ""' <<<"$DATASET")
-      value=""
-      [[ -n "$ref" ]] && value=$(jq -r --arg k "$ref" '.[$k] // ""' <<<"$REFS")
-      if [[ -z "$value" ]]; then missing="$name"; break; fi
-      resolved="${resolved//\{$name\}/$value}"
-    done < <(grep -o '{[a-zA-Z]*}' <<<"$path" | tr -d '{}')
+  # ---- 3. read the trace back until it terminates ------------------------------------------
+  local timeout interval waited=0 frames='[]' terminal=""
+  timeout=$(jget_from "$DATASET" '.proposePathProbe.runTimeoutSeconds')
+  interval=$(jget_from "$DATASET" '.proposePathProbe.pollIntervalSeconds')
+  local success_frame
+  success_frame=$(jget_from "$DATASET" '.proposePathProbe.successFrame')
 
-    if [[ -n "$missing" ]]; then
-      PROBE_RESULTS+="${tool}"$'\t'"skipped"$'\t'"no subject seeded for {${missing}}"$'\n'
-      continue
-    fi
-
-    http GET "$resolved" "" "$token"
-    if ! status_in "$HTTP_STATUS" 200; then
-      verdict="gate-a"
-      note="HTTP ${HTTP_STATUS} for '${reader}' on ${resolved}"
-      [[ "$worst" == "ok" ]] && worst="gate-a"
-    elif jq -e 'type == "array"' >/dev/null 2>&1 <<<"$HTTP_BODY"; then
-      # EvidenceComplete requires a JObject. A bare array cannot satisfy it under any renaming.
-      verdict="gate-b"; note="returns a bare array; the contract requires an object"
-      worst="gate-b"
-    else
-      local absent
-      absent=$(jq -r --argjson f "$fields" '. as $o | [$f[] | . as $k | select($o | has($k) | not)] | join(", ")' <<<"$HTTP_BODY")
-      if [[ -n "$absent" ]]; then
-        verdict="gate-b"; note="200, but the object has no ${absent}"
-        worst="gate-b"
-      else
-        verdict="ok"; note="200, object carries $(jq -r '$f | join(", ")' --argjson f "$fields" -n)"
+  while (( waited <= timeout )); do
+    http GET "/api/copilot/runs/${rid}/trace" "" "$token"
+    if [[ "$HTTP_STATUS" == "200" ]]; then
+      frames=$(jq '.frames // []' <<<"$HTTP_BODY")
+      # Classify on the positive frames, never on the run's status field.
+      if jq -e --arg k "$success_frame" 'any(.[]; .kind == $k)' >/dev/null <<<"$frames"; then
+        terminal="success"; break
+      fi
+      if jq -e 'any(.[]; .kind == "run.done")' >/dev/null <<<"$frames"; then
+        terminal="done"; break
       fi
     fi
-    PROBE_RESULTS+="${tool}"$'\t'"${verdict}"$'\t'"${note}"$'\n'
-  done <<<"$tools"
+    detail "waiting for run ${rid} to finish (${waited}s/${timeout}s)"
+    sleep "$interval"
+    waited=$((waited + interval))
+  done
 
-  case "$worst" in
-    ok)     PROBE_VERDICT="open" ;;
-    gate-a) PROBE_VERDICT="gate-a" ;;
-    gate-b) PROBE_VERDICT="gate-b" ;;
-  esac
+  # ---- 4. report what the run actually did --------------------------------------------------
+  local line
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    probe_record "$(cut -f1 <<<"$line")" "$(cut -f2 <<<"$line")" "$(cut -f3- <<<"$line")"
+  done < <(probe_tool_lines "$frames")
+
+  if [[ "$terminal" == "success" ]]; then
+    PROBE_APPROVAL_ID=$(jq -r --arg k "$success_frame" \
+      'map(select(.kind == $k)) | .[0].payload.approval.id // empty' <<<"$frames")
+    local rung
+    rung=$(jq -r --arg k "$success_frame" \
+      'map(select(.kind == $k)) | .[0].payload.requiredRung // "?"' <<<"$frames")
+    probe_record "$success_frame" "ok" \
+      "approval ${PROBE_APPROVAL_ID:-<unnamed>} required at ${rung} — the path is open"
+    PROBE_VERDICT="open"
+    return 0
+  fi
+
+  # No success frame. Report the REFUSAL the environment produced, which is a better diagnostic
+  # than any prediction: it is the real reason, from this run, named by the service that made it.
+  local errors read_failed="no"
+  errors=$(jq -c '[.[] | select(.kind == "run.error") | .payload]' <<<"$frames")
+  jq -e 'any(.[]; .kind == "tool.failed")' >/dev/null <<<"$frames" && read_failed="yes"
+
+  if [[ "$(jq 'length' <<<"$errors")" -gt 0 ]]; then
+    local code message worst=""
+    while IFS=$'\t' read -r code message; do
+      [[ -n "$code" ]] || continue
+      local verdict="refused"
+      # GATE B means the reads WORKED and the evidence contract still refused the proposal. If a
+      # read failed, every error after it is a CONSEQUENCE, and naming a consequence as the cause
+      # is the whole defect this probe was rewritten to stop committing. Such a line keeps its own
+      # code and says nothing it has not observed.
+      [[ "$read_failed" == "no" && "$code" == "evidence_incomplete" ]] && verdict="gate-b"
+      probe_record "run.error" "$verdict" "${code}: ${message}"
+      [[ -z "$worst" ]] && worst="$verdict"
+    done < <(jq -r '.[] | [(.code // "?"), (.message // "")] | @tsv' <<<"$errors")
+
+    # A read refused upstream outranks whatever the propose step then said about it: the propose
+    # could not have succeeded without the evidence that read never returned.
+    if [[ "$read_failed" == "yes" ]]; then
+      PROBE_VERDICT="gate-a"
+    else
+      PROBE_VERDICT="${worst:-refused}"
+    fi
+    return 0
+  fi
+
+  if [[ -z "$terminal" ]]; then
+    probe_record "run ${rid}" "unknown" \
+      "no terminal frame within ${timeout}s. The run neither produced an approval nor said why."
+  else
+    probe_record "run ${rid}" "unknown" \
+      "the run finished without emitting ${success_frame} and without a run.error frame. \
+There is no recorded reason, which is itself the finding."
+  fi
+  return 0
+}
+
+# One line per tool the run actually attempted, read out of the trace. `tool.failed` carries the
+# upstream status, which is the real refusal rather than a prediction of one.
+probe_tool_lines() {
+  jq -r '
+    (map(select(.kind == "tool.started")) | map({key: .payload.toolCallId, value: .payload.name}) | from_entries) as $names
+    | map(select(.kind == "tool.completed" or .kind == "tool.failed"))
+    | .[]
+    | ($names[.payload.toolCallId] // .payload.toolCallId // "tool") as $tool
+    | if .kind == "tool.completed"
+      then [$tool, "ok", ("read ok — " + ((.payload.resultSummary // "no summary") | tostring))]
+      else [$tool, "gate-a", ((.payload.error // "failed") | tostring)]
+      end
+    | @tsv' <<<"$1"
 }
 
 report_propose_path() {
   header "Propose path — can an approval be created at all?"
   local action
   action=$(jget_from "$DATASET" '.proposePathProbe.actionId')
-  detail "probing ${action} as '$(jget_from "$DATASET" '.proposePathProbe.readAs')' — the evidence a run must gather"
+  detail "drove ${action} as '$(jget_from "$DATASET" '.proposePathProbe.readAs')' through a real copilot run"
 
-  local tool verdict note
-  while IFS=$'\t' read -r tool verdict note; do
-    [[ -n "$tool" ]] || continue
+  local label verdict note
+  while IFS=$'\t' read -r label verdict note; do
+    [[ -n "$label" ]] || continue
     case "$verdict" in
-      ok)      success "${tool}: ${note}" ;;
-      gate-a)  fail_line "${tool}: ${note}  [GATE A — authorization]" ;;
-      gate-b)  fail_line "${tool}: ${note}  [GATE B — evidence contract]" ;;
-      skipped) warn "${tool}: ${note}" ;;
-      *)       warn "${tool}: ${note}" ;;
+      ok)      success "${label}: ${note}" ;;
+      gate-a)  fail_line "${label}: ${note}  [GATE A — authorization]" ;;
+      gate-b)  fail_line "${label}: ${note}  [GATE B — evidence contract]" ;;
+      refused) fail_line "${label}: ${note}  [REFUSED — see the code above]" ;;
+      *)       warn "${label}: ${note}" ;;
     esac
   done <<<"$PROBE_RESULTS"
 
   echo
   case "$PROBE_VERDICT" in
     open)
-      success "The propose path is OPEN. Approvals can be created, so the task queue can be real."
+      success "The propose path is OPEN — this probe just drove it end to end and an approval exists."
+      [[ -n "$PROBE_RUN_ID" ]] && detail "run ${PROBE_RUN_ID}, approval ${PROBE_APPROVAL_ID:-<unnamed>}"
       ;;
     gate-a)
-      warn "BLOCKED at GATE A — the acting banker cannot read the evidence a run needs."
-      warn "No approval can be created, so the copilot task queue will be EMPTY. That is the"
+      warn "BLOCKED at GATE A — a read the run needed was refused upstream (see the status above)."
+      warn "The propose could not have succeeded without evidence the read never returned, so NO"
+      warn "approval can be created and the copilot task queue will be EMPTY. That is the"
       warn "environment telling you the truth, not a seeding failure."
       ;;
     gate-b)
-      warn "BLOCKED at GATE B — the evidence contract and the read tools disagree."
-      warn "PolicyEvaluator.EvidenceComplete wants objects with field names the tools do not"
-      warn "return, and some tools return bare arrays, which cannot satisfy it at all. Every"
-      warn "proposal is refused 'evidence_incomplete', so NO approval can exist and the copilot"
-      warn "task queue will be EMPTY. See tests/verification/README.md."
+      warn "BLOCKED at GATE B — the reads succeeded and authority-service still refused the"
+      warn "proposal on evidence. The code and message above are the real refusal, from this run."
+      warn "No approval can exist, so the copilot task queue will be EMPTY."
+      ;;
+    refused)
+      warn "The run was REFUSED — and it said why. The run.error code above is the reason the"
+      warn "service gave, not a prediction: fix that, then re-run demo:seed."
       ;;
     *)
       warn "Propose-path health UNKNOWN — see the note above. Approvals will not be attempted."
+      warn "An unknown verdict is NOT a pass: nothing here observed an approval being created."
       ;;
   esac
 }
@@ -843,12 +999,12 @@ APPROVALS_DEFERRED=""
 seed_approvals() {
   if [[ "$PROBE_VERDICT" != "open" ]]; then
     header "Approvals — DEFERRED"
-    warn "Not seeding approvals. The propose path is closed (see above), and the only honest way"
-    warn "to create one is to drive POST /api/authority/approvals."
+    warn "Not seeding approvals. The probe run above did not reach '$(jget_from "$DATASET" '.proposePathProbe.successFrame')',"
+    warn "and the only honest way to create an approval is to drive the real path."
     echo >&2
-    warn "  TODO(GATE B — evidence contract): $(jget_from "$DATASET" '._blockedOnEvidenceContract.unblockWhen')"
+    warn "  UNBLOCK WHEN: $(jget_from "$DATASET" '._proposePathDeferral.unblockWhen')"
     echo >&2
-    warn "$(jget_from "$DATASET" '._blockedOnEvidenceContract.whyNotSimulated')"
+    warn "$(jget_from "$DATASET" '._proposePathDeferral.whyNotSimulated')"
     APPROVALS_DEFERRED=1
     return 0
   fi
@@ -1015,6 +1171,18 @@ cmd_show() {
   login_all_present
   discover_evidence_account
   cmd_show_summary
+
+  # The only honest probe of the propose path CREATES an approval. A verb named `show` must not
+  # write, so it is opt-in — and its absence is reported as an absence, never as a pass.
+  if [[ "$DO_PROBE" != "true" ]]; then
+    header "Propose path — not probed"
+    warn "This run did not check whether an approval can be created, because the only honest"
+    warn "check is to create one and 'show' does not write. Nothing above is evidence that the"
+    warn "propose path is open."
+    warn "Run 'demo:show -- --probe' (or demo:seed) to drive a real run and find out."
+    return 0
+  fi
+
   probe_propose_path
   report_propose_path
   [[ "$PROBE_VERDICT" == "open" ]] || return 3
@@ -1023,13 +1191,13 @@ cmd_show() {
 # show must not write, so it cannot rely on seed_accounts having run. Re-derive the evidence
 # account by matching the dataset's declared subject against what the owner can actually see.
 discover_evidence_account() {
-  local owner atype ordinal
+  # Matching on accountType alone is only unambiguous because no owner holds two accounts of
+  # the same type. That is not a hope: tests/demo/test-demo-dataset.sh fails the dataset if it
+  # ever stops being true, because otherwise "which account" would depend on server ordering.
+  local owner atype
   owner=$(jq -r '[.accounts[] | select(.evidenceSubject == true)][0].owner // empty' <<<"$DATASET")
   atype=$(jq -r '[.accounts[] | select(.evidenceSubject == true)][0].accountType // empty' <<<"$DATASET")
   [[ -n "$owner" && -n "${TOKENS[$owner]:-}" ]] || return 0
-
-  ordinal=$(jq -r --arg o "$owner" --arg t "$atype" \
-    '[.accounts[] | select(.owner == $o)] | map(.accountType) | index($t) // 0' <<<"$DATASET")
 
   http GET /api/accounts "" "${TOKENS[$owner]}"
   [[ "$HTTP_STATUS" == "200" ]] || return 0
