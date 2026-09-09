@@ -318,9 +318,14 @@ async def test_the_supervisor_role_is_structural_not_a_droppable_field():
     updated = next(f for f in _frames(runs, "run_1") if f["kind"] == "approval.updated")
     agent_assessment = updated["payload"]["approval"]["agentAssessment"]
 
-    assert set(agent_assessment) == {"primary", "supervisor"}, (
-        "the supervisor opinion must arrive under the 'supervisor' key — that key IS its role"
+    assert set(agent_assessment) == {"primary", "supervisor", "agreement"}, (
+        "the supervisor opinion must arrive under the 'supervisor' key — that key IS its role. "
+        "'agreement' is the harness's own tri-state comparison (§P4.3), not an assessment: it is "
+        "a sibling of the two opinions and is never one of them."
     )
+    # Set equality in BOTH directions on purpose. A subset check would pass if someone bolted on
+    # a third assessment-shaped key; a superset check would pass if the supervisor vanished.
+    assert "agentName" not in str(agent_assessment["agreement"]), "agreement is a verdict comparison, not an agent"
     # The supervisor's own dissent (its verdict/rationale) is under 'supervisor', not 'primary'.
     assert agent_assessment["supervisor"]["agentName"] == "Independent supervisor"
     assert agent_assessment["primary"]["agentName"] != "Independent supervisor"

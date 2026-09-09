@@ -42,6 +42,8 @@ import structlog
 
 from app.events.bus import RunStream, RunStreamRegistry
 from app.planner.limits import FanoutLimits
+from app.planner.model_call import Attribution
+from app.planner.verdicts import AGREE, NOT_COMPARABLE, compare_verdicts, is_verdict
 from app.planner.approval_view import (
     primary_wire_assessment,
     supervisor_wire_assessment,
@@ -214,6 +216,12 @@ class SecondOpinion:
     confidence: float
     key_factors: tuple[str, ...]
     strongest_counter_argument: str
+    #: Which decider produced this, on which exact bytes (§P7.1). Attribution, not
+    #: reproducibility: identical bytes produce split verdicts, so the record's job is to let a
+    #: reader say WHICH model said this — including that it was the same base model as the
+    #: primary's, which is the residual correlation §P1.2e requires be disclosed rather than
+    #: papered over. Optional so a test decider need not supply one.
+    attribution: "Attribution | None" = None
 
     def to_wire(self) -> dict[str, Any]:
         return {
@@ -301,6 +309,10 @@ def deterministic_decider(spawn: SupervisorInput, own_evidence: Mapping[str, Any
         confidence=confidence,
         key_factors=tuple(sorted(gathered)),
         strongest_counter_argument=counter,
+        # Named out loud: this opinion was SCRIPTED, not thought. The mode is the exact fact
+        # `supervisor_mode` exists to keep visible, and it now travels with the opinion onto the
+        # approval record instead of living only in a startup log line nobody re-reads.
+        attribution=Attribution(mode="deterministic"),
     )
 
 
@@ -333,9 +345,22 @@ class SupervisorAgent:
 @dataclass(frozen=True)
 class FanOutResult:
     second_opinion: SecondOpinion
-    agrees_with_primary: bool
+    #: Tri-state (§P4.3): ``agree`` | ``diverge`` | ``not_comparable``. A side that failed has no
+    #: position, and ``not_comparable`` is excluded from every denominator rather than counted as
+    #: dissent or as consensus.
+    agreement: str
     supervisor_input: SupervisorInput
     subagent_run_id: str
+
+    @property
+    def agrees_with_primary(self) -> bool:
+        """Kept for callers that only ask "did they agree?". Deliberately NOT the stored value.
+
+        ``not_comparable`` is False here — a dead pipeline must never read as consensus — but a
+        caller that needs to tell "they disagreed" from "there was nothing to compare" must read
+        ``agreement``, and that is why the boolean is derived rather than authoritative.
+        """
+        return self.agreement == AGREE
 
 
 # ---------------------------------------------------------------------------
@@ -555,7 +580,7 @@ class FanOutEngine:
         # (3) Agreement is COMPUTED by comparison, never read off the supervisor.
         #     §6.4(6): disagreement is first-class and does not gate proceeding.
         primary_recommendation = _primary_recommendation(approval)
-        agrees = _recommendations_agree(primary_recommendation, opinion.recommendation)
+        agreement = compare_verdicts(primary_recommendation, opinion.recommendation)
 
         await stream.emit(
             "subagent.completed",
@@ -600,27 +625,40 @@ class FanOutEngine:
                 opinion.strongest_counter_argument,
                 opinion.key_factors,
                 reader_tool_ids,
+                opinion.attribution,
             ),
+            # Server-observed, tri-state, and stated rather than left to be inferred from two
+            # verdict fields. `not_comparable` is the arm that must be visible: a card that
+            # cannot tell "they disagreed" from "one of them never answered" has already
+            # rendered "Independent review reached the same verdict" over two absent verdicts.
+            "agreement": agreement,
         }
         await stream.emit("approval.updated", {"approval": updated_approval})
 
         return FanOutResult(
             second_opinion=opinion,
-            agrees_with_primary=agrees,
+            agreement=agreement,
             supervisor_input=spawn,
             subagent_run_id=subagent_run_id,
         )
 
 
-def _primary_recommendation(approval: Mapping[str, Any]) -> str:
-    # The primary PROPOSED the action; its recommendation is to proceed. Read from the
-    # approval's assessment if present, so a future non-proposing primary still compares.
+def _primary_recommendation(approval: Mapping[str, Any]) -> str | None:
+    """The primary's stated verdict, or ``None`` when it stated none.
+
+    It used to end in ``or "proceed"``, on the reasoning that the primary PROPOSED the action so
+    its position must be to proceed. That was harmless only while the primary could not fail.
+    Now that it can, the fallback manufactures a position for an agent that has none — and a
+    supervisor ``hold`` against a manufactured ``proceed`` renders as genuine dissent. That is
+    precisely the classification error Livingston had to correct by hand in the other direction
+    (a failed supervisor counted as dissent), mirrored onto the primary side and living *inside
+    the code* rather than inside a probe.
+
+    So: no verdict, no position, and the comparison below returns ``not_comparable``.
+    """
     assessment = approval.get("agentAssessment") or {}
-    return str(assessment.get("recommendation") or "proceed")
-
-
-def _recommendations_agree(primary_reco: str, supervisor_reco: str) -> bool:
-    return primary_reco.strip().casefold() == supervisor_reco.strip().casefold()
+    recommendation = assessment.get("recommendation")
+    return str(recommendation) if is_verdict(recommendation) else None
 
 
 def _now() -> str:

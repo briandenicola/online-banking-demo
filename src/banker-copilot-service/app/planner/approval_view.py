@@ -20,9 +20,9 @@ the key it arrives under.
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
-from app.planner.verdicts import RECOMMENDATIONS, UNRECOGNISED_VERDICT
+from app.planner.verdicts import RECOMMENDATIONS, UNRECOGNISED_VERDICT, is_verdict
 
 PRIMARY_AGENT_NAME = "Primary agent"
 SUPERVISOR_AGENT_NAME = "Independent supervisor"
@@ -61,26 +61,130 @@ def verdict_for(recommendation: str) -> str:
 def primary_wire_assessment(approval: Mapping[str, Any]) -> dict[str, Any]:
     """The PRIMARY's assessment, in the wire shape ``toApproval.toAssessments`` consumes.
 
-    Enriches the stored assessment with a ``verdict`` the card can render, derived ONLY from the
-    primary's own declared recommendation (it PROPOSED the action, so absent an explicit token its
-    verdict is to proceed). ``summary`` and evidence ids are the primary's own declared outputs,
-    already on the approval — nothing here is re-derived from the primary's private reasoning.
+    It ENRICHES what the primary actually stated with the caption the card renders. It no longer
+    manufactures anything, and the two deletions matter more than the code that remains:
+
+      * ``recommendation = str(existing.get("recommendation") or "proceed")`` invented a verdict
+        for an agent that stated none. That default is how "Primary agent — PROCEED" came to be
+        rendered over an assessment nobody made, and — once the primary could FAIL — it would
+        have manufactured a position for a failed agent, against which a supervisor ``hold``
+        renders as genuine dissent. A defaulted verdict is not a smaller lie than a fabricated
+        rationale; it is the same lie in the field a reader trusts most.
+      * ``existing["rationale"] = summary`` promoted the banker's echoed objective into the
+        primary's reasoning. The proposal no longer sends ``summary`` at all.
+
+    After this work the assessment either arrived and parsed, or it failed and says so. There is
+    no third state for a default to serve — and while the default existed, the failure was
+    invisible.
+
+    A missing verdict therefore stays missing. The client's ``AgentAssessment.verdict`` is
+    optional, so it renders as absent rather than as a mild verdict; ``failure`` and the failsafe
+    ``rationale`` are what say, positively, that no assessment was formed.
     """
     existing = dict(approval.get("agentAssessment") or {})
-    recommendation = str(existing.get("recommendation") or "proceed")
     existing.setdefault("agentName", PRIMARY_AGENT_NAME)
-    existing["verdict"] = verdict_for(recommendation)
-    summary = existing.get("summary")
-    if summary and "rationale" not in existing:
-        existing["rationale"] = summary
+    recommendation = existing.get("recommendation")
+    if is_verdict(recommendation):
+        existing["verdict"] = verdict_for(str(recommendation))
+    elif recommendation is not None:
+        # A token that is not a verdict is not permission and is not silence either. It is a
+        # contract violation, and it is named as one.
+        existing["verdict"] = UNRECOGNISED_VERDICT
     ids = existing.get("evidenceToolIds")
     if ids and "citedEvidenceIds" not in existing:
         existing["citedEvidenceIds"] = list(ids)
     return existing
 
 
+def primary_proposal_assessment(
+    assessment,
+    *,
+    required_evidence_tool_ids: Sequence[str],
+    discretionary_evidence_tool_ids: Sequence[str],
+    refused_evidence_requests: Sequence[Mapping[str, str]],
+    assessment_iterations: int,
+    converged: bool,
+) -> dict[str, Any]:
+    """The primary's assessment as it goes ONTO the proposal — the body authority-service stores.
+
+    Two provenances, deliberately not blurred (§P3.3, §P5.5):
+
+      * the model's CLAIM — verdict, confidence, rationale, key factors, what it could not
+        verify. Its citations have already been checked against what was gathered, by the parser.
+      * the harness's OBSERVATION — which tools the policy required, which the model was granted
+        beyond them, which requests were refused and why, how many passes it took and whether it
+        stopped because it was satisfied. Every one of these is server-derived; not one of them
+        is read off the model.
+
+    ``requiredEvidenceToolIds`` is a CONTROL and ``discretionaryEvidenceToolIds`` is a CHOICE.
+    They stay in separate fields because "the copilot reviewed the account" must not mean
+    something different run to run while reading identically.
+
+    There is **no ``value`` parameter and no ``concern`` parameter**, here or on ``KeyFactor``. A
+    flat model factor is a statement, not a dimension-and-measurement pair, so there is no second
+    half to populate and anything populating one is invented. A future edit that wants one has to
+    widen this signature, and that widening is what the key-factor shape test catches.
+    """
+    wire: dict[str, Any] = {
+        "agentName": PRIMARY_AGENT_NAME,
+        # Server-observed, never model-asserted. `evidenceToolIds` remains the full gathered set
+        # so the record's statement of WHAT WAS GATHERED is an observation; only the citations
+        # below are the model's claim.
+        "evidenceToolIds": sorted({*required_evidence_tool_ids, *discretionary_evidence_tool_ids}),
+        "requiredEvidenceToolIds": list(required_evidence_tool_ids),
+        "discretionaryEvidenceToolIds": list(discretionary_evidence_tool_ids),
+        "refusedEvidenceRequests": [dict(r) for r in refused_evidence_requests],
+        "assessmentIterations": assessment_iterations,
+        # A POSITIVE recorded fact, never an absence. Without it, "hit the cap while still
+        # unsatisfied" and "was satisfied on the first pass" read identically.
+        "converged": converged,
+        "rationale": assessment.rationale,
+    }
+
+    if assessment.verdict is not None:
+        wire["recommendation"] = assessment.verdict
+    if assessment.self_reported_confidence is not None:
+        # Absent on a failed assessment, never 0.0. A zero is a number: it can be plotted,
+        # averaged and compared, and a sentinel number gets pooled into a statistic by accident.
+        #
+        # The field is still spelled `confidence` on the wire because the rename to
+        # `selfReportedConfidence` crosses the language boundary and the golden wire, and the
+        # ruling defers it (§P7.2, §P9). What is required NOW and holds here: nothing ranks,
+        # sorts, colour-scales or gates on this number, and no threshold on it exists anywhere.
+        wire["confidence"] = assessment.self_reported_confidence
+    if assessment.key_factors:
+        wire["keyFactors"] = [
+            {"label": factor.label, "citedEvidenceIds": list(factor.cited_evidence_ids)}
+            for factor in assessment.key_factors
+        ]
+        cited = sorted({c for factor in assessment.key_factors for c in factor.cited_evidence_ids})
+        if cited:
+            wire["citedEvidenceIds"] = cited
+    if assessment.unverified:
+        # The primary's honest half of the asymmetry: what it could NOT establish. Optional,
+        # because absent is honest and an empty-string filler is not.
+        wire["unverified"] = list(assessment.unverified)
+    if assessment.requested_evidence:
+        wire["requestedEvidenceToolIds"] = list(assessment.requested_evidence)
+    if assessment.failure is not None:
+        # A stated failure, not an absence a renderer is left to interpret. The client's fields
+        # are all optional, so a missing verdict renders as blank; this is the positive value on
+        # the wire that says which failure occurred.
+        wire["failure"] = assessment.failure
+        wire["failureReason"] = assessment.failure_reason
+    if assessment.attribution is not None:
+        wire.update(assessment.attribution.to_wire())
+    return wire
+
+
 def supervisor_wire_assessment(
-    agent_id: str, recommendation: str, confidence: float, counter_argument: str, key_factors, cited_evidence_ids
+    agent_id: str,
+    recommendation: str,
+    confidence: float,
+    counter_argument: str,
+    key_factors,
+    cited_evidence_ids,
+    attribution=None,
 ) -> dict[str, Any]:
     """The SUPERVISOR's second opinion, in the same wire shape.
 
@@ -107,4 +211,9 @@ def supervisor_wire_assessment(
         "rationale": counter_argument,
         "keyFactors": [{"label": factor} for factor in key_factors],
         "citedEvidenceIds": list(cited_evidence_ids),
+        # Attribution (§P7.1): which decider, which model, which exact bytes. Carried on BOTH
+        # assessments so a reader can see for themselves that the "independent" second opinion
+        # came from the same base model as the primary — a residual correlation that cannot be
+        # engineered away this week and so must be disclosed rather than papered over.
+        **(attribution.to_wire() if attribution is not None else {}),
     }

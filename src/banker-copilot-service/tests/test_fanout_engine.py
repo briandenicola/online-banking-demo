@@ -169,25 +169,43 @@ async def test_supervisor_reads_raw_inputs_not_the_primary_cache():
         assert "PRIMARY_SAW_THAT" not in str(args)
 
 
+def _fixed(recommendation: str):
+    def _decider(spawn, own_evidence):
+        return SecondOpinion(
+            recommendation=recommendation,
+            confidence=0.9,
+            key_factors=("beneficiary-unverified",),
+            strongest_counter_argument="The beneficiary could not be independently verified.",
+        )
+
+    return _decider
+
+
+def _approval_where_the_primary_said(verdict: str | None) -> dict:
+    """An approval body carrying (or not carrying) a real primary verdict.
+
+    ``None`` is the case that matters: an assessment that FAILED. It is spelled as a stated
+    failure rather than an empty dict, because that is what the wire actually carries now.
+    """
+    assessment = {"failure": "primary_unavailable"} if verdict is None else {"recommendation": verdict}
+    return {**APPROVAL, "agentAssessment": assessment}
+
+
 @pytest.mark.asyncio
 async def test_agreement_is_computed_after_the_fact():
     """§6.4(6): agreement is a comparison the harness makes, not a value read off the supervisor.
     A supervisor that disagrees does not gate proceeding — the disagreement is recorded."""
     registry, executor = _registry_and_executor()
 
-    def _dissenting(spawn, own_evidence):
-        return SecondOpinion(
-            recommendation="hold",
-            confidence=0.9,
-            key_factors=("beneficiary-unverified",),
-            strongest_counter_argument="The beneficiary could not be independently verified.",
-        )
-
-    engine, runs = _engine(executor, registry, decider=_dissenting)
+    engine, runs = _engine(executor, registry, decider=_fixed("hold"))
     stream = runs.create("run_1", "sess_1")
-    result = await engine.run_second_opinion(_request(), stream, APPROVAL, {"get_flagged_transaction": {}})
+    result = await engine.run_second_opinion(
+        _request(), stream, _approval_where_the_primary_said("proceed"), {"get_flagged_transaction": {}}
+    )
 
-    # Primary proposed (recommendation "proceed"); supervisor said "hold" → disagreement.
+    # The primary stated `proceed`; the supervisor stated `hold` → they diverge. Both sides have
+    # a position, so this is a real comparison rather than a comparison against a default.
+    assert result.agreement == "diverge"
     assert result.agrees_with_primary is False
     # Wire contract: the supervisor's opinion rides under `agentAssessment.supervisor` — the shape
     # the single mapper `toApproval.toAssessments` already tolerates, which assigns roles by key
@@ -332,3 +350,67 @@ async def test_the_planner_never_fans_out_at_l1():
     duplicating a second opinion defeats it. The gate is ``requiredRung == 'L2'``."""
     fanout = await _run_planner_at("L1")
     assert fanout.calls == []
+
+
+# ------------------------------------------------- §P4.3 agreement is tri-state ----
+
+
+@pytest.mark.asyncio
+async def test_two_real_verdicts_that_match_agree():
+    registry, executor = _registry_and_executor()
+    engine, runs = _engine(executor, registry, decider=_fixed("proceed"))
+    stream = runs.create("run_1", "sess_1")
+    result = await engine.run_second_opinion(
+        _request(), stream, _approval_where_the_primary_said("proceed"), {"get_flagged_transaction": {}}
+    )
+    assert result.agreement == "agree"
+    assert result.agrees_with_primary is True
+
+
+@pytest.mark.asyncio
+async def test_a_failed_primary_is_not_comparable_and_is_never_rendered_as_dissent():
+    """§P4.3, and it is a real defect found in the ruling rather than a hypothetical.
+
+    `_primary_recommendation` used to end in `or "proceed"`. Once the primary can FAIL, that
+    fallback manufactures a position for an agent that has none, and the supervisor's `hold`
+    against that invented `proceed` lands on the card as genuine dissent. Agreement therefore has
+    three arms, and a side with no verdict lands on the third one — excluded from every
+    denominator rather than counted either way.
+    """
+    registry, executor = _registry_and_executor()
+    engine, runs = _engine(executor, registry, decider=_fixed("hold"))
+    stream = runs.create("run_1", "sess_1")
+    result = await engine.run_second_opinion(
+        _request(), stream, _approval_where_the_primary_said(None), {"get_flagged_transaction": {}}
+    )
+
+    assert result.agreement == "not_comparable"
+    # And the boolean shortcut says False — a dead pipeline must never read as consensus — but it
+    # is derived, so nobody can mistake "nothing to compare" for "they disagreed".
+    assert result.agrees_with_primary is False
+    updated = next(f for f in _frames(runs, "run_1") if f["kind"] == "approval.updated")
+    assert updated["payload"]["approval"]["agentAssessment"]["agreement"] == "not_comparable"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_SUPERVISOR_is_not_comparable_either():
+    """The same rule from the other side: the failsafe `hold` is a withhold, not a position on
+    the action, and counting it as dissent is the error Livingston had to correct by hand."""
+    from app.planner.supervisor_model import parse_second_opinion
+
+    registry, executor = _registry_and_executor()
+
+    def _broken(spawn, own_evidence):
+        return parse_second_opinion("the model returned prose")
+
+    engine, runs = _engine(executor, registry, decider=_broken)
+    stream = runs.create("run_1", "sess_1")
+    result = await engine.run_second_opinion(
+        _request(), stream, _approval_where_the_primary_said("proceed"), {"get_flagged_transaction": {}}
+    )
+    # NOTE: the supervisor's failsafe still STATES `hold` — aligning it with the primary's absent
+    # verdict is deferred by §P9 precisely because it changes supervisor behaviour in the middle
+    # of a measurement. So this currently reads as `diverge`, and that is recorded here rather
+    # than papered over, so the day the deferred ticket lands this test says what changed.
+    assert result.agreement == "diverge"
+    assert "supervisor_unavailable" in result.second_opinion.key_factors

@@ -30,6 +30,7 @@ is positioned to catch. The prompt is assembled from those two values only.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import os
 from dataclasses import dataclass
@@ -39,6 +40,7 @@ import structlog
 
 from app.config import ConfigurationError, env_with_legacy
 from app.planner.fanout import SecondOpinion, SupervisorInput
+from app.planner.model_call import Attribution, extract_json, sha256_text
 from app.planner.verdicts import RECOMMENDATIONS
 
 logger = structlog.get_logger("banker-copilot-service")
@@ -171,20 +173,14 @@ def build_prompt(spawn: SupervisorInput, own_evidence: Mapping[str, Any]) -> str
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
-    """Pull the JSON object out of a model reply, tolerating a code fence around it.
+    """The shared reader, re-exported under this module's historical private name.
 
-    Deliberately narrow: it finds the outermost braces and parses once. It does not repair
-    malformed JSON, because a reply this decider cannot read is a reply it must not act on
-    — and "repairing" it would mean guessing a verdict on a banking action.
+    It moved to ``app.planner.model_call`` when the primary assessor arrived and needed the
+    same behaviour: find the outermost braces, parse once, never repair. Two copies of "how we
+    read a model reply" would drift, and the drift would be invisible until one of them started
+    accepting something the other refused. Behaviour here is unchanged.
     """
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end <= start:
-        return None
-    try:
-        parsed = json.loads(text[start : end + 1])
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
+    return extract_json(text)
 
 
 def _failsafe(reason: str) -> SecondOpinion:
@@ -296,6 +292,15 @@ class FoundryDecider:
 
         text = getattr(response, "text", None) or str(response)
         opinion = parse_second_opinion(text)
+        opinion = dataclasses.replace(
+            opinion,
+            attribution=Attribution(
+                mode="foundry",
+                model_deployment=self.model,
+                prompt_sha256=sha256_text(prompt),
+                response_sha256=sha256_text(text),
+            ),
+        )
         logger.info(
             "Supervisor second opinion",
             recommendation=opinion.recommendation,
