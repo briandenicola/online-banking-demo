@@ -73,6 +73,23 @@ describe('verdict vocabulary contract', () => {
     expect([...SERVER_VERDICTS]).toEqual(pythonTuple(verdicts, 'RECOMMENDATIONS'));
   });
 
+  it('the server sentinel for "not a verdict" is not itself a verdict', () => {
+    // Found by tampering. The UI is safe against the sentinel being RENAMED —
+    // anything outside the closed set renders as UNRECOGNISED at maximum
+    // severity. It is NOT safe against the sentinel becoming a real verdict:
+    // `UNRECOGNISED_VERDICT = "hold"` would render a broken pipeline as a
+    // genuine, mild, plausible second opinion, on the exact banner a banker
+    // reads consensus from. That is the original defect restored from the far
+    // side of the wire, where no UI test can see it.
+    const match = verdicts.match(/^UNRECOGNISED_VERDICT\s*=\s*"([^"]+)"/m);
+    expect(match).not.toBeNull();
+    const sentinel = match![1];
+    expect(sentinel.trim()).not.toBe('');
+    expect((SERVER_VERDICTS as readonly string[]).map((v) => v.toLowerCase())).not.toContain(
+      sentinel.toLowerCase()
+    );
+  });
+
   it('the UI agreement states are the server agreement states', () => {
     const server = pythonTuple(verdicts, 'AGREEMENT_STATES');
     expect([...AGREEMENT_STATES].sort()).toEqual([...server].sort());
