@@ -38,17 +38,19 @@ function renderWithFactors(
 
 describe('the key factor row', () => {
   it('the shipped fixture matches what the service can produce (anti-vacuous guard)', () => {
-    // The primary sends NO factors and NO confidence (loop.py proposes with
-    // {summary, evidenceToolIds}). If the fixture drifts back to inventing them,
-    // the divergence guards below would silently start testing a fiction.
-    expect(demoApproval.assessments[0].keyFactors).toBeUndefined();
-    expect(demoApproval.assessments[0].confidence).toBeUndefined();
-    // The supervisor's factors are flat statements with no value.
-    const supervisorFactors = demoApproval.assessments[1].keyFactors!;
-    expect(supervisorFactors.length).toBeGreaterThan(0);
-    for (const factor of supervisorFactors) {
-      expect(factor.value).toBeUndefined();
-      expect(factor.concern).toBeUndefined();
+    // The primary NOW states factors of its own — it did not until this week —
+    // so the assertion is no longer "it sends none". What must still hold is the
+    // GROUNDING: on BOTH sides a factor is a flat statement. `value` was the
+    // fabricated constant "independently corroborated"; `concern` defaulted to
+    // false put a green tick beside a judgement nobody made. Neither builder has
+    // a parameter for either, and this is the fixture-side half of that.
+    for (const assessment of demoApproval.assessments) {
+      const factors = assessment.keyFactors!;
+      expect(factors.length).toBeGreaterThan(0);
+      for (const factor of factors) {
+        expect(factor.value).toBeUndefined();
+        expect(factor.concern).toBeUndefined();
+      }
     }
   });
 
@@ -117,7 +119,7 @@ describe('the key factor row', () => {
       expect(c.textContent).not.toContain('DIVERGENT');
     });
 
-    it('does not fire on the shipped demo approval', () => {
+    it('does not fire on the shipped demo approval, where the two agents merely word things differently', () => {
       cleanup();
       const view = render(
         <CopilotProvider offline>

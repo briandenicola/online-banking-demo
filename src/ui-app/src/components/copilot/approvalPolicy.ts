@@ -130,100 +130,172 @@ export function isReversible(approval: Approval): boolean {
   return false;
 }
 
-export type DisagreementKind = 'none' | 'verdict' | 'confidence' | 'both';
+/**
+ * How the two agents' positions relate. TRI-STATE, and the third arm is the
+ * point (ruling §P4.3).
+ *
+ *   `agree`          - both stated a verdict and they are the same verdict.
+ *   `diverge`        - both stated a verdict and they differ.
+ *   `not_comparable` - at least one side stated NO verdict. Not agreement, not
+ *                      dissent: nothing was compared.
+ *   `not_reviewed`   - no independent supervisor opinion is on this card at all.
+ *
+ * The first three are the server's own tokens, verbatim, from
+ * `banker-copilot-service/app/planner/verdicts.py::AGREEMENT_STATES`. The fourth
+ * is a client-side fact — whether a second column is on screen — and is never
+ * sent by anyone.
+ *
+ * What is deliberately GONE:
+ *
+ *   - `'confidence'` and `'both'`. They keyed on `Math.abs(pc - sc) >= 0.2`, a
+ *     numeric threshold on self-reported confidence. It fired on nothing while
+ *     the primary sent no confidence; the moment the primary got a real
+ *     assessment it started firing on the golden fixture (0.88 vs 0.62) and
+ *     turned a genuine verdict divergence into `'both'`. Confidence was measured
+ *     at 0.83-0.98 with NO separation between a stable case and a coin flip, so
+ *     ranking on it shows a human authority the number does not carry — and this
+ *     kind feeds `dwellRequirementMs`, so it GATED. Ruled out entirely: §P7.2(2),
+ *     nothing ranks, sorts, colour-scales or gates on that number.
+ *
+ *   - The client-side re-derivation of the comparison. The server computes
+ *     `compare_verdicts` and sends the result beside the two verdicts; deriving
+ *     it again here is a second definition of one rule in a second language,
+ *     which is exactly what "the verdict was renamed in transit" was.
+ */
+export type AgreementKind = 'agree' | 'diverge' | 'not_comparable' | 'not_reviewed';
 
 export interface Disagreement {
-  kind: DisagreementKind;
+  kind: AgreementKind;
+  /** True only for `agree`. Everything else must read as unresolved, never as consensus. */
+  concurs: boolean;
+  title: string;
   summary: string;
   divergentFactors: string[];
 }
 
+/** Why a side has no position, in its own words, naming the failure the server stated. */
+function noPositionReason(assessment: AgentAssessment | undefined, side: string): string | null {
+  if (!assessment) return `no ${side} assessment reached this card`;
+  if (assessment.failure) {
+    return assessment.failureReason
+      ? `the ${side} states ${assessment.failure} (${assessment.failureReason})`
+      : `the ${side} states ${assessment.failure}`;
+  }
+  if (normaliseVerdict(assessment.verdict) === null) {
+    return `the ${side} verdict read as ${verdictPresentation(assessment.verdict).label}`;
+  }
+  return null;
+}
+
 /**
- * Detects divergence between the primary and supervisor assessments.
+ * How the primary and supervisor positions relate, for rendering.
  *
- * Client-side derivation is acceptable here — and only here — because it is
- * descriptive rather than authoritative: it decides how loudly to render two
- * verdicts that are both already on screen. It grants nothing and gates nothing.
+ * Descriptive, not authoritative: it decides how loudly to render two positions
+ * that are both already on screen, and how long the dwell gate holds. It grants
+ * nothing.
+ *
+ * The comparison itself is NOT made here. `approval.assessmentAgreement` is the
+ * server's `compare_verdicts` result, sent under `agentAssessment.agreement`. An
+ * absent or unrecognised token is `not_comparable` — the one thing it may never
+ * become is `agree`.
  */
-export function disagreementOf(assessments: AgentAssessment[]): Disagreement {
+export function disagreementOf(approval: Pick<Approval, 'assessments' | 'assessmentAgreement'>): Disagreement {
+  const assessments = approval.assessments || [];
   const primary = assessments.find((a) => a.role === 'primary');
   const supervisor = assessments.find((a) => a.role === 'supervisor');
 
   if (!primary || !supervisor) {
-    return { kind: 'none', summary: '', divergentFactors: [] };
+    return {
+      kind: 'not_reviewed',
+      concurs: false,
+      title: 'No independent review on this request.',
+      summary:
+        'Only one agent has stated a position. Nothing here has been independently reviewed, and a single opinion is not a second one.',
+      divergentFactors: [],
+    };
   }
-
-  // Compare on the server's OWN vocabulary, not on raw wire strings. Two points:
-  //
-  //  1. A token that is not a verdict cannot be said to agree with anything. The
-  //     old `(a||'').toUpperCase() !== (b||'').toUpperCase()` reported AGREEMENT
-  //     when both sides were absent or unreadable — so a wholly broken pipeline
-  //     rendered as "Independent review reached the same verdict", which is the
-  //     single most dangerous sentence this component can display.
-  //  2. It also reported agreement between two *identical* unrecognised strings,
-  //     which is agreement by coincidence, not by review.
-  const primaryVerdict = normaliseVerdict(primary.verdict);
-  const supervisorVerdict = normaliseVerdict(supervisor.verdict);
-  const verdictUnreadable = primaryVerdict === null || supervisorVerdict === null;
-  const verdictDiffers = verdictUnreadable || primaryVerdict !== supervisorVerdict;
-
-  const pc = typeof primary.confidence === 'number' ? primary.confidence : undefined;
-  const sc = typeof supervisor.confidence === 'number' ? supervisor.confidence : undefined;
-  const confidenceDiffers = pc !== undefined && sc !== undefined && Math.abs(pc - sc) >= 0.2;
 
   const divergentFactors: string[] = [];
   const supervisorFactors = supervisor.keyFactors || [];
   const primaryFactors = primary.keyFactors || [];
-  // Factor-level divergence is only computable when BOTH agents stated factors.
-  //
-  // The primary structurally sends none — `loop.py` proposes with
-  // `agentAssessment: {summary, evidenceToolIds}` and `primary_wire_assessment`
-  // adds no factors — so `primaryFactors` was always empty, `match` was always
-  // undefined, and EVERY supervisor factor was pushed here and rendered bold red
-  // "← DIVERGENT". An indicator that fires on 100% of runs carries exactly zero
-  // information, and it fired hardest on the runs where the supervisor had
-  // returned nothing at all.
-  //
-  // Silence is the honest output when there is nothing to compare against. This
-  // is not the feature being deleted: the loop below is unchanged and lights up
-  // the moment the primary emits factors (named and deferred in the decision
-  // record — `loop.py`'s propose call is the site).
-  const comparable = supervisorFactors.length > 0 && primaryFactors.length > 0;
-  if (comparable) {
-    for (const factor of supervisorFactors) {
-      // The failsafe sentinel is not an opinion about the action, so it cannot
-      // diverge from one. It is rendered as a failed call in its own right.
-      if (isSupervisorUnavailable(factor)) continue;
-      const match = primaryFactors.find((f) => f.label === factor.label);
-      if (!match || Boolean(match.concern) !== Boolean(factor.concern)) {
-        divergentFactors.push(factor.label);
-      }
+  for (const factor of supervisorFactors) {
+    // The failsafe sentinel is not an opinion about the action, so it cannot
+    // diverge from one. It is rendered as a failed call in its own right.
+    if (isSupervisorUnavailable(factor)) continue;
+    const match = primaryFactors.find((f) => f.label === factor.label);
+    // TWO conditions, and the second one is the whole guard: divergence is
+    // claimed ONLY where both agents named the same factor AND both explicitly
+    // classified it, in opposite directions.
+    //
+    // What was here before, and why it had to go: `!match || Boolean(match.
+    // concern) !== Boolean(factor.concern)`. While the primary sent no factors
+    // at all, an outer `both sides stated factors` guard kept it silent — the
+    // comparison was safe by COINCIDENCE, not by construction. The primary now
+    // states factors, the outer guard opened, and `!match` immediately flagged
+    // every supervisor factor on the demo card: two independent models writing
+    // free-text labels essentially never choose the same words, so string
+    // equality on model prose returns "no match" ~100% of the time.
+    //
+    // A different choice of words is not a disagreement. Flagging it asserts a
+    // conflict nobody stated — the same fabrication as the `value` field that
+    // read "independently corroborated", in the loudest style the card has.
+    // `Boolean(undefined) !== Boolean(undefined)` was likewise always false, so
+    // the concern half never fired on its own either.
+    //
+    // So this now says only what can be known, and today that is nothing: no
+    // decider classifies its own factors, so it renders silent on live data and
+    // lights up the day one does. Silence is the honest output; an indicator
+    // that fires on every run costs the reader attention and teaches them to
+    // ignore the channel.
+    if (match && typeof match.concern === 'boolean' && typeof factor.concern === 'boolean') {
+      if (match.concern !== factor.concern) divergentFactors.push(factor.label);
     }
   }
 
-  const kind: DisagreementKind = verdictDiffers && confidenceDiffers
-    ? 'both'
-    : verdictDiffers
-      ? 'verdict'
-      : confidenceDiffers
-        ? 'confidence'
-        : 'none';
+  const stated = approval.assessmentAgreement;
 
-  const summary =
-    kind === 'none'
-      ? 'Independent review reached the same verdict.'
-      : verdictUnreadable
-        ? `A verdict could not be read (primary: ${verdictPresentation(primary.verdict).label}, supervisor: ${verdictPresentation(supervisor.verdict).label}). Treat this as unreviewed, not as agreement.`
-        : verdictDiffers
-          ? `Primary recommends ${verdictPresentation(primary.verdict).label}. Supervisor recommends ${verdictPresentation(supervisor.verdict).label}.`
-          : 'The two agents agree on the verdict but differ sharply in confidence.';
+  if (stated === 'agree') {
+    return {
+      kind: 'agree',
+      concurs: true,
+      title: 'Independent review reached the same verdict.',
+      summary: `Both agents recommend ${verdictPresentation(primary.verdict).label}. Agreement is not proof: both opinions came from the same base model on the same evidence.`,
+      divergentFactors,
+    };
+  }
 
-  return { kind, summary, divergentFactors };
+  if (stated === 'diverge') {
+    return {
+      kind: 'diverge',
+      concurs: false,
+      title: 'THE TWO AGENTS DISAGREE. A HUMAN MUST DECIDE.',
+      summary: `Primary recommends ${verdictPresentation(primary.verdict).label}. Supervisor recommends ${verdictPresentation(supervisor.verdict).label}.`,
+      divergentFactors,
+    };
+  }
+
+  // `not_comparable`, or the server said nothing. Both mean the same thing to a
+  // reader and neither may read as consensus: a dead pipeline is not a review.
+  const reasons = [noPositionReason(primary, 'primary agent'), noPositionReason(supervisor, 'supervisor')]
+    .filter((r): r is string => r !== null);
+  return {
+    kind: 'not_comparable',
+    concurs: false,
+    title: 'NOT INDEPENDENTLY REVIEWED — the two positions could not be compared.',
+    summary:
+      (reasons.length > 0
+        ? `No comparison was possible because ${reasons.join(', and ')}.`
+        : stated === undefined
+          ? 'The service did not state whether these two positions agree.'
+          : 'At least one agent stated no verdict.') +
+      ' Treat this as unreviewed. It is neither agreement nor dissent, and it is excluded from every agreement measurement.',
+    divergentFactors,
+  };
 }
 
 export interface DwellContext {
   approval: Approval;
-  disagreement: DisagreementKind;
+  disagreement: AgreementKind;
   /** True when this approval replaced another — dwell resets to full, no credit carried. */
   supersedes: boolean;
 }
@@ -241,7 +313,11 @@ export function dwellRequirementMs(ctx: DwellContext): number {
 
   let base: number;
   if (approval.requiredRung === 'L2' || approval.requiredSigners > 1) {
-    base = disagreement === 'none' ? dwellMs.l2Agree : dwellMs.l2Disagree;
+    // ONLY a stated `agree` earns the shorter dwell. `not_comparable` and
+    // `not_reviewed` are absences, and an absence buying a banker LESS reading
+    // time is the same bug as an absence rendering as consensus — one level
+    // down, on the gate instead of the banner.
+    base = disagreement === 'agree' ? dwellMs.l2Agree : dwellMs.l2Disagree;
   } else {
     base = isReversible(approval) ? dwellMs.l1Reversible : dwellMs.l1Irreversible;
   }

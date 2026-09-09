@@ -54,6 +54,7 @@ import {
   StreamStatus,
 } from './types';
 import {
+  AgreementKind,
   Disagreement,
   countMaterialChanges,
   diffPayloads,
@@ -67,7 +68,7 @@ import {
   terminalCopy,
   validateReason,
 } from './approvalPolicy';
-import { AuthorityRungChip, ApprovalCountdown, ConfidenceBar, PayloadHashChip } from './CopilotPrimitives';
+import { AuthorityRungChip, ApprovalCountdown, PayloadHashChip } from './CopilotPrimitives';
 import { verdictPresentation } from './supervisorVerdict';
 import { factorPresentation } from './supervisorFactors';
 import { getCopilotConfig } from '../../config/copilotConfig';
@@ -374,6 +375,51 @@ const EvidenceList: React.FC<{ approval: Approval; onOpen: (id: string) => void;
 // Agent opinions
 // ---------------------------------------------------------------------------
 
+/**
+ * The caveat travels with the number, because the number is the misleading part.
+ *
+ * Measured across 42 runs: min 0.83, median 0.94, max 0.98. The coin-flip case —
+ * identical bytes producing opposite verdicts — sat at 0.82-0.96, overlapping the
+ * rock-solid one. So it never goes low and it does not separate a stable case
+ * from an unstable one, while being shown to a human deciding whether to sign.
+ * It is displayed as PROSE and nothing else: no bar, no colour scale, no rank,
+ * no threshold (ruling §P7.2).
+ */
+export const SELF_REPORTED_CONFIDENCE_CAVEAT =
+  "The model's own stated confidence. It is not a reliability measure: observed 0.83-0.98 across every run, and identical inputs have produced opposite verdicts at overlapping values. Nothing on this screen is ranked, ordered or gated on it.";
+
+/**
+ * Attribution (§P7.1): which decider, which model, which exact bytes.
+ *
+ * The record cannot be reproducible — the call is nondeterministic — so it claims
+ * to be ATTRIBUTABLE instead. `mode` is the field that separates a judgement from
+ * a script, which is the exact confusion this whole feature was built to end, and
+ * the deployment id is how a reader sees for themselves that the "independent"
+ * second opinion came from the same base model as the primary.
+ */
+const AssessmentAttribution: React.FC<{ assessment: AgentAssessment }> = ({ assessment }) => {
+  const parts: string[] = [];
+  if (assessment.mode) parts.push(`mode ${assessment.mode}`);
+  if (assessment.modelDeployment) parts.push(assessment.modelDeployment);
+  if (assessment.promptSha256) parts.push(`prompt ${shortSha(assessment.promptSha256)}`);
+  if (assessment.responseSha256) parts.push(`reply ${shortSha(assessment.responseSha256)}`);
+  if (parts.length === 0) return null;
+  return (
+    <Typography
+      variant="caption"
+      data-testid={`assessment-attribution-${assessment.role ?? 'unknown'}`}
+      sx={{ display: 'block', mt: 1, color: 'text.secondary', fontFamily: 'monospace' }}
+    >
+      {parts.join(' · ')}
+    </Typography>
+  );
+};
+
+function shortSha(sha: string): string {
+  const hex = sha.startsWith('sha256:') ? sha.slice(7) : sha;
+  return hex.slice(0, 8);
+}
+
 const OpinionColumn: React.FC<{
   assessment: AgentAssessment;
   divergentFactors: string[];
@@ -404,9 +450,47 @@ const OpinionColumn: React.FC<{
           data-verdict-severity={verdict.severity}
         />
       </Tooltip>
-      {typeof assessment.confidence === 'number' && <ConfidenceBar value={assessment.confidence} />}
+      {typeof assessment.selfReportedConfidence === 'number' && (
+        <Tooltip title={SELF_REPORTED_CONFIDENCE_CAVEAT}>
+          <Typography
+            variant="caption"
+            data-testid={`self-reported-confidence-${assessment.role ?? 'unknown'}`}
+            aria-label={`self-reported confidence ${assessment.selfReportedConfidence.toFixed(2)}. ${SELF_REPORTED_CONFIDENCE_CAVEAT}`}
+            sx={{ color: 'text.secondary' }}
+          >
+            self-reported confidence {assessment.selfReportedConfidence.toFixed(2)}
+          </Typography>
+        </Tooltip>
+      )}
     </Stack>
+    {assessment.failure && (
+      <Alert
+        severity="error"
+        variant="outlined"
+        role="alert"
+        sx={{ mb: 1, py: 0 }}
+        data-testid={`assessment-failure-${assessment.role ?? 'unknown'}`}
+        data-failure={assessment.failure}
+      >
+        <Typography variant="caption" sx={{ fontWeight: 800 }}>
+          NO ASSESSMENT WAS FORMED — {assessment.failure}
+          {assessment.failureReason ? ` (${assessment.failureReason})` : ''}
+        </Typography>
+      </Alert>
+    )}
     {assessment.rationale && <Typography variant="body2">{assessment.rationale}</Typography>}
+    {assessment.unverified && assessment.unverified.length > 0 && (
+      <Stack spacing={0.25} sx={{ mt: 1 }}>
+        <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700 }}>
+          Could not be established from the evidence:
+        </Typography>
+        {assessment.unverified.map((item) => (
+          <Typography key={item} variant="caption" data-testid="unverified-row" sx={{ color: 'warning.main' }}>
+            ? {item}
+          </Typography>
+        ))}
+      </Stack>
+    )}
     {assessment.keyFactors && assessment.keyFactors.length > 0 && (
       <Stack spacing={0.25} sx={{ mt: 1 }}>
         {assessment.keyFactors.map((factor) => {
@@ -462,6 +546,7 @@ const OpinionColumn: React.FC<{
         })}
       </Stack>
     )}
+    <AssessmentAttribution assessment={assessment} />
   </Paper>
   );
 };
@@ -474,12 +559,37 @@ const OpinionColumn: React.FC<{
  * the screen. Doubled warning glyphs and the word DISAGREE carry it without
  * relying on the red.
  */
-const DisagreementBanner: React.FC<{ disagreement: Disagreement }> = ({ disagreement }) => {
-  if (disagreement.kind === 'none') return null;
+const BANNER: Record<AgreementKind, { severity: 'error' | 'warning' | 'success'; glyph: string }> = {
+  // `not_comparable` is error-severity ON PURPOSE, and it is not the mildest arm.
+  // The mild default is what caused the original defect: two ABSENT verdicts
+  // rendered "Independent review reached the same verdict". A dead pipeline must
+  // never be able to display as consensus, and it must not display as a shrug
+  // either — it is a broken control on an L2 banking action.
+  diverge: { severity: 'error', glyph: '⚠⚠' },
+  not_comparable: { severity: 'error', glyph: '⛔' },
+  not_reviewed: { severity: 'warning', glyph: '⛔' },
+  agree: { severity: 'success', glyph: '✓' },
+};
+
+const DisagreementBanner: React.FC<{ disagreement: Disagreement; showUnreviewed: boolean }> = ({
+  disagreement,
+  showUnreviewed,
+}) => {
+  // On an L1 card nobody promised an independent review, so its absence is not
+  // news. Everywhere a second opinion is expected, its absence is the headline.
+  if (disagreement.kind === 'not_reviewed' && !showUnreviewed) return null;
+  const banner = BANNER[disagreement.kind];
   return (
-    <Alert severity="error" icon={<WarningAmberIcon />} role="alert" sx={{ mb: 1 }}>
+    <Alert
+      severity={banner.severity}
+      icon={<WarningAmberIcon />}
+      role="alert"
+      sx={{ mb: 1 }}
+      data-testid="agreement-banner"
+      data-agreement={disagreement.kind}
+    >
       <AlertTitle sx={{ fontWeight: 800 }}>
-        ⚠⚠ THE TWO AGENTS DISAGREE. A HUMAN MUST DECIDE.
+        {banner.glyph} {disagreement.title}
       </AlertTitle>
       {disagreement.summary}
       {disagreement.divergentFactors.length > 0 && (
@@ -655,7 +765,7 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
   const [error, setError] = useState<string | undefined>(undefined);
 
   const terminal = approval.status === 'denied' || approval.status === 'executed';
-  const disagreement = useMemo(() => disagreementOf(approval.assessments), [approval.assessments]);
+  const disagreement = useMemo(() => disagreementOf(approval), [approval]);
   const isL2 = approval.requiredRung === 'L2' || approval.requiredSigners > 1;
 
   const dwellMs = useMemo(
@@ -691,17 +801,23 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
   const spotField = spotCheckRequired ? spotCheckField(approval) : undefined;
   const spotExpected = spotField ? spotCheckExpectedAnswer(spotField) : '';
 
-  // Low agent confidence already escalates the rung; it should also force the
-  // evidence panel open. The cases where the agent is least sure are exactly the
-  // ones a fatigued human waves through, because they look like every other card.
-  const lowestConfidence = approval.assessments.reduce<number>(
-    (min, a) => (typeof a.confidence === 'number' ? Math.min(min, a.confidence) : min),
-    1
-  );
-  const evidenceDefaultOpen = lowestConfidence < 0.75 || disagreement.kind !== 'none';
+  // The evidence panel opens whenever the two positions did not concur — which
+  // includes the case where one of them does not exist.
+  //
+  // What used to be here: `lowestConfidence < 0.75 || ...`. That was a numeric
+  // threshold on self-reported confidence deciding what a banker is shown, i.e.
+  // something hidden or revealed because a number crossed a line, on a number
+  // measured at 0.83-0.98 that never crossed it. Ruled out (§P7.2(2)): the
+  // threshold is gone rather than retuned, because there is no honest value for
+  // it. `concurs` is true only for a stated `agree`.
+  const evidenceDefaultOpen = !disagreement.concurs;
 
+  // An override justification is required whenever a supervisor opinion was
+  // expected and the two did not concur. `not_comparable` counts: signing past a
+  // review that never happened deserves at least as much of a stated reason as
+  // signing past one that disagreed.
   const overrideRequired =
-    isL2 && disagreement.kind !== 'none' && approval.assessments.some((a) => a.role === 'supervisor');
+    isL2 && !disagreement.concurs && approval.assessments.some((a) => a.role === 'supervisor');
   const overrideValid = !overrideRequired || validateReason(override, config.overrideJustificationMinLength).valid;
 
   const streamSafe = canSignUnderStream(streamStatus);
@@ -833,7 +949,7 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
       {approval.assessments.length > 0 && (
         <>
           <Divider sx={{ my: 1 }} />
-          <DisagreementBanner disagreement={disagreement} />
+          <DisagreementBanner disagreement={disagreement} showUnreviewed={isL2} />
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
             {approval.assessments.map((assessment) => (
               <OpinionColumn

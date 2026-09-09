@@ -222,11 +222,69 @@ export interface AgentAssessment {
   agentName?: string;
   role?: 'primary' | 'supervisor';
   verdict?: string;
-  confidence?: number;
+  /**
+   * The model's OWN stated confidence. Named for what it is (ruling §P7.2(3)):
+   * measured 0.83–0.98 across 42 runs, with identical inputs producing opposite
+   * verdicts at overlapping values. It never goes low and it does not separate a
+   * stable case from a coin flip.
+   *
+   * **Nothing may rank, sort, colour-scale, gate, hide or reveal on this number.**
+   * It is prose, and it earns its place only beside `unverified`. The wire still
+   * spells it `confidence` — that rename is deferred to §P9 and is pinned by
+   * `selfReportedConfidence.contract.test.ts`, which fails loudly on the day the
+   * server renames it rather than letting the field quietly go blank.
+   */
+  selfReportedConfidence?: number;
   rationale?: string;
   keyFactors?: AgentKeyFactor[];
   citedEvidenceIds?: string[];
+  /**
+   * What this agent could NOT establish from the evidence. Optional, because
+   * absent is honest and an empty-string filler is not.
+   */
+  unverified?: string[];
+  /**
+   * A POSITIVE statement that no assessment was formed, and which kind of failure
+   * it was: `primary_unavailable` (not reached / did not answer) or
+   * `primary_assessment_invalid` (a reply arrived and violated the contract).
+   *
+   * Read from the wire rather than inferred from a missing `verdict`. Every field
+   * here is optional, so an absence renders as blank — and a blank is what a
+   * renderer is left to *interpret*. The failure has to be a value.
+   */
+  failure?: string;
+  /** The specific named reason, e.g. `primary_mode_deterministic`. */
+  failureReason?: string;
+  /**
+   * Attribution (§P7.1). The record cannot be reproducible — identical bytes
+   * produce split verdicts — so its job is to be *attributable*: which decider,
+   * which model, which exact bytes. Carried on BOTH assessments so a reader can
+   * see for themselves whether the "independent" second opinion came from the
+   * same base model as the primary.
+   */
+  mode?: string;
+  modelDeployment?: string;
+  promptSha256?: string;
+  responseSha256?: string;
 }
+
+/**
+ * Tri-state, and SERVER-STATED (ruling §P4.3).
+ *
+ * Not a boolean. A boolean has two arms and this comparison has three cases, so
+ * the third has to land on one of the other two — and whichever it lands on is a
+ * claim the system is not entitled to make. `false` reports a dead pipeline as
+ * dissent; `true` reports it as consensus, which is the sentence this card has
+ * already rendered over two absent verdicts.
+ *
+ * The tokens are the server's, verbatim: `banker-copilot-service/app/planner/
+ * verdicts.py::AGREEMENT_STATES`. A second definition of this rule in a second
+ * language is what "the verdict was renamed in transit" was, so the client does
+ * not re-derive the comparison — it reads what the server computed.
+ */
+export type AgreementState = 'agree' | 'diverge' | 'not_comparable';
+
+export const AGREEMENT_STATES: AgreementState[] = ['agree', 'diverge', 'not_comparable'];
 
 export interface EvidenceRef {
   id: string;
@@ -251,6 +309,12 @@ export interface Approval {
   evidence: EvidenceRef[];
   /** Primary always; supervisor present only at L2 once it has formed an opinion. */
   assessments: AgentAssessment[];
+  /**
+   * The server's own tri-state comparison of the two verdicts, sent beside them
+   * under `agentAssessment.agreement`. Absent until the supervisor has run — and
+   * absent is NOT agreement.
+   */
+  assessmentAgreement?: AgreementState;
   /** The signature binds to THIS hash — not to the intent. Always rendered. */
   payloadHash: string;
   /** Server-computed truncation. Never truncate the hash client-side. */

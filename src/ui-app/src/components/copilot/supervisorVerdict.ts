@@ -21,10 +21,22 @@
  *                     verdict is how this bug class survives.
  *
  * The vocabulary below is the server's, verbatim and complete:
- *   `banker-copilot-service/app/planner/supervisor_model.py::RECOMMENDATIONS`
+ *   `banker-copilot-service/app/planner/verdicts.py::RECOMMENDATIONS`
  *   = ("proceed", "hold", "decline")
  * If the server can emit a token this file has no case for, that token renders
  * loudly as unrecognised — never as the mildest verdict, and never silently.
+ *
+ * It lived in `supervisor_model.py` until the primary agent gained a real
+ * assessment and a SECOND agent started stating verdicts; it then moved to a
+ * neutral home. This comment cited the old path for exactly as long as it took
+ * somebody to notice, which is the argument for
+ * `__tests__/verdictVocabulary.contract.test.ts`: a comment cannot go stale in a
+ * way a suite notices, so the list is now pinned against the real Python.
+ *
+ * Both agents key on this file. The names `SERVER_VERDICTS` and
+ * `verdictPresentation` are deliberately not supervisor-specific — there is ONE
+ * vocabulary, and a per-agent presentation table would be the translation table
+ * that caused the original defect, wearing a plural.
  */
 
 /** The server's verdict vocabulary, in ASCENDING order of objection. */

@@ -9,7 +9,7 @@
  */
 
 import React from 'react';
-import { Box, Chip, LinearProgress, Tooltip, Typography } from '@mui/material';
+import { Box, Chip, Tooltip, Typography } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
@@ -157,35 +157,24 @@ export const NodeStatusGlyph: React.FC<{ status: NodeStatus }> = ({ status }) =>
 
 // ---------------------------------------------------------------------------
 
-interface ConfidenceBarProps {
-  value: number;
-  label?: string;
-}
-
-/**
- * Confidence rendered as a comparable bar, not a decimal buried in prose.
+/*
+ * `ConfidenceBar` was here.
  *
- * The uncomfortable case this exists for: the supervisor agent being MORE
- * confident in the opposite direction. That fact is the most decision-relevant
- * thing on an L2 disagreement screen and it must be visible at a glance.
+ * It rendered self-reported confidence as a proportional bar, and its own
+ * docstring stated the reason: "the supervisor agent being MORE confident in the
+ * opposite direction ... must be visible at a glance." That is a RANKING of two
+ * numbers, presented as the most decision-relevant thing on the screen.
+ *
+ * The number does not support it. Measured across 42 runs: 0.83-0.98, with the
+ * coin-flip case (identical bytes, opposite verdicts) overlapping the rock-solid
+ * one. A bar invites a human to compare two values that carry no separation, on
+ * the screen where they decide whether to sign.
+ *
+ * Deleted rather than left unused (ruling §P7.2(2)): the number is still shown,
+ * as prose, named `self-reported confidence`, with the measured caveat attached.
+ * A component whose whole purpose is to make a forbidden comparison easy is a
+ * component that comes back.
  */
-export const ConfidenceBar: React.FC<ConfidenceBarProps> = ({ value, label }) => {
-  const pct = Math.round(Math.min(1, Math.max(0, value)) * 100);
-  return (
-    <Box sx={{ minWidth: 140 }}>
-      <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-        {label ? `${label} ` : ''}
-        confidence {value.toFixed(2)}
-      </Typography>
-      <LinearProgress
-        variant="determinate"
-        value={pct}
-        aria-label={`confidence ${pct} percent`}
-        sx={{ height: 6, borderRadius: 3 }}
-      />
-    </Box>
-  );
-};
 
 // ---------------------------------------------------------------------------
 

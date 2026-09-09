@@ -97,40 +97,56 @@ export const demoApproval: Approval = {
       excerpt: 'Three or more transfers within 72h aggregating above $20,000.',
     },
   ],
+  // Every field below is a field the REGENERATED GOLDEN WIRE FIXTURE
+  // (`tests/fixtures/copilot-wire-envelopes.json`) actually carries, and
+  // `demoFixtureShape.test.ts` fails if this fixture ever invents one that the
+  // service does not send. Three separate defects on this card came from this
+  // fixture teaching the UI a shape the service has never produced, so the rule
+  // is now held by a test instead of by a comment.
   assessments: [
     {
-      agentId: 'agent_primary',
-      agentName: 'Transaction review',
+      // No `agentId`: the golden wire's primary assessment carries none. The
+      // supervisor's is `run_demo::supervisor`, derived from its subagent run id;
+      // the primary is the run itself and has no separate one.
+      agentName: 'Primary agent',
       role: 'primary',
       // The action is `transaction.hold.place`. The primary PROPOSED it, so its verdict is
       // `proceed` — proceed with placing the hold. Prose verdicts ("Recommend hold") were
       // invented vocabulary the server never emits, and on an adverse action they read
       // backwards: "hold" is the noun in the action, not the verdict.
       verdict: 'proceed',
+      // The primary now makes a REAL model-backed assessment, so it states its own
+      // confidence, its own factors and what it could not establish. Until this week it
+      // emitted only `{summary, evidenceToolIds}` and this fixture deliberately carried
+      // neither, because inventing them is what taught the UI a shape that did not exist.
+      // They are here now because the wire carries them — not because the card looks
+      // better with them.
+      selfReportedConfidence: 0.88,
       rationale:
         'Amounts sit just under the $8,500 single-wire review threshold and aggregate above the AML-14 structuring trigger.',
-      // No `keyFactors` and no `confidence` — DELIBERATELY, because the service sends
-      // neither. `loop.py` proposes with `agentAssessment: {summary, evidenceToolIds}`
-      // and `primary_wire_assessment` adds verdict/rationale/citedEvidenceIds only.
-      //
-      // The fixture used to invent both: three `{label, value, concern}` measurement
-      // pairs and a 0.81 confidence. That is what taught the UI a shape the service has
-      // never produced — and it made `divergentFactors` (which compares against these)
-      // and the confidence comparison look exercised when live they are respectively
-      // stuck-on and dead. Both are named and deferred in the decision record. This card
-      // is asymmetric because the PRODUCT is asymmetric; papering over that with fixture
-      // data is how the gap stayed invisible.
+      keyFactors: [
+        // `{label, citedEvidenceIds}`. No `value` and no `concern`: a flat model factor is
+        // a statement, not a dimension-and-measurement pair, and the builder has no
+        // parameter for either.
+        { label: 'amounts reconcile against the flagged transaction record' },
+        { label: 'aggregate crosses the AML-14 structuring trigger' },
+      ],
+      unverified: ["the beneficiary's identity could not be established"],
       citedEvidenceIds: ['ev_1', 'ev_3'],
+      mode: 'foundry',
+      modelDeployment: 'gpt-4o-banker',
+      promptSha256: 'sha256:5772aae6c2733eddaae29ee24193f56311e01ab7a5a30f513472ae86fa6ca0cc',
+      responseSha256: 'sha256:36903754aa4b4e04e8516e7c8acfc524b34641adb6d82333317a71b235f25efa',
     },
     {
       agentId: 'agent_supervisor',
-      agentName: 'Independent review',
+      agentName: 'Independent supervisor',
       role: 'supervisor',
       // "Recommend release" argued AGAINST placing the hold — that is `decline`, the
       // strongest objection available, not a mild condition. Under the old label adapter
       // this exact opinion reached the screen as "CONDITIONAL".
       verdict: 'decline',
-      confidence: 0.62,
+      selfReportedConfidence: 0.62,
       rationale:
         'Counterparty is a freight vendor and the customer runs a haulage business; the pattern matches invoice settlement, not structuring.',
       keyFactors: [
@@ -143,8 +159,19 @@ export const demoApproval: Approval = {
         { label: 'pattern matches invoice settlement' },
       ],
       citedEvidenceIds: ['ev_2'],
+      // NO attribution block, and that asymmetry is real rather than an oversight.
+      // `supervisor_wire_assessment` spreads attribution only when the decider
+      // supplied one, and the golden capture's supervisor supplies none. Adding a
+      // plausible-looking `modelDeployment` here would show a reader that the two
+      // opinions came from the same base model — a fact this fixture cannot know
+      // and the capture does not state. That invention is precisely the bug this
+      // fixture has now produced three times.
     },
   ],
+  // SERVER-STATED, never re-derived here. `fanout.py` puts `compare_verdicts`'
+  // result on the wire beside the two verdicts; a fixture with two assessments
+  // and no `agreement` is a shape the service never emits.
+  assessmentAgreement: 'diverge',
   payloadHash: '9f2c4a7b1e8d3f60a5c2b9e4d7f1a8c3b6e9d2f5a8c1b4e7d0f3a6c9b2e5d8f1',
   payloadHashShort: '9f2c4a7b',
   policyVersion: 'policy-2026.05.1',

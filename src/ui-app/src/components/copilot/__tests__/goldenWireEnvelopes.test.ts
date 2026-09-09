@@ -75,11 +75,21 @@ describe('golden wire envelopes -> SSE pipeline -> store', () => {
     const aa = dualShaped!.payload.approval!.agentAssessment as {
       primary: { verdict?: string };
       supervisor: { verdict?: string };
+      agreement?: string;
     };
     // The raw bytes must disagree, or the pipeline assertion proves nothing.
     expect((aa.primary.verdict || '').toUpperCase()).not.toBe(
       (aa.supervisor.verdict || '').toUpperCase()
     );
+    // BOTH sides must actually hold a verdict, or "disagreement" is really
+    // `not_comparable` wearing a different hat. Until this week the primary sent
+    // none and this assertion could not have been written.
+    expect(aa.primary.verdict).toBeTruthy();
+    expect(aa.supervisor.verdict).toBeTruthy();
+    // And the SERVER must be the one saying they diverge. If `fanout.py` ever
+    // stops sending `agreement`, the card falls back to `not_comparable` forever
+    // — safe, but silent. This is where that goes loud.
+    expect(aa.agreement).toBe('diverge');
   });
 
   it('routes approval payloads through toApproval (client shape, not wire shape)', () => {
@@ -114,9 +124,40 @@ describe('golden wire envelopes -> SSE pipeline -> store', () => {
     expect(roles).toContain('primary');
     expect(roles).toContain('supervisor');
 
-    const disagreement = disagreementOf(approval.assessments);
+    const disagreement = disagreementOf(approval);
     // The flagship demo moment: proven against the backend's own bytes.
-    expect(disagreement.kind).not.toBe('none');
-    expect(disagreement.kind).toBe('verdict');
+    expect(disagreement.kind).toBe('diverge');
+    expect(disagreement.concurs).toBe(false);
+    // The server's own token survived the trip. Dropping it is how the card
+    // would go back to deciding agreement for itself in a second language.
+    expect(approval.assessmentAgreement).toBe('diverge');
+  });
+
+  it('carries the primary REAL assessment the service now produces — not just an echo', () => {
+    // Until this week the primary emitted `{summary, evidenceToolIds}` and the
+    // wire adapter DEFAULTED a "proceed" verdict onto it. Every field asserted
+    // here is read off the regenerated golden bytes, so it cannot pass on a
+    // shape the service does not produce.
+    const { state } = replayThroughSsePipeline();
+    const approval = state.approvals[goldenEnvelopes[0].payload.approval!.id as string];
+    const primary = approval.assessments.find((a) => a.role === 'primary')!;
+
+    expect(primary.verdict).toBeTruthy();
+    expect(primary.rationale).toBeTruthy();
+    expect(typeof primary.selfReportedConfidence).toBe('number');
+    expect(primary.keyFactors!.length).toBeGreaterThan(0);
+    // Grounding (§P3): the primary states factors as flat LABELS. A `value` is a
+    // measurement it never took, and a `concern` is a classification it never
+    // made. Neither may ever appear, on either side.
+    for (const assessment of approval.assessments) {
+      for (const factor of assessment.keyFactors || []) {
+        expect(factor.value).toBeUndefined();
+        expect(factor.concern).toBeUndefined();
+      }
+    }
+    // Attribution (§P7.1): which decider, which model, which exact bytes.
+    expect(primary.mode).toBeTruthy();
+    expect(primary.promptSha256).toMatch(/^sha256:/);
+    expect(primary.responseSha256).toMatch(/^sha256:/);
   });
 });

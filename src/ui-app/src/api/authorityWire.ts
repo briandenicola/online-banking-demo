@@ -21,6 +21,8 @@ import {
   ApprovalState,
   AgentAssessment,
   AgentKeyFactor,
+  AgreementState,
+  AGREEMENT_STATES,
   AuthorityRung,
   Escalator,
   EvidenceRef,
@@ -263,6 +265,26 @@ function toKeyFactors(raw: unknown): AgentKeyFactor[] | undefined {
   return factors;
 }
 
+function toStringList(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out = raw.filter((v): v is string => typeof v === 'string' && v.trim() !== '');
+  return out.length > 0 ? out : undefined;
+}
+
+/**
+ * The server's tri-state comparison, read rather than re-derived.
+ *
+ * An unknown token is NOT coerced to a state. `undefined` here means "the server
+ * did not state whether these two agree", and the card renders that as its own
+ * thing — never as agreement.
+ */
+function toAgreement(raw: Record<string, unknown> | null | undefined): AgreementState | undefined {
+  const token = raw && typeof raw === 'object' ? raw.agreement : undefined;
+  return typeof token === 'string' && (AGREEMENT_STATES as string[]).includes(token)
+    ? (token as AgreementState)
+    : undefined;
+}
+
 function toAssessments(raw: Record<string, unknown> | null | undefined): AgentAssessment[] {
   if (!raw || typeof raw !== 'object') return [];
 
@@ -274,7 +296,14 @@ function toAssessments(raw: Record<string, unknown> | null | undefined): AgentAs
     agentName: typeof value.agentName === 'string' ? value.agentName : undefined,
     role,
     verdict: typeof value.verdict === 'string' ? value.verdict : undefined,
-    confidence:
+    // The wire still spells this `confidence`; the client calls it what it is.
+    // The rename crosses the language boundary and the golden wire, so the ruling
+    // defers it (§P7.2(3), §P9) — but the caveat belongs on the name a reader
+    // sees, so the client-side rename happens now and ONE key is read, not two.
+    // Tolerating both spellings would be the `policyVersion` seam again; instead
+    // `selfReportedConfidence.contract.test.ts` fails loudly the day the server
+    // renames, rather than letting the number silently vanish from the card.
+    selfReportedConfidence:
       typeof value.confidence === 'number'
         ? value.confidence
         : typeof value.confidence === 'string'
@@ -285,6 +314,17 @@ function toAssessments(raw: Record<string, unknown> | null | undefined): AgentAs
     citedEvidenceIds: Array.isArray(value.citedEvidenceIds)
       ? (value.citedEvidenceIds as string[])
       : undefined,
+    unverified: toStringList(value.unverified),
+    // A stated failure, not an absence a renderer is left to interpret.
+    failure: typeof value.failure === 'string' && value.failure.trim() !== '' ? value.failure : undefined,
+    failureReason:
+      typeof value.failureReason === 'string' && value.failureReason.trim() !== ''
+        ? value.failureReason
+        : undefined,
+    mode: typeof value.mode === 'string' ? value.mode : undefined,
+    modelDeployment: typeof value.modelDeployment === 'string' ? value.modelDeployment : undefined,
+    promptSha256: typeof value.promptSha256 === 'string' ? value.promptSha256 : undefined,
+    responseSha256: typeof value.responseSha256 === 'string' ? value.responseSha256 : undefined,
   });
 
   const out: AgentAssessment[] = [];
@@ -350,6 +390,7 @@ export function toApproval(wire: WireApproval): Approval {
     rawPayload: wire.payload || {},
     evidence: toEvidence(wire.evidence),
     assessments: toAssessments(wire.agentAssessment),
+    assessmentAgreement: toAgreement(wire.agentAssessment),
     payloadHash: wire.payloadHash,
     payloadHashShort: wire.payloadHashShort,
     policyVersion: wire.policyVersion,
