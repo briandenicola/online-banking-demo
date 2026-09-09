@@ -354,3 +354,92 @@ undeployable; verified rather than assumed.
 ## 2026-09-08 — Gate B ruling: evidence contract architecture
 
 Gate B (evidence completeness validation) has been ruled on by Danny. Full ruling: `docs/design/gate-b-evidence-contract-ruling.md`. Turk owns implementation of the declared-projection adapter across `config/copilot-tools.yaml`, `executor.py`, and the C# seam test in `authority-service.UnitTests`. Livingston owns fixture validation and measurement of the two-tool subset (`get_account`, `list_account_transactions`). Both gates (A + B) must pass before the co-signature feature can execute in production.
+
+## 2026-09-09 — the guard shouted about the wrong thing
+
+48. **My own principle, inverted, cost Brian a morning.** I built the propose-path probe to stop
+    a fake success — writing approval rows straight into the store would put cards on screen
+    while the pipeline stayed dead. It then produced a **fake failure**, which is the same defect
+    class: *a signal that is not specific to the thing that was supposed to fail.* The probe
+    inspected the RAW upstream response shape and predicted `evidence_incomplete`. Turk's declared
+    `evidenceProjection` (`0e19c15`) reshapes both reads INSIDE the executor, so the raw shape has
+    not needed to satisfy `EvidenceComplete` since that commit. The prediction outlived the defect,
+    the seeder refused to seed, and a real operator read a false blocker as a real one. Proof the
+    gate was open the whole time: `run_b3022efa254d4dcb` completed end to end through exactly the
+    two tools I was failing, and Livingston then drove 42 more.
+
+49. **A predictive guard has a shelf life; a driven one does not.** The rule I will apply from now
+    on: *if a check can be performed by DOING the thing, doing it is the only honest form of the
+    check.* The probe now logs in, opens a copilot session, starts a run, and reads the trace
+    back. It cannot go stale against a fix, because it has no model of what should happen — it
+    reports what did. The upgrade is not only in correctness: the failure output got **better**,
+    because `run.error` carries the service's own `code` and `message` and `tool.failed` carries
+    the upstream status. A real refusal beats a prediction of one as a diagnostic every time.
+
+50. **Classify on the positive frame, and never let a consequence wear the cause's name.** Success
+    is `approval.required`, not the absence of an error and not the terminal status field — a run
+    that dies before emitting anything has no errors either. And when a read has already failed,
+    every `run.error` after it is a CONSEQUENCE: my first cut labelled a downstream
+    `evidence_unavailable` as `[GATE B]` while the real cause was a 403 two frames earlier. That
+    is the identical defect at line level. `gate-b` now means only *the reads worked and the
+    contract still refused*.
+
+51. **`show` must not write, so it must not probe by default.** The only honest probe CREATES an
+    approval. Rather than let a verb named `show` quietly write, probing is opt-in (`-- --probe`)
+    and its absence is printed as an absence: "this run did not check; nothing above is evidence
+    that the propose path is open." An unstated non-check reads exactly like a pass.
+
+52. **Waiting for *anything* instead of the thing you need — the same defect, in the poll loop.**
+    `collect_ai_subjects` broke when `length(all scored) >= min_required`. Scored records outlive
+    the identities that produced them, so fifty orphans cleared the threshold instantly, the loop
+    never waited for THIS run's transactions to be scored, and the run died three lines later at
+    the ownership filter with "none belong to an account owned by a customer this run seeded" —
+    a message that reads like a data-store problem and is really a wait that ended early. It now
+    waits on the seeded-owned count, resolved once before the loop, and the two failure modes
+    (nothing scored at all / nothing scored that is ours) say different things.
+
+53. **When data has to be shaped so a defect does not show, the workaround has become the design.**
+    I gave the banker four accounts because `get_account`/`GetAccountTransactions` were
+    owner-scoped, and I filed that as lesson 44 — a service fact to design around. It was a
+    service *defect*: `GetAccountTransactions` filtered by the CALLER's userId and answered `200
+    []` for anyone else's account, a success asserting a falsehood. My data shape made it
+    invisible. Per Danny's ruling §B6 the accounts now belong to Casey and Dana, the banker owns
+    none, and the guard test asserts the old shape's **absence** — "so nothing can quietly fall
+    back." Lesson 44 is hereby superseded, and the general form is worth more than the specific
+    one: *a dataset that exists to keep a check green is evidence about the code, not about the
+    data.*
+
+54. **Preserve the shape, move the ownership.** The empty account, the near-threshold deposits and
+    the three near-identical credits are not decoration — Livingston measured the supervisor
+    reasoning about real ledger contents (it proceeded on an account that genuinely held three
+    duplicate credits and held on one that did not). A reseed that "tidied" those away would have
+    silently deleted the measurement's subject. The dataset now says so in `_accountComment`, and
+    a guard asserts the deliberately-empty account still has both a zero balance and zero
+    transactions.
+
+55. **A dataset invariant that is only true by luck will not stay true.** With ownership moved,
+    Casey nearly ended up with two Checking accounts — and `seed_accounts` claims "the first
+    unclaimed account of this type" while `demo:show` re-derives the evidence subject by type
+    alone. "Which account" would have silently depended on server ordering, differently per
+    environment. Fixed by making each owner's account types unique AND asserting it, rather than
+    by writing more clever matching code.
+
+56. **Money on this wire is a decimal STRING, and the scale belongs to the policy.** A JSON number
+    in a money position is refused `payload_not_canonicalizable` by the Canonicalizer before the
+    request leaves banker-copilot-service. The probe amount is derived live from
+    `balance_adjustment_dual_control_amount` and formatted at the scale the policy PUBLISHES
+    (`"1000.00"` -> 2 decimals), with `LC_ALL=C` on the `printf` so a comma separator cannot be
+    emitted into a money field. Deriving the scale is the difference between following the policy
+    and restating it. It also has to land ABOVE the line: below it the action is L1 and the
+    supervisor fan-out never runs, so the probe would prove less than it appears to.
+
+**Environment limits (stated, not glossed):** `jq`, `curl`, `python3` and `bash` are present, so
+`tests/demo/test-demo-dataset.sh` was actually run and passes, and every new guard was
+tamper-tested (banker-owned account, probe reverted to shape inspection, duplicate account type
+under one owner — each fails). The new probe was exercised end to end against a **mock copilot
+API** across open / refused-read / evidence-refusal / non-evidence-refusal / silent-run /
+session-401 / timeout, and the request body was captured to confirm `amount` goes out as
+`"2500.00"`. What I could NOT verify: anything against the live cluster. I ran read-only checks
+only (`/api/auth/login` exists, `/api/users/login` is 405, `/api/copilot/sessions` is 401) and
+drove **no seed run and created no approval**, because that needs Brian's approval and the
+banker-read fix is still in flight. Task 3 is therefore correct-by-ruling, not verified-by-run.
