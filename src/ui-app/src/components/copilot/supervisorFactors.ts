@@ -46,6 +46,20 @@ import { AgentKeyFactor } from './types';
  */
 export const SUPERVISOR_UNAVAILABLE_FACTOR = 'supervisor_unavailable';
 
+/**
+ * Rendered where the `← DIVERGENT` flags would have been, when the primary stated
+ * no key factors and so nothing could be compared against.
+ *
+ * Wording note: Danny's §F5 offers this "something of the form: *Factor comparison
+ * unavailable — the primary agent does not emit key factors.*" The second clause is
+ * stated run-scoped here instead, because `primary_model.py` now DOES parse and emit
+ * `keyFactors` on the happy path — it is an assessment this run did not produce, not
+ * a capability the service lacks. Saying the stronger thing would be the same class
+ * of error the ruling exists to remove: a label asserting more than is known.
+ */
+export const FACTOR_COMPARISON_UNAVAILABLE =
+  'Factor comparison unavailable — the primary agent stated no key factors.';
+
 export interface FactorPresentation {
   /** The agent's own statement — the row's main text. */
   text: string;

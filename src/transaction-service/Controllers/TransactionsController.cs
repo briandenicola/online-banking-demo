@@ -92,8 +92,15 @@ public class TransactionsController : ControllerBase
             // EMPTY result therefore proves nothing about entitlement, so it cannot be the
             // table's "permitted and empty" row. Answering `200 []` on it would rebuild the
             // exact defect §B2.2 deletes: a true-looking answer produced by an accident of the
-            // query. It errs closed, and it costs no shipping caller — the copilot always holds
-            // `banker`, and no other caller in the repo uses this endpoint.
+            // query. It errs closed, and it costs no PRODUCT caller: there is no ui-app caller and
+            // no other service caller, and the copilot reads this with the invoking banker's token,
+            // which holds `banker`. Blast radius, as the search that produced it —
+            //   grep -rn "transactions/account" src/ scripts/ tests/ config/ infra/ .github/ Taskfile.yml
+            // at be6ba88: the only non-privileged callers in the repo were four sites in
+            // scripts/demo/demo.sh (~401, ~627, ~642, ~1271), all on customer tokens, which this
+            // narrowing broke and which now read their own rows via GET /api/transactions/my.
+            // An earlier version of this comment claimed no other caller in the repo used this
+            // endpoint; that search covered only src/, and searching src/ is not searching the repo.
             _logger.LogWarning(
                 "Denied read of transactions for account {AccountId}: caller is neither the owner nor a banker/supervisor.",
                 accountId);

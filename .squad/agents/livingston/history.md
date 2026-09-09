@@ -1335,3 +1335,12 @@ be asked for it.
 
 **⚠️ Critical for your test suite:** Three policy actions now gather one more piece of evidence than before — `transaction.flag.review`, `transaction.score.override`, `transfer.reversal.execute` all require `get_account` alongside `list_account_transactions` per ruling §B3.2. The reseed moved the accounts under test, so your previous 42 runs do not survive it. Authority-service validates this requirement at startup; deploy will abort if policy violates it.
 
+
+---
+
+**2026-09-09 (Scribe)** — Rulings and empty-ledger fix committed. Brian's reseed path is now unblocked. Rusty moved all four `demo.sh` customer-token call sites from `GET /api/transactions/account/{id}` to `GET /api/transactions/my` (works on empty ledger with owner's own token). Two independent guards (textual + behavioural idempotency sim); no Azure writes; no kubectl mutations; no redeploy required.
+
+Danny's three rulings stand: §B2.2 narrowing correct, §E probe idempotency correct, §F silence requires visibility. All decisions merged to canonical ledger at `.squad/decisions.md`.
+
+**Stage 1 measurement is the next gate.** Measure harness correctness after reseed completes.
+

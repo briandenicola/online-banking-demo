@@ -13,7 +13,7 @@ import { cleanup, render, within } from '@testing-library/react';
 import ApprovalCard from '../ApprovalCard';
 import { CopilotProvider } from '../CopilotContext';
 import { demoApproval } from '../demoFixture';
-import { SUPERVISOR_UNAVAILABLE_FACTOR } from '../supervisorFactors';
+import { SUPERVISOR_UNAVAILABLE_FACTOR, FACTOR_COMPARISON_UNAVAILABLE } from '../supervisorFactors';
 import { AgentKeyFactor, Approval } from '../types';
 
 function renderWithFactors(
@@ -145,6 +145,52 @@ describe('the key factor row', () => {
         [{ label: 'aggregate', concern: true }]
       );
       expect(c.textContent).not.toContain('DIVERGENT');
+    });
+  });
+
+  describe('when the comparison could not run at all', () => {
+    // The point: an indicator that renders NOTHING is indistinguishable from one
+    // that compared the two sides and found them consistent. "We could not check"
+    // must never wear the face of "we checked and it was fine" on a card a
+    // supervisor reads. Same principle as `supervisor_unavailable` — a call that
+    // did not happen may not render as a quiet pass.
+    it('says so in the indicator\'s place when the primary stated no factors', () => {
+      const c = renderWithFactors([{ label: 'pattern matches invoice settlement' }], undefined);
+      const label = within(c).getByTestId('factor-comparison-unavailable');
+      expect(label.textContent).toContain(FACTOR_COMPARISON_UNAVAILABLE);
+      expect(c.textContent).not.toContain('DIVERGENT');
+    });
+
+    it('is informational, not the error colour reserved for a failed supervisor call', () => {
+      const c = renderWithFactors([{ label: 'pattern matches invoice settlement' }], undefined);
+      const label = within(c).getByTestId('factor-comparison-unavailable');
+      // Legible on its own, not tucked into a tooltip or an expandable.
+      expect(label).toBeVisible();
+      expect(label.getAttribute('aria-label')).toBe(FACTOR_COMPARISON_UNAVAILABLE);
+    });
+
+    it('stays quiet when both sides DID state factors (anti-vacuous)', () => {
+      // Without this, an unconditional label would pass the test above and the card
+      // would claim it could not compare on every run — the always-fires defect
+      // this whole change exists to avoid, in a politer font.
+      const c = renderWithFactors([{ label: 'aggregate' }], [{ label: 'aggregate' }]);
+      expect(within(c).queryByTestId('factor-comparison-unavailable')).not.toBeInTheDocument();
+    });
+
+    it('stays quiet on the shipped demo approval, where both agents state factors', () => {
+      cleanup();
+      const view = render(
+        <CopilotProvider offline>
+          <ApprovalCard approval={demoApproval} streamStatus="live" />
+        </CopilotProvider>
+      );
+      expect(view.container.textContent).not.toMatch(/Factor comparison unavailable/i);
+    });
+
+    it('does not appear on a failed supervisor call, which is a failure and not a comparison', () => {
+      const c = renderWithFactors([{ label: SUPERVISOR_UNAVAILABLE_FACTOR }], undefined);
+      expect(within(c).getByTestId('factor-unavailable')).toBeInTheDocument();
+      expect(within(c).queryByTestId('factor-comparison-unavailable')).not.toBeInTheDocument();
     });
   });
 });

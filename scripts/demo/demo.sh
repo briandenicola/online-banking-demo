@@ -381,12 +381,47 @@ account_ids_for() {
   jq -r '.[] | (.id // .Id)' <<<"$HTTP_BODY"
 }
 
+# owner_transactions <owner> — the owner's OWN transaction rows, across all their accounts, via
+# GET /api/transactions/my.
+#
+# Why not GET /api/transactions/account/{id}: that route derives a non-privileged caller's
+# entitlement from the rows it is about to return, so an account with zero rows proves nothing and
+# answers 403 — an owner cannot read their own empty ledger. On a fresh reseed every ledger is
+# empty. /my is scoped to the caller's userId, so it asks a question the caller's own token is the
+# proof of: "what have I posted". See docs/design/empty-ledger-narrowing-ruling.md §E4.
+owner_transactions() {
+  local owner="$1"
+  http_or_die GET /api/transactions/my "" "${TOKENS[$owner]}" \
+    "Could not list transactions for '${owner}'." 200
+  printf '%s' "$HTTP_BODY"
+}
+
+# transactions_on_account <json> <accountId> — the subset of <json> posted to <accountId>.
+#
+# The (.accountId // .AccountId) pair is load-bearing, not decorative. The API may serialize
+# PascalCase; a bare .accountId would then match zero rows, every idempotency check would report
+# "not yet posted", and every reseed would double-post every transaction — a failure that PASSES.
+# Guarded by tests/demo/test-demo-dataset.sh, group "Empty-ledger entitlement and PascalCase
+# tolerance" — both textually and behaviourally against a PascalCase fixture.
+transactions_on_account() {
+  local json="$1" account_id="$2" out
+  out=$(jq -c --arg a "$account_id" \
+    '[ (if type == "array" then . else (.items // []) end)[]
+       | select((.accountId // .AccountId) == $a) ]' <<<"$json" 2>/dev/null) || out='[]'
+  printf '%s' "${out:-[]}"
+}
+
 seed_transactions() {
   header "Transactions"
 
   local owner
   while read -r owner; do
     local token="${TOKENS[$owner]}"
+
+    # One read of the owner's ledger per owner, taken before anything is posted. Rows this run
+    # posts are tracked in posted_now so a repeated description inside one run is still caught.
+    local existing posted_now=$'\n'
+    existing=$(owner_transactions "$owner")
 
     local count idx
     count=$(jq --arg o "$owner" '[.transactions[] | select(.owner == $o)] | length' <<<"$DATASET")
@@ -398,10 +433,11 @@ seed_transactions() {
       account_id="${ACCOUNT_IDS[${owner}:${account_index}]:-${ACCOUNT_IDS[${owner}:0]:-}}"
       [[ -n "$account_id" ]] || die "'${owner}' has no account at index ${account_index}; cannot post '${description}'."
 
-      http_or_die GET "/api/transactions/account/${account_id}" "" "$token" \
-        "Could not list transactions for account ${account_id}." 200
-      if jq -e --arg d "$description" '(if type == "array" then . else (.items // []) end)
-          | any(.[]; (.description // .Description) == $d)' >/dev/null <<<"$HTTP_BODY"; then
+      local on_account
+      on_account=$(transactions_on_account "$existing" "$account_id")
+      if [[ "$posted_now" == *$'\n'"${account_id}|${description}"$'\n'* ]] ||
+         jq -e --arg d "$description" \
+           'any(.[]; (.description // .Description) == $d)' >/dev/null <<<"$on_account"; then
         detail "${owner}: '${description}' already posted"
         continue
       fi
@@ -412,6 +448,7 @@ seed_transactions() {
           currency: "USD", category: .category}' <<<"$spec")
       http_or_die POST /api/transactions "$body" "$token" \
         "Could not post transaction '${description}' for '${owner}'." 200 201
+      posted_now+="${account_id}|${description}"$'\n'
       success "${owner}: ${description}"
     done
   done < <(account_owners)
@@ -606,27 +643,32 @@ set_ref_num() {
   REFS=$(jq --arg k "$key" --argjson v "$value" '.[$k] = $v' <<<"$REFS")
 }
 
-# resolve_account_refs <accountId> <prefix> — balance and transaction count, read with the
-# OWNER's token, because account-service scopes reads to the owner.
+# resolve_account_refs <accountId> <prefix> [owner] — balance and transaction count, read with the
+# OWNER's token, because account-service scopes reads to the owner. Pass <owner> when the caller
+# already knows it, to skip the probe loop and reuse the identity.
+#
+# <prefix>TransactionCount counts the OWNER's rows on that account, not the account's ledger. Under
+# single ownership (every account in config/demo-dataset.json has exactly one owner, and
+# Account.UserId is single-valued) those are the same set. Joint accounts would make this an
+# under-count. See docs/design/empty-ledger-narrowing-ruling.md §E5.
 resolve_account_refs() {
-  local account_id="$1" prefix="$2"
+  local account_id="$1" prefix="$2" known_owner="${3:-}"
   [[ -n "$account_id" ]] || die "No account id available for the '${prefix}' references."
 
-  local owner token='' balance='' count=0
+  local owner owner_name='' balance='' count=0
   while read -r owner; do
+    [[ -n "$known_owner" && "$owner" != "$known_owner" ]] && continue
     http GET "/api/accounts/${account_id}" "" "${TOKENS[$owner]}"
     if [[ "$HTTP_STATUS" == "200" ]]; then
-      token="${TOKENS[$owner]}"
+      owner_name="$owner"
       balance=$(jget '.balance // .Balance')
       break
     fi
   done < <(account_owners)
 
-  [[ -n "$token" ]] || die "Account ${account_id} could not be read by any seeded customer."
+  [[ -n "$owner_name" ]] || die "Account ${account_id} could not be read by any seeded customer."
 
-  http_or_die GET "/api/transactions/account/${account_id}" "" "$token" \
-    "Could not count transactions on account ${account_id}." 200
-  count=$(jq 'if type == "array" then length else (.count // (.items | length) // 0) end' <<<"$HTTP_BODY")
+  count=$(transactions_on_account "$(owner_transactions "$owner_name")" "$account_id" | jq 'length')
 
   REFS=$(jq --arg k "${prefix}AccountId"        --arg v "$account_id"  '.[$k] = $v' <<<"$REFS")
   REFS=$(jq --arg k "${prefix}AccountBalance"   --argjson v "${balance:-0}" '.[$k] = $v' <<<"$REFS")
@@ -634,15 +676,14 @@ resolve_account_refs() {
 }
 
 build_unscored_fallback_refs() {
-  local owner first_account tx_id amount
+  local owner first_account tx_id amount rows
   owner=$(jq -r '.identities[] | select(.primary == true) | .username' <<<"$DATASET")
   mapfile -t ids < <(account_ids_for "$owner")
   first_account="${ids[0]}"
 
-  http_or_die GET "/api/transactions/account/${first_account}" "" "${TOKENS[$owner]}" \
-    "Could not read transactions for the fallback subject." 200
-  tx_id=$(jq -r 'sort_by(-((.amount // .Amount) | fabs)) | .[0] | (.id // .Id) // empty' <<<"$HTTP_BODY")
-  amount=$(jq -r 'sort_by(-((.amount // .Amount) | fabs)) | .[0] | (.amount // .Amount) // empty' <<<"$HTTP_BODY")
+  rows=$(transactions_on_account "$(owner_transactions "$owner")" "$first_account")
+  tx_id=$(jq -r 'sort_by(-((.amount // .Amount) | fabs)) | .[0] | (.id // .Id) // empty' <<<"$rows")
+  amount=$(jq -r 'sort_by(-((.amount // .Amount) | fabs)) | .[0] | (.amount // .Amount) // empty' <<<"$rows")
   [[ -n "$tx_id" ]] || die "No transactions found for the fallback subject."
 
   local key
@@ -654,8 +695,8 @@ build_unscored_fallback_refs() {
   done
   REFS=$(jq --arg k scoredRiskScore --argjson v 0.5 '.[$k] = $v' <<<"$REFS")
 
-  resolve_account_refs "$first_account" primary
-  resolve_account_refs "$first_account" secondary
+  resolve_account_refs "$first_account" primary   "$owner"
+  resolve_account_refs "$first_account" secondary "$owner"
 }
 
 # =============================================================================================
@@ -1262,17 +1303,25 @@ cmd_show_summary() {
       continue
     fi
     http GET /api/accounts "" "${TOKENS[$owner]}"
-    local n_accounts=0 n_tx=0
+    local n_accounts=0 n_tx=0 accounts_body='[]' my_tx='[]'
     if [[ "$HTTP_STATUS" == "200" ]]; then
-      n_accounts=$(jq 'length' <<<"$HTTP_BODY")
+      accounts_body="$HTTP_BODY"
+      n_accounts=$(jq 'length' <<<"$accounts_body")
+      # One userId-scoped read per owner. Counted per account by filtering the owner's own rows,
+      # NOT by counting the whole /my body against each account — that would report the owner's
+      # full row count once per account and silently inflate the total.
+      http GET /api/transactions/my "" "${TOKENS[$owner]}"
+      [[ "$HTTP_STATUS" == "200" ]] && my_tx="$HTTP_BODY"
       local aid
       while read -r aid; do
         [[ -n "$aid" ]] || continue
-        http GET "/api/transactions/account/${aid}" "" "${TOKENS[$owner]}"
-        [[ "$HTTP_STATUS" == "200" ]] && n_tx=$((n_tx + $(count_records "$HTTP_BODY")))
-      done < <(jq -r '.[] | (.id // .Id)' <<<"$HTTP_BODY")
+        n_tx=$((n_tx + $(count_records "$(transactions_on_account "$my_tx" "$aid")")))
+      done < <(jq -r '.[] | (.id // .Id)' <<<"$accounts_body")
     fi
-    printf '  %-16s %s account(s), %s transaction(s)\n' "$owner" "$n_accounts" "$n_tx"
+    # "owner's transaction(s)", not "transaction(s)": this counts the OWNER's rows on each account,
+    # which under single ownership is the account's ledger. Ruling §E5 — a verify pass that changes
+    # what it counts without saying so is the worst possible place for an unlabelled meaning change.
+    printf '  %-16s %s account(s), %s owner'"'"'s transaction(s)\n' "$owner" "$n_accounts" "$n_tx"
   done < <(account_owners)
 
   header "AI scoring"

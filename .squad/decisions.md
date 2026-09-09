@@ -2649,3 +2649,329 @@ in-flight runs are against the previous build and are unaffected.
 reported `completed` with no approval will report `failed`. Any count taken from `run.status`
 before this deploy needs re-reading, and the `failed` count going up is the measurement
 getting *more* correct, not the harness getting worse.
+# Decision — the seeder reads its own rows: four call sites moved to `/api/transactions/my`
+
+**Author:** Rusty (Platform/Infra) · **Date:** 2026-09-09 · **Branch:** `332-beta`
+**Status:** IMPLEMENTED, not committed. Awaiting Scribe.
+**Implements:** `docs/design/empty-ledger-narrowing-ruling.md` §E4, §E4.1, §E5 (Danny, authoritative).
+**Also records:** `docs/design/probe-idempotency-and-divergence-silence-ruling.md` — record only, no code.
+**Files touched:** `scripts/demo/demo.sh`, `tests/demo/test-demo-dataset.sh`. Nothing else.
+
+---
+
+## The decision in one line
+
+**Brian can reseed. No redeploy.** The seeder now asks "what have *I* posted" through
+`GET /api/transactions/my`, which its own token proves, instead of asking an account-scoped route a
+question it cannot establish entitlement for on an empty ledger.
+
+## What was wrong, precisely
+
+`GET /api/transactions/account/{accountId}` derives a non-privileged caller's entitlement from the
+rows it is about to return (`ownsEveryRow` requires `Count > 0`). The seeder read that route with a
+**customer** token as an idempotency pre-check, *before* posting. On a fresh reseed the ledger is
+empty, zero rows prove nothing, and the owner is refused `403` reading their own account.
+
+The narrowing is correct and **transaction-service is unchanged**. The caller was wrong: it was
+asking a question about its own rows through an account-scoped endpoint, by habit.
+
+## What changed
+
+Two new helpers in `demo.sh` — `owner_transactions <owner>` (one `/my` read per identity) and
+`transactions_on_account <json> <accountId>` (the client-side filter). All four call sites now go
+through them:
+
+| Call site | Function | Change |
+|---|---|---|
+| `demo.sh:437` | `seed_transactions` | idempotency pre-check against the owner's own rows |
+| `demo.sh:671` | `resolve_account_refs` | `<prefix>TransactionCount` from the owner's rows on that account |
+| `demo.sh:684` | `build_unscored_fallback_refs` | fallback subject selected from the owner's rows |
+| `demo.sh:1318` | verify pass (`cmd_show_summary`) | per-account count, **relabelled** `owner's transaction(s)` |
+
+`resolve_account_refs` takes an optional third argument, the already-known owner, so
+`build_unscored_fallback_refs` skips the probe loop and reuses one identity across both its calls
+(§E4.1's "one fetch per owner"). On the scored path the owner is genuinely unknown — it is derived
+from ai-service's flagged pool — so the probe loop still runs there, twice per seed, against a
+handful of seeded identities. That is not worth a cache.
+
+### Blast radius, as the search that produced it (§E6.1)
+
+```
+grep -rn 'transactions/account' src/ scripts/ tests/ config/ infra/ .github/ Taskfile.yml
+```
+
+10 hits, **zero of them a non-privileged caller**: 2 mutation/unit test stubs in
+`banker-copilot-service`, 3 documentation lines (2 READMEs + Turk's comment in
+`TransactionsController.cs`), 1 evidence fixture recorded as `banker`, 3 lines of my own new guard
+in `tests/demo/test-demo-dataset.sh`, and `config/copilot-tools.yaml:133` — the copilot's
+`list_account_transactions`, which executes with the invoking banker's token and holds
+`CustomerFinancialRead`. **The four `demo.sh` customer-token callers are gone.**
+
+## The three things that could have gone wrong quietly
+
+1. **PascalCase.** A bare `.accountId` matches nothing against a PascalCase body, so the
+   idempotency check would report "not yet posted" every run and **every reseed would double-post
+   every transaction**. `(.accountId // .AccountId)`, in exactly one helper.
+2. **Inflated counts.** `/my` returns rows across *all* an owner's accounts. Counting the whole
+   body once per account would have multiplied every total. Filter, then count.
+3. **Duplicate descriptions inside one run.** One `/my` read per owner is taken *before* posting,
+   so it cannot see rows this run creates. A `posted_now` list closes that, independent of whether
+   the dataset happens to be free of duplicates today (it is: 23/23 unique).
+
+## Meaning changes, declared (§E5)
+
+Three counts moved from *the account's ledger* to *the owner's rows on that account*. Under single
+ownership — every account in `config/demo-dataset.json` has exactly one `owner`, and
+`Account.UserId` is single-valued — those are the same set. **Joint accounts would make all three
+under-counts**, and that is the ticket if this repo ever grows them. The verify pass now prints
+`owner's transaction(s)` so the change is visible on the surface rather than inferred later.
+
+## Rejected
+
+- **Borrow the banker token for the pre-check.** Cheapest, and it is lesson 44 wearing a different
+  hat: acquiring authority the caller does not have so a check stops firing. It would pass while
+  leaving the seeder unable to describe what a customer can actually do. Danny rejected it in §E3
+  and I agree without reservation.
+- **Widen the transaction-service response to `200 []`.** Rebuilds §B2.2's defect one field over.
+- **Fix the five pre-existing bare `.accountId` reads in the AI-scoring path.** They read
+  ai-service's `/api/admin/*` bodies — FastAPI, camelCase only, a different contract, another
+  agent's area, and mid-flight. I scoped my guard instead of sprawling the diff.
+
+## Verification
+
+- `bash -n scripts/demo/demo.sh` — passes.
+- `tests/demo/test-demo-dataset.sh` — **PASSED, 10 check groups**, including three new ones:
+  the demo scripts never call the account-scoped route; the helper filters PascalCase-tolerantly;
+  and a **behavioural** check that `eval`s the real helper and feeds it camelCase and PascalCase
+  fixtures, plus empty and non-JSON bodies.
+- **Tamper test (house rule):** reverting the helper to a bare `.accountId` fails **both** the
+  textual and the behavioural guard. Reverted; suite green again.
+- **Idempotency simulated offline**, five cases — reseed/camelCase, reseed/PascalCase, empty
+  ledger, same description on a different account, duplicate within one run — all decide correctly.
+- **Not done, deliberately:** no `task cloud:demo:reset`, no Azure write, no `kubectl` mutation, no
+  commit. The live reseed is Brian's to run and is the remaining proof.
+
+## Ruling 2 — probe idempotency (record only)
+
+Accepted, no code change. A probe that drives a real path **may not** be idempotent: reusing an
+outstanding approval turns *"is this path open now?"* into *"was it open once?"*, which passes on
+precisely the day it should fail. Repeated seeds leaving fresh probe approvals is correct
+behaviour. `e37e695` stands unchanged.
+
+## Follow-ups for someone else
+
+- **Turk:** the §E6.2 comment correction in `GetAccountTransactions` — comment only, rides the next
+  image, does not gate the reseed.
+- **Deferred:** transaction-service asking account-service who owns the account (§E2). The trigger
+  is a second non-privileged caller of that endpoint.
+# Decision — §B2.2 cost claim corrected in place; no behaviour change, no redeploy
+
+**Author:** Turk (Backend Dev) · **Date:** 2026-09-09 · **Branch:** `332-beta`
+**Implements:** `docs/design/empty-ledger-narrowing-ruling.md` §E6.2 (Danny, 2026-09-09)
+**Scope:** `src/transaction-service/Controllers/TransactionsController.cs` — comment only.
+**Not committed.** Left in the working tree for the Scribe pass.
+
+---
+
+## What changed
+
+One comment block inside `GetAccountTransactions`, in the `!privileged && !ownsEveryRow` branch.
+Two lines removed, nine added. **No `.cs` logic line changed.** Verified mechanically:
+
+```
+git diff -U0 src/transaction-service/ | grep -E "^[+-]" | grep -vE "^(\+\+\+|---)" | grep -vE "^[+-]\s*//"
+→ empty
+```
+
+Every added and removed line is a `//` comment. `Count > 0`, the `privileged` check, the `403`, and
+the response body are all untouched. The narrowing behaves exactly as it did at `9a346e3`.
+
+**The falsified sentence, removed:**
+
+> It errs closed, and it costs no shipping caller — the copilot always holds `banker`, and no other
+> caller in the repo uses this endpoint.
+
+**Replaced with** the true and narrower statement: it costs no *product* caller (no `ui-app`, no
+other service); the copilot reads this with the invoking banker's token, which holds `banker`; and
+the repo's non-privileged callers were the four sites in `scripts/demo/demo.sh`, which now read
+their own rows via `GET /api/transactions/my`. The comment also records that the original search
+covered only `src/`, so the next reader knows how the error was made and not merely that it was.
+
+## The blast radius, stated as the search — §E6.1
+
+Danny's replacement rule is that a narrowing's cost claim must name the search that produced it.
+The comment carries this verbatim so it can be re-run:
+
+```
+grep -rn "transactions/account" src/ scripts/ tests/ config/ infra/ .github/ Taskfile.yml
+```
+
+Verified at `be6ba88`, 10 hits:
+
+| Hit | Kind | Privileged? |
+|---|---|---|
+| `scripts/demo/demo.sh:401,627,642,1271` | non-privileged callers, customer tokens | **no** — these are the four that broke; Rusty moves them to `/my` |
+| `config/copilot-tools.yaml:133` | copilot tool definition | yes — executes with the invoking banker's token |
+| `src/banker-copilot-service/tests/test_api.py:225`, `mutants/tests/test_api.py:223` | test stubs, not live callers | n/a |
+| `tests/fixtures/evidence-samples/list_account_transactions.json:11` | recorded evidence sample, banker-token capture | n/a |
+| `src/transaction-service/README.md:25` | endpoint listing, no behaviour claim | n/a |
+| `src/banker-copilot-service/README.md:191` | stale prose — see below | n/a |
+
+**The sha and the fix are stated as two separate facts, deliberately.** "No non-privileged caller as
+of `be6ba88`" would itself be false — at `be6ba88` demo.sh still calls the old endpoint. The comment
+says: this is the search, verified at `be6ba88`; and these four sites move under Rusty's change.
+
+## Where else the false claim appears — answer: nowhere in code
+
+Checked, and reporting as asked:
+
+- **XML doc comment on `GetAccountTransactions`** — there is none. Nothing to correct.
+- **`src/transaction-service/README.md`** — line 25 lists the endpoint as *"List transactions for
+  specific account"*. Neutral; it makes no claim about callers or about authorization, so it is not
+  stale in the way the comment was. Left alone as proportionate.
+- **`src/transaction-service.Tests/{SecurityTests,FailClosedSecurityTests}.cs`** — no doc comment
+  repeats the claim. `GetAccountTransactions_OtherUsersAccount_ReturnsForbidden` and
+  `..._DeniedResponse_CarriesNoTransactionData` assert the current behaviour correctly.
+- **`docs/design/empty-ledger-narrowing-ruling.md:180,209`** — quotes the false claim *as* the
+  falsified claim. Correct as written; not mine and not touched.
+
+## Not mine — reporting rather than editing
+
+**`src/banker-copilot-service/README.md:191` is stale.** Under *"Known gaps in the upstreams"* it
+says:
+
+> `GET /api/transactions/account/{accountId}` filters by the caller's own userId. A banker therefore
+> cannot see a customer's transactions through it, so the read tool as specified cannot do its job.
+> This is the most consequential of the four.
+
+That gap was closed by §B2.2 (`9a346e3`): the endpoint now queries by `accountId` and a
+`CustomerFinancialRead` holder sees the account's ledger. The read tool does its job. This is
+banker-copilot-service documentation, not transaction-service's, so per my boundaries I have **not**
+edited it. Recommend its owner strike or amend item 1 in that list.
+
+## Verification
+
+- `dotnet build src/transaction-service/transaction-service.csproj` — **succeeded, 0 warnings, 0 errors.**
+- `dotnet test src/transaction-service.Tests/` — **19 passed, 0 failed, 0 skipped.** Unchanged from
+  the 19 after `9a346e3`, which is the expected result for a comment edit.
+- Test run needed `-p:BaseIntermediateOutputPath=/tmp/... -p:BaseOutputPath=/tmp/...` because
+  `src/transaction-service.Tests/{obj,bin}` are root-owned from an older run. Temp dirs cleaned up.
+  This forces a genuine rebuild rather than the mtime-preserving /tmp mirror that gave me a false
+  green last session.
+
+## Consequence for Brian
+
+**None operationally. No redeploy, no image rebuild, no rollout.** The running transaction-service
+pods are already correct — the `403` they serve is the behaviour Danny upheld. This comment rides
+whenever the next image is built for unrelated reasons. The reseed is unblocked by Rusty's
+`demo.sh` change, not by anything here.
+# Decision — the factor-divergence indicator says why it is silent
+
+**Author:** Linus (Frontend) · **Date:** 2026-09-09 · **Branch:** `332-beta` · **Not committed.**
+**Implements:** `docs/design/probe-idempotency-and-divergence-silence-ruling.md` §F5 (Danny's one
+condition on shipping structural silence).
+
+## Decision
+
+Where the `← DIVERGENT` flags would render, the supervisor's column now renders, when the primary
+stated no key factors:
+
+> ℹ **Factor comparison unavailable — the primary agent stated no key factors.**
+
+Informational (`info.main`), not the `error.main` reserved for a supervisor call that actually
+failed — nothing failed here. Rendered inline in the factor block, not in a tooltip and not behind
+an expandable.
+
+## Why
+
+An indicator that renders nothing is indistinguishable from one that examined both sides and found
+them consistent. "We could not check" and "we checked and it was fine" must not look the same on a
+card a supervisor signs from. This is the `supervisor_unavailable` principle one level down: a
+comparison that did not happen may not render as a quiet pass.
+
+## One deviation from Danny's wording, deliberate
+
+§F5's suggested copy is *"…the primary agent does not emit key factors."* I shipped *"…the primary
+agent **stated** no key factors."*
+
+§F4 reasons from `loop.py` emitting `{summary, evidenceToolIds}` only. That is no longer the whole
+picture: `src/banker-copilot-service/app/planner/primary_model.py` parses `keyFactors` and
+*rejects* an assessment that states none (`primary_key_factors_missing`), and `demoFixture` now
+carries primary factors because the wire carries them. So "does not emit" would assert a permanent
+service limitation that is not true — an over-claim of exactly the kind this ruling exists to
+delete. Run-scoped wording is true in both worlds. §F5 says "something of the form", which I read
+as the latitude for precisely this. **Flagging for Danny to confirm or overrule; the reasoning is
+his, only the tense is mine.**
+
+Consequence worth stating plainly: because the primary now does emit factors on the happy path,
+the label is **conditional and mostly silent** — it appears on runs where the primary's assessment
+failed or came back factorless, which is exactly when a reader most needs to know the comparison
+did not run.
+
+## Changes (`src/ui-app/` only)
+
+- `approvalPolicy.ts` — `Disagreement` gains `factorComparison: 'compared' | 'primary_stated_no_factors' | 'no_factors'`,
+  computed beside the divergence guard so the card knows *why* the guard was silent. The failsafe
+  sentinel is excluded: a supervisor that only returned `supervisor_unavailable` stated nothing to
+  compare, and that is already rendered as the failed call it is.
+- `supervisorFactors.ts` — the copy, as one exported constant, with the deviation documented at
+  the string.
+- `ApprovalCard.tsx` — renders it in the supervisor column, where the flags would have been.
+- `__tests__/factorRow.test.tsx` — five tests, including the two that matter as a pair: label
+  present when the primary stated none, **and absent when both sides stated factors**. Without the
+  negative, an unconditional label passes.
+
+## Verification
+
+- `npx react-scripts test --watchAll=false --testPathPattern "copilot|demoFixture|authorityWire"` —
+  **228 passed, 15 suites.**
+- Tamper: `{false && …}` on the render condition → 2 failures, both new, both naming the missing
+  testid. Reverted; green.
+- `tsc --noEmit` clean (only the two pre-existing `tsconfig` deprecation warnings).
+- The 13 `account-opening` UI failures are pre-existing and were not touched.
+
+## Not in scope / open
+
+- Primary `keyFactors` + `confidence` remains deferred to the next epic per §F7. This label is the
+  interim honesty, not a substitute for it.
+- **Pre-existing flake, not mine:** `agreementTriState.test.tsx`'s low/high-confidence comparison
+  diffs two whole-card `textContent` dumps while `ApprovalCountdown` is ticking (`0:16` vs `0:15`).
+  Its `strip()` neutralises confidences but not the countdown. Failed once, passed on re-run.
+
+## Second item flagged for Danny — `compared` is not yet the same as *compared*
+
+Found while writing this up, not fixed here. The divergence guard fires only where **both** sides
+set `concern` to an explicit boolean. Neither side ever does: `approval_view.py:212` sends
+`{"label": factor}`, `KeyFactor` carries only a label and cited evidence ids, and my own fixture
+guard asserts `concern === undefined` on both sides. So on the shipped demo card
+`factorComparison === 'compared'` — both sides stated factors, so my label correctly stays quiet —
+**and the comparison still cannot produce a result**, because no one classifies their factors.
+
+That is the §F5 ambiguity surviving one layer deeper, on the exact card Brian demos.
+
+I did **not** widen the label to cover it, deliberately. Firing it whenever no factor is
+classified means firing it on every card, which is §F4's always-fires defect in a politer font,
+and I am not making that call unilaterally on the back of a ruling that asked for one string.
+**Danny's to rule.** If it should be covered, it belongs with §F7's deferred work — the primary and
+supervisor emitting factors in one vocabulary — because the honest fix is for a decider to state
+whether a factor weighs for or against, not for the card to narrate the gap twice.
+
+## Deployment
+
+Frontend only. Needs a `ui-app` image rebuild to reach the cluster. Brian is not redeploying now —
+**it rides the next image.**
+
+---
+
+## OPEN ITEMS — Flagged for Danny
+
+**From Linus (factor-divergence indicator, 2026-09-09):**
+
+1. **Wording deviation** — Linus shipped *"the primary agent stated no key factors"* instead of Danny's suggested *"does not emit key factors"* because the primary now does emit factors on the happy path (a permanent service limitation is not true). The run-scoped wording is correct in both worlds. §F5 says "something of the form", which Linus read as the latitude for this tense change. **Needs Danny to confirm or overrule.**
+
+2. **Silence ambiguity one layer deeper** — `factorComparison === 'compared'` (both sides stated factors) is correct on the demo card, **but the comparison still cannot produce a result** because neither side classifies factors (`approval_view.py:212` sends `{"label": factor}`, `KeyFactor` carries only a label). The divergence guard fires only where both set `concern` to explicit booleans (never). That is the §F5 ambiguity surviving one layer deeper, on the exact card Brian demos. Linus flagged rather than widening the label to cover it (which would fire on every card — §F4's always-fires defect). **Danny's to rule: cover it now, or defer with §F7's work?**
+
+**From Turk (§B2.2 cost claim correction, 2026-09-09):**
+
+1. **Stale documentation upstream** — `src/banker-copilot-service/README.md:191` still lists "filters by the caller's own userId" as an open upstream gap under "Known gaps in the upstreams", which §B2.2 (`9a346e3`) closed. The endpoint now queries by `accountId` and a `CustomerFinancialRead` holder sees the account's ledger. Not Turk's boundaries; reported rather than edited. **Recommend owner strike or amend item 1 in that list.**
+

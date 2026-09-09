@@ -58,6 +58,64 @@ else
   ok "scripts/demo/*.sh contain no literal URL or IP address"
 fi
 
+group "Empty-ledger entitlement and PascalCase tolerance"
+# Two guards for docs/design/empty-ledger-narrowing-ruling.md, both protecting failures that
+# would otherwise PASS silently.
+#
+# 1. GET /api/transactions/account/{id} derives a non-privileged caller's entitlement from the rows
+#    it returns, so an owner reading their own EMPTY ledger gets 403. The seeder must not call it.
+# 2. A bare `.accountId` against a PascalCase body matches zero rows. The idempotency pre-check
+#    would then report "not yet posted" on every run and every reseed would double-post every
+#    transaction — silent data corruption. Every accountId read must be `(.accountId // .AccountId)`.
+
+if grep -nE '/api/transactions/account/' scripts/demo/demo.sh scripts/demo/demo-lib.sh \
+   | grep -vE '^[^:]+:[0-9]+: *#' >/dev/null 2>&1; then
+  bad "demo scripts call the account-scoped transactions route (403 on an empty ledger — use /api/transactions/my)"
+  grep -nE '/api/transactions/account/' scripts/demo/demo.sh scripts/demo/demo-lib.sh \
+    | grep -vE '^[^:]+:[0-9]+: *#' | sed 's/^/         /'
+else
+  ok "demo scripts read transactions via /api/transactions/my, never the account-scoped route"
+fi
+
+# Remove every correctly-paired form first; anything left in the helper is a casing-fragile read.
+# Scoped to the helper deliberately: it is the ONLY place demo.sh reads accountId off a
+# transaction-service body. The bare .accountId reads elsewhere in demo.sh are against
+# ai-service's /api/admin/* responses — FastAPI, camelCase only, a different contract.
+helper=$(sed -n '/^transactions_on_account() {/,/^}/p' scripts/demo/demo.sh)
+if [[ -z "$helper" ]]; then
+  bad "transactions_on_account() is missing from demo.sh — the account filter has no guarded home"
+elif grep -q '(\.accountId // \.AccountId)' <<<"$helper"; then
+  ok "transactions_on_account() filters PascalCase-tolerantly — (.accountId // .AccountId)"
+else
+  bad "transactions_on_account() uses a bare .accountId — it matches nothing against a PascalCase body and makes every reseed double-post"
+  sed 's/^/         /' <<<"$helper"
+fi
+
+# Behavioural, not textual: a grep dies on reformatting, this does not. Feed the real helper both
+# serializations and require it to find the row either way.
+check "transactions_on_account() finds the row in camelCase AND PascalCase bodies" \
+  bash -c '
+    set -uo pipefail
+    eval "$(sed -n "/^transactions_on_account() {/,/^}/p" scripts/demo/demo.sh)"
+    camel="[{\"accountId\":\"A1\",\"description\":\"x\"},{\"accountId\":\"A2\"}]"
+    pascal="[{\"AccountId\":\"A1\",\"Description\":\"x\"},{\"AccountId\":\"A2\"}]"
+    for body in "$camel" "$pascal"; do
+      n=$(transactions_on_account "$body" A1 | jq "length")
+      [[ "$n" == 1 ]] || { echo "expected 1 row, got ${n} from: ${body}"; exit 1; }
+    done
+    # An empty ledger and a non-JSON (curl error) body must both degrade to [], not to a crash.
+    [[ "$(transactions_on_account "[]" A1)" == "[]" ]] || { echo "empty body did not yield []"; exit 1; }
+    [[ "$(transactions_on_account "curl: (7) refused" A1)" == "[]" ]] || { echo "non-JSON body did not yield []"; exit 1; }
+  '
+
+# The verify pass counts the OWNER's rows on each account, not the account's ledger (ruling §E5).
+# The printed label must say so.
+if grep -qE "owner'\"'\"'s transaction\(s\)|owner's transaction\(s\)" scripts/demo/demo.sh; then
+  ok "the verify pass labels its per-account count as the owner's transactions"
+else
+  bad "the verify pass prints an unlabelled transaction count — it counts the owner's rows and must say so (ruling §E5)"
+fi
+
 group "Cross-file agreement"
 python3 - "$DATASET" "$POLICY" <<'PY'
 import json, re, sys, pathlib

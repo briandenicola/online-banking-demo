@@ -2807,3 +2807,54 @@ this is the fourth flavour of absent-by-coincidence I have hit: deleted projecti
 
 **For Turk specifically:** Three policy actions now gather one more piece of evidence than before — `transaction.flag.review`, `transaction.score.override`, `transfer.reversal.execute` all require `get_account` alongside `list_account_transactions` per ruling §B3.2. Authority-service validates this at startup; the reseed moved the accounts under test.
 
+
+---
+
+## Learnings — 2026-09-09, the falsified cost claim on the §B2.2 narrowing
+
+**The narrowing was right. The claim I shipped it on was false, and the claim is what nearly sank
+the demo.** Danny upheld the `403` in full — zero rows genuinely cannot establish entitlement in a
+service that does not own accounts, and `200 []` would have rebuilt the §B2.2 defect one field over.
+No behaviour changed. What changed is a comment.
+
+**`src/` is not the repo.** I wrote "no other caller in the repo uses this endpoint" on the strength
+of a search that only ever covered `src/`. `scripts/demo/demo.sh` called the endpoint at four sites
+(~401, ~627, ~642, ~1271), all on customer tokens, and Brian's reseed died on exactly that `403`.
+`scripts/` ships with the demo. So do `tests/`, `config/`, `infra/`, `.github/` and `Taskfile.yml`.
+
+**Danny's standing rule, which I now owe on every narrowing:** a blast-radius claim must be stated
+as *the search that produced it* — the pattern and the roots — not as a conclusion. "Nothing else in
+the repo" is unfalsifiable and therefore worthless; `grep -rn "transactions/account" src/ scripts/
+tests/ config/ infra/ .github/ Taskfile.yml` → 4 hits, listed, is re-runnable by the next person.
+Minimum roots: `src/ scripts/ tests/ config/ infra/ .github/ Taskfile.yml`.
+
+**The claim being written down is the only reason this was catchable.** Danny made a point of this
+and I am recording it: the correct response to a falsified claim is to CORRECT it, never to delete
+it. A narrowing with no cost claim would have failed the same way with nothing to audit. The claim
+was wrong; having made it is what made the error findable in hours instead of in production.
+
+**What the claim got right, and it is why the code stands:** there is no `ui-app` caller and no
+other service caller. The copilot reads this with the invoking banker's token, which holds `banker`,
+so the model path is untouched. The *shape* of the authorization was correct; the *reach* was not.
+Those are two separate claims and I fused them.
+
+**A sha-stamped claim must not fuse the search with the fix.** Writing "no caller as of `be6ba88`"
+would itself have been false — at `be6ba88` demo.sh still called the old endpoint. The comment now
+states two separate facts: the search verified at `be6ba88`, and the disposition (those four sites
+move to `/api/transactions/my` under Rusty's change).
+
+**Root-owned `obj/` again.** `src/transaction-service.Tests/{obj,bin}` are root-owned from an old
+run. Previously I mirrored the tree to /tmp and got a false green off preserved mtimes. This time:
+`dotnet test -p:BaseIntermediateOutputPath=/tmp/... -p:BaseOutputPath=/tmp/...`, which forces a real
+build into a writable path and leaves the repo untouched. 19/19 passed. Use this, not the mirror.
+
+---
+
+**2026-09-09 (Scribe)** — §B2.2 cost claim correction merged. Comment-only fix in `src/transaction-service/Controllers/TransactionsController.cs`, `GetAccountTransactions` method. Zero logic changes verified. 19/19 tests passed. 
+
+False claim removed: "costs no shipping caller." Replaced with truth: no *product* caller, copilot executes with invoking banker's token, four demo.sh customer-token callers moved to `/my` (Rusty's change). Cost claim now carries the search that validated it (shell expression for reproducibility).
+
+Upstream gap flagged: `src/banker-copilot-service/README.md:191` still lists "filters by caller's own userId" as open, which §B2.2 closed. Recommended to owner for correction (not Turk's boundary).
+
+**No redeploy.** Comment rides next image.
+

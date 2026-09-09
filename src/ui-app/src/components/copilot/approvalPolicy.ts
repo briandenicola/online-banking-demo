@@ -171,7 +171,24 @@ export interface Disagreement {
   title: string;
   summary: string;
   divergentFactors: string[];
+  /**
+   * Whether the factor-by-factor comparison could run at all.
+   *
+   * An indicator that renders nothing is indistinguishable from one that looked at
+   * the data and found no divergence — "we could not check" reading as "we checked
+   * and it was fine". The divergence guard below is silent whenever one side stated
+   * no factors, so the card needs to know WHY it is silent in order to say so.
+   */
+  factorComparison: FactorComparison;
 }
+
+export type FactorComparison =
+  /** Both sides stated factors; an absent DIVERGENT flag means no divergence was found. */
+  | 'compared'
+  /** The supervisor stated factors and the primary stated none, so nothing could be compared. */
+  | 'primary_stated_no_factors'
+  /** There was no row to compare in the first place — no indicator, and nothing to explain. */
+  | 'no_factors';
 
 /** Why a side has no position, in its own words, naming the failure the server stated. */
 function noPositionReason(assessment: AgentAssessment | undefined, side: string): string | null {
@@ -212,6 +229,7 @@ export function disagreementOf(approval: Pick<Approval, 'assessments' | 'assessm
       summary:
         'Only one agent has stated a position. Nothing here has been independently reviewed, and a single opinion is not a second one.',
       divergentFactors: [],
+      factorComparison: 'no_factors',
     };
   }
 
@@ -252,6 +270,18 @@ export function disagreementOf(approval: Pick<Approval, 'assessments' | 'assessm
     }
   }
 
+  // Why the indicator is silent, so the card can say it out loud. The failsafe
+  // sentinel is not a factor, so a supervisor that only returned it has stated
+  // nothing to compare — that is a failed call, already rendered as one, and not
+  // this label's business.
+  const comparableSupervisorFactors = supervisorFactors.filter((f) => !isSupervisorUnavailable(f));
+  const factorComparison: FactorComparison =
+    comparableSupervisorFactors.length === 0
+      ? 'no_factors'
+      : primaryFactors.length === 0
+        ? 'primary_stated_no_factors'
+        : 'compared';
+
   const stated = approval.assessmentAgreement;
 
   if (stated === 'agree') {
@@ -261,6 +291,7 @@ export function disagreementOf(approval: Pick<Approval, 'assessments' | 'assessm
       title: 'Independent review reached the same verdict.',
       summary: `Both agents recommend ${verdictPresentation(primary.verdict).label}. Agreement is not proof: both opinions came from the same base model on the same evidence.`,
       divergentFactors,
+      factorComparison,
     };
   }
 
@@ -271,6 +302,7 @@ export function disagreementOf(approval: Pick<Approval, 'assessments' | 'assessm
       title: 'THE TWO AGENTS DISAGREE. A HUMAN MUST DECIDE.',
       summary: `Primary recommends ${verdictPresentation(primary.verdict).label}. Supervisor recommends ${verdictPresentation(supervisor.verdict).label}.`,
       divergentFactors,
+      factorComparison,
     };
   }
 
@@ -290,6 +322,7 @@ export function disagreementOf(approval: Pick<Approval, 'assessments' | 'assessm
           : 'At least one agent stated no verdict.') +
       ' Treat this as unreviewed. It is neither agreement nor dissent, and it is excluded from every agreement measurement.',
     divergentFactors,
+    factorComparison,
   };
 }
 

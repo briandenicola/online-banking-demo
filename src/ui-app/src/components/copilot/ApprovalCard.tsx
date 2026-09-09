@@ -60,6 +60,7 @@ import {
   diffPayloads,
   disagreementOf,
   dwellRequirementMs,
+  FactorComparison,
   formatFieldValue,
   isReversible,
   shouldSpotCheck,
@@ -70,7 +71,7 @@ import {
 } from './approvalPolicy';
 import { AuthorityRungChip, ApprovalCountdown, PayloadHashChip } from './CopilotPrimitives';
 import { verdictPresentation } from './supervisorVerdict';
-import { factorPresentation } from './supervisorFactors';
+import { factorPresentation, FACTOR_COMPARISON_UNAVAILABLE } from './supervisorFactors';
 import { getCopilotConfig } from '../../config/copilotConfig';
 import { useCopilot, useNow } from './CopilotContext';
 import { signingIdentity } from './signingIdentity';
@@ -423,8 +424,9 @@ function shortSha(sha: string): string {
 const OpinionColumn: React.FC<{
   assessment: AgentAssessment;
   divergentFactors: string[];
+  factorComparison: FactorComparison;
   independent?: boolean;
-}> = ({ assessment, divergentFactors, independent }) => {
+}> = ({ assessment, divergentFactors, factorComparison, independent }) => {
   // Label, colour and rank all come from the ONE lookup keyed on the server's own
   // vocabulary. The previous inline ternary compared against 'APPROVE' and
   // 'DECLINE' — one of which the server never emits and the other of which it
@@ -544,6 +546,24 @@ const OpinionColumn: React.FC<{
             </Stack>
           );
         })}
+        {/* Where the ← DIVERGENT flags would have been. A divergence indicator that
+            renders nothing looks exactly like one that compared the two sides and
+            found them consistent — "we could not check" wearing the face of "we
+            checked and it was fine". So when the comparison could not run, the card
+            says so in its place, in the same register as the row it replaces.
+            Informational, not error-coloured: nothing failed here, the primary
+            simply stated no factors to compare against, and `error.main` is
+            reserved for a supervisor call that actually failed. */}
+        {independent && factorComparison === 'primary_stated_no_factors' && (
+          <Typography
+            variant="caption"
+            data-testid="factor-comparison-unavailable"
+            aria-label={FACTOR_COMPARISON_UNAVAILABLE}
+            sx={{ color: 'info.main', fontWeight: 700, mt: 0.5 }}
+          >
+            ℹ {FACTOR_COMPARISON_UNAVAILABLE}
+          </Typography>
+        )}
       </Stack>
     )}
     <AssessmentAttribution assessment={assessment} />
@@ -956,6 +976,7 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
                 key={`${assessment.role}-${assessment.agentId || assessment.agentName || 'agent'}`}
                 assessment={assessment}
                 divergentFactors={disagreement.divergentFactors}
+                factorComparison={disagreement.factorComparison}
                 independent={assessment.role === 'supervisor'}
               />
             ))}

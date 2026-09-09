@@ -448,3 +448,93 @@ banker-read fix is still in flight. Task 3 is therefore correct-by-ruling, not v
 
 **2026-09-09 (Scribe)** — Inbox merge and deploy verification complete. Your 11 queued decisions from `.squad/decisions/inbox/` are now merged into the canonical ledger at `.squad/decisions.md`. Authority-service has deployed cleanly to `banking-demo` namespace with the §B3.2 startup guard active (`banker-copilot-authority`, policyVersion `pv1:d7b3db9f5ada15b8`, 22 thresholds, 13 action types).
 
+
+---
+
+## Learnings (2026-09-09 — empty-ledger seeder fix, `332-beta`)
+
+57. **The endpoint I reach for by habit is not always the one whose entitlement I can prove.**
+    The seeder read `GET /api/transactions/account/{id}` with a customer token to answer "have I
+    already posted this?". That is a question about *my own rows*, and I was asking it through an
+    *account-scoped* route. Turk's §B2.2 narrowing then made the mismatch visible: on a fresh
+    reseed the ledger is empty, entitlement in that service is derived only from the returned
+    rows, zero rows prove nothing, and the owner got `403` reading their own account. The fix was
+    not to widen the service — it was to ask the question I could prove, via
+    `GET /api/transactions/my`, which is scoped to the caller's `userId`. Four call sites, one
+    read per identity, fewer HTTP calls than before. **The service was right; the caller was
+    lazy.**
+
+58. **Lesson 44 has a token-shaped variant, and Danny caught me before I could reach for it.**
+    The cheapest fix was to pre-read with the banker token. That is not "using the right
+    credential" — it is acquiring authority the caller does not have so a check stops firing. It
+    would have made the seed pass while leaving `seed_transactions()` permanently unable to
+    describe what a customer can actually do, and the next reader would have concluded, falsely,
+    that seeding requires banker authority. `/my` is the opposite move: it does not borrow
+    authority, it asks a question the caller's own token *is* the proof of.
+
+59. **The dangerous half of this fix was the half that could not fail loudly.** The visible bug
+    was a `403` with an exit status — the good kind of defect, it stopped the run and named
+    itself. The fix's own failure mode was the opposite: a bare `.accountId` against a PascalCase
+    body matches zero rows, so the idempotency check reports "not yet posted" every run and the
+    reseed **double-posts every transaction**. Silent data corruption hiding inside the fix for
+    the visible bug. `(.accountId // .AccountId)` everywhere, and I confined every transaction-row
+    read to one helper so there is exactly one place for that trap to live — and one place to
+    guard.
+
+60. **A grep guard dies on reformatting; a behavioural guard does not.** I wrote both. The
+    textual one asserts the paired form is present in `transactions_on_account()`; the
+    behavioural one `eval`s the real helper out of `demo.sh` and feeds it a camelCase fixture and
+    a PascalCase fixture, requiring one row from each. Tamper-tested: reverting the helper to a
+    bare `.accountId` fails **both**. I also proved the whole idempotency decision offline —
+    reseed/camel, reseed/pascal, empty ledger, same description on a different account, and a
+    duplicate inside one run — all five decide correctly.
+
+61. **When my own new guard fires on someone else's pre-existing code, scope the guard, do not
+    widen the fix — and do not write an exclusion list either.** My first file-wide
+    "no bare `.accountId`" check caught five lines in the AI-scoring path. Those read
+    ai-service's `/api/admin/*` bodies — FastAPI, camelCase only, a different serialization
+    contract, and not mine. Widening the fix would have sprawled the diff across another agent's
+    area mid-flight; an exclusion list would have rotted. Narrowing the guard to the one helper
+    that reads transaction-service rows was right *because* I had first made that helper the only
+    such reader. **The guard was made narrow by making the code narrow, not by adding exceptions.**
+
+62. **A verify pass that quietly changes what it counts is the worst possible place for an
+    unlabelled meaning change** — it is the thing everything else is checked against. The
+    per-account count now counts the *owner's* rows on that account, so the header reads
+    `owner's transaction(s)`. Under single ownership those are the same set; joint accounts would
+    make it an under-count, and saying so on the surface is what makes that discoverable rather
+    than a future mystery. Same for `<prefix>TransactionCount`, which the model reads as evidence.
+    Related trap I nearly shipped: `/my` returns rows across **all** of an owner's accounts, so
+    counting the whole body once per account would have inflated every total silently. Filter,
+    then count.
+
+63. **Ruling 2 — a probe that drives a real path may NOT be idempotent (record only, no code).**
+    I had asked whether repeated seeds leaving fresh probe approvals was a defect. Danny ruled it
+    is correct behaviour. Reusing an outstanding approval turns *"is this path open **now**?"*
+    into *"was it open **once**?"* — and that passes on precisely the day it should fail. A probe
+    that asserts a live property must pay for that assertion every time; caching the answer
+    retires the probe without anyone deciding to retire it. `e37e695` stands unchanged. This is
+    lesson 44 again from a third angle: the cheap version passes, and passing is exactly what
+    hides it. Full reasoning in
+    `docs/design/probe-idempotency-and-divergence-silence-ruling.md`.
+
+**Environment limits (stated, not glossed):** `bash -n` passes on `scripts/demo/demo.sh`;
+`tests/demo/test-demo-dataset.sh` runs clean at **10 check groups passing**, and the new casing
+guard was tamper-tested (both the textual and behavioural halves fail when the helper is reverted
+to a bare `.accountId`). The idempotency decision was simulated offline across five cases. What I
+did **NOT** do: no `task cloud:demo:reset`, no write of any kind to Azure, no `kubectl` mutation,
+no commit, no branch operation, and no edit outside `scripts/demo/demo.sh` and
+`tests/demo/test-demo-dataset.sh` — Turk and Linus were live in the tree. **The fix is therefore
+verified statically and behaviourally, but not yet verified by a live reseed. Brian's run is the
+proof.** No transaction-service redeploy is required; the running pods are correct.
+
+---
+
+**2026-09-09 (Scribe)** — Seeder fix merged to master. Four `demo.sh` call sites migrated from `GET /api/transactions/account/{id}` to `GET /api/transactions/my`, with PascalCase-tolerant filtering `(.accountId // .AccountId)`.
+
+All three things that could have gone wrong quietly (PascalCase, inflated counts, duplicates) are guarded with two independent checks: textual (helper syntax) and behavioural (fixture-driven idempotency sim). Tamper-tested both; both fail on revert, both pass now.
+
+**Brian's reseed unblocked.** Seeder now asks "what have I posted" through its own token's view instead of asking an account-scoped endpoint without entitlement on an empty ledger.
+
+**No redeploy.** No Azure writes, no kubectl mutations. Live reseed is the remaining proof.
+

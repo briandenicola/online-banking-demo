@@ -2388,3 +2388,80 @@ artifact claim more than the mechanism behind it can support?*
 
 **2026-09-09 (Scribe)** — Inbox merge and deploy verification complete. Your 11 queued decisions from `.squad/decisions/inbox/` are now merged into the canonical ledger at `.squad/decisions.md`. Authority-service has deployed cleanly to `banking-demo` namespace with the §B3.2 startup guard active (`banker-copilot-authority`, policyVersion `pv1:d7b3db9f5ada15b8`, 22 thresholds, 13 action types).
 
+
+---
+
+## Learnings — 2026-09-09 (three rulings: empty-ledger narrowing, probe idempotency, divergence silence)
+
+Written to `docs/design/empty-ledger-narrowing-ruling.md` and
+`docs/design/probe-idempotency-and-divergence-silence-ruling.md`.
+
+- **A falsified cost claim reopens the change, not just the claim.** Turk's §B2.2 narrowing was
+  accepted on "it costs no shipping caller." It cost four. That is why this was a ruling and not a
+  coordinator patch — the reasoning that bought the acceptance had failed, so the acceptance had to
+  be re-earned. It was re-earned: the narrowing still stands. But it had to be re-earned.
+- **The blast-radius rule has to name the roots or it will not survive.** "Search the repo" is
+  advice. `src/ scripts/ tests/ config/ infra/ .github/ Taskfile.yml`, with the pattern and the hit
+  list quoted, is a gate. Turk's search was competent and scoped to `src/`; the defect was that
+  nothing forced him to say what he had searched.
+- **Distinguish dodging a check from asking a question you can prove.** The seeder borrowing a
+  banker token and the seeder calling `/api/transactions/my` both make the 403 go away, and they
+  are opposites: the first acquires authority it does not have, the second asks about its own rows.
+  Rusty's lesson 44 bites the first and not the second — and I had to write that distinction down
+  in one sentence, because otherwise the next reviewer sees only "the seeder changed to avoid the
+  error" and relitigates it.
+- **Prefer the fix that does not need a redeploy when it is also the honest one.** The
+  architecturally cleaner answer (transaction-service asks account-service) would have blocked
+  Brian behind a build for a defect whose entire reach was one shell script. Smallest measured
+  change is not a compromise here; it happened to coincide with the correct one. Check for that
+  coincidence before reaching for the clean architecture.
+- **The evidence that a caller-side fix suffices was already in the caller.** `resolve_account_refs`
+  already probes account-service for ownership at line 617. Reading the caller before ruling on the
+  service is what turned a service-to-service design debate into a four-line script edit.
+- **When a count changes meaning, the label must change in the same commit.** The verify pass moves
+  from "the account's transactions" to "the owner's transactions on that account." Equal today
+  under single ownership. A verification pass that silently changes what it counts is the worst
+  possible place in the repo for an unlabelled meaning change.
+- **Silence is a valid rendering; blankness is not.** Linus was right to prefer a structurally
+  silent divergence indicator over three fabricated corroborations. But silence must carry its
+  reason on the card, or a viewer reads "no divergence found" out of a component that cannot find
+  any. The condition cost one string.
+- **A fixture may never assert a field the service cannot produce.** `demoFixture` was agreeing
+  with the renderer instead of the service. That failure mode detonates at the demo, in front of
+  the audience, the first time live data replaces the fixture. Generalised into the ruling.
+- **A probe that drives a real path may not be idempotent.** Reuse turns "is this open now" into
+  "was this open once", and the second answer passes on precisely the day the first would fail.
+  Rusty was right to ask rather than invent, and right in what he had already built.
+
+### 2026-09-09 — items 5 and 6 (#140 sequencing, #335 triage)
+
+- **Boundaries beat judgement calls.** #140 got permission with a four-path file list
+  (`harness-limits.yaml`, `authority-policy.yaml`, `copilot-tools.yaml`, `banker-copilot-service/`)
+  instead of "be careful not to disturb the measurement". A reviewer can check the first with
+  `git diff --name-only`. The second is a conversation every time.
+- **The discriminating fact was arithmetic, not architectural.** `maxConcurrentSubagents: 4` vs
+  #140's six agents. Stage 2 is a config-only edit to that same file. Without reading the number I
+  would have ruled on epic size and got a defensible but ungrounded answer.
+- **`loan.decision.record` is inert by ABSENCE, not by a flag** — `agentMayPropose: true` already,
+  no `enabled: false`. Safety is real but unguarded, and one line in `copilot-tools.yaml` ends it.
+  I declined to add a flag: a state stated twice is stated wrong once.
+- **Read the code before ruling on the issue.** #335 was raised expecting the authority events to
+  be dropped. They are not — all eleven are handled and guarded. Defect A is fixed outright. Half
+  the issue is stale. Ruling on the title would have produced a false blocker on #332.
+- **Third instance this week of the same seam.** `publishedEventTypes` is a hand-maintained Go list
+  whose own comment claims it catches a producer added without a case. It cannot. Same shape as
+  Turk's falsified cost claim, hours apart. **Both were catchable only because the false claim was
+  written down.** That is now twice in one day that a written premise was the only handle — it is
+  the strongest argument I have for the compaction rule I wrote into the manifest.
+
+---
+
+**2026-09-09 (Scribe)** — Inbox merge complete. Three ruling documents committed to `docs/design/`:
+- `empty-ledger-narrowing-ruling.md` (§B2.2 narrowing stands; seeder was wrong)
+- `probe-idempotency-and-divergence-silence-ruling.md` (probe may not be idempotent; silence needs one visible condition)
+- `sequencing-140-and-audit-gap-335-ruling.md` (#140 may open for research/design; stage 2 gates touching `config/harness-limits.yaml` and copilot-service; #335 not a blocker, approval trail audited)
+
+Six rulings and all follow-ups documented. Two open items flagged from Linus's work (wording deviation, factor-classification gap surviving one layer deeper) and one from Turk (upstream docs gap at banker-copilot-service). All recorded in `.squad/decisions.md`.
+
+**Reseed unblocked.** Stage 1 measurement is the next gate.
+

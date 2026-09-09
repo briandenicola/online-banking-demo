@@ -1534,3 +1534,57 @@ the ones that find tests proving less than they appear to.
 
 **2026-09-09 (Scribe)** — Inbox merge and deploy verification complete. Your 11 queued decisions from `.squad/decisions/inbox/` are now merged into the canonical ledger at `.squad/decisions.md`. Authority-service has deployed cleanly to `banking-demo` namespace with the §B3.2 startup guard active (`banker-copilot-authority`, policyVersion `pv1:d7b3db9f5ada15b8`, 22 thresholds, 13 action types).
 
+
+---
+
+**2026-09-09 — the "comparison unavailable" label (Danny's §F5 condition)**
+
+## Learnings
+
+- **A silent indicator is an assertion.** Nothing rendered where a divergence flag would go reads
+  as "we compared the two sides and they were consistent" — which is a claim, made by absence, on
+  a card a supervisor signs from. The fix is never to fire the indicator anyway; it is to say
+  *why* it did not fire. Same shape as `supervisor_unavailable`: a call that did not happen may
+  not render as a quiet pass. Silence needs a reason attached or it is indistinguishable from a
+  pass.
+- **The ruling's premise had already moved under it.** §F4 reasons from "`loop.py` emits
+  `{summary, evidenceToolIds}` and nothing else, so `primaryFactors` is structurally empty" —
+  but `app/planner/primary_model.py` now parses and emits `keyFactors`, and rejects an assessment
+  that states none (`primary_key_factors_missing`). So I made the label **run-scoped** — "the
+  primary agent stated no key factors" — rather than Danny's capability-scoped "does not emit key
+  factors". §F5 says "something of the form", which is the latitude, and asserting a permanent
+  service limitation that is no longer true would be exactly the class of over-claim the ruling
+  exists to delete. **Read the code the ruling reasons from before you quote the ruling's
+  premise.**
+- **Every conditional label needs a negative test, or it is an unconditional label.** My first
+  test ("primary stated none → label shows") passes just as happily against a label rendered on
+  every card. The pair that matters is that plus "both sides stated factors → label absent".
+  Without the second, I would have replaced an indicator that fired 100% of the time with a
+  disclaimer that fires 100% of the time, in a politer font.
+- **Tamper-test confirmed the guard: `{false && ...}` on the render condition → 2 failures, both
+  mine, both naming the missing testid.** Reverted, 228/228 green.
+- **`agreementTriState.test.tsx` has a real flake** — it compares two full card `textContent`
+  dumps and the `ApprovalCountdown` ticks between the renders (`0:16` vs `0:15`). Not mine, not
+  fixed, but it will bite whoever runs the suite next on a slow machine. Its `strip()` only
+  neutralises `0.\d+` confidences, not the countdown.
+- **The ambiguity survives one layer deeper and I left it there on purpose.** Divergence needs
+  both sides to set `concern` to an explicit boolean, and neither side ever sets it —
+  `approval_view.py` sends `{"label": factor}` and nothing more. So on the demo card
+  `factorComparison === 'compared'`, my label correctly stays quiet, and the comparison *still*
+  cannot produce a result. Widening the label to cover that means firing it on every card, which
+  is the always-fires defect wearing a politer font. Flagged for Danny in the decision record
+  instead of fixed. **When the honest fix is upstream, say so loudly and do not simulate it
+  downstream.**
+
+---
+
+**2026-09-09 (Scribe)** — Factor-divergence indicator merged to master (frontend only). Added `factorComparison` field to `Disagreement` and render condition in `ApprovalCard.tsx`. Label *"Factor comparison unavailable — the primary agent stated no key factors"* renders in supervisor column where `← DIVERGENT` flags would be (informational, not error).
+
+Principle: "We could not check" and "we checked and it was fine" must not look the same on a card a supervisor signs from.
+
+Five tests including present-when-primary-stated-none and absent-when-both-stated-factors. 228/228 passing. Tamper-tested (render condition `{false && …}` → 2 failures, both new, both named). 
+
+**Two flags for Danny:** (1) Wording deviation — shipped "stated no key factors" instead of "does not emit" because primary now emits factors on happy path; run-scoped wording is correct in both worlds; §F5 says "something of the form". (2) Second-layer silence — divergence guard only fires where both set `concern` to explicit booleans (never); gap survives on demo card; widening label would fire on every card (§F4 defect in politer font). Recorded in decisions for Danny's ruling.
+
+**No redeploy.** Frontend only, rides next image.
+
