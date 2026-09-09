@@ -36,7 +36,7 @@ import asyncio
 import inspect
 import json
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Mapping, Protocol
+from typing import Any, Awaitable, Callable, Mapping, Protocol, Sequence
 
 import structlog
 
@@ -451,7 +451,8 @@ class FanOutEngine:
         request: Any,
         stream: RunStream,
         approval: Mapping[str, Any],
-        primary_evidence: Mapping[str, Any],
+        *,
+        required_evidence_tool_ids: Sequence[str],
         depth: int = 1,
         parent_step_id: str = "",
     ) -> FanOutResult | None:
@@ -472,7 +473,7 @@ class FanOutEngine:
             return None
 
         # (1) Build the spawn input from the INTENT. The raw entity ids come from the
-        #     banker's own inputs (payload/facts/context), never from primary_evidence.
+        #     banker's own inputs (payload/facts/context), never from the primary's evidence.
         raw_inputs: dict[str, Any] = {}
         raw_inputs.update(getattr(request.session, "context", None) or {})
         raw_inputs.update(request.payload or {})
@@ -487,10 +488,22 @@ class FanOutEngine:
         )
         spawn = build_supervisor_input(intent)
 
-        # The supervisor re-runs the SAME read tools the action required — a second,
-        # independent draw. It gets the parent's read allowlist minus propose_action.
+        # The supervisor re-runs the SAME read tools THE ACTION REQUIRED — a second, independent
+        # draw. It gets the parent's read allowlist minus propose_action.
+        #
+        # §P5.7, and this is the whole reason the parameter is a list of REQUIRED tool ids rather
+        # than the primary's evidence. This line used to read `sorted(primary_evidence.keys())`.
+        # That was correct only by coincidence — the two sets happened to be equal while the
+        # primary could gather nothing beyond policy. The moment the evidence ceiling let
+        # discretionary reads into that dict, the supervisor's independent draw would silently
+        # have widened to follow the primary's CHOICES, and the diff that caused it would contain
+        # no mention of the supervisor at all: blindness defeated by a data-flow change in another
+        # module. Deriving from the action's `requiredEvidence` is both more correct — the second
+        # draw should be defined by the action under review, which is policy — and structurally
+        # safe, because there is no longer an argument here through which primary output can
+        # travel. Held by a test that fails the day someone re-points this at the evidence dict.
         allowed = set(subagent_tool_ids(self._registry.tool_ids))
-        reader_tool_ids = tuple(t for t in sorted(primary_evidence.keys()) if t in allowed)
+        reader_tool_ids = tuple(t for t in sorted(set(required_evidence_tool_ids)) if t in allowed)
 
         subagent_run_id = f"{request.run_id}::supervisor"
         child_stream = self._runs.create(

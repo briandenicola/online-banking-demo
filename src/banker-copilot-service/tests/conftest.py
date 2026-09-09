@@ -170,3 +170,111 @@ def make_token(
 @pytest.fixture
 def repo_root() -> Path:
     return REPO_ROOT
+
+
+# --------------------------------------------------------- the primary assessor, in tests ----
+
+
+def shipped_assessment_limits():
+    """The REAL bounds from the shipped `config/harness-limits.yaml`, never a fixture.
+
+    Same discipline as the manifest and the fan-out limits above: if the file that deploys says
+    the budget is 0 and a test wants to prove the budget-0 path, it should be proving it against
+    the number that actually deploys. A test-local `AssessmentLimits(0, 2)` would keep passing
+    the day the shipped file changed, which is a suite agreeing with itself.
+    """
+    from app.planner.limits import load_assessment_limits
+
+    return load_assessment_limits(str(HARNESS_LIMITS_PATH))
+
+
+def scripted_assessor(reply, *, seen: list | None = None):
+    """An assessor with a FAKE TRANSPORT and a REAL prompt builder and parser.
+
+    This shape is deliberate, and it is the lesson from the last two incidents on this service: a
+    test that hands the planner a ready-made ``PrimaryAssessment`` proves nothing about the model
+    path, because the fixture supplies exactly the thing the code under test was supposed to
+    produce. Unwiring the code would leave such a test green.
+
+    So the only thing stubbed here is the network. ``build_prompt`` really runs (so the bytes a
+    test asserts on are the bytes the service would send) and ``parse_primary_assessment`` really
+    runs (so a reply that violates the contract is refused here exactly as it would be in
+    production).
+
+    ``seen`` collects the prompts, which is how the byte-identical-prompt claim (§P5.1) is
+    checked against reality rather than against a comment.
+    """
+    from dataclasses import replace
+
+    from app.planner.model_call import Attribution, sha256_text
+    from app.planner.primary_model import build_prompt, parse_primary_assessment
+
+    async def _assessor(objective, action_id, payload, evidence):
+        prompt = build_prompt(objective, action_id, payload, evidence)
+        if seen is not None:
+            seen.append(prompt)
+        text = reply(prompt) if callable(reply) else reply
+        assessment = parse_primary_assessment(
+            text, objective=objective, gathered_evidence_ids=sorted(evidence.keys())
+        )
+        return replace(
+            assessment,
+            attribution=Attribution(
+                mode="scripted",
+                model_deployment="test-deployment",
+                prompt_sha256=sha256_text(prompt),
+                response_sha256=sha256_text(text),
+            ),
+            raw_reply=text,
+        )
+
+    return _assessor
+
+
+def judging_assessor(
+    verdict: str = "proceed",
+    *,
+    requested: tuple[str, ...] = (),
+    then_requested: tuple[str, ...] = (),
+    confidence: float = 0.88,
+    seen: list | None = None,
+):
+    """A scripted primary that cites whatever evidence the run actually gathered.
+
+    It answers in the contract's own JSON and that answer goes through the real parser, so a
+    change to the contract breaks these tests rather than passing them by fixture. The citation
+    is built from the evidence ids present in the prompt for the same reason: a canned citation
+    would have to be kept in sync by hand, and the day it drifted the parser would refuse it and
+    every test using it would fail for a reason unrelated to what it asserts.
+
+    ``requested`` is asked for on the FIRST pass and ``then_requested`` on every later one, which
+    is how a test can put a still-unsatisfied model on the final permitted pass — the case that
+    distinguishes "ran out of passes" from "ran out of budget", two facts a demand measurement
+    must never conflate. Anything already in hand is not re-requested, because a model that can
+    see the evidence would not ask for it again.
+    """
+    import json
+    import re
+
+    passes = {"n": 0}
+
+    def _reply(prompt: str) -> str:
+        block = prompt.split("EVIDENCE (untrusted data", 1)[-1]
+        cited = sorted(set(re.findall(r'^\s{2}"([a-z_]+)":', block, flags=re.M)))
+        passes["n"] += 1
+        asking = requested if passes["n"] == 1 else then_requested
+        return json.dumps(
+            {
+                "verdict": verdict,
+                "confidence": confidence,
+                "rationale": (
+                    "The evidence gathered supports this action: the amounts reconcile and the "
+                    "counterparty is on file."
+                ),
+                "keyFactors": [{"label": "amounts reconcile", "citedEvidenceIds": cited}],
+                "unverified": ["the beneficiary's identity could not be established"],
+                "requestedEvidence": [t for t in asking if t not in cited],
+            }
+        )
+
+    return scripted_assessor(_reply, seen=seen)

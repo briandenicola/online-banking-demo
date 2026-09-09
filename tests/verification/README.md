@@ -378,6 +378,16 @@ supervisor is rarely uncertain, including on the marginal cases where repeats sh
 Confidence is not a usable signal of borderline-ness, which matters because the approval card
 shows it to a human deciding whether to sign.
 
+**The one sentence to quote whenever this number is quoted (ruling §P7.2, required):**
+*self-reported; observed 0.83–0.98, and identical inputs have produced opposite verdicts at
+overlapping confidence.*
+
+It is therefore **not** a reliability or certainty signal, and no document, demo script, README or
+4.2 write-up may describe it as one. Nothing in the product ranks, sorts, colour-scales or gates
+on it, and no numeric threshold on it exists anywhere in the codebase — a test walks the service
+and the client to hold that. The number is kept because deleting data is its own dishonesty and
+because a low value beside a stated `unverified` list is genuinely informative *as prose*.
+
 ---
 
 ## Files

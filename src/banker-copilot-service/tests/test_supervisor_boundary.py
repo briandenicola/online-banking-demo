@@ -25,6 +25,8 @@ from typing import Any
 
 import pytest
 
+from conftest import judging_assessor, shipped_assessment_limits
+
 from app.events.bus import InMemoryTraceSink, RunStreamRegistry
 from app.planner.fanout import FanOutEngine, SecondOpinion, SupervisorInput
 from app.planner.limits import FanoutLimits
@@ -170,6 +172,8 @@ async def _drive(rung: str, decider) -> tuple[RunStreamRegistry, _Executor]:
         executor=executor,
         authority=_Authority(rung, PRIMARY_SENTINEL, ("get_flagged_transaction",)),
         max_iterations=12,
+        assessment_limits=shipped_assessment_limits(),
+        assessor=judging_assessor(),
         store=_Store(),
         fanout=fanout,
     )

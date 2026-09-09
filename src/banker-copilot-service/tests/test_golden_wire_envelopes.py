@@ -29,6 +29,8 @@ from typing import Any
 
 import pytest
 
+from conftest import judging_assessor, shipped_assessment_limits
+
 from app.events.bus import InMemoryTraceSink, RunStreamRegistry
 from app.planner.fanout import FanOutEngine, SecondOpinion, SupervisorInput
 from app.planner.limits import FanoutLimits
@@ -65,8 +67,10 @@ REALISTIC_BODY: dict[str, Any] = {
         "ev_1": {"kind": "tool_result", "label": "Three wires to one counterparty in 48h", "toolCallId": "tc_2"},
         "ev_3": {"kind": "policy", "label": "AML-14 structuring threshold", "toolCallId": "tc_4"},
     },
-    "agentAssessment": {"summary": "Aggregate sits above the AML-14 trigger.", "recommendation": "proceed",
-                        "evidenceToolIds": ["ev_1", "ev_3"]},
+    # Deliberately absent here: `agentAssessment` is not canned. It is whatever the planner
+    # actually PROPOSED, echoed back by the stub below exactly as authority-service echoes the
+    # body it stored. A canned one is how this golden could go on passing with the assessor
+    # unwired — the fixture would be supplying the very thing the code under test must produce.
     "payloadHash": "sha256:9f2c4a7b1e8d3f60a5c2b9e4d7f1a8c3b6e9d2f5a8c1b4e7d0f3a6c9b2e5d8f1",
     "payloadHashShort": "9f2c4a7b",
     "policyVersion": "policy-2026.05.1",
@@ -126,9 +130,11 @@ class _Executor:
 
 
 class _Outcome:
-    def __init__(self) -> None:
+    def __init__(self, proposed_assessment: dict) -> None:
         self.status_code = 201
         self.body = json.loads(json.dumps(REALISTIC_BODY))
+        # The real service stores what it was sent and returns it. So does this.
+        self.body["agentAssessment"] = proposed_assessment
 
     @property
     def admitted(self) -> bool:
@@ -140,7 +146,7 @@ class _Authority:
         return {"actions": [{"id": "transaction.hold.place", "requiredEvidence": ["get_flagged_transaction"]}]}
 
     async def propose(self, body, *, bearer_token, session_id, agent_id, correlation_id):
-        return _Outcome()
+        return _Outcome(body["agentAssessment"])
 
 
 class _Store:
@@ -174,7 +180,10 @@ async def _emit_envelopes() -> list[dict[str, Any]]:
     fanout = FanOutEngine(registry=registry, executor=executor, runs=runs, limits=LIMITS, decider=_dissenting)
     planner = Planner(
         registry=registry, executor=executor, authority=_Authority(),
-        max_iterations=12, store=_Store(), fanout=fanout,
+        max_iterations=12,
+        assessment_limits=shipped_assessment_limits(),
+        assessor=judging_assessor(),
+        store=_Store(), fanout=fanout,
     )
     req = PlannerRequest(
         session=_Session(),

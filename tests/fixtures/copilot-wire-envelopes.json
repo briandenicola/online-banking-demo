@@ -1,6 +1,6 @@
 [
   {
-    "seq": 11,
+    "seq": 14,
     "runId": "run_demo",
     "kind": "approval.required",
     "payload": {
@@ -31,20 +31,6 @@
             "toolCallId": "tc_4"
           }
         },
-        "agentAssessment": {
-          "summary": "Aggregate sits above the AML-14 trigger.",
-          "recommendation": "proceed",
-          "evidenceToolIds": [
-            "ev_1",
-            "ev_3"
-          ],
-          "agentName": "Primary agent",
-          "verdict": "PROCEED",
-          "citedEvidenceIds": [
-            "ev_1",
-            "ev_3"
-          ]
-        },
         "payloadHash": "sha256:9f2c4a7b1e8d3f60a5c2b9e4d7f1a8c3b6e9d2f5a8c1b4e7d0f3a6c9b2e5d8f1",
         "payloadHashShort": "9f2c4a7b",
         "policyVersion": "policy-2026.05.1",
@@ -79,7 +65,42 @@
         "createdAt": "2026-05-12T14:00:00Z",
         "expiresAt": "2026-05-12T14:15:00Z",
         "executionState": "not_started",
-        "callerMaySign": true
+        "callerMaySign": true,
+        "agentAssessment": {
+          "agentName": "Primary agent",
+          "evidenceToolIds": [
+            "get_flagged_transaction"
+          ],
+          "requiredEvidenceToolIds": [
+            "get_flagged_transaction"
+          ],
+          "discretionaryEvidenceToolIds": [],
+          "refusedEvidenceRequests": [],
+          "assessmentIterations": 1,
+          "converged": true,
+          "rationale": "The evidence gathered supports this action: the amounts reconcile and the counterparty is on file.",
+          "recommendation": "proceed",
+          "confidence": 0.88,
+          "keyFactors": [
+            {
+              "label": "amounts reconcile",
+              "citedEvidenceIds": [
+                "get_flagged_transaction"
+              ]
+            }
+          ],
+          "citedEvidenceIds": [
+            "get_flagged_transaction"
+          ],
+          "unverified": [
+            "the beneficiary's identity could not be established"
+          ],
+          "mode": "scripted",
+          "modelDeployment": "test-deployment",
+          "promptSha256": "sha256:5772aae6c2733eddaae29ee24193f56311e01ab7a5a30f513472ae86fa6ca0cc",
+          "responseSha256": "sha256:36903754aa4b4e04e8516e7c8acfc524b34641adb6d82333317a71b235f25efa",
+          "verdict": "PROCEED"
+        }
       },
       "policyVersion": "policy-2026.05.1",
       "requiredRung": "L2"
@@ -87,7 +108,7 @@
     "sessionId": "sess_demo"
   },
   {
-    "seq": 15,
+    "seq": 18,
     "runId": "run_demo",
     "kind": "approval.updated",
     "payload": {
@@ -118,41 +139,6 @@
             "toolCallId": "tc_4"
           }
         },
-        "agentAssessment": {
-          "primary": {
-            "summary": "Aggregate sits above the AML-14 trigger.",
-            "recommendation": "proceed",
-            "evidenceToolIds": [
-              "ev_1",
-              "ev_3"
-            ],
-            "agentName": "Primary agent",
-            "verdict": "PROCEED",
-            "citedEvidenceIds": [
-              "ev_1",
-              "ev_3"
-            ]
-          },
-          "supervisor": {
-            "agentId": "run_demo::supervisor",
-            "agentName": "Independent supervisor",
-            "verdict": "HOLD",
-            "confidence": 0.62,
-            "rationale": "The customer runs a haulage business; this reads as vendor settlement, not structuring.",
-            "keyFactors": [
-              {
-                "label": "counterparty is an established freight vendor"
-              },
-              {
-                "label": "pattern matches invoice settlement"
-              }
-            ],
-            "citedEvidenceIds": [
-              "get_flagged_transaction"
-            ]
-          },
-          "agreement": "diverge"
-        },
         "payloadHash": "sha256:9f2c4a7b1e8d3f60a5c2b9e4d7f1a8c3b6e9d2f5a8c1b4e7d0f3a6c9b2e5d8f1",
         "payloadHashShort": "9f2c4a7b",
         "policyVersion": "policy-2026.05.1",
@@ -187,7 +173,63 @@
         "createdAt": "2026-05-12T14:00:00Z",
         "expiresAt": "2026-05-12T14:15:00Z",
         "executionState": "not_started",
-        "callerMaySign": true
+        "callerMaySign": true,
+        "agentAssessment": {
+          "primary": {
+            "agentName": "Primary agent",
+            "evidenceToolIds": [
+              "get_flagged_transaction"
+            ],
+            "requiredEvidenceToolIds": [
+              "get_flagged_transaction"
+            ],
+            "discretionaryEvidenceToolIds": [],
+            "refusedEvidenceRequests": [],
+            "assessmentIterations": 1,
+            "converged": true,
+            "rationale": "The evidence gathered supports this action: the amounts reconcile and the counterparty is on file.",
+            "recommendation": "proceed",
+            "confidence": 0.88,
+            "keyFactors": [
+              {
+                "label": "amounts reconcile",
+                "citedEvidenceIds": [
+                  "get_flagged_transaction"
+                ]
+              }
+            ],
+            "citedEvidenceIds": [
+              "get_flagged_transaction"
+            ],
+            "unverified": [
+              "the beneficiary's identity could not be established"
+            ],
+            "mode": "scripted",
+            "modelDeployment": "test-deployment",
+            "promptSha256": "sha256:5772aae6c2733eddaae29ee24193f56311e01ab7a5a30f513472ae86fa6ca0cc",
+            "responseSha256": "sha256:36903754aa4b4e04e8516e7c8acfc524b34641adb6d82333317a71b235f25efa",
+            "verdict": "PROCEED"
+          },
+          "supervisor": {
+            "agentId": "run_demo::supervisor",
+            "agentName": "Independent supervisor",
+            "verdict": "HOLD",
+            "confidence": 0.62,
+            "rationale": "The customer runs a haulage business; this reads as vendor settlement, not structuring.",
+            "keyFactors": [
+              {
+                "label": "counterparty is an established freight vendor"
+              },
+              {
+                "label": "pattern matches invoice settlement"
+              }
+            ],
+            "citedEvidenceIds": [
+              "get_flagged_transaction"
+            ]
+          },
+          "agreement": "diverge"
+        }
       }
     },
     "sessionId": "sess_demo"

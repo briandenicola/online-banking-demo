@@ -389,3 +389,63 @@ def test_the_prompt_names_the_action_under_assessment():
     `decline` four times out of four at 0.99 — violent agreement recorded as disagreement."""
     prompt = build_prompt(OBJECTIVE, "account.balance.adjust", {}, {})
     assert "REQUESTED ACTION\naccount.balance.adjust" in prompt
+
+
+# ------------------------------------------- §P9.10 what the documents may and may not say ----
+
+
+def _prose_files():
+    """Every document a reader could reasonably take as a description of the product."""
+    import pathlib
+
+    repo = pathlib.Path(__file__).resolve().parents[3]
+    roots = [
+        repo / "tests" / "verification",
+        repo / "docs" / "demo",
+        repo / "src" / "banker-copilot-service" / "README.md",
+        repo / "src" / "ui-app" / "src" / "components" / "copilot",
+    ]
+    files = []
+    for root in roots:
+        if root.is_file():
+            files.append(root)
+        elif root.is_dir():
+            files.extend(p for p in root.rglob("*.md") if "node_modules" not in str(p))
+    return files
+
+
+def test_no_document_claims_the_supervisor_independently_corroborates_the_primary():
+    """§P1.2e/§P9.10, banned by name.
+
+    Both agents are the same base model behind the same endpoint. "Independent corroboration"
+    claims a property the mechanism does not have: two draws from one model agreeing is weaker
+    evidence than the phrase implies, and it is exactly the phrase a reader would quote back.
+    The blindness that IS real — construction, inputs and prompt — is worth stating precisely,
+    and this test exists so the precise claim is not quietly upgraded to the flattering one.
+    """
+    offenders = []
+    for path in _prose_files():
+        text = path.read_text(encoding="utf-8").casefold()
+        for phrase in ("independent corroboration", "independently corroborated"):
+            if phrase in text:
+                offenders.append(f"{path.name}: {phrase!r}")
+    assert offenders == [], offenders
+
+
+def test_the_one_honest_sentence_about_confidence_is_where_the_number_is_quoted():
+    """§P7.2, required now even though the wire rename is deferred. The measurement is
+    unambiguous — the number never goes low and does not separate a stable case from a coin
+    flip — so the place that quotes the distribution has to say so."""
+    import pathlib
+
+    import re
+
+    raw = (
+        pathlib.Path(__file__).resolve().parents[3] / "tests" / "verification" / "README.md"
+    ).read_text(encoding="utf-8")
+    # Whitespace-insensitive: the sentence must survive being re-wrapped by an editor, because a
+    # guard that a reflow can break is a guard that will be deleted the first time it fires.
+    readme = re.sub(r"\s+", " ", raw)
+    assert "self-reported; observed 0.83–0.98" in readme
+    assert "identical inputs have produced opposite verdicts at overlapping confidence" in readme
+    assert "not** a reliability or certainty signal" in readme

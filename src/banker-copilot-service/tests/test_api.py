@@ -6,6 +6,8 @@ import json
 
 import httpx
 import pytest
+
+from conftest import judging_assessor, shipped_assessment_limits
 from fastapi.testclient import TestClient
 
 from tests.conftest import make_token
@@ -239,6 +241,8 @@ def test_planner_gathers_evidence_then_proposes_and_streams_the_trace(client, mo
         executor=client.app.state.executor,
         authority=client.app.state.authority,
         max_iterations=12,
+        assessment_limits=shipped_assessment_limits(),
+        assessor=judging_assessor(),
     )
 
     session = client.post(

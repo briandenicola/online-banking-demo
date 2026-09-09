@@ -23,8 +23,9 @@ from app.config import (
 )
 from app.events.bus import CosmosTraceSink, InMemoryTraceSink, RunStreamRegistry
 from app.planner.fanout import FanOutEngine, deterministic_decider
-from app.planner.limits import load_fanout_limits
-from app.planner.loop import Planner, planner_mode
+from app.planner.limits import load_assessment_limits, load_fanout_limits
+from app.planner.primary_model import FoundryPrimaryAssessor, unavailable_assessor
+from app.planner.loop import Planner, adverse_proposal_mode, planner_mode
 from app.planner.supervisor_model import FoundryDecider, supervisor_mode
 from app.stores.sessions import CosmosSessionStore, InMemorySessionStore
 from app.tools.executor import ToolExecutor
@@ -143,6 +144,17 @@ async def lifespan(app: FastAPI):
         tool_budget=fanout_limits.per_subagent_tool_budget,
         wall_clock_s=fanout_limits.subagent_wall_clock_seconds,
     )
+    # The assessment loop's bounds (§P5.2). Same fail-closed posture, and note the budget may
+    # legitimately be ZERO: that is stage 1, in which the primary is asked the same question and
+    # every request it makes is refused and recorded. Zero is a budget, not an off switch — there
+    # is no branch anywhere that tests it.
+    assessment_limits = load_assessment_limits(settings.harness_limits_path)
+    logger.info(
+        "Assessment limits loaded",
+        per_run_additional_tool_budget=assessment_limits.per_run_additional_tool_budget,
+        max_assessment_iterations=assessment_limits.max_assessment_iterations,
+    )
+
     # The supervisor's decider (§6.4). Declared, never inferred — the scripted decider
     # always recommends `proceed` when its reads succeed, so wiring it by accident makes
     # agreement 100% by construction and renders the co-signature as independent review
@@ -165,27 +177,49 @@ async def lifespan(app: FastAPI):
         decider=decider,
     )
 
+    # The PRIMARY's assessor, by the same declared-mode rule as the supervisor's decider. In
+    # deterministic mode it is not a bland stand-in: it states, by name, that no assessment was
+    # formed. For as long as this service ran without one, the card showed "Primary agent —
+    # PROCEED" and nobody could tell.
+    app.state.planner_mode = planner_mode()
+    if app.state.planner_mode == "foundry":
+        assessor = FoundryPrimaryAssessor(
+            endpoint=env_with_legacy("FOUNDRY_PROJECT_ENDPOINT", "AZURE_AI_PROJECT_ENDPOINT", "").strip(),
+            model=env_with_legacy("FOUNDRY_MODEL", "AZURE_AI_MODEL_DEPLOYMENT", "").strip(),
+        )
+    else:
+        assessor = unavailable_assessor
+    app.state.primary_assessor = assessor
+
     app.state.planner = Planner(
         registry=registry,
         executor=app.state.executor,
         authority=app.state.authority,
         max_iterations=settings.planner_max_iterations,
+        assessment_limits=assessment_limits,
+        assessor=assessor,
         store=app.state.session_store,
         fanout=app.state.fanout,
     )
 
-    app.state.planner_mode = planner_mode()
+    app.state.adverse_proposal_mode = adverse_proposal_mode()
     logger.info(
         "Planner ready",
         mode=app.state.planner_mode,
         supervisor_mode=app.state.supervisor_mode,
         max_iterations=settings.planner_max_iterations,
+        # Declared and said out loud, exactly like the two modes above. `withhold` means an
+        # adverse primary stops the action reaching a human at all, and that must never be a
+        # thing anyone has to read the code to discover.
+        adverse_proposal=app.state.adverse_proposal_mode,
     )
 
     yield
 
     if isinstance(app.state.supervisor_decider, FoundryDecider):
         await app.state.supervisor_decider.aclose()
+    if isinstance(app.state.primary_assessor, FoundryPrimaryAssessor):
+        await app.state.primary_assessor.aclose()
     await app.state.http.aclose()
 
 

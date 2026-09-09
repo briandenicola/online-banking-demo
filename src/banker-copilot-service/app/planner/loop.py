@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import os
 import time
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Sequence
 
 import structlog
 
@@ -33,7 +33,15 @@ from app.stores.sessions import Session, new_artifact
 from app.tools.executor import ToolExecutor, ToolInvocationError
 from app.tools.propose import AuthorityClient, ProposeRejected
 from app.tools.registry import ToolRegistry
-from app.planner.approval_view import primary_wire_assessment
+from app.planner.approval_view import primary_proposal_assessment, primary_wire_assessment
+from app.planner.evidence_ceiling import (
+    ITERATIONS_EXHAUSTED,
+    READ_REFUSED_403,
+    RefusedEvidenceRequest,
+    additional_evidence,
+)
+from app.planner.limits import AssessmentLimits
+from app.planner.primary_model import PrimaryAssessment, unavailable
 
 logger = structlog.get_logger("banker-copilot-service")
 
@@ -49,6 +57,34 @@ except ImportError:  # pragma: no cover
 
 
 PLANNER_MODES = ("foundry", "deterministic")
+
+#: §P6. Declared, never inferred, logged at startup, ONE call site, one named function.
+#:
+#: `propose` (the default and the ruled-correct behaviour): the primary proposes even when its
+#: own assessment is adverse. An agent that declines to propose has DISPOSED — it has exercised a
+#: veto the authority ladder never granted it, and it exercises it invisibly, because the banker
+#: gets an empty screen rather than a denial. Worse, the banker still needs to act, so the refusal
+#: relocates the work to the admin tabs, which are reachable, role-authorized and leave no audit
+#: record. An adverse proposal on the governed path is strictly better than a silent refusal that
+#: routes around it — and the card's two-position comparison only exists if there are two
+#: positions.
+#:
+#: `withhold` exists so Brian can SEE that behaviour, not because it is close. A withheld proposal
+#: ends the run `failed` with `primary_declined`: no approval was admitted, and status is derived
+#: from that, so flipping this seam cannot reintroduce the completed-on-no-approval lie by a new
+#: door.
+ADVERSE_PROPOSAL_MODES = ("propose", "withhold")
+
+
+def adverse_proposal_mode() -> str:
+    mode = (os.getenv("COPILOT_ADVERSE_PROPOSAL") or "propose").strip().lower()
+    if mode not in ADVERSE_PROPOSAL_MODES:
+        raise ConfigurationError(
+            f"COPILOT_ADVERSE_PROPOSAL={mode!r} is not one of {ADVERSE_PROPOSAL_MODES}. "
+            "This setting is declared, never inferred: guessing it would decide whether a banking "
+            "action reaches a human at all."
+        )
+    return mode
 
 
 def planner_mode() -> str:
@@ -170,6 +206,40 @@ class _RunOutcome:
 
 
 @dataclass
+class _AssessmentRecord:
+    """What the harness OBSERVED about the assessment loop, kept apart from what the model claimed.
+
+    Every field here is server-derived (§P5.5). The model's requests are its claim; these are the
+    observation, and the two must never be blurred into one list — ``requiredEvidenceToolIds`` is a
+    CONTROL and ``discretionaryEvidenceToolIds`` is a CHOICE, and "the copilot reviewed the
+    account" must not mean something different run to run while reading identically.
+    """
+
+    required_evidence_tool_ids: tuple[str, ...]
+    discretionary_evidence_tool_ids: list[str] = field(default_factory=list)
+    refused: list[RefusedEvidenceRequest] = field(default_factory=list)
+    iterations: int = 0
+    #: A POSITIVE recorded fact, never an absence. Without it, "hit the cap while still
+    #: unsatisfied" and "was satisfied on the first pass" read identically — a broken path
+    #: looking like a working one, which is the defect class this feature keeps producing.
+    #: It starts False and is EARNED, in the same spirit as `_RunOutcome.status`.
+    converged: bool = False
+    assessment: PrimaryAssessment = field(
+        default_factory=lambda: unavailable(
+            "primary_never_assessed",
+            "no assessment step ran on this plan",
+        )
+    )
+
+    def refuse(self, tool_id: str, reason: str) -> None:
+        self.refused.append(RefusedEvidenceRequest(tool_id, reason))
+
+    @property
+    def refusals_wire(self) -> list[dict[str, str]]:
+        return [r.to_wire() for r in self.refused]
+
+
+@dataclass
 class PlannerRequest:
     session: Session
     run_id: str
@@ -188,6 +258,8 @@ class Planner:
         executor: ToolExecutor,
         authority: AuthorityClient,
         max_iterations: int,
+        assessment_limits: AssessmentLimits,
+        assessor,
         store=None,
         fanout=None,
     ) -> None:
@@ -195,6 +267,13 @@ class Planner:
         self._executor = executor
         self._authority = authority
         self._max_iterations = max_iterations
+        # Both required, neither defaulted. A default budget here would be a second home for a
+        # number whose only home is `config/harness-limits.yaml` (invariant I-3), and a default
+        # assessor would be the exact failure this feature exists to end: a planner that quietly
+        # runs without a judgement and looks identical to one that has one.
+        self._assessment_limits = assessment_limits
+        self._assessor = assessor
+        self._adverse_proposal = adverse_proposal_mode()
         self._store = store
         # The Phase 3 fan-out engine. Optional so the single-threaded planner (and every
         # test that never reaches L2) is unchanged; when present, an L2 proposal triggers
@@ -233,7 +312,21 @@ class Planner:
             await stream.emit("plan.proposed", {"version": 1, "steps": steps})
 
             evidence: dict[str, Any] = {}
-            for index, step in enumerate(steps):
+            record = _AssessmentRecord(required_evidence_tool_ids=tuple(evidence_tools))
+            # The plan is now a MUTABLE list walked by position, because the assess step may
+            # insert discretionary reads into it (§P5.2). They are inserted as ORDINARY tool
+            # steps, so they inherit the iteration cap below without a new bound being invented:
+            # two independent ceilings, one of them already shipped and tested, is worth more
+            # than one carefully-argued new one.
+            plan_version = 1
+            next_step_number = len(steps) + 1
+            position = 0
+            executed = 0
+            while position < len(steps):
+                step = steps[position]
+                position += 1
+                index = executed
+                executed += 1
                 if index >= self._max_iterations:
                     await stream.emit(
                         "run.error",
@@ -257,6 +350,23 @@ class Planner:
 
                 if step["kind"] == "tool":
                     ok = await self._run_tool_step(request, stream, step, evidence)
+                    if not ok and step.get("discretionary"):
+                        # A discretionary read that fails does NOT fail the run. It was never
+                        # required, so the plan is no worse off than if the model had not asked.
+                        # It is recorded as a refused read, because otherwise the record cannot
+                        # distinguish "did not look" from "was not allowed to look" — and it has
+                        # already spent its budget, which bounds a model that would otherwise
+                        # enumerate the 403s to learn the session's authority surface.
+                        record.refuse(step["toolId"], READ_REFUSED_403)
+                        await stream.emit(
+                            "step.failed",
+                            {
+                                "stepId": step["id"],
+                                "error": "discretionary read refused",
+                                "willRetry": False,
+                            },
+                        )
+                        continue
                     if not ok:
                         # Belt and braces: a tool step only exists when the run has an
                         # `action_id`, so the plan also contains a propose step this break
@@ -273,6 +383,43 @@ class Planner:
                             },
                         )
                         break
+                elif step["kind"] == "assess":
+                    granted = await self._run_assess_step(request, stream, step, evidence, record)
+                    if granted:
+                        added, next_step_number = _insert_discretionary_steps(
+                            steps, position, granted, next_step_number
+                        )
+                        plan_version += 1
+                        record.discretionary_evidence_tool_ids.extend(granted)
+                        await stream.emit(
+                            "plan.revised",
+                            {
+                                "version": plan_version,
+                                "at": _now(),
+                                # Says WHOSE choice this was. The trace titles these steps
+                                # differently too (§P5.5): a control and a choice must never read
+                                # identically on screen.
+                                "reason": (
+                                    "The agent asked for additional evidence beyond what the "
+                                    "policy requires."
+                                ),
+                                "addedStepIds": added,
+                                # Nothing is ever removed by a revision here. The ceiling is
+                                # strictly additive; a revision that could drop a required step
+                                # would be the evidence floor moving, which is the one thing
+                                # this whole design prevents by construction.
+                                "removedStepIds": [],
+                                "steps": [
+                                    {
+                                        "id": s["id"],
+                                        "index": s["index"],
+                                        "title": s["title"],
+                                        "status": s["status"],
+                                    }
+                                    for s in steps
+                                ],
+                            },
+                        )
                 elif step["kind"] == "artifact":
                     artifact = new_artifact(
                         run_id=request.run_id,
@@ -298,7 +445,31 @@ class Planner:
                         },
                     )
                 elif step["kind"] == "propose":
-                    result = await self._run_propose_step(request, stream, evidence)
+                    if not _proposal_permitted(self._adverse_proposal, record.assessment):
+                        # §P6, the seam, at its ONE call site. Default `propose` never lands here.
+                        await stream.emit(
+                            "run.error",
+                            {
+                                "code": "primary_declined",
+                                "message": (
+                                    "The primary agent's assessment was adverse and "
+                                    "COPILOT_ADVERSE_PROPOSAL=withhold, so no proposal was put to "
+                                    "a human. The action is not prevented — it is relocated to a "
+                                    "path that leaves no audit record."
+                                ),
+                                "recoverable": False,
+                            },
+                        )
+                        await stream.emit(
+                            "step.failed",
+                            {
+                                "stepId": step["id"],
+                                "error": "primary_declined",
+                                "willRetry": False,
+                            },
+                        )
+                        break
+                    result = await self._run_propose_step(request, stream, evidence, record)
                     if not result.admitted:
                         # This step exists for one reason: to put an approval in front of a
                         # human. It produced none, so it did not do its job, and emitting
@@ -333,7 +504,17 @@ class Planner:
                     # deployments, so guard on its presence.
                     if self._fanout is not None and body.get("requiredRung") == "L2":
                         await self._fanout.run_second_opinion(
-                            request, stream, body, evidence, parent_step_id=step["id"]
+                            request,
+                            stream,
+                            body,
+                            # §P5.7. The supervisor's independent draw is defined by THE ACTION
+                            # UNDER REVIEW — policy — not by what the primary happened to gather.
+                            # It used to be handed `evidence`, and the day discretionary reads
+                            # landed in that dict the second draw would silently have widened to
+                            # follow the primary's choices: blindness defeated by a data-flow
+                            # change in a module that never mentions the supervisor.
+                            required_evidence_tool_ids=record.required_evidence_tool_ids,
+                            parent_step_id=step["id"],
                         )
 
                 await stream.emit(
@@ -439,8 +620,95 @@ class Planner:
         )
         return True
 
+    async def _run_assess_step(
+        self,
+        request: PlannerRequest,
+        stream: RunStream,
+        step: dict[str, Any],
+        evidence: dict[str, Any],
+        record: _AssessmentRecord,
+    ) -> tuple[str, ...]:
+        """Ask the primary to JUDGE the evidence, and decide which extra reads it may have.
+
+        Returns the tool ids granted — empty on every pass at budget 0, which is stage 1.
+
+        **Everything below runs at every budget.** The prompt is the same constant, the reply goes
+        through the same parser, the requests are recorded, and `additional_evidence` is called and
+        returns empty. There is no `if budget:` here and there must never be one: a branch would
+        mean stage 1 measured a code path that never ships, which is this feature's signature
+        defect (§P5.1). The only edge stage 1 does not traverse is the executor invoking an extra
+        tool — and the executor is traversed on every run anyway by the required evidence.
+        """
+        assessment = await self._assessor(
+            request.objective, request.action_id, request.payload, evidence
+        )
+        record.iterations += 1
+        record.assessment = assessment
+
+        pass_number = record.iterations
+        final_pass = pass_number >= self._assessment_limits.max_assessment_iterations
+
+        bindable = tuple(
+            tool_id
+            for tool_id in self._registry.tool_ids
+            if _is_bindable(self._registry.get(tool_id), request)
+        )
+        granted, refused = additional_evidence(
+            assessment.requested_evidence,
+            gathered=evidence.keys(),
+            known_tool_ids=self._registry.tool_ids,
+            bindable_tool_ids=bindable,
+            # On the last permitted pass the budget is not consulted for granting, because there
+            # is no gathering step left to run — see the re-classification below. Retrying past
+            # `maxAssessmentIterations`, in any form including a "just one more" special case, is
+            # refused (§P5.6).
+            budget=0 if final_pass else self._remaining_budget(record),
+        )
+        if final_pass and granted:  # pragma: no cover - unreachable while budget is forced to 0
+            granted = ()
+        if final_pass:
+            # Reported as what it is. Calling this `budget_exhausted` would report unspent budget
+            # as spent and corrupt the one number stage 1 exists to produce.
+            refused = tuple(
+                RefusedEvidenceRequest(r.tool_id, ITERATIONS_EXHAUSTED)
+                if r.reason == "budget_exhausted"
+                else r
+                for r in refused
+            )
+        record.refused.extend(refused)
+
+        # EARNED, never defaulted: the primary formed a position AND asked for nothing further,
+        # i.e. it stopped because it was satisfied. A failed assessment did not converge — it
+        # failed — and a request nobody could honour did not converge either.
+        record.converged = assessment.formed and not assessment.requested_evidence
+
+        await stream.emit(
+            "step.completed",
+            {
+                "stepId": step["id"],
+                "durationMs": 0,
+                "summary": _assessment_summary(assessment),
+                # §P7.1: the raw reply lives on the EVENT STREAM, joined by sessionId and
+                # correlationId, and never on the approval. The approval carries the structural
+                # fields and the two hashes that tie them to this reply.
+                "rawReply": assessment.raw_reply,
+                "assessmentPass": pass_number,
+            },
+        )
+        return granted
+
+    def _remaining_budget(self, record: _AssessmentRecord) -> int:
+        """PER-RUN, not per-iteration: two passes cannot spend the budget each."""
+        return self._assessment_limits.per_run_additional_tool_budget - len(
+            record.discretionary_evidence_tool_ids
+        )
+
     async def _run_propose_step(
-        self, request: PlannerRequest, stream: RunStream, evidence: dict[str, Any]
+        self,
+        request: PlannerRequest,
+        stream: RunStream,
+        evidence: dict[str, Any],
+        record: _AssessmentRecord,
     ) -> ProposeStepResult:
         """Propose the action for human signature.
 
@@ -457,10 +725,18 @@ class Planner:
                     "payload": request.payload,
                     "evidence": evidence,
                     "facts": request.facts,
-                    "agentAssessment": {
-                        "summary": request.objective,
-                        "evidenceToolIds": sorted(evidence.keys()),
-                    },
+                    # The primary's OWN judgement, and the harness's own observations about how
+                    # it was reached. This used to be `{"summary": request.objective}` — the
+                    # banker's words echoed back — which the wire adapter then dressed in a
+                    # defaulted "proceed". The card rendered a verdict no agent had produced.
+                    "agentAssessment": primary_proposal_assessment(
+                        record.assessment,
+                        required_evidence_tool_ids=record.required_evidence_tool_ids,
+                        discretionary_evidence_tool_ids=record.discretionary_evidence_tool_ids,
+                        refused_evidence_requests=record.refusals_wire,
+                        assessment_iterations=record.iterations,
+                        converged=record.converged,
+                    ),
                 },
                 bearer_token=request.bearer_token,
                 session_id=request.session.id,
@@ -530,6 +806,23 @@ def _plan_steps(evidence_tools: list[str], action_id: str | None) -> list[dict[s
             }
         )
 
+    if action_id:
+        # §P5.2, invariant 1: the required evidence above is gathered FIRST and
+        # UNCONDITIONALLY, before the model is consulted at all. Ordering is the control — if the
+        # model is never asked until the required set is in hand, then a model failure, a timeout
+        # or a garbage reply CANNOT reduce evidence below policy. There is nothing to validate,
+        # because there is no sequence in which it happens.
+        index = len(steps)
+        steps.append(
+            {
+                "id": f"step_{index + 1}",
+                "index": index,
+                "title": "Assess the evidence",
+                "status": "pending",
+                "kind": "assess",
+            }
+        )
+
     index = len(steps)
     steps.append(
         {
@@ -554,6 +847,93 @@ def _plan_steps(evidence_tools: list[str], action_id: str | None) -> list[dict[s
         )
 
     return steps
+
+
+DISCRETIONARY_STEP_TITLE = "Additional check (agent's choice): {tool_id}"
+REASSESS_STEP_TITLE = "Re-assess with the additional evidence"
+
+
+def _insert_discretionary_steps(
+    steps: list[dict[str, Any]],
+    position: int,
+    granted: Sequence[str],
+    next_step_number: int,
+) -> tuple[list[str], int]:
+    """Splice the granted reads, plus one more assess pass, into the live plan.
+
+    Titled distinctly on purpose (§P5.5). A required read and a discretionary one must never read
+    identically in the trace: one is the policy's control and the other is the model's choice, and
+    blurring them is the same error as merging the two id lists on the record.
+
+    Step ids are drawn from a counter that never rewinds, so an id always means the same step for
+    the life of the run — the UI upserts plan steps by id, and a reused id would silently rewrite
+    a step the banker already watched run.
+    """
+    added: list[str] = []
+    inserted: list[dict[str, Any]] = []
+    for tool_id in granted:
+        inserted.append(
+            {
+                "id": f"step_{next_step_number}",
+                "index": 0,
+                "title": DISCRETIONARY_STEP_TITLE.format(tool_id=tool_id),
+                "status": "pending",
+                "kind": "tool",
+                "toolId": tool_id,
+                "discretionary": True,
+            }
+        )
+        added.append(f"step_{next_step_number}")
+        next_step_number += 1
+
+    inserted.append(
+        {
+            "id": f"step_{next_step_number}",
+            "index": 0,
+            "title": REASSESS_STEP_TITLE,
+            "status": "pending",
+            "kind": "assess",
+        }
+    )
+    added.append(f"step_{next_step_number}")
+    next_step_number += 1
+
+    steps[position:position] = inserted
+    for i, step in enumerate(steps):
+        # Positional, so the trace renders in the order things actually happened. Ids are stable;
+        # only the index moves.
+        step["index"] = i
+    return added, next_step_number
+
+
+def _is_bindable(tool, request: PlannerRequest) -> bool:
+    """Can this tool's REQUIRED parameters be filled from the banker's own inputs?
+
+    The model names a tool id and never an argument (§P5.3). A tool whose required parameters
+    cannot be bound from the session context, payload and facts is refused as unbindable rather
+    than invented — the same rule as §R5: nobody may stamp a subject onto evidence. This is the
+    sharpest edge in the whole ceiling, because an invented argument could read ANOTHER
+    CUSTOMER'S account and file it in this customer's approval record.
+    """
+    if tool is None:
+        return False
+    schema = tool.parameters or {}
+    required = schema.get("required") or list((schema.get("properties") or {}).keys())
+    bound = _bind_arguments(schema, request)
+    return all(name in bound for name in required)
+
+
+def _assessment_summary(assessment) -> str:
+    if assessment.formed:
+        return f"Primary assessment: {assessment.verdict}"
+    return f"No assessment formed: {assessment.failure_reason or assessment.failure}"
+
+
+def _proposal_permitted(mode: str, assessment) -> bool:
+    """§P6's ONE decision point. Under the default `propose`, this is always True."""
+    if mode == "propose":
+        return True
+    return assessment.verdict != "decline"
 
 
 def _bind_arguments(schema: dict[str, Any], request: PlannerRequest) -> dict[str, Any]:

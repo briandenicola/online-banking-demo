@@ -37,3 +37,35 @@ fanout:
   # the root records the timeout and proceeds — fan-out is opt-in and a stuck leaf must never
   # wedge the case.
   subagentWallClockSeconds: 60
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The primary's assessment loop and its evidence ceiling (#332 §P5).
+#
+# The model judges; the policy decides what it must have looked at first. Required evidence is
+# gathered first and unconditionally, BEFORE the model is consulted, so no model failure, timeout
+# or garbage reply can reduce evidence below policy. Beyond that floor the primary may REQUEST
+# more reads — never fewer.
+#
+# There is no on/off flag for that ceiling, deliberately (§P5.1). It is a BUDGET. At budget 0 the
+# model is asked the same question, its reply is parsed by the same parser, its requests are
+# recorded, and the additions function is called and returns empty. Stage 1 is the loop running
+# zero iterations, not the loop switched off — so what stage 1 measures is the path that ships.
+# ─────────────────────────────────────────────────────────────────────────────
+assessment:
+  # STAGE 1 (this deployment): 0. The assessment is real; no discretionary read is granted.
+  # Refused requests are still recorded, which is how we measure the DEMAND for the ceiling
+  # before the ceiling runs — real evidence for whether the stage-2 value is right.
+  #
+  # STAGE 2: 3, raised deliberately after stage 1 is measured. Rationale for 3: the registry
+  # holds twelve read tools and required sets are one to three, so three additional roughly
+  # doubles the evidence surface while keeping the trace legible — the same yardstick that puts
+  # maxConcurrentSubagents at 4 above. It is PER-RUN, not per-iteration: two passes cannot spend
+  # three each.
+  perRunAdditionalToolBudget: 0
+
+  # One initial judgement and at most one re-judge: judge → gather → judge → propose. Two is the
+  # smallest number that makes this a feedback loop rather than a straight line, and it makes
+  # non-convergence a single definite event instead of a decaying sequence nobody can
+  # characterise. Retrying past this, in any form including a "just one more" special case, is
+  # refused (§P5.6).
+  maxAssessmentIterations: 2

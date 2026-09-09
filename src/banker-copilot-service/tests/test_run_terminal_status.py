@@ -23,6 +23,8 @@ from typing import Any
 
 import pytest
 
+from conftest import judging_assessor, shipped_assessment_limits
+
 from app.events.bus import InMemoryTraceSink, RunStreamRegistry
 from app.planner.loop import Planner, PlannerRequest
 from app.tools.executor import ToolInvocationError
@@ -158,6 +160,8 @@ async def _drive(
         executor=executor,
         authority=authority,
         max_iterations=12,
+        assessment_limits=shipped_assessment_limits(),
+        assessor=judging_assessor(),
         store=_Store(),
     )
     request = PlannerRequest(
@@ -326,6 +330,8 @@ async def test_evidence_only_run_that_raises_reports_failed():
         executor=_Executor(),
         authority=_Authority("admit"),
         max_iterations=12,
+        assessment_limits=shipped_assessment_limits(),
+        assessor=judging_assessor(),
         store=_BrokenStore(),
     )
     request = PlannerRequest(
@@ -373,6 +379,8 @@ async def test_terminal_status_is_taken_from_the_real_planner_frame():
         executor=_Executor(),
         authority=_Authority("unrecoverable"),
         max_iterations=12,
+        assessment_limits=shipped_assessment_limits(),
+        assessor=judging_assessor(),
         store=_Store(),
     )
     request = PlannerRequest(
@@ -452,6 +460,8 @@ def test_rest_run_status_reports_failed_for_a_refused_proposal():
             executor=client.app.state.executor,
             authority=client.app.state.authority,
             max_iterations=12,
+            assessment_limits=shipped_assessment_limits(),
+            assessor=judging_assessor(),
         )
 
         headers = {"Authorization": "Bearer " + make_token(effective_roles=["banker"])}

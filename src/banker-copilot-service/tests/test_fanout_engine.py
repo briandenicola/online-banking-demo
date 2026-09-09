@@ -18,6 +18,8 @@ from typing import Any
 
 import pytest
 
+from conftest import judging_assessor, shipped_assessment_limits
+
 from app.events.bus import InMemoryTraceSink, RunStreamRegistry
 from app.planner.fanout import FanOutEngine, SecondOpinion
 from app.planner.limits import FanoutLimits
@@ -103,6 +105,10 @@ def _request() -> _Request:
 
 APPROVAL = {"id": "apr_1", "status": "pending", "requiredRung": "L2"}
 
+#: What the ACTION requires — policy. §P5.7: this, and never the primary's evidence keys, is what
+#: defines the supervisor's independent draw.
+REQUIRED = ("get_flagged_transaction",)
+
 
 def _engine(executor, registry, decider=None):
     runs = RunStreamRegistry(InMemoryTraceSink(), replay_window=500)
@@ -130,10 +136,11 @@ def _registry_and_executor():
 async def test_l2_spawns_one_blind_supervisor_and_emits_nested_frames():
     registry, executor = _registry_and_executor()
     engine, runs = _engine(executor, registry)
-    primary_evidence = {"get_flagged_transaction": {"beneficiary": "PRIMARY_SAW_THAT"}}
 
     stream = runs.create("run_1", "sess_1")
-    result = await engine.run_second_opinion(_request(), stream, APPROVAL, primary_evidence)
+    result = await engine.run_second_opinion(
+        _request(), stream, APPROVAL, required_evidence_tool_ids=REQUIRED
+    )
 
     assert result is not None
     frames = [f for f in _frames(runs, "run_1")]
@@ -157,10 +164,11 @@ async def test_supervisor_reads_raw_inputs_not_the_primary_cache():
     inputs and it re-invokes the tools; the primary's ``evidence`` dict is never passed in."""
     registry, executor = _registry_and_executor()
     engine, runs = _engine(executor, registry)
-    primary_evidence = {"get_flagged_transaction": {"beneficiary": "PRIMARY_SAW_THAT"}}
 
     stream = runs.create("run_1", "sess_1")
-    await engine.run_second_opinion(_request(), stream, APPROVAL, primary_evidence)
+    await engine.run_second_opinion(
+        _request(), stream, APPROVAL, required_evidence_tool_ids=REQUIRED
+    )
 
     # It actually invoked the tool with arguments bound from the raw payload — a real second draw.
     assert ("get_flagged_transaction", {"transactionId": "tx_1"}) in executor.calls
@@ -200,7 +208,7 @@ async def test_agreement_is_computed_after_the_fact():
     engine, runs = _engine(executor, registry, decider=_fixed("hold"))
     stream = runs.create("run_1", "sess_1")
     result = await engine.run_second_opinion(
-        _request(), stream, _approval_where_the_primary_said("proceed"), {"get_flagged_transaction": {}}
+        _request(), stream, _approval_where_the_primary_said("proceed"), required_evidence_tool_ids=REQUIRED
     )
 
     # The primary stated `proceed`; the supervisor stated `hold` → they diverge. Both sides have
@@ -230,7 +238,7 @@ async def test_no_grandchildren_the_depth_ceiling_refuses_a_third_level():
 
     # depth=2 would make the child depth 3, above the ceiling of 2 → None, and nothing spawned.
     result = await engine.run_second_opinion(
-        _request(), stream, APPROVAL, {"get_flagged_transaction": {}}, depth=2
+        _request(), stream, APPROVAL, required_evidence_tool_ids=REQUIRED, depth=2
     )
     assert result is None
     assert executor.calls == []
@@ -255,7 +263,7 @@ async def test_tool_budget_caps_the_supervisor_reads():
         _request(),
         stream,
         APPROVAL,
-        {"get_flagged_transaction": {}, "list_account_transactions": []},
+        required_evidence_tool_ids=("get_flagged_transaction", "list_account_transactions"),
     )
     assert len(executor.calls) == 1
 
@@ -273,7 +281,10 @@ class _RecordingFanout:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def run_second_opinion(self, request, stream, approval, primary_evidence, depth=1, parent_step_id=""):
+    async def run_second_opinion(
+        self, request, stream, approval, *, required_evidence_tool_ids, depth=1, parent_step_id=""
+    ):
+        self.required_evidence_tool_ids = tuple(required_evidence_tool_ids)
         self.calls.append(approval.get("requiredRung"))
         return None
 
@@ -321,6 +332,8 @@ async def _run_planner_at(rung: str) -> _RecordingFanout:
         executor=executor,
         authority=_FakeAuthority(rung),
         max_iterations=12,
+        assessment_limits=shipped_assessment_limits(),
+        assessor=judging_assessor(),
         store=_FakeStore(),
         fanout=fanout,
     )
@@ -361,7 +374,7 @@ async def test_two_real_verdicts_that_match_agree():
     engine, runs = _engine(executor, registry, decider=_fixed("proceed"))
     stream = runs.create("run_1", "sess_1")
     result = await engine.run_second_opinion(
-        _request(), stream, _approval_where_the_primary_said("proceed"), {"get_flagged_transaction": {}}
+        _request(), stream, _approval_where_the_primary_said("proceed"), required_evidence_tool_ids=REQUIRED
     )
     assert result.agreement == "agree"
     assert result.agrees_with_primary is True
@@ -381,7 +394,7 @@ async def test_a_failed_primary_is_not_comparable_and_is_never_rendered_as_disse
     engine, runs = _engine(executor, registry, decider=_fixed("hold"))
     stream = runs.create("run_1", "sess_1")
     result = await engine.run_second_opinion(
-        _request(), stream, _approval_where_the_primary_said(None), {"get_flagged_transaction": {}}
+        _request(), stream, _approval_where_the_primary_said(None), required_evidence_tool_ids=REQUIRED
     )
 
     assert result.agreement == "not_comparable"
@@ -406,7 +419,7 @@ async def test_a_failed_SUPERVISOR_is_not_comparable_either():
     engine, runs = _engine(executor, registry, decider=_broken)
     stream = runs.create("run_1", "sess_1")
     result = await engine.run_second_opinion(
-        _request(), stream, _approval_where_the_primary_said("proceed"), {"get_flagged_transaction": {}}
+        _request(), stream, _approval_where_the_primary_said("proceed"), required_evidence_tool_ids=REQUIRED
     )
     # NOTE: the supervisor's failsafe still STATES `hold` — aligning it with the primary's absent
     # verdict is deferred by §P9 precisely because it changes supervisor behaviour in the middle
