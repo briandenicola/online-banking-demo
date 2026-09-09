@@ -87,12 +87,18 @@ public class AccountsControllerSecurityTests
     }
 
     /// <summary>
-    /// SECURITY: Verifies that GetAccount denies access to accounts owned by other users.
-    /// The controller returns NotFound (rather than Forbid) to avoid leaking information
-    /// about the existence of other users' accounts.
+    /// SECURITY: an ordinary customer may not read another customer's account.
+    ///
+    /// <para>
+    /// The answer is 403 and no longer 404 (ruling §B2.1). Hiding existence behind a 404 was a
+    /// real control, and it was given up deliberately: when denial and absence are the same
+    /// answer, nothing downstream can tell them apart — not the copilot, not the projection, not
+    /// the supervisor, not the human reading the approval card. Enumeration hardening at the edge
+    /// is ticketed, and it is unimplementable until the internals distinguish the two facts.
+    /// </para>
     /// </summary>
     [Fact]
-    public async Task GetAccount_OtherUsersAccount_ReturnsNotFound()
+    public async Task GetAccount_OtherUsersAccount_ReturnsForbidden()
     {
         SetUser("attacker");
         var victimAccount = new Account
@@ -107,8 +113,8 @@ public class AccountsControllerSecurityTests
 
         var result = await _sut.GetAccount("acc-victim");
 
-        // Returns NotFound to prevent account enumeration attacks
-        result.Should().BeOfType<NotFoundResult>();
+        result.Should().BeOfType<ObjectResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
     }
 
     /// <summary>
@@ -116,7 +122,7 @@ public class AccountsControllerSecurityTests
     /// Without a valid JWT userId claim, the request is rejected.
     /// </summary>
     [Fact]
-    public async Task GetAccount_NoAuthentication_ReturnsNotFound()
+    public async Task GetAccount_NoAuthentication_ReturnsUnauthorized()
     {
         SetNoUser();
         var account = new Account
@@ -131,8 +137,9 @@ public class AccountsControllerSecurityTests
 
         var result = await _sut.GetAccount("acc-1");
 
-        // Controller checks userId claim is not empty; returns NotFound when missing
-        result.Should().BeOfType<NotFoundResult>();
+        // No userId claim is no identity at all, which is a different fact again from either
+        // absence or denial, and it keeps its own answer.
+        result.Should().BeOfType<UnauthorizedResult>();
     }
 
     /// <summary>
@@ -141,7 +148,7 @@ public class AccountsControllerSecurityTests
     /// The controller returns NotFound to prevent information disclosure.
     /// </summary>
     [Fact]
-    public async Task GetAccountByNumber_OtherUsersAccount_ReturnsNotFound()
+    public async Task GetAccountByNumber_OtherUsersAccount_ReturnsForbidden()
     {
         SetUser("attacker");
         var victimAccount = new Account
@@ -156,7 +163,8 @@ public class AccountsControllerSecurityTests
 
         var result = await _sut.GetAccountByNumber("ACC999");
 
-        result.Should().BeOfType<NotFoundResult>();
+        result.Should().BeOfType<ObjectResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
     }
 
     /// <summary>
@@ -165,7 +173,7 @@ public class AccountsControllerSecurityTests
     /// The controller returns NotFound to prevent unauthorized balance manipulation.
     /// </summary>
     [Fact]
-    public async Task UpdateBalance_OtherUsersAccount_ReturnsNotFound()
+    public async Task UpdateBalance_OtherUsersAccount_ReturnsForbidden()
     {
         SetUser("attacker");
         var victimAccount = new Account
@@ -180,7 +188,8 @@ public class AccountsControllerSecurityTests
 
         var result = await _sut.UpdateBalance("acc-victim", new UpdateBalanceRequest { Amount = -50000m });
 
-        result.Should().BeOfType<NotFoundResult>();
+        result.Should().BeOfType<ObjectResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
         _accountServiceMock.Verify(
             s => s.UpdateBalanceAsync(It.IsAny<string>(), It.IsAny<decimal>()),
             Times.Never,

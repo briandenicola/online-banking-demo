@@ -1,5 +1,8 @@
 namespace Banking.Auth;
 
+using System;
+using System.Security.Claims;
+
 /// <summary>
 /// The role strings used in <c>[Authorize(Roles = ...)]</c> gates across the .NET services.
 ///
@@ -79,4 +82,74 @@ public static class BankingRoles
     /// </para>
     /// </summary>
     public const string IdentityRead = "admin,Admin,banker,Banker,supervisor,Supervisor";
+
+    /// <summary>
+    /// READ access to a customer's money: their accounts and the transactions recorded against
+    /// them. Held by <c>banker</c> and <c>supervisor</c>, and by nothing else.
+    ///
+    /// <para>
+    /// <c>admin</c> is absent DELIBERATELY and by precedent (§5.8.2: admin implies neither banker
+    /// nor supervisor). Reading a customer's balance is BANKING authority; reading an identity
+    /// record is PLATFORM authority. That is exactly why this is a new constant rather than a
+    /// reuse of <see cref="IdentityRead"/>, which carries <c>Admin</c> for the platform reason.
+    /// </para>
+    ///
+    /// <para>
+    /// **The blast radius, stated rather than discovered** (ruling §B1.1): one compromised banker
+    /// credential reads every customer's balances and transaction history. There is no
+    /// relationship or assignment scoping, no purpose-of-access capture and no customer-visible
+    /// disclosure — all three are ticketed, and the demo narration says so out loud instead of
+    /// implying they are present.
+    /// </para>
+    /// </summary>
+    public const string CustomerFinancialRead = "banker,Banker,supervisor,Supervisor";
+
+    /// <summary>
+    /// WRITE access to a customer's money: today, posting a balance adjustment.
+    ///
+    /// <para>
+    /// Same members as <see cref="CustomerFinancialRead"/>, and separate on purpose. A read
+    /// authority and a write authority that happen to coincide are still two different
+    /// authorities, and the day they diverge must be a one-line change here rather than an audit
+    /// of every call site (ruling §B4.3).
+    /// </para>
+    ///
+    /// <para>
+    /// **The honest limitation:** in a real bank this write is gated on the APPROVAL RECORD, not
+    /// on the role — a banker's authority to adjust a balance comes from the co-signature, not
+    /// from their job title. This harness produces exactly that record and does not yet gate on
+    /// it. Ticketed deferred-before-`main`: *state-changing endpoints verify the approval, not
+    /// the role.*
+    /// </para>
+    /// </summary>
+    public const string CustomerFinancialWrite = "banker,Banker,supervisor,Supervisor";
+
+    /// <summary>
+    /// Does <paramref name="principal"/> hold any role in <paramref name="roleList"/>?
+    ///
+    /// <para>
+    /// The constants above are comma-separated because that is the shape
+    /// <c>[Authorize(Roles = ...)]</c> takes. Where a check has to happen INSIDE an action — as
+    /// it must whenever the answer is "permitted, but the response body depends on who asked" —
+    /// this splits the same one list rather than letting a second copy of the members appear as
+    /// literals in a controller. One list, two consumers, no drift.
+    /// </para>
+    /// </summary>
+    public static bool Holds(ClaimsPrincipal? principal, string roleList)
+    {
+        if (principal is null)
+        {
+            return false;
+        }
+
+        foreach (var role in roleList.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (principal.IsInRole(role))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }
