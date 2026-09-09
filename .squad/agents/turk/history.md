@@ -2721,3 +2721,43 @@ emptied quarantine, and the model consulted before the required reads. The one t
 something: interpolating the budget into the prompt was caught by the "prompt never mentions
 the budget" test but *not* by the byte-equality test, because the caller did not yet pass it.
 The weaker, earlier guard was the one that fired. Both are worth having.
+
+### Audit follow-up (Danny, `979bd37` — GO for stage 1)
+
+**Correction to what I wrote above.** Byte-equality did not "fail to catch" the budget
+interpolation. That tamper was an *incomplete edit* — the caller never passed the budget — so the
+prompt genuinely was identical at both budgets and the assertion was correct to pass. The
+mention-scan caught the *intent* one move before the wiring existed. That is layering working, not
+a hole, and I mislabelled it. A tamper that does not reach the code under test proves nothing about
+the guard that stayed green. **Check the tamper actually landed before drawing a conclusion from
+which test fired.**
+
+**`x.get(k) or fallback` cannot tell absent from empty.** `_is_bindable` read
+`schema.get("required") or list(properties)`, so `required: []` — every parameter optional, the
+tool binds with no arguments — fell through to the conservative branch. Three shipped tools have
+that shape. It errs closed, so no authority consequence; the damage is that the recorded *reason*
+was false and a real request dropped out of the only count stage 1 exists to produce, in the
+direction that makes the ceiling look less needed. **A defect with no failure and no lie to the
+banker can still corrupt a measurement, and the measurement is what sets the next limit.** My
+fakes all set `required` equal to their properties, so they could never have seen it — the guard
+now runs against the shipped manifest.
+
+**A guard nobody has seen fail is a guard nobody has tested.** Danny would not accept "assume it
+can fail" for the byte-equality assertion. The comparison is now named once and run twice: real
+builder, and a deliberately budget-dependent one where the same assertion must trip. His reasoning
+is worth keeping: cheap guards (a word scan, an AST walk) are early and *specific*, and specific
+means defeatable by paraphrase; the expensive guard fails on the **effect regardless of route**.
+Do not delete a backstop because a cheaper guard usually fires first.
+
+**Caught another "absent by coincidence" on myself** while refactoring that test: the equality
+helper became a coroutine and the caller did not `await` it, so for one run it asserted nothing and
+the suite was green. Third time this class has bitten me. The tell was a warning count that moved
+from 2 to 3 — **watch the warning count, not just the pass count.**
+
+**A written standard came out of the fan-out fix** (third time this move has paid): *when a control
+depends on a value never reaching a place, delete the parameter rather than filter it. A filtered
+channel is a promise; an absent parameter is a fact.*
+
+**All three departures from the ruling were accepted, and the reason is transferable:** each one
+*narrowed* something the text left wide, and each named the line it was departing from. Narrowing
+with the citation attached is auditable. Widening, or silence, is not.
