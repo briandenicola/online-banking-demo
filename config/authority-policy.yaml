@@ -382,7 +382,7 @@ actionTypes:
       path: /api/transactions/{transactionId}/review
     hashFields: [transactionId, amount, decision, note]
     moneyFields: [amount]
-    requiredEvidence: [get_flagged_transaction, list_account_transactions]
+    requiredEvidence: [get_flagged_transaction, get_account, list_account_transactions]
     rules:
       - id: large-flagged-amount
         when: { field: amount, op: gte, threshold: flagged_transaction_dual_control_amount }
@@ -407,7 +407,7 @@ actionTypes:
       path: /api/risk/{transactionId}/override
     hashFields: [transactionId, newScore, rationale]
     moneyFields: []
-    requiredEvidence: [get_scored_transaction, list_account_transactions]
+    requiredEvidence: [get_scored_transaction, get_account, list_account_transactions]
     rules: []
 
   account_opening.application.review:
@@ -447,7 +447,7 @@ actionTypes:
       path: /api/transfers/{transferId}/reverse
     hashFields: [transferId, amount, reason]
     moneyFields: [amount]
-    requiredEvidence: [get_transfer, list_account_transactions]
+    requiredEvidence: [get_transfer, get_account, list_account_transactions]
     rules:
       - id: large-reversal
         when: { field: amount, op: gte, threshold: transfer_reversal_dual_control_amount, abs: true }
