@@ -1344,3 +1344,17 @@ Danny's three rulings stand: §B2.2 narrowing correct, §E probe idempotency cor
 
 **Stage 1 measurement is the next gate.** Measure harness correctness after reseed completes.
 
+
+---
+
+**2026-09-09 (Scribe)** — Verification check 2.5 (TTL_EXPIRED) now unexercised in demo environment.
+
+The 8-hour approval TTL override means no seeded approval reaches expiry inside a demo test window. Check 2.5 — *TTL expiry sweeper fires → `denied`, `terminalReason: TTL_EXPIRED`* — will neither pass nor fail; it simply never fires.
+
+**Nothing was deleted or edited.** The sweeper still runs (`Approval__SweepIntervalSeconds: 60` untouched). The check is intact. It was disabled by a number changing elsewhere.
+
+**To restore coverage, either:**
+1. seed a purpose-built short-TTL approval (e.g. `POLICY_TTL_USER_LOCK` temporarily low, since `user.lock` is not used by the §7 walkthrough), or
+2. run a separate pass with these 9 env keys removed and the pod restarted.
+
+Marked as an affirmative observation for the audit trail — you may find it useful when planning next measurement phase.

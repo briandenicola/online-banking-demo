@@ -657,3 +657,81 @@ did NOT do: no live reseed, no `task cloud:demo:reset`, no Azure or kubectl writ
 **Die distinction:** The `die` must name its cause. "nothing flagged at all" (stream/Foundry/FLAGGING_THRESHOLD problem) vs "flagged but nothing qualifies" (model scored low, or poll window too small) send debuggers to different services.
 
 **Opt-out:** If the qualifying subject depends on a model score, a hard `die` on low-score days leaves the operator with no demo. An escape hatch with a typed flag (`--allow-unescalated` style) that degrades the run and prints what is degraded is legitimate. A *silent* default variance is not.
+
+## Learnings (2026-09-09 — demo approval TTL env override, `332-beta`)
+
+**Task:** Approvals expired ~20 min after seeding, killing the entire escalator queue before a
+§7.1-§7.7 walkthrough could finish. Danny's ruling (§R12, *not* §R11 — §R11 is the `.id` lookup
+guard; the brief mis-cited it) called for an environment-only TTL override. Brian approved 8h.
+
+### A version hash that MOVES can be proof the change worked, not proof you broke something
+
+The task carried a stop-condition: *"if the policy version hash changes, you altered policy
+content — stop."* **That premise is false, and the source says so in as many words.**
+`ResolvedPolicy.ComputeVersion` hashes the **resolved** threshold values, not the file:
+
+> *"Replace the threshold DEFINITIONS with their RESOLVED VALUES. This is the whole point: the
+> hash must move when `POLICY_TRANSFER_L2_AMOUNT` changes, even though the file did not."*
+
+So an env override **must** move the hash. A hash that stayed at `pv1:d7b3db9f5ada15b8` would
+have meant the override *silently failed*. The stop-condition, taken literally, would have made
+me abort on the single strongest signal of success and keep going on failure — exactly inverted.
+
+**Rule: before accepting a "if X changes, you broke it" tripwire, read what X is computed over.**
+A tripwire is a hypothesis about a mechanism, and it inherits every error in that hypothesis.
+Verify the invariant, not just the observation.
+
+**The right invariant** was available and is what I actually reported: policy **identity** must
+hold (`policyId`, 22 thresholds, 13 action types) and the *file* must be untouched
+(`git diff config/authority-policy.yaml` empty), while the *resolved values* move. Identity
+stable + values moved = correct. That distinction is the whole design.
+
+### Verify the mechanism's limits, not just its existence
+
+Danny verified the loader honours `POLICY_TTL_*` and he was right. But "the knob exists" does
+not mean "your value fits". `ValidateThresholdValues` rejects a policy and **refuses to start**
+the service on a bad threshold. I read it before deploying: `duration_seconds` requires a
+non-negative integer and has **no upper bound**, so 28800 is safe. Had a cap existed, the
+override would have crash-looped authority-service overnight, on the eve of the demo, from a
+change everyone had signed off as trivially safe. Cost of checking: one file read.
+
+### Two details the prescriptions got wrong, both found by enumerating from source
+
+1. **The set was 9, not the 8 I was handed.** `ttl_loan_decision` was missing from the brief and
+   from Danny's three-var suggestion. Enumerating `kind: duration_seconds` from the file gives 10;
+   `retention_seconds` is 90-day record retention, not an approval clock, so it stays at default.
+2. **The default TTL's env key is `POLICY_APPROVAL_TTL_SECONDS`, not `POLICY_TTL_DEFAULT`.**
+   Pattern-matching the `POLICY_TTL_*` convention onto it would have produced a var that set
+   nothing, with no error — the loader only rejects thresholds declaring *no* env key, it cannot
+   detect an env var that matches nothing. **An unrecognised env var fails silently. Always read
+   the `env:` key off the threshold rather than inferring it.**
+
+### `:latest` + `imagePullPolicy: Always` makes "config-only" a claim you must prove
+
+A `rollout restart` on a `:latest` tag re-pulls, so a restart intended as config-only can
+silently swap the binary. I captured `.status.containerStatuses[].imageID` before and after:
+identical `sha256:e71a449e…`. **That digest comparison is what makes "no rebuild happened" a
+measurement instead of an intention.**
+
+### Coverage that depends on a value someone else is about to change
+
+Third instance in one ruling (§R3, §R12, this). Verification check **2.5** — TTL sweeper fires →
+`denied` / `TTL_EXPIRED` — was only ever observable *because the TTL was short*. Nothing about it
+was deleted or edited; it was disabled by a number changing somewhere else entirely. **Be precise
+about what actually broke:** the sweeper still runs (`Approval__SweepIntervalSeconds: 60`,
+untouched). What is lost is the **opportunity to observe it** — no demo-seeded approval now
+reaches expiry inside a test window. Saying "the sweeper is disabled" would have sent Livingston
+hunting a `BackgroundService` bug that does not exist.
+
+### Deploy-path notes for this repo
+
+- `deploy/flux/` describes a Flux Kustomization, but **Flux is not installed** on
+  `model-osprey-55220-aks` (`kubectl get kustomizations` → no such resource type). Deployment is
+  manual. Checked rather than assumed — had Flux been live, patching the cluster directly would
+  have been reverted within its 10m reconcile and my verification would have expired with it.
+- The standing ban on `kubectl apply -k deploy/kustomize/base` is well-founded: base carries
+  literal `REPLACE_WITH_ACR_LOGIN_SERVER` / `REPLACE_WITH_TAG` placeholders and applying it
+  straight would drive every deployment in the namespace to `ImagePullBackOff`.
+- Non-secret env for every service flows through the shared `banking-demo-config` ConfigMap via
+  `envFrom`. Only `authority-service` sets `POLICY_FILE_PATH`, so it is the sole policy loader —
+  the added keys are inert in the other twelve pods.

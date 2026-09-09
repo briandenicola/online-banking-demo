@@ -3424,3 +3424,143 @@ account normally. The narrowing costs exactly the zero-row case and nothing wide
 `.squad/identity/now.md:66` lists this capture as outstanding, pending Brian's approval for a live
 Azure read. **That approval was given and the item is discharged by this note** — all four fixtures
 exist and both consumers are green. Whoever owns `now.md` should tick it.
+# Decision — Demo approval TTLs raised to 8 hours by environment override
+
+**Author:** Rusty (Platform)
+**Date:** 2026-09-09
+**Branch:** `332-beta` (uncommitted — a Scribe holds the git index)
+**Requested by:** Brian, explicitly approved, including the redeploy
+**Ruling:** Danny, `docs/design/seeded-approval-rung-nondeterminism-ruling.md` **§R12**
+**Status:** APPLIED and verified live in `banking-demo`
+
+---
+
+## Correction to the citation
+
+The brief cited **§R11**. §R11 is the `.id`-is-the-lookup-key guard. The TTL ruling is **§R12**.
+Recorded so the next reader does not chase the wrong section.
+
+## Problem
+
+Of 10 approvals seeded at 21:35Z, only 2 survived 20 minutes. Eight are
+`account.balance.adjust`, whose `ttl_balance_adjust` default is **1200s**. That set includes the
+whole NEEDS-YOU queue and **every `esc-*` escalator card** — the centrepiece of epic #332. The
+§7.1-§7.7 walkthrough spans eight sections and two browser identities and cannot complete in
+twenty minutes, so cards would expire mid-demo into `TTL_EXPIRED`, which renders as a terminal
+state the presenter would have to explain away.
+
+## Decision
+
+Raise **all 9 approval TTLs to 28800s (8 hours)** for the demo environment **only**, via
+environment variables on the shared `banking-demo-config` ConfigMap.
+
+Brian chose 8h (a working day) over Danny's suggested 4h; it survives a demo that runs long or is
+repeated after lunch.
+
+**The shipped defaults in `config/authority-policy.yaml` are unchanged.** Verified:
+`git diff config/authority-policy.yaml` is empty. Twenty minutes on a balance adjustment is a
+defensible product control and was not weakened to make a demo convenient.
+
+### The 9 keys, all set to `28800`
+
+| Threshold | Env key | Default (kept) |
+|---|---|---|
+| `approval_ttl_default` | `POLICY_APPROVAL_TTL_SECONDS` | 1800 |
+| `ttl_transaction_flag_review` | `POLICY_TTL_TRANSACTION_FLAG_REVIEW` | 1800 |
+| `ttl_transaction_score_override` | `POLICY_TTL_TRANSACTION_SCORE_OVERRIDE` | 3600 |
+| `ttl_account_opening_review` | `POLICY_TTL_ACCOUNT_OPENING_REVIEW` | 7200 |
+| `ttl_transfer_reverse` | `POLICY_TTL_TRANSFER_REVERSE` | 1200 |
+| `ttl_balance_adjust` | `POLICY_TTL_BALANCE_ADJUST` | 1200 |
+| `ttl_user_lock` | `POLICY_TTL_USER_LOCK` | 900 |
+| `ttl_user_unlock` | `POLICY_TTL_USER_UNLOCK` | 1800 |
+| `ttl_loan_decision` | `POLICY_TTL_LOAN_DECISION` | 14400 |
+
+Two corrections to the requested set, both from enumerating `kind: duration_seconds` in source:
+
+- **`ttl_loan_decision` was missing** from the brief's list. The set is 9, not 8.
+- **`approval_ttl_default`'s env key is `POLICY_APPROVAL_TTL_SECONDS`**, not the `POLICY_TTL_*`
+  pattern. An env var matching no threshold is ignored **silently** — the loader validates that
+  each threshold *declares* a key, not that each key *is used*.
+
+`retention_seconds` (also `duration_seconds`) is deliberately **left at default** — it is the
+90-day record-retention clock, not an approval clock.
+
+## Mechanism (verified from source, not from the ruling)
+
+`PolicyLoader.ResolveThresholds` resolves **environment variable → file default, with no third
+source**, and *requires* every threshold to declare an override key. Danny's description was
+accurate. `ValidateThresholdValues` additionally requires `duration_seconds` to be a
+**non-negative integer with no upper bound** — checked before deploying, because a cap would have
+crash-looped authority-service overnight.
+
+## ⚠️ The policy version hash MOVED — by design, and this is the proof it worked
+
+`pv1:d7b3db9f5ada15b8` → **`pv1:6b4dec9a0d13aa4b`**
+
+**This is correct and expected. It does NOT indicate policy content was edited.**
+`ResolvedPolicy.ComputeVersion` hashes the **resolved** threshold values, not the file. Its own
+comment: *"the hash must move when `POLICY_TRANSFER_L2_AMOUNT` changes, even though the file did
+not."*
+
+The brief's stop-condition ("if the hash changes you altered policy content — stop") rests on a
+false premise and is **inverted**: an unchanged hash would have meant the override *silently
+failed*. Constraint 1 was honoured, proved the correct way:
+
+- policy **identity** stable — `banker-copilot-authority`, **22 thresholds**, **13 action types**
+- policy **file** untouched — `git diff config/authority-policy.yaml` empty
+- exactly **9** thresholds report `overriddenByEnv: true`
+
+## Deployment
+
+- ConfigMap `banking-demo-config` patched in-place; `authority-service` rollout-restarted.
+- **Flux is NOT installed** on this cluster, so the direct patch will not be reconciled away.
+- `kubectl apply -k deploy/kustomize/base` was **not** used (standing prohibition — base carries
+  `REPLACE_WITH_*` placeholders that would cause cluster-wide `ImagePullBackOff`).
+- **No image rebuild.** Config-only, proved by digest: `sha256:e71a449e…` **identical** before and
+  after. This mattered because the tag is `:latest` with `imagePullPolicy: Always`, so a restart
+  *could* have swapped the binary.
+- `deploy/kustomize/base/configmap.yaml` updated to match, with the rationale in comments.
+  **Uncommitted** — a Scribe holds the index.
+
+## Verification from the cluster
+
+- Pod `authority-service-6dc57f8947-7dst8`, **2/2 Running, 0 restarts**.
+- §B3.2 startup guard passed: policy `banker-copilot-authority`, 22 thresholds, 13 action types.
+- Read back from the **running service** via authenticated `GET /api/authority/policy`: all 9 TTLs
+  report value `28800` with source **ENV**. Not read from YAML.
+
+---
+
+## ⚠️ FOR LIVINGSTON — verification check 2.5 is now unobservable
+
+**Check 2.5:** *TTL expiry sweeper fires → `denied`, `terminalReason: TTL_EXPIRED`.*
+
+**Nothing was deleted or edited.** The check is intact. It was disabled by a number changing
+elsewhere.
+
+**Precisely what is lost — and what is not:**
+
+- **NOT broken:** the sweeper still runs. `Approval__SweepIntervalSeconds: 60` and
+  `Approval__SweepBatchSize: 100` are untouched. The `TTL_EXPIRED` code path is unchanged.
+- **Lost:** the *opportunity to observe it*. No demo-seeded approval now reaches expiry inside a
+  test window — the soonest is **8 hours** after seeding. Check 2.5 will neither pass nor fail; it
+  simply never fires. Its column in the verification doc was previously satisfied *incidentally*,
+  by approvals aging out during the run.
+- 2.5 was flagged as *"the sweeper has never run against a real clock and a real store"* — that
+  gap is now **unclosed again** in this environment.
+
+**To restore coverage, either:**
+1. seed a purpose-built short-TTL approval (e.g. `POLICY_TTL_USER_LOCK` temporarily low, since
+   `user.lock` is not used by the §7 walkthrough), or
+2. run a separate pass with these 9 keys removed and the pod restarted.
+
+**Pattern, third instance in this ruling alone (with §R3 and §R12):** a guard whose coverage
+quietly depends on a value somebody else is about to change. Worth a standing rule — a check that
+relies on a *configurable* value should assert that value, so changing it fails the check loudly
+instead of silencing it.
+
+## Out of scope / not done
+
+No demo or seeding script was run — Rusty runs the reseed against this deployed change. No commit.
+`scripts/demo/demo.sh`, `config/demo-dataset.json`, `tests/demo/`, `tests/fixtures/` untouched.
+`.squad/decisions-compaction-plan.md` not executed.
