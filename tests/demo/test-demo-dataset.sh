@@ -410,6 +410,88 @@ for node in walk(dataset["approvals"]):
                         f"an amount derived from '{name}' stays BELOW the dual-control line "
                         f"({value} < {base}) so the approval demonstrates L1, not L2")
 
+# ---- Canonicalizable payloads --------------------------------------------------------------
+# The authority canonicalizer (design §6.2) refuses a payload it cannot canonicalize rather than
+# coercing it: a value we cannot canonicalize is a value a human cannot be said to have signed.
+# Two number rules fall out of that, and BOTH have now bitten this seeder:
+#
+#   money position     — a JSON float is rejected; money is a fixed-scale decimal STRING.
+#   non-money position — a JSON float is rejected; anything fractional must be a string.
+#
+# The rule is READ OUT of the canonicalizer below rather than restated, so that if the service
+# ever stops rejecting floats this guard reports itself stale instead of silently over-asserting.
+canon_path = pathlib.Path("src/authority-service/Policy/Canonicalizer.cs")
+canon = canon_path.read_text() if canon_path.exists() else ""
+rejects_float = bool(re.search(r"JTokenType\.Float", canon)) and \
+                bool(re.search(r"Non-money numbers must be integers", canon))
+assert_(rejects_float,
+        f"the float-rejection rule is still present in {canon_path} (if this fails, the guard "
+        f"below is stale and must be re-derived from the canonicalizer, not deleted)")
+
+# Mirrors resolve_placeholders() in scripts/demo/demo-lib.sh. That function substitutes
+# {"@threshold": n, "@delta": d} with jq arithmetic -- base + delta -- and the RESULT is what is
+# sent. So a payload whose literal is an object is still a latent float if the policy's own
+# threshold, or the delta, carries a fractional part. The guard must check the RESOLVED value.
+UNRESOLVED = object()   # an @ref is discovered at runtime; not statically checkable.
+
+def resolve_like_seeder(node):
+    if isinstance(node, dict):
+        if "@threshold" in node:
+            name = node["@threshold"]
+            if name not in thresholds:
+                return UNRESOLVED
+            return float(thresholds[name]["default"]) + node.get("@delta", 0)
+        if "@ref" in node:
+            return UNRESOLVED
+        return {k: resolve_like_seeder(v) for k, v in node.items()
+                if not k.startswith("$") and not k.startswith("_")}
+    if isinstance(node, list):
+        return [resolve_like_seeder(v) for v in node]
+    return node
+
+def numeric_leaves(node, path=""):
+    if node is UNRESOLVED:
+        return
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield from numeric_leaves(v, f"{path}.{k}" if path else k)
+    elif isinstance(node, list):
+        for v in node:
+            yield from numeric_leaves(v, path)
+    elif isinstance(node, bool):
+        return
+    elif isinstance(node, (int, float)):
+        yield path, node
+
+# Every payload that is sent to POST /api/authority/approvals, under the name the seeder uses.
+payload_sources = []
+for approval in dataset["approvals"]:
+    for field in ("payload", "revisedPayload"):
+        if isinstance(approval.get(field), dict):
+            payload_sources.append((f"{approval['key']}.{field}", approval["actionId"],
+                                    approval[field]))
+probe = dataset.get("proposePathProbe", {})
+if isinstance(probe.get("payload"), dict):
+    payload_sources.append(("proposePathProbe.payload", probe.get("actionId"), probe["payload"]))
+
+assert_(bool(payload_sources), "there is at least one approval payload to check")
+
+for label, action_id, raw_payload in payload_sources:
+    money_fields = set(actions.get(action_id, {}).get("moneyFields") or [])
+    for path, value in numeric_leaves(resolve_like_seeder(raw_payload)):
+        integral = float(value).is_integer()
+        if path in money_fields:
+            why = (f"'{path}' is a money field, and money must be supplied as a fixed-scale "
+                   f"decimal string (for example \"7500.50\")")
+        else:
+            why = (f"'{path}' is a non-money field, and anything with a fractional part must be "
+                   f"supplied as a string")
+        assert_(integral,
+                f"{label}: {path} canonicalizes ({value!r} is a whole number)"
+                if integral else
+                f"{label}: {value!r} would be sent as a JSON float and the canonicalizer will "
+                f"refuse the payload with payload_not_canonicalizable -- {why}")
+
 # ---- Lifecycle coverage --------------------------------------------------------------------
 afters = {a["after"] for a in dataset["approvals"]}
 for verb in ("leave-pending", "sign-slot0", "sign-full", "deny", "supersede"):

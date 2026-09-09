@@ -1584,7 +1584,11 @@ Principle: "We could not check" and "we checked and it was fine" must not look t
 
 Five tests including present-when-primary-stated-none and absent-when-both-stated-factors. 228/228 passing. Tamper-tested (render condition `{false && …}` → 2 failures, both new, both named). 
 
-**Two flags for Danny:** (1) Wording deviation — shipped "stated no key factors" instead of "does not emit" because primary now emits factors on happy path; run-scoped wording is correct in both worlds; §F5 says "something of the form". (2) Second-layer silence — divergence guard only fires where both set `concern` to explicit booleans (never); gap survives on demo card; widening label would fire on every card (§F4 defect in politer font). Recorded in decisions for Danny's ruling.
+Upstream gap flagged: `src/banker-copilot-service/README.md:191` still lists "filters by caller's own userId" as open, which §B2.2 closed. Recommended to owner for correction (not Turk's boundary).
 
-**No redeploy.** Frontend only, rides next image.
+**No redeploy.** Comment rides next image.
+
+---
+
+**2026-09-09 (Scribe)** — Canonicalizer guard added to test-demo-dataset.sh. Note for following work: the canonicalizer forbids floating-point numbers in non-money fields and requires strings for any fractional part on non-money values. Guard is applied to resolved payloads (after placeholder substitution), not literals. Resolves placeholders using jq arithmetic, exactly as the seeder does. Covers `approvals[*].payload`, `approvals[*].revisedPayload`, and `proposePathProbe.payload`. Rule parsed from `Canonicalizer.cs` and `moneyFields` from policy YAML — no hand-maintained list.
 

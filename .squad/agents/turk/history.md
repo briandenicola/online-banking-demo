@@ -2854,7 +2854,7 @@ build into a writable path and leaves the repo untouched. 19/19 passed. Use this
 
 False claim removed: "costs no shipping caller." Replaced with truth: no *product* caller, copilot executes with invoking banker's token, four demo.sh customer-token callers moved to `/my` (Rusty's change). Cost claim now carries the search that validated it (shell expression for reproducibility).
 
-Upstream gap flagged: `src/banker-copilot-service/README.md:191` still lists "filters by caller's own userId" as open, which §B2.2 closed. Recommended to owner for correction (not Turk's boundary).
+---
 
-**No redeploy.** Comment rides next image.
+**2026-09-09 (Scribe)** — Canonicalizer guard added to test-demo-dataset.sh. Note for following work: the canonicalizer forbids floating-point numbers in non-money fields and requires strings for any fractional part on non-money values. Guard is applied to resolved payloads (after placeholder substitution), not literals. Resolves placeholders using jq arithmetic, exactly as the seeder does. Covers `approvals[*].payload`, `approvals[*].revisedPayload`, and `proposePathProbe.payload`. Rule parsed from `Canonicalizer.cs` and `moneyFields` from policy YAML — no hand-maintained list.
 

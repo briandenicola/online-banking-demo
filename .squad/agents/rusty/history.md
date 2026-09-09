@@ -538,3 +538,42 @@ All three things that could have gone wrong quietly (PascalCase, inflated counts
 
 **No redeploy.** No Azure writes, no kubectl mutations. Live reseed is the remaining proof.
 
+
+---
+
+## Learnings (2026-09-09 — canonicalizer fractional payload, `332-beta`)
+
+**The bug.** `config/demo-dataset.json` approval #11 (`l2-score-override-pending`) carried
+`"newScore": 0.25` as a raw JSON float. `authority-policy.yaml` declares
+`transaction.score.override.hashFields: [transactionId, newScore, rationale]`, so `newScore` is
+projected and canonicalized. `Canonicalizer.WriteNumber` rejects `JTokenType.Float` outright.
+HTTP 400 `payload_not_canonicalizable`. Fixed by changing the JSON **type** only —
+`"newScore": "0.25"`. The semantic value is unchanged and stays in the `riskScore` 0.0–1.0
+domain (`ai-service` clamps to `max(0.0, min(1.0, ...))`; `overrideScore` is `ge=0.0, le=1.0`).
+Non-money strings are NFC-passed through unmodified, so `"0.25"` canonicalizes to exactly `0.25`.
+
+**The real lesson — the literal is not what gets sent.** I nearly guarded the wrong thing.
+`resolve_placeholders()` in `demo-lib.sh` substitutes `{"@threshold": n, "@delta": d}` with
+**jq arithmetic**, `base + delta`, and it is the *result* that is POSTed. Eight approval
+`payload.amount` fields are exactly this shape. They pass today only because every
+`*_dual_control_amount` threshold and every delta happens to be integral. A money threshold
+published as `1000.50` would make `tonumber` yield `1000.5` and every one of those eight
+approvals would start failing at once. `seed_approvals` uses plain `resolve_placeholders` for
+the payload — it does **not** call `money_from_threshold`, which is what the probe path uses to
+render `"2500.00"`. That asymmetry is the latent defect; the guard now covers it.
+
+**@delta is not inherently safe — it is out of scope, which is different.** The two fractional
+`@delta` values (`agent.confidence -0.12`, `session.anomalyScore +0.05`) resolve to genuine
+floats: `0.58` and `0.8500000000000001`. They survive only because they live under `facts`, and
+`hashFields` names payload paths only, so they are never canonicalized. Move either one into a
+`payload` and it breaks immediately. Path scope, not value safety. Do not record it as "floats
+are fine in the dataset."
+
+**Guard shape.** Rule is read out of `Canonicalizer.cs` (staleness assert on the float-rejection
+site) and `moneyFields` out of the policy YAML. No hand-maintained list of "fields that must be
+strings" — that is the fragile shape Danny flagged in the Go `publishedEventTypes` list. The
+check resolves each payload the way the seeder does, then asserts every numeric leaf is integral.
+
+**Tamper-tested twice**, per house rule: reverting `newScore` to `0.25` fails with the non-money
+message; setting `approvals[0].payload.amount["@delta"] = -30.5` fails with the money message.
+Both restored.

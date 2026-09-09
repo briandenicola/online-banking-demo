@@ -2963,6 +2963,121 @@ Frontend only. Needs a `ui-app` image rebuild to reach the cluster. Brian is not
 
 ---
 
+# Decision — approval payload numbers are integral-or-string, and a guard enforces it
+
+**Author:** Rusty (Platform/Infra)
+**Date:** 2026-09-09
+**Branch:** `332-beta`
+**Status:** applied (Scribe pass)
+**Files:** `config/demo-dataset.json`, `tests/demo/test-demo-dataset.sh`
+
+## Context
+
+The reseed reached approval 11 of 11 and was refused:
+
+```
+POST /api/authority/approvals -> 400
+{"error":"payload_not_canonicalizable",
+ "message":"Field 'newScore' is a floating-point number. Non-money numbers must be integers;
+            anything with a fractional part must be supplied as a string."}
+```
+
+Latent, not a regression. `config/demo-dataset.json` approval `l2-score-override-pending` carried
+`"newScore": 0.25`. `config/authority-policy.yaml` declares
+`transaction.score.override.hashFields: [transactionId, newScore, rationale]`, so `newScore` is
+projected and canonicalized. `Canonicalizer.WriteNumber` rejects `JTokenType.Float` unconditionally
+(design §6.2 rule 4). The step had never executed before — earlier failures (GATE B, then the 403)
+masked it.
+
+## Decision
+
+### 1. Type change only, no semantic change
+
+`"newScore": 0.25` → `"newScore": "0.25"`.
+
+The value 0.25 is correct and is retained. `get_scored_transaction.requiredFields` names
+`riskScore`, and `ai-service` scores on **0.0–1.0** (`_parse_response` clamps
+`max(0.0, min(1.0, ...))`; `overrideScore` is `Field(ge=0.0, le=1.0)`). `newScore` stays in that
+domain. `moneyFields` is empty for this action, so the money branch never engages and
+`MaybeMoney` NFC-passes the string through unmodified — the canonical form is exactly `0.25`.
+
+### 2. The guard checks the RESOLVED payload, not the literal
+
+This is the substantive finding. `resolve_placeholders()` in `scripts/demo/demo-lib.sh`
+substitutes `{"@threshold": n, "@delta": d}` using **jq arithmetic** (`base + delta`), and it is
+the *result* that is POSTed. Eight approval `payload.amount` fields are that shape. A guard that
+only scanned JSON literals would see an object and pass.
+
+Those eight pass today only because every `*_dual_control_amount` threshold and every delta is
+integral. A money threshold published as `1000.50` would make `tonumber` yield `1000.5`, and all
+eight approvals would fail at once with the *money* variant of the same error.
+
+Contributing asymmetry: `seed_approvals` uses plain `resolve_placeholders` for the payload, while
+`probe_propose_path` uses `money_from_threshold` to render a fixed-scale decimal string
+(`"2500.00"`). Only the probe path is money-safe. Not changing that here — it is a behaviour
+change to the seeding path on Brian's critical path. The guard makes the latency visible and will
+fail loudly the moment a fractional threshold is introduced. Flagging for Danny as a follow-up:
+`seed_approvals` should arguably route `moneyFields` through `money_from_threshold`.
+
+### 3. Rule is parsed, not restated
+
+Per the house rule and Danny's ruling on the Go `publishedEventTypes` list, there is **no**
+hand-maintained list of "fields that must be strings":
+
+- the float-rejection rule is asserted still present in
+  `src/authority-service/Policy/Canonicalizer.cs`; if the service stops rejecting floats the guard
+  reports itself stale rather than silently over-asserting
+- `moneyFields` per `actionId` comes from `config/authority-policy.yaml`
+- threshold defaults come from the same policy file
+- `resolve_like_seeder()` mirrors `resolve_placeholders()`, including `$`/`_` annotation
+  stripping and `@ref` being runtime-only (not statically checkable)
+
+Coverage: every `approvals[*].payload`, `approvals[*].revisedPayload`, and
+`proposePathProbe.payload`.
+
+## Verification
+
+- `bash -n` clean: `demo.sh`, `demo-lib.sh`, `test-demo-dataset.sh`
+- `tests/demo/test-demo-dataset.sh` — **PASSED, 10 check groups**
+- Tamper-tested twice, both restored:
+  - `newScore` → `0.25` ⇒ `FAIL — l2-score-override-pending.payload: 0.25 would be sent as a JSON
+    float ... 'newScore' is a non-money field`
+  - `approvals[0].payload.amount["@delta"]` → `-30.5` ⇒ `FAIL — l1-pending-needs-you.payload: 969.5
+    ... 'amount' is a money field`
+- No Azure writes, no `kubectl` mutations, nothing outside the three permitted paths.
+
+---
+
+# Decision — scoring poll interval raised to accommodate Azure Foundry throttling
+
+**Author:** Scribe
+**Date:** 2026-09-09
+**Branch:** `332-beta`
+**Status:** applied
+**File:** `config/demo-dataset.json`
+
+## Context
+
+Reseed was proceeding successfully through approval 11 but failing to complete the seeded
+transaction-scoring phase within the configured `scoring.pollSeconds: 90`. Root cause: Azure AI
+Foundry rate-limits all ai-service scoring calls with HTTP 429, and the service retries after ~3
+seconds. With 23 seeded transactions, each costing ~5–6 seconds of clock time due to throttling
+and retry, the 90-second window is insufficient.
+
+## Decision
+
+Raised `scoring.pollSeconds` from 90 to 300 (5 minutes). Added `_scoringComment` documenting
+the reason: Azure Foundry HTTP 429 throttling.
+
+This is throttling behaviour, not a service fault. The polling window now accommodates all 23
+transactions under production rate-limiting.
+
+## Verification
+
+Reseed completed end to end. `Seed complete` message observed.
+
+---
+
 ## OPEN ITEMS — Flagged for Danny
 
 **From Linus (factor-divergence indicator, 2026-09-09):**

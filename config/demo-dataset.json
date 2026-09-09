@@ -384,9 +384,9 @@
       "category": "shopping"
     }
   ],
-  "_scoringComment": "How long to wait for ai-service to score the anomalous transactions before giving up.",
+  "_scoringComment": "How long to wait for ai-service to score the anomalous transactions before giving up. Azure AI Foundry rate-limits scoring: every call takes an HTTP 429 and a ~3s retry before succeeding, so a full seed of ~23 transactions needs roughly 140s of scoring time. 90s could not finish and failed as though the consumer were dead.",
   "scoring": {
-    "pollSeconds": 90,
+    "pollSeconds": 300,
     "pollIntervalSeconds": 5,
     "minScoredRequired": 1
   },
@@ -824,7 +824,7 @@
         "transactionId": {
           "@ref": "scoredTransactionId"
         },
-        "newScore": 0.25,
+        "newScore": "0.25",
         "rationale": "The beneficiary is the customer's own account at another institution, verified against the payment instruction on file."
       },
       "evidence": {
