@@ -2268,3 +2268,63 @@ reason should move; the test is whether the agent can state the reason back, and
 boundary crossing got the rule rather than a one-off pass: **a charter boundary follows the
 concern, not the file extension — and the permission is asymmetric. Delete presentation logic
 from the backend, never add it there.**
+
+### Same day, amendment — the evidence ceiling, and a sequencing constraint I mis-stated as a scope one
+
+Brian wanted the ceiling in scope now. The coordinator took my own reason apart correctly: **my
+objection was to a shared DEPLOY, not a shared BUILD.** I was protecting attribution between two
+measurements, and two staged deploys are two measurements — that was never an argument for
+writing the code a week later. **Worth remembering as a failure mode of my own: I expressed a
+measurement constraint as a risk judgement, and the two have different remedies.** Amended in
+place rather than writing a second document.
+
+**But I accepted it with the condition the coordinator himself offered to lose the argument
+over, because he was right to ask it: a flag that is a BRANCH means stage 1 runs a code path that
+never ships.** That is this feature's signature defect again. The answer is that the switch must
+be a **budget, not a branch** — at `perRunAdditionalToolBudget: 0` the same prompt, the same
+parser and the same additions call all execute, and the function simply returns empty. Stage 1 is
+the loop running zero iterations, not the loop switched off. **The general form: a feature flag
+implemented as a quantity keeps one code path; implemented as a conditional it makes two, and
+then the pre-rollout measurement is of a configuration nobody runs.**
+
+The condition paid for itself twice. It forced the assessor prompt to be byte-identical across
+stages — which only works because §P2.1 already gave the primary an `unverified` array, so the
+*request channel already existed* and no stage-2-only paragraph was needed. And because refusals
+must be recorded, **stage 1 measures the demand for the ceiling before the ceiling runs**: we
+learn which tools the primary asks for and how often, which is the evidence for whether a budget
+of 3 is right instead of a number I picked.
+
+**The finding I would have missed if I had only answered the six questions asked.**
+`FanOutEngine` derives the supervisor's read list from `sorted(primary_evidence.keys())`. The
+moment discretionary evidence lands in that dict, **the supervisor's independent draw silently
+widens to follow the primary's choices.** Blindness — the control I had just spent a whole
+section defending against an explicit proposal to widen it — would have been defeated by a
+data-flow change in a module that never mentions the supervisor, in a diff nobody would flag.
+Ruled the supervisor's tool ids come from the action's `requiredEvidence` instead, which is also
+simply more correct: its draw should be defined by the action under review, not by what the
+primary happened to do. **Lesson: when adding a producer to a shared data structure, find every
+consumer that derives behaviour from its SHAPE rather than its contents.**
+
+**Sharpest correction to the brief's assumptions:** the risk in discretionary gathering is not
+tool choice, it is **arguments**. A model that names a tool exercises authority it already has
+(same bearer token, upstream enforces, 403s are recorded and spend budget). A model that could
+supply *arguments* could read a different customer's account and file it in this customer's
+approval record. So: **the model names a tool id and never supplies arguments** — binding stays
+deterministic from banker inputs, and an unbindable tool is refused rather than invented, which
+is §R5's rule reappearing in a new place. Also corrected an assumption in the brief: the harness
+does **not** enforce `capabilityScope` (it is metadata; enforcement is upstream by token) — which
+makes the guarantee *stronger* than assumed, but only if stated accurately.
+
+**Non-convergence resolves by the same argument as the adverse proposal**, and it is reassuring
+when a new question falls out of an existing ruling: propose anyway with the adverse assessment,
+because an agent that gathers what it can, stays unsatisfied and then declines to propose has
+*disposed* — and the banker's work relocates to the unaudited admin path. `converged: false` must
+be a positive recorded fact, or "hit the cap unsatisfied" and "satisfied on the first pass" read
+identically.
+
+**On Brian's "how agentic is this really?" question — answered by bounding the claim, not by
+inflating it.** This adds a genuine feedback loop on the **evidence** axis and deliberately none
+on the **authority** axis (step selection stays deterministic; the supervisor's verdict still
+gates nothing, per ratified §6.4(6)). Saying which axis the loop is on is more useful than
+claiming the harness "decides", and it is §P11's own test applied to my own amendment: *does this
+artifact claim more than the mechanism behind it can support?*

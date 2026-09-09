@@ -6,6 +6,11 @@
 **Epic:** #332 Phase 3 — Banker Copilot supervisor / L2 co-signature
 **Requested by:** Brian (@briandenicola), via the coordinator
 **Status:** RULED. Hand-off to Turk (implementation), Linus (card), Livingston (re-measurement).
+**AMENDED 2026-09-08 (same day), on Brian's instruction:** the evidence ceiling is **in scope
+now**, built in this cycle, deployed in two stages. §P5 is rewritten in full; §P8 and §P9 are
+updated to match. The amendment is accepted with **one condition that decides whether it works
+at all** — the stage-1/stage-2 switch must be a **budget, not a branch** (§P5.1). Nothing else in
+this document is changed by the amendment.
 
 **Inputs read:** `docs/design/gate-b-evidence-contract-ruling.md` (mine),
 `tests/verification/README.md` (Livingston, rewritten),
@@ -44,6 +49,16 @@ Six things decide the rest:
 
 Brian's rulings on deterministic step selection and on the adverse proposal are not relitigated.
 I confirm the second one on its own reasoning and sharpen why (§P6).
+
+**Added by the amendment, and it is a seventh item of the same kind:**
+
+7. **The stage-1/stage-2 switch is a budget, not a branch** — otherwise stage 1 measures a
+   configuration nobody runs, which is this feature's signature defect wearing yet another
+   costume (§P5.1). And the ceiling's own back door gets closed in the same commit: **the
+   supervisor's read list must come from the policy's `requiredEvidence`, not from the primary's
+   evidence keys**, or discretionary gathering silently widens the supervisor's draw and
+   blindness is defeated by a data-flow change in a module that never mentions the supervisor
+   (§P5.7).
 
 ---
 
@@ -404,30 +419,285 @@ consensus.**
 
 ## P5 — The evidence ceiling: the model may gather MORE, never less
 
-Accepted as Brian framed it — *the model judges; the policy decides what it must have looked at
-first* — and specified here in full so it is not redesigned later. **Sequenced second (§P9).**
+**AMENDED. In scope now.** Built in this cycle alongside the assessment, deployed in two stages.
+The coordinator's reading of my original objection is correct and I accept the correction: I was
+protecting **attribution between two measurements**, and two staged deploys are two measurements.
+That was never an argument for writing the code a week later, and I should not have expressed a
+sequencing constraint as a scope constraint. The distinction matters — one is a fact about
+measurement, the other is a judgement about risk, and I conflated them.
 
-**Structural shape, so "never less" is true by construction rather than by validation:**
+Brian's framing — *the model judges; the policy decides what it must have looked at first* —
+is unchanged and is the whole design.
+
+### P5.1 The flag question, answered plainly, because it decides everything else
+
+The coordinator asked the right question and offered to lose the argument over it: **if a
+disabled ceiling means stage 1 runs a different code path from the one that ships in stage 2,
+then stage 1 measures a configuration nobody runs.** That is this feature's signature defect and
+it would be fatal here.
+
+**It fails if the switch is a branch. It does not fail if the switch is a budget.** So:
+
+> **RULING: there is no `if ceiling_enabled:`. There is a budget, and stage 1 sets it to zero.**
+
+At budget 0 the code traverses **the same path** it traverses in stage 2: the model is asked the
+same question, its reply is parsed by the same parser, its requests are recorded, the additions
+function is called, and it returns empty because the budget is exhausted. Stage 1 is not the
+loop switched off; it is the loop running zero iterations. The only untraversed edge is the one
+that actually invokes an extra tool — and that edge is the executor, which is traversed on every
+run anyway by the required evidence.
+
+Two conditions make that true rather than merely stated, and Turk must hold both:
+
+1. **The assessor's prompt is byte-identical in both stages.** Not "similar" — identical, one
+   constant, no budget interpolated into it, no conditional paragraph. If stage 2's prompt
+   invited requesting evidence and stage 1's did not, then stage 1 would measure an assessment
+   the product never makes, and the flag question would be answered "yes, it fails" for a subtler
+   reason than the branch. The request channel is **`unverified`, which §P2.1 already ruled into
+   the contract** — the primary always states what it could not establish and may always name
+   tools that would establish it. Whether that request is *honoured* is the budget's business,
+   never the prompt's.
+2. **A refused request is RECORDED, not dropped** — `requested but refused: budget_exhausted`
+   in the trace and on the record (§P5.5). A refusal must be a positive stated fact, per the
+   standing rule.
+
+This buys something better than a safe stage 1: **stage 1 measures the demand for the ceiling
+before the ceiling runs.** We will know, from real runs, which tools the primary asked for and
+how often — which is the evidence for whether the budget of 3 (§P5.2) is right, and it is
+evidence we would otherwise have to guess at. If stage 2 never happened, stage 1 would still not
+be a lie: it is a bounded configuration, honestly reported, whose refusals are visible.
+
+**Stage 1** — assessment real, `perRunAdditionalToolBudget: 0`. Livingston measures. The delta
+from today is attributable to exactly one change: the agent count going from one to two.
+**Stage 2** — budget raised. Livingston measures again. That delta is attributable to exactly one
+change: the evidence surface widening. Nothing is deferred and nothing is conflated.
+
+### P5.2 The floor first, then what bounds the ceiling
+
+**Two invariants make "never less" true by construction rather than by validation. They come
+first because everything below is only safe in their presence.**
 
 1. **Required evidence is gathered first and unconditionally, before the model is consulted at
-   all.** Ordering is the control here: if the model is never asked until the required set is in
-   hand, a model failure cannot reduce evidence below policy. Nothing needs to check it.
+   all.** Ordering is the control: if the model is never asked until the required set is in hand,
+   a model failure, a timeout or a garbage reply **cannot** reduce evidence below policy. There
+   is nothing to check, because there is no sequence in which it happens.
 2. **The additions function returns ADDITIONS, never a plan.** Signature control:
    `additional_evidence(objective, action_id, gathered) -> tuple[str, ...]`. It cannot express
-   "instead of", it cannot reorder, it cannot drop. This is the same move as
-   `build_supervisor_input(intent)`.
-3. **Candidates are the registry's read allowlist, minus what was already gathered.** An
-   unknown id is refused by name and logged; it is not a fatal error, because a model naming a
-   tool that does not exist is a model being wrong, not a config being wrong.
-4. **Bounded by config, with no literal in code.** Add `perRunAdditionalToolBudget` to
-   `config/harness-limits.yaml`, which is already the single home for these numbers and already
-   says a threshold stated twice is a threshold wrong once.
-5. **The trace and the approval must distinguish policy-required evidence from model-chosen
-   evidence.** Different step titles, and a flag on the record. Blurring a control with a choice
-   in the same list is how the control quietly becomes a preference — the same reasoning that
-   refused relaxing `EvidenceComplete` in the Gate B ruling.
+   "instead of", it cannot reorder and it cannot drop — the same move as
+   `build_supervisor_input(intent)`. An unknown tool id is refused by name and recorded, not
+   fatal: a model naming a tool that does not exist is a model being wrong, not a config being
+   wrong.
 
-Gate B is unaffected: the required set is unchanged and the additions are strictly additive.
+**Now the bounds.** An unbounded loop in a banking demo is worse than no loop, and I want the
+numbers defended rather than picked.
+
+| bound | value | where |
+|---|---:|---|
+| `perRunAdditionalToolBudget` | **3** | `config/harness-limits.yaml` |
+| `maxAssessmentIterations` | **2** | `config/harness-limits.yaml` |
+
+**`perRunAdditionalToolBudget: 3`.** The registry holds twelve read tools; required sets are one
+to three tools. Three additional therefore lets the model roughly **double** the evidence surface
+— enough for the loop to be real — while keeping the trace legible. Trace legibility is the
+stated reason `maxConcurrentSubagents` is 4 in that same file (*"the trace pane IS the demo"*),
+and it is the right yardstick here too: a run that gathers eleven things is not a run anyone
+watches. It is **per-run, not per-iteration** — two iterations cannot spend three each.
+
+**`maxAssessmentIterations: 2`.** That is one initial judgement and **at most one re-judge**:
+`judge → gather → judge → propose`. Two is the smallest number that makes this a feedback loop
+rather than a straight line, and it makes non-convergence a **single definite event** instead of
+a decaying sequence nobody can characterise. With a per-run budget of three, a third pass could
+only differ by scraps. Every extra pass is also a live model call in front of an audience.
+
+**Both live in `config/harness-limits.yaml`**, which is already the single home for these numbers
+and already states the rule — a threshold stated twice is a threshold wrong once. No literal in
+code; a missing or invalid value aborts startup, exactly as the rest of that file does.
+
+**And a third bound already exists — use it rather than trusting a new one.** Discretionary reads
+are inserted into the plan as **ordinary tool steps**, so they count against
+`COPILOT_PLANNER_MAX_ITERATIONS` (12) and hit the existing `iteration_cap` `run.error` if
+anything goes wrong with the budgets above. Two independent ceilings, one of them already
+shipped and tested, is worth more than one carefully-argued new one.
+
+### P5.3 What the model may gather — and the sharper risk, which is not tool choice
+
+**Confirmed:** candidates are tools already declared in `config/copilot-tools.yaml`. There is no
+way to spell a write in that file, so the ceiling cannot reach a mutating affordance — not
+because it is filtered, but because one is not expressible.
+
+**Correcting the assumption about capability scopes, because the correction matters.**
+`capabilityScope` is declared per tool but the harness **does not enforce it** — it is metadata
+the registry reports; enforcement is upstream, by the session's bearer token, which the executor
+forwards unchanged. So the accurate statement is stronger than the assumed one: **the ceiling
+cannot widen authority because it changes no credential.** A discretionary read the session may
+not perform returns 403 from the upstream service, exactly as a required one does today (that is
+what Gate A is). **Forbidden, stated rather than assumed: no discretionary read may use any
+credential, token, header or identity other than the one the required reads used.** If a future
+edit needs a service identity to make a discretionary read succeed, it is undoing Gate A and must
+be refused at review.
+
+A 403 on a discretionary read is **recorded as a refused read, spends budget, and does not fail
+the run**. Recording it matters — otherwise the record cannot distinguish *"did not look"* from
+*"was not allowed to look."* Spending budget matters too: it bounds a model that would otherwise
+enumerate the 403s and learn the session's authority surface. Bounded and visible, rather than
+prevented, is the right posture for a probe that grants nothing.
+
+**The sharper risk is arguments, not tools, and it gets the structural rule:**
+
+> **RULING: the model names a TOOL ID. It never supplies arguments.**
+
+Arguments stay bound by `_bind_arguments` from the banker's own inputs — session context, payload,
+facts — exactly as required evidence is bound today. A model that could choose arguments could
+read *a different customer's account* and file it in this customer's approval record. That is a
+data-boundary breach dressed as evidence gathering, and it is a much larger hole than tool
+selection. A tool whose required parameters cannot be bound from those sources is **refused as
+unbindable, never invented** — the same rule as §R5: the proposer may not stamp a subject onto
+its own evidence.
+
+**Excluded from the candidate set:**
+
+- Tools already gathered (the additions function returns *additions*).
+- The **§R5 quarantine** — `list_login_audits`, and anything else quarantined there. It has no
+  projection precisely because its subject identity cannot be established, and letting it in
+  through a discretionary door would put an unfiltered global audit list into an approval record
+  by a route the Gate B ruling closed at the front. One line, no new judgement, consistent.
+- Tools whose parameters cannot be bound (above).
+
+### P5.4 How the extra evidence is held
+
+**Yes — the same declared four-verb grammar, and there is nothing to build.** The projection is
+applied in `executor.py` beside `redact`, on every invocation, so discretionary reads are
+projected by construction. That is the payoff of having ruled it into the executor rather than
+the planner, and it is the answer to "does the model get a different evidence path": it cannot.
+
+Three consequences to state so nobody has to derive them:
+
+1. **Discretionary evidence never counts toward `requiredEvidence`.** `EvidenceComplete` checks
+   named keys; additions are disjoint from the required set by construction (already-gathered ids
+   are excluded), so Gate B is untouched — strictly additive, as ruled. A discretionary read
+   cannot satisfy a required key even accidentally.
+2. **A required tool that FAILED cannot be re-entered as a discretionary addition.** A failed
+   required read aborts the plan today (`outcome.aborted = True`), so the loop is never reached.
+   Stated because "correct via a fact about another code path" is how a dependency nobody meant
+   to create comes into existence.
+3. **A tool with no declared projection is still gatherable**, and its raw response is stored.
+   That is honest for discretionary evidence *because it is labelled discretionary* (§P5.5) and
+   asserts nothing about a subject. The §R5 exclusion is what keeps the one case where raw
+   storage would imply a false subject out of the set.
+
+If a discretionary tool's projection is ill-formed, it aborts at **startup**, exactly as it does
+now — the ceiling adds no new load-time path and no new grammar.
+
+### P5.5 What the ceiling changes in the approval record
+
+The coordinator's phrasing is the requirement and I am adopting it verbatim as the test: *"the
+copilot reviewed the account" must not mean something different run to run while reading
+identically.* This is the same concern as §P7 — the record is not reproducible, so it must at
+least be **attributable and legible** — applied to the evidence axis instead of the model axis.
+
+**RULING: `evidenceToolIds` is split, and refusals are recorded.**
+
+| field | provenance |
+|---|---|
+| `requiredEvidenceToolIds` | the policy's `requiredEvidence` — a **control** |
+| `discretionaryEvidenceToolIds` | what the model chose to add — a **choice** |
+| `refusedEvidenceRequests` | `[{toolId, reason}]` — `budget_exhausted` \| `unknown_tool` \| `unbindable` \| `quarantined` \| `read_refused_403` |
+| `assessmentIterations`, `converged` | how many passes, and whether it stopped because it was satisfied |
+
+All four are **server-observed**, never model-asserted, exactly as `evidenceToolIds` is today
+(§P3.3). The model's *requests* are its claim; these fields are the observation.
+
+Two reasons this is not bookkeeping. First, a control and a choice must never be blurred into one
+list — that is the same argument that refused relaxing `EvidenceComplete`, and the same one that
+requires the trace to title discretionary steps differently. Second, **`refusedEvidenceRequests`
+is what makes stage 1 measurable at all** (§P5.1): with the budget at zero it is the *only* place
+the ceiling's demand is visible.
+
+### P5.6 What happens when re-judging does not converge
+
+Reasoning inside Turk's rule — terminal status derives from *was a proposal admitted* — and by
+the same argument as §P6:
+
+> **RULING: it proposes, with the model's own adverse assessment stating the insufficiency. The
+> run's terminal status is unchanged. Hitting the cap is not a run failure.**
+
+An agent that gathered what it could, remained unsatisfied, and then *declined to propose* has
+disposed rather than proposed — invisibly, and on grounds the ladder never granted it. Worse, the
+banker still needs to act, so the refusal relocates the work to the unaudited admin path (§P6.3).
+The primary's verdict will presumably be `hold`, its `unverified` array carries what it could not
+establish, and `refusedEvidenceRequests` carries what it asked for and did not get. **That is a
+far more useful artifact than an empty screen: a human sees precisely what was missing.**
+
+Three things forbidden, because each is a plausible-looking edit:
+
+- **Retrying past the cap**, in any form, including a "just one more" special case.
+- **Treating non-convergence as a failed run.** No `run.error`; the approval was admitted.
+- **Skipping the fan-out because the primary already objected.** Same as §P6: making the second
+  opinion conditional on the first is the anchoring §P1 removes, in scheduling form.
+
+And `converged: false` must be a **positive recorded fact**, not an absence. Without it, "hit the
+cap while still unsatisfied" and "was satisfied on the first pass" read identically — a broken
+path looking like a working one, which is the defect class this feature keeps producing.
+
+**One position per agent.** The final assessment is the primary's position on the card. Do not
+render both passes: two verdicts from one agent forces the reader to decide which one counts,
+which is a judgement the card must not delegate. The earlier pass lives in the trace, which is
+this system's record by ratified decision.
+
+### P5.7 Does the supervisor see that the ceiling was exercised? NO — and the ceiling opens a back door I want closed in the same commit
+
+**Ruling: no. The supervisor is not told that discretionary gathering happened, what was
+requested, or what was refused.** The coordinator's instinct is right and the reason is the one I
+gave in §P1.2d: *"the primary went looking for more"* is a statement **about the primary's
+reasoning**, which is the class §6.4(1) names by hand. It is a weaker anchor than the conclusion,
+and weaker anchors still anchor. `SupervisorInput` is closed (§P1.2b); the first real test of a
+boundary is whether it holds against a case one likes, and this is that case.
+
+**Now the finding, which is the most important paragraph in this amendment.**
+`FanOutEngine` derives the supervisor's read list from `sorted(primary_evidence.keys())`. The
+moment discretionary evidence lands in that same dict, **the supervisor's independent draw
+silently widens to follow the primary's choices** — the ceiling leaks into supervisor
+construction through the back door, nobody decides it, and the diff that causes it contains no
+mention of the supervisor at all. Blindness would be defeated by a *data-flow* change in another
+module, which is exactly how every defect on this feature has happened.
+
+> **RULING: the supervisor's reader tool ids are derived from the action's `requiredEvidence`,
+> not from the primary's evidence keys.**
+
+That is both more correct and safer. More correct: the supervisor's draw should be defined by
+**the action under review**, which is policy, not by what the primary happened to do. Safer: it
+closes the leak structurally rather than by remembering to filter. Held by a test — *the
+supervisor's tool ids equal the required set regardless of what the primary gathered* — which
+fails the day someone re-points the derivation at the evidence dict. **This is required in the
+same commit as the ceiling; the ceiling must not merge without it.**
+
+**Should the supervisor get its own discretionary gathering?** It sounds symmetric and I am
+ruling **no for now — deferred-before-`main`, ticketed.** It would double the model calls inside
+the fan-out and, more importantly, make the second draw's surface depend on a second model's
+choices, so divergence would become uninterpretable during the very measurement this staging
+exists to protect. Its posture already lets it say the evidence is insufficient, and Livingston's
+corpus shows it does so precisely. Revisit after stage 2 is measured.
+
+### P5.8 What this makes true about the harness — stated honestly, since Brian asked
+
+The coordinator's answer to Brian was accurate and I am not going to improve it by inflating it:
+today there is one model call, no feedback loop, a supervisor verdict that changes no control
+flow, and a repair seam with nothing behind it.
+
+This ruling closes two of those four. **A real feedback loop exists on the evidence axis** —
+judge, gather, re-judge, and a bounded non-convergence outcome — and the primary's model call
+becomes a judgement rather than a formality. That is genuinely what separates an investigating
+harness from a workflow engine with a model bolted on, and it is cheap because the executor,
+the projection, the argument binding and the budgets all already exist.
+
+**What remains scripted, and deliberately so:** step selection stays deterministic (Brian's
+ruling — `requiredEvidence` is a control, and a control that a model may re-plan degrades from a
+guarantee to a detection), and the supervisor's verdict still changes no control flow (§6.4(6),
+ratified — disagreement is first-class and does not gate proceeding; that is the *authority*
+model, not a missing feature). The honest summary is: **the loop is on the evidence axis by
+design, and off the authority axis by design.** Anyone describing this as "the agent decides what
+to do" is making a claim the mechanism does not support (§P11).
+
 
 ---
 
@@ -565,6 +835,38 @@ the spawn input casually (§P1.2b); the honest options are a distinct action id 
 declared, payload-derived direction field admitted under §6.4(1) as banker-declared. **Ticketed,
 required before `main`, and it is a design question, not a patch.**
 
+### P8.1 Two stages, two measurements — what each one is allowed to claim (AMENDED)
+
+The staging in §P5.1 exists for this section's benefit, so its terms are set here.
+
+**Stage 1 — real primary assessment, `perRunAdditionalToolBudget: 0`.** The only change from the
+measured `226b24a` baseline is *the agent count going from one to two*. Any movement in position
+divergence is attributable to that and nothing else. This is the run that answers whether the
+22.6% was measuring one agent, and it is the first time check 4.2's name is accurate.
+
+**Stage 1 also produces a result nobody has today, for free:** `refusedEvidenceRequests` records
+what the primary asked for and was refused for budget. That is a **demand measurement** — which
+tools, how often, on which case classes — and it is the evidence for whether 3 is the right
+budget. Report it. If the primary rarely asks, the ceiling is worth less than we think and
+stage 2 should be judged accordingly rather than assumed to be an improvement.
+
+**Stage 2 — budget raised.** The only change is *the evidence surface widening*. The delta is
+attributable to that. The specific hypothesis to test is Livingston's own finding: dissent is
+dominated by justifications living outside the ledger. **If the ceiling helps, it should move the
+grounded cases and leave the ungrounded ones roughly where they are** — because no additional
+read can produce a consent form the system does not hold. A ceiling that raised agreement
+*uniformly* would be raising it for a reason unrelated to evidence, and that is a finding against
+it, not for it.
+
+**Neither stage may be pooled with the other, and neither may be pooled with the `226b24a`
+baseline.** Three configurations, three separately reported results, each carrying its build
+provenance — Livingston's rewritten README already sets that standard and it applies to itself.
+
+**A guard on the whole exercise:** the ceiling changes what the primary sees while the supervisor
+keeps drawing from the required set (§P5.7). That asymmetry is deliberate and it means stage 2's
+divergence figure is *not* comparable to a world where both sides gathered more. Say so where the
+number is quoted.
+
 ---
 
 ## P9 — Scope, sequencing, and what waits
@@ -599,12 +901,41 @@ measures one agent. Nothing errors. Everything looks like it works.
 10. Documentation: confidence may not be described as a reliability signal; "independent
     corroboration" banned (§P1.2e, §P7.2).
 
+**Also ships now — the evidence ceiling (§P5, AMENDED).** Built in this pass, deployed second,
+budget zero at stage 1:
+
+11. The loop: required evidence first and unconditionally; `additional_evidence(...)` returning
+    additions only; discretionary reads inserted as ordinary plan steps so they inherit the
+    existing iteration cap (§P5.2).
+12. `perRunAdditionalToolBudget` (3) and `maxAssessmentIterations` (2) in
+    `config/harness-limits.yaml`, no literals in code, fatal on missing or invalid (§P5.2).
+13. Tool ids only, never arguments; binding unchanged; unbindable, quarantined (§R5), unknown and
+    already-gathered ids refused **by name and recorded**; no credential other than the session's
+    (§P5.3).
+14. Record split: `requiredEvidenceToolIds` / `discretionaryEvidenceToolIds` /
+    `refusedEvidenceRequests` / `assessmentIterations` + `converged`, all server-observed;
+    discretionary steps titled distinctly in the trace (§P5.5).
+15. Non-convergence proposes with the adverse assessment; no `run.error`; fan-out still runs
+    (§P5.6).
+16. **The supervisor's reader tool ids re-derived from the action's `requiredEvidence` rather
+    than from the primary's evidence keys, with the test that holds it. This must land in the
+    same commit as the ceiling** — without it, discretionary gathering silently widens the
+    supervisor's draw and blindness is defeated by a data-flow change in another module (§P5.7).
+17. Tests specific to the staging: the assessor prompt is byte-identical at budget 0 and budget
+    3; a refused request is recorded at budget 0; and the budget-0 path executes the same
+    functions as the budget-3 path rather than skipping them (§P5.1). **Turk — that last one is
+    the equivalent of the unwired-`project()` hole your own tamper matrix found. If the loop can
+    be made inert without a test going red, the staging argument collapses.**
+
 **Deferred-before-`main` — ticketed, not carried in a decision file:**
 
-- **The additional-evidence ceiling (§P5).** Sequenced *second*, and for a real reason rather than
-  caution: shipping it at the same time as the primary assessment would change the evidence
-  surface and the number of agents in the same deploy, and no movement in 4.2 could then be
-  attributed to either. **Ship the assessment, re-measure, then open the ceiling.**
+- **~~The additional-evidence ceiling (§P5)~~ — NO LONGER DEFERRED.** In scope now, built in this
+  pass, deployed at stage 2 (§P5.1). The sequencing constraint survives as a *deploy* constraint;
+  it was never a scope constraint and I was wrong to express it as one.
+- **Discretionary gathering for the supervisor (§P5.7).** Sounds symmetric; would double the
+  fan-out's model calls and make the second draw's surface depend on a second model's choices,
+  which would render divergence uninterpretable during the measurement the staging protects.
+  Revisit after stage 2.
 - Supervisor confidence alignment: `_failsafe` confidence absent rather than `0.0`, and an
   unparsable confidence failing closed rather than clamping to `0.0` while keeping the verdict.
   Deferred because it changes supervisor behaviour mid-measurement. One ticket, both halves.
@@ -616,8 +947,10 @@ measures one agent. Nothing errors. Everything looks like it works.
   (§R4) and the per-key provenance envelope (§R3).
 
 **Refused, not deferred:** semantic grounding of key factors (§P3.4); widening `SupervisorInput`
-(§P1.2b); requiring a counter-argument from the primary (§P1.2c); tuning either agent to raise the
-agreement rate (§P1.3).
+(§P1.2b), including to say that the ceiling was exercised (§P5.7); requiring a counter-argument
+from the primary (§P1.2c); tuning either agent to raise the agreement rate (§P1.3); letting the
+model supply tool **arguments** (§P5.3); any discretionary read using a credential other than the
+session's (§P5.3); retrying past `maxAssessmentIterations` (§P5.6).
 
 ---
 
