@@ -1328,3 +1328,10 @@ the discrepancy correctly before asking, and asked anyway rather than assuming �
 retracted a headline once before. **Credibility earned by self-correction is spent by unexplained
 arithmetic**, and it is much cheaper to publish the reconciliation table with the number than to
 be asked for it.
+
+---
+
+**2026-09-09 (Scribe)** — Inbox merge and deploy verification complete. Your 11 queued decisions from `.squad/decisions/inbox/` are now merged into the canonical ledger at `.squad/decisions.md`. Authority-service has deployed cleanly to `banking-demo` namespace with the §B3.2 startup guard active (`banker-copilot-authority`, policyVersion `pv1:d7b3db9f5ada15b8`, 22 thresholds, 13 action types).
+
+**⚠️ Critical for your test suite:** Three policy actions now gather one more piece of evidence than before — `transaction.flag.review`, `transaction.score.override`, `transfer.reversal.execute` all require `get_account` alongside `list_account_transactions` per ruling §B3.2. The reseed moved the accounts under test, so your previous 42 runs do not survive it. Authority-service validates this requirement at startup; deploy will abort if policy violates it.
+

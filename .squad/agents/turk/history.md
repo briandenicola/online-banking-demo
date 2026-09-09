@@ -2800,3 +2800,10 @@ MTIMES, so MSBuild kept the tampered DLL and a clean checkout "failed". Four min
 phantom. **A revert is not verified until the thing that consumes it has actually rebuilt**, and
 this is the fourth flavour of absent-by-coincidence I have hit: deleted projection, unwired
 `project()`, un-awaited coroutine, and now an un-rebuilt binary.
+
+---
+
+**2026-09-09 (Scribe)** — Inbox merge and deploy verification complete. Your 11 queued decisions from `.squad/decisions/inbox/` are now merged into the canonical ledger at `.squad/decisions.md`. Authority-service has deployed cleanly to `banking-demo` namespace with the §B3.2 startup guard active (`banker-copilot-authority`, policyVersion `pv1:d7b3db9f5ada15b8`, 22 thresholds, 13 action types).
+
+**For Turk specifically:** Three policy actions now gather one more piece of evidence than before — `transaction.flag.review`, `transaction.score.override`, `transfer.reversal.execute` all require `get_account` alongside `list_account_transactions` per ruling §B3.2. Authority-service validates this at startup; the reseed moved the accounts under test.
+

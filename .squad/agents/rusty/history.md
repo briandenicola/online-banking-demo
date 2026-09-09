@@ -443,3 +443,8 @@ session-401 / timeout, and the request body was captured to confirm `amount` goe
 only (`/api/auth/login` exists, `/api/users/login` is 405, `/api/copilot/sessions` is 401) and
 drove **no seed run and created no approval**, because that needs Brian's approval and the
 banker-read fix is still in flight. Task 3 is therefore correct-by-ruling, not verified-by-run.
+
+---
+
+**2026-09-09 (Scribe)** — Inbox merge and deploy verification complete. Your 11 queued decisions from `.squad/decisions/inbox/` are now merged into the canonical ledger at `.squad/decisions.md`. Authority-service has deployed cleanly to `banking-demo` namespace with the §B3.2 startup guard active (`banker-copilot-authority`, policyVersion `pv1:d7b3db9f5ada15b8`, 22 thresholds, 13 action types).
+

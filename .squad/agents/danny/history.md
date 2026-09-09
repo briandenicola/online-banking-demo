@@ -2383,3 +2383,8 @@ artifact claim more than the mechanism behind it can support?*
 - **Sequencing is part of the ruling.** This moves the accounts under test, so it must land before
   stage 1 is measured, not between the two stages — otherwise it becomes the third uncontrolled
   variable in a measurement I spent the previous night protecting.
+
+---
+
+**2026-09-09 (Scribe)** — Inbox merge and deploy verification complete. Your 11 queued decisions from `.squad/decisions/inbox/` are now merged into the canonical ledger at `.squad/decisions.md`. Authority-service has deployed cleanly to `banking-demo` namespace with the §B3.2 startup guard active (`banker-copilot-authority`, policyVersion `pv1:d7b3db9f5ada15b8`, 22 thresholds, 13 action types).
+
