@@ -2355,3 +2355,31 @@ artifact claim more than the mechanism behind it can support?*
   gets "fixed" later; I required the reasoning at the call site, not in the ruling.
 - All three of Turk's departures from my text narrowed something I had left wide, and each named
   the line it departed from. That is what a good implementation of a ruling looks like.
+
+### 2026-09-09 — Banker/customer read ruling (docs/design/banker-customer-read-ruling.md)
+
+- **When the data has to be shaped so a defect does not show, the workaround has become the
+  design.** The seeder's banker-owned accounts were the tell, and they stayed invisible because
+  they made everything pass. Look for the workaround in the fixtures, not the code.
+- **`return Ok(emptyList)` can be a lie.** `GetAccountTransactions` narrowed the CALLER's
+  transactions by accountId, so for any non-owner it asserted "no history" for every account in
+  the bank. Three correct components in series — controller, projection, `EvidenceComplete` —
+  each faithful to its input, carrying a falsehood the whole way because the first answered a
+  question it was never asked.
+- **The structural fix was free, and it came from naming the facts correctly at the source.** Once
+  a denial is a 403 instead of a 200, there is no successful response to project, so the evidence
+  key is absent and Gate B rejects. I did not have to make Gate B check truth — which I refused,
+  because a projection describes a response and cannot know whether it is true.
+- **Say the blast radius out loud when you accept it.** "Any banker reads any account" is right
+  for this demo; the value is in stating what a real bank would add so the demo narrates the gap
+  instead of quietly overclaiming. We are genuinely close to only one of the three (the read
+  record), so that is the only one anyone may claim.
+- **Rejecting service identity protected a control I had already measured.** It would have moved
+  the enforcement point out from under Gate A mid-feature. Role-based needed no identity change at
+  all — the claim was already minted and already expanded.
+- **Look one step past the reported defect.** Nobody listed `UpdateBalance`, which carries the
+  same owner check; the demo would have failed one step LATER, which is worse, because by then it
+  looks like the harness worked.
+- **Sequencing is part of the ruling.** This moves the accounts under test, so it must land before
+  stage 1 is measured, not between the two stages — otherwise it becomes the third uncontrolled
+  variable in a measurement I spent the previous night protecting.
