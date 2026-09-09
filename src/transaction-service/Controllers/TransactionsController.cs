@@ -1,6 +1,8 @@
 using System.Linq;
 using System.Threading.Tasks;
+using Banking.Auth;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using OnlineBankingDemo.Contracts.Dtos;
@@ -72,8 +74,40 @@ public class TransactionsController : ControllerBase
             return Unauthorized();
         }
 
-        var userTransactions = await _transactionService.GetUserTransactionsAsync(userId);
-        var accountTransactions = userTransactions.Where(t => t.AccountId == accountId);
+        // §B2.2. This endpoint used to read the CALLER's transactions and narrow them to this
+        // accountId, so for any non-owner it returned `200 []` BY CONSTRUCTION, for every account
+        // in the bank. That was not a lenient authorization check — there was no check at all,
+        // and the empty result was a coincidence of the query that read as a fact about the
+        // world. The old filter is DELETED rather than kept as a fallback: a fallback would
+        // preserve the exact path that produces the lie.
+        var accountTransactions = (await _transactionService.GetAccountTransactionsAsync(accountId)).ToList();
+
+        var privileged = BankingRoles.Holds(User, BankingRoles.CustomerFinancialRead);
+        var ownsEveryRow = accountTransactions.Count > 0 && accountTransactions.All(t => t.UserId == userId);
+        if (!privileged && !ownsEveryRow)
+        {
+            // NARROWING the ruling's §B2 table at the one point it cannot cover, and saying so.
+            // A non-privileged caller's entitlement here is derived from the rows themselves —
+            // this service does not own accounts and has nothing else to derive it from. An
+            // EMPTY result therefore proves nothing about entitlement, so it cannot be the
+            // table's "permitted and empty" row. Answering `200 []` on it would rebuild the
+            // exact defect §B2.2 deletes: a true-looking answer produced by an accident of the
+            // query. It errs closed, and it costs no shipping caller — the copilot always holds
+            // `banker`, and no other caller in the repo uses this endpoint.
+            _logger.LogWarning(
+                "Denied read of transactions for account {AccountId}: caller is neither the owner nor a banker/supervisor.",
+                accountId);
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Forbidden" });
+        }
+
+        // A permitted caller and a genuinely empty ledger. §B2: after this change that is the
+        // ONLY way an empty array is produced here.
+        //
+        // What it does NOT say is whether the account exists — transaction-service does not own
+        // accounts and cannot tell "no such account" from "clean history". The honest reading of
+        // this body is "the transactions recorded against this accountId", silent on existence.
+        // Existence is get_account's question, and the §B3.2 startup guard in the authority-policy
+        // loader is what stops anyone requiring this evidence without it.
         return Ok(accountTransactions);
     }
 
