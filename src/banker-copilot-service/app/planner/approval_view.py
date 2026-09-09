@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from app.planner.verdicts import RECOMMENDATIONS, UNRECOGNISED_VERDICT
+
 PRIMARY_AGENT_NAME = "Primary agent"
 SUPERVISOR_AGENT_NAME = "Independent supervisor"
 
@@ -43,17 +45,16 @@ SUPERVISOR_AGENT_NAME = "Independent supervisor"
 # the vocabulary. Presentation — label wording, colour, severity rank — belongs to the client and
 # now lives in exactly one place there (ui-app supervisorVerdict.ts), which keys on these tokens.
 #
-# The vocabulary is READ from supervisor_model rather than restated here. The import is deferred
-# because supervisor_model -> fanout -> approval_view is a real cycle at module-import time; by the
-# time a verdict is rendered every module is loaded. A restatement would be a third copy of the
-# rule that can drift from both of the two it claims to hold together.
-UNRECOGNISED_VERDICT = "UNRECOGNISED"
+# The vocabulary is READ from `app.planner.verdicts` rather than restated here. It used to be
+# read from `supervisor_model` through a DEFERRED import, because supervisor_model -> fanout ->
+# approval_view is a real cycle at module-import time. That cycle existed because the vocabulary
+# was living in one agent's module while two agents used it; moving it to a neutral home (§P2.1)
+# removes both the cycle and the deferred import. A restatement would be a third copy of the rule
+# that can drift from both of the two it claims to hold together.
 
 
 def verdict_for(recommendation: str) -> str:
-    from app.planner.supervisor_model import RECOMMENDATIONS
-
-    token = recommendation.strip().casefold()
+    token = str(recommendation or "").strip().casefold()
     return token.upper() if token in RECOMMENDATIONS else UNRECOGNISED_VERDICT
 
 

@@ -39,6 +39,7 @@ import structlog
 
 from app.config import ConfigurationError, env_with_legacy
 from app.planner.fanout import SecondOpinion, SupervisorInput
+from app.planner.verdicts import RECOMMENDATIONS
 
 logger = structlog.get_logger("banker-copilot-service")
 
@@ -53,9 +54,10 @@ except ImportError:  # pragma: no cover
 
 SUPERVISOR_MODES = ("foundry", "deterministic")
 
-# The supervisor's verdict vocabulary. Anything outside this set is not a verdict, and a
-# thing that is not a verdict must never be treated as permission.
-RECOMMENDATIONS = ("proceed", "hold", "decline")
+# The verdict vocabulary is READ from `app.planner.verdicts`, not stated here. It is shared
+# with the primary assessor now that the primary states a verdict of its own (§P2.1), and two
+# statements of it would need a translation table between them. Re-exported for the callers
+# that already import it from this module.
 
 # Every failure lands here. A supervisor that could not form an opinion has not approved
 # anything, and the only safe rendering of "no opinion" on a co-signed banking action is
