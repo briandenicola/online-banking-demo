@@ -2159,3 +2159,30 @@ Anchored that ONE window to load time; every other fixture timestamp is narrativ
 **Verified:** 524 passed / 13 failed (13 pre-existing account-opening); layout 52/52; two new
 real-browser terminal-state guards. 16 tests broke mid-change and were fixed by re-dating stale
 fixtures, never by deleting assertions.
+
+## Phase 10 — free-text planner run outcomes (2026-09-10)
+
+- **The wire, read from the code not the design doc.** Answer artifact is
+  `artifact.created` `kind:"answer"`, content `{answer, keyPoints[],
+  citedEvidenceIds[], unverified[]}`. Refusal is `run.error {code, message,
+  recoverable:false}` + `step.failed` + `run.done status:"failed"`. Turk's design
+  wanted a durable refusal artifact; the code does not emit one, so a refusal
+  exists ONLY as `run.error`.
+- **Presentation, not placement.** The answer already reached the artifact dock —
+  it rendered as a JSON dump because `ArtifactBody`'s last branch stringifies
+  objects. Checking this before restructuring `CopilotHarness` saved putting 52
+  layout assertions at risk for no gain. Always confirm which of the two a defect
+  is before moving a component.
+- **A constraint encoded in copy is not enforced.** I wrote non-disclosing copy
+  for `ambiguous_subject`/`subject_not_found` and still passed the server message
+  through verbatim. Non-disclosure held only because Turk wrote careful strings.
+  Enforce at the render, and test with a deliberately leaky input.
+- **See the control fail before trusting it.** Removing the guard made the test
+  report three candidate usernames in the DOM. Same discipline caught the
+  pre-fix/post-fix signature for the answer and refusal e2e: all three fail
+  against the previous build, all pass against the current one.
+- **The replay filter is a liability for anything carried once.** A refusal rides
+  `run.error` alone, so a cold load depends entirely on the backlog passing the
+  filter added with the storm fix. It does — `completedRuns` is empty on a fresh
+  client — but that had to be asserted, not assumed. Durable across reload,
+  LOST on service restart.
