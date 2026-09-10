@@ -41,6 +41,11 @@ public class UserService : IUserService
         return await _userRepository.GetByUsernameAsync(username);
     }
 
+    public async Task<List<UserModel>> LookupUsersByUsernamePrefixAsync(string query, int limit = 5)
+    {
+        return await _userRepository.LookupByUsernamePrefixAsync(query, Math.Clamp(limit, 1, 5));
+    }
+
     public async Task<UserModel?> GetUserByEmailAsync(string email)
     {
         return await _userRepository.GetByEmailAsync(email);

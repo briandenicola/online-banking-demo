@@ -244,6 +244,21 @@ public class AccountsControllerTests
     [Theory]
     [InlineData("banker")]
     [InlineData("supervisor")]
+    public async Task GetAccountsForCustomer_AsBankingAuthority_ListsResolvedCustomersAccounts(string role)
+    {
+        SetUserWithRoles("banker-1", role);
+        var accounts = new List<Account> { CustomerAccount() };
+        _accountServiceMock.Setup(s => s.GetUserAccountsAsync("casey")).ReturnsAsync(accounts);
+
+        var result = await _sut.GetAccountsForCustomer("casey");
+
+        result.Should().BeOfType<OkObjectResult>();
+        _accountServiceMock.Verify(s => s.GetUserAccountsAsync("casey"), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("banker")]
+    [InlineData("supervisor")]
     public async Task UpdateBalance_AsBankingAuthority_AdjustsACustomersAccount(string role)
     {
         // §B4.3, and this is the step Brian hits ten minutes after the read fix if it is missed:

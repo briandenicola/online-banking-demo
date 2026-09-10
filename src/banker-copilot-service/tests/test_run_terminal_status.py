@@ -57,14 +57,26 @@ class _FakeResult:
 
 
 class _FakeTool:
-    def __init__(self, tool_id: str, params: tuple[str, ...]) -> None:
+    def __init__(self, tool_id: str, params: tuple[str, ...], scope: str = "risk.read") -> None:
         self.tool_id = tool_id
-        self.parameters = {"properties": {p: {"type": "string"} for p in params}}
+        self.capability_scope = scope
+        self.parameters = {
+            "type": "object",
+            "properties": {p: {"type": "string"} for p in params},
+            "required": list(params),
+            "additionalProperties": False,
+        }
 
 
 class _FakeRegistry:
     def __init__(self, tool_ids: tuple[str, ...]) -> None:
         self._tools = {t: _FakeTool(t, ("transactionId",)) for t in tool_ids}
+        if "get_user" in tool_ids:
+            self._tools["get_user"] = _FakeTool("get_user", ("userId",), "identity.read")
+        if "lookup_customer" in tool_ids:
+            self._tools["lookup_customer"] = _FakeTool("lookup_customer", ("username",), "customer-directory.read")
+        if "get_account" in tool_ids:
+            self._tools["get_account"] = _FakeTool("get_account", ("accountId",), "accounts.read")
 
     @property
     def tool_ids(self):
@@ -83,6 +95,12 @@ class _Executor:
     async def invoke(self, tool_id: str, arguments: dict[str, Any], bearer: str) -> _FakeResult:
         if self.fail:
             raise ToolInvocationError("upstream_forbidden", "account-service returned 403")
+        if tool_id == "get_user":
+            return _FakeResult({"id": arguments["userId"], "username": "casey", "firstName": "Casey", "lastName": "Retail"})
+        if tool_id == "lookup_customer":
+            return _FakeResult({"query": arguments["username"], "count": 1, "matches": [{"id": "usr_casey", "username": "casey", "displayName": "Casey Retail"}]})
+        if tool_id == "get_account":
+            return _FakeResult({"id": arguments["accountId"], "accountId": arguments["accountId"], "accountType": "Checking"})
         return _FakeResult({"transactionId": "tx_1", "amount": "245.00"})
 
 
@@ -154,6 +172,7 @@ class _Session:
     context: dict[str, Any] = {}
     actor_id = "usr_banker_44"
     actor_username = "banker@example.com"
+    capabilities = ("risk.read", "identity.read", "customer-directory.read", "accounts.read")
 
 
 async def _drive(
@@ -351,7 +370,7 @@ async def test_free_text_propose_path_selects_action_validates_payload_and_propo
     frames = await _drive(
         authority=authority,
         executor=_Executor(),
-        evidence_tools=("get_flagged_transaction",),
+        evidence_tools=("get_flagged_transaction", "get_account"),
         action_id=None,
         intent_selector=selector,
         answerer=None,
@@ -366,6 +385,46 @@ async def test_free_text_propose_path_selects_action_validates_payload_and_propo
         "reason": "Goodwill overdraft fee refund.",
     }
     assert "approval.required" in _kinds(frames)
+    assert _terminal(frames) == "completed"
+
+
+async def test_free_text_identifier_shaped_customer_hint_is_resolved_not_passed_through():
+    class RecordingExecutor(_Executor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        async def invoke(self, tool_id: str, arguments: dict[str, Any], bearer: str) -> _FakeResult:
+            self.calls.append((tool_id, dict(arguments)))
+            return await super().invoke(tool_id, arguments, bearer)
+
+    async def selector(*_args, **_kwargs):
+        return IntentDecision(
+            kind="propose",
+            action_id="account.balance.adjust",
+            subject_hints={"userId": "9f6a6d1e-1111-4444-aaaa-555555555555"},
+            payload_draft={
+                "accountId": "acc_1",
+                "amount": "35",
+                "direction": "credit",
+                "reason": "Goodwill overdraft fee refund.",
+            },
+        )
+
+    executor = RecordingExecutor()
+    authority = _Authority("admit")
+    frames = await _drive(
+        authority=authority,
+        executor=executor,
+        evidence_tools=("get_user", "get_account"),
+        action_id=None,
+        intent_selector=selector,
+    )
+
+    assert ("get_user", {"userId": "9f6a6d1e-1111-4444-aaaa-555555555555"}) in executor.calls
+    assert authority.last_body["payload"]["accountId"] == "acc_1"
+    artifacts = [f["payload"]["content"] for f in frames if f["kind"] == "artifact.created"]
+    assert any("resolved_subject" in artifact for artifact in artifacts)
     assert _terminal(frames) == "completed"
 
 
@@ -413,7 +472,13 @@ async def test_free_text_unfillable_payload_is_refused_before_propose():
         )
 
     authority = _Authority("admit")
-    frames = await _drive(authority=authority, executor=_Executor(), action_id=None, intent_selector=selector)
+    frames = await _drive(
+        authority=authority,
+        executor=_Executor(),
+        evidence_tools=("get_account",),
+        action_id=None,
+        intent_selector=selector,
+    )
 
     assert authority.propose_calls == 0
     error = next(f for f in frames if f["kind"] == "run.error")
@@ -436,7 +501,13 @@ async def test_free_text_noncanonical_money_is_refused_before_propose():
         )
 
     authority = _Authority("admit")
-    frames = await _drive(authority=authority, executor=_Executor(), action_id=None, intent_selector=selector)
+    frames = await _drive(
+        authority=authority,
+        executor=_Executor(),
+        evidence_tools=("get_account",),
+        action_id=None,
+        intent_selector=selector,
+    )
 
     assert authority.propose_calls == 0
     error = next(f for f in frames if f["kind"] == "run.error")

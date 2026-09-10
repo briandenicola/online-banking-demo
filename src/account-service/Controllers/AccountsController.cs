@@ -105,6 +105,25 @@ public class AccountsController : ControllerBase
         return Ok(account);
     }
 
+    [HttpGet("customer/{userId}")]
+    [Authorize(Roles = BankingRoles.CustomerFinancialRead)]
+    public async Task<IActionResult> GetAccountsForCustomer(string userId)
+    {
+        var callerUserId = User.FindFirst(global::AccountService.Constants.ClaimNames.UserId)?.Value;
+        if (string.IsNullOrEmpty(callerUserId))
+        {
+            return Unauthorized();
+        }
+
+        var accounts = await _accountService.GetUserAccountsAsync(userId);
+        _logger.LogInformation(
+            "AUDIT customer_accounts_lookup caller={CallerUserId} subject={SubjectUserId} count={Count}",
+            callerUserId,
+            userId,
+            accounts.Count());
+        return Ok(accounts);
+    }
+
     /// <summary>
     /// May this caller read this account? The owner always may; otherwise it takes banking
     /// authority over customer money (§B1.1).

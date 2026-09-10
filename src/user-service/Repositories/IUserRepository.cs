@@ -4,6 +4,7 @@ public interface IUserRepository
 {
     Task<Models.User?> GetByIdAsync(string id);
     Task<Models.User?> GetByUsernameAsync(string username);
+    Task<List<Models.User>> LookupByUsernamePrefixAsync(string query, int limit);
     Task<Models.User?> GetByEmailAsync(string email);
     Task<Models.User> CreateAsync(Models.User user);
     Task<Models.User> ReplaceAsync(Models.User user);

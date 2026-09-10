@@ -9,6 +9,7 @@ public interface IUserService
 {
     Task<User?> GetUserByIdAsync(string id);
     Task<User?> GetUserByUsernameAsync(string username);
+    Task<List<User>> LookupUsersByUsernamePrefixAsync(string query, int limit = 5);
     Task<User?> GetUserByEmailAsync(string email);
     Task<User> CreateUserAsync(RegisterUserRequest request);
     Task<bool> ValidateCredentialsAsync(string username, string password);

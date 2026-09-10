@@ -3166,3 +3166,18 @@ at that moment. Unchanged by my fix, present before it. Filed for Linus and Dann
 **Verification:** 420 banker-copilot Python tests passed; 150 authority unit tests passed; 224 authority integration tests passed; demo dataset checks passed (10 groups).
 
 **Key Learning:** A free-text command path must fail before emitting success whenever intent selection, payload construction, or evidence binding is absent. "No action selected" is not a successful empty evidence bundle; it is a named planner outcome.
+
+### 2026-09-10 — Subject resolver and score-override floor (#332)
+
+**Issue:** Danny ruled the free-text resolver must be a bounded lookup, not a model id pass-through, and that `transaction.score.override` needs a signable score band with too-deep reductions forced out of the harness.
+
+**Fixes:**
+- Added `CustomerDirectoryLookup` as a separate banker/supervisor authority and a bounded `GET /api/customer-directory/lookup` endpoint: min-3 literal username query, exact-match-first, cap 5, identity-only projection, and audit logging.
+- Added `GET /api/accounts/customer/{userId}` for banker/supervisor account resolution, plus read-tool manifest entries for customer lookup, customer account listing, and account-number lookup.
+- Implemented the real `ReferenceResolver`: all user/account hints, including GUID-shaped hints, are resolved through read tools before use; ambiguity/no-match are terminal refusals and resolution facts land in the evidence bundle.
+- Strengthened read-plan validation against the registry, session capabilities, and tool argument schemas before execution.
+- Added `score_override_floor` and the `deep-score-reduction` L3 rule, projected the signable band to the intent model, and preflighted `newScore` as a canonical bounded ratio.
+
+**Verification:** 423 banker-copilot Python tests passed; user-service tests 67 passed; account-service tests 43 passed; authority unit tests 151 passed; authority integration tests 224 passed; demo dataset checks passed (10 groups).
+
+**Key Learning:** The read branch is an authorization surface too. Model-selected read tools and model-supplied ids must be treated as untrusted claims and revalidated through the same registry/capability/read-authority path as proposals.

@@ -180,6 +180,12 @@ thresholds:
     env: POLICY_AGENT_CONFIDENCE_FLOOR
     description: Below this primary-agent confidence, a second human is required.
 
+  score_override_floor:
+    kind: ratio
+    default: "0.25"
+    env: POLICY_SCORE_OVERRIDE_FLOOR
+    description: Below this replacement risk score, the override is outside the Copilot harness.
+
   session_anomaly_score_floor:
     kind: ratio
     default: "0.80"
@@ -439,7 +445,12 @@ actionTypes:
     hashFields: [transactionId, newScore, rationale]
     moneyFields: []
     requiredEvidence: [get_scored_transaction, get_account, list_account_transactions]
-    rules: []
+    rules:
+      - id: deep-score-reduction
+        when: { field: newScore, op: lt, threshold: score_override_floor }
+        raiseTo: L3
+        reasonTemplate: >
+          Reducing a risk score below {threshold} is not a Copilot decision.
 
   account_opening.application.review:
     displayName: Decide an account-opening application
@@ -624,6 +635,7 @@ capabilityScopes:
   risk.write: { roles: [banker, supervisor] }
   transactions.read: { roles: [banker, supervisor] }
   identity.read: { roles: [banker, supervisor] }
+  customer-directory.read: { roles: [banker, supervisor] }
   onboarding.write: { roles: [banker, supervisor] }
   lending.read: { roles: [banker, supervisor] }
   lending.write: { roles: [supervisor] }

@@ -105,6 +105,13 @@ public static class BankingRoles
     public const string CustomerFinancialRead = "banker,Banker,supervisor,Supervisor";
 
     /// <summary>
+    /// Bounded customer-directory lookup for case work. Same members as customer financial
+    /// read today, but separate on purpose: resolving a username to an id is identity-plane
+    /// discovery, not permission to read balances and not platform administration.
+    /// </summary>
+    public const string CustomerDirectoryLookup = "banker,Banker,supervisor,Supervisor";
+
+    /// <summary>
     /// WRITE access to a customer's money: today, posting a balance adjustment.
     ///
     /// <para>

@@ -261,6 +261,34 @@ public class PolicyEvaluatorTests
         decision.RequiredSigners.Should().BeGreaterThanOrEqualTo(2);
     }
 
+    [Fact]
+    public void Score_override_below_the_floor_escalates_out_of_the_copilot_harness()
+    {
+        var floor = Policy.Threshold("score_override_floor").AsDecimal();
+
+        var decision = Evaluator.Evaluate(new EvaluationContext
+        {
+            ActionId = "transaction.score.override",
+            Payload = new JObject
+            {
+                ["transactionId"] = "txn-1",
+                ["newScore"] = (floor - 0.01m).ToString("F2"),
+                ["rationale"] = "Manual review found the model overweighted one factor."
+            },
+            Evidence = new JObject
+            {
+                ["get_scored_transaction"] = new JObject { ["transactionId"] = "txn-1", ["riskScore"] = 0.91 },
+                ["get_account"] = new JObject { ["accountId"] = "acct-1", ["balance"] = 1000 },
+                ["list_account_transactions"] = new JObject { ["accountId"] = "acct-1", ["count"] = 3 }
+            },
+            Actor = TestHarness.Banker()
+        }, Policy);
+
+        decision.Outcome.Should().Be(DecisionOutcome.NotPermitted);
+        decision.RequiredRung.Should().Be(Rung.L3);
+        decision.FiredEscalators.Should().Contain(e => e.Key == "deep-score-reduction");
+    }
+
     // =====================================================================================
 
     private static PolicyDecision Evaluate(int mask, Action<JObject>? mutatePayload = null)

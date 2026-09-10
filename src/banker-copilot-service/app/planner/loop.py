@@ -23,10 +23,11 @@ from __future__ import annotations
 import os
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping, Sequence
 
+import jsonschema
 import structlog
 
 from app.events.bus import RunStream
@@ -268,18 +269,116 @@ class _ActionSpec:
     required_evidence: tuple[str, ...]
     hash_fields: tuple[str, ...]
     money_fields: tuple[str, ...]
+    score_override_floor: Decimal | None = None
 
 
 @dataclass(frozen=True)
 class _ReferenceResolution:
     decision: IntentDecision
+    evidence: dict[str, Any] = field(default_factory=dict)
 
 
 class ReferenceResolver:
-    """Reference-resolution seam; lookup-backed name search intentionally lives behind this."""
+    """Resolve model hints through read tools; never trust identifier-shaped text directly."""
+
+    def __init__(self, registry: ToolRegistry | None = None, executor: ToolExecutor | None = None):
+        self._registry = registry
+        self._executor = executor
 
     async def resolve(self, request: PlannerRequest, decision: IntentDecision) -> _ReferenceResolution:
-        return _ReferenceResolution(decision=decision)
+        if self._executor is None or self._registry is None:
+            return _ReferenceResolution(decision=decision)
+
+        draft = dict(decision.payload_draft or {})
+        hints = dict(decision.subject_hints or {})
+        evidence: dict[str, Any] = {}
+
+        user_hint = _first_present(hints, "customer", "username", "user", "userId") or draft.get("userId")
+        if user_hint:
+            user = await self._resolve_user(str(user_hint), request.bearer_token)
+            if isinstance(user, IntentDecision):
+                return _ReferenceResolution(decision=user, evidence=evidence)
+            draft["userId"] = user["id"]
+            evidence["resolved_subject"] = {
+                "query": str(user_hint),
+                "matched": {"userId": user["id"], "username": user.get("username"), "displayName": user.get("displayName")},
+                "basis": "customer-directory-lookup",
+            }
+
+        account_hint = _first_present(hints, "account", "accountType") or draft.get("accountType")
+        account_id_hint = _first_present(hints, "accountId") or draft.get("accountId")
+        account_number_hint = _first_present(hints, "accountNumber") or draft.get("accountNumber")
+        if account_id_hint:
+            account = await self._invoke("get_account", {"accountId": str(account_id_hint)}, request.bearer_token)
+            if account is None:
+                return _ReferenceResolution(
+                    decision=_refusal("subject_not_found", "The referenced account could not be resolved for this banker."),
+                    evidence=evidence,
+                )
+            draft["accountId"] = account.get("accountId") or account.get("id") or str(account_id_hint)
+            evidence["resolved_account"] = {"query": str(account_id_hint), "matched": {"accountId": draft["accountId"]}, "basis": "account-id-read"}
+        elif account_number_hint:
+            account = await self._invoke("get_account_by_number", {"accountNumber": str(account_number_hint)}, request.bearer_token)
+            if account is None:
+                return _ReferenceResolution(
+                    decision=_refusal("subject_not_found", "The referenced account could not be resolved for this banker."),
+                    evidence=evidence,
+                )
+            draft["accountId"] = account.get("accountId") or account.get("id")
+            evidence["resolved_account"] = {"query": str(account_number_hint), "matched": {"accountId": draft["accountId"]}, "basis": "account-number-read"}
+        elif account_hint and draft.get("userId"):
+            accounts_doc = await self._invoke("list_customer_accounts", {"userId": str(draft["userId"])}, request.bearer_token)
+            accounts = accounts_doc.get("accounts") if isinstance(accounts_doc, Mapping) else accounts_doc
+            matches = [
+                a for a in (accounts or [])
+                if str(a.get("accountType", "")).lower() == str(account_hint).lower()
+            ]
+            if not matches:
+                return _ReferenceResolution(
+                    decision=_refusal("subject_not_found", "No account matched the requested account type for the resolved customer."),
+                    evidence=evidence,
+                )
+            if len(matches) > 1:
+                return _ReferenceResolution(
+                    decision=_refusal("ambiguous_subject", "More than one account matched the requested account type; no account was selected."),
+                    evidence=evidence,
+                )
+            draft["accountId"] = matches[0].get("accountId") or matches[0].get("id")
+            evidence["resolved_account"] = {
+                "query": str(account_hint),
+                "matched": {"accountId": draft["accountId"], "accountType": matches[0].get("accountType")},
+                "basis": "customer-account-type",
+            }
+
+        if evidence:
+            decision = replace(decision, payload_draft=draft)
+        return _ReferenceResolution(decision=decision, evidence=evidence)
+
+    async def _resolve_user(self, hint: str, token: str) -> dict[str, Any] | IntentDecision:
+        if _looks_like_id(hint):
+            user = await self._invoke("get_user", {"userId": hint}, token)
+            if user is None:
+                return _refusal("subject_not_found", "The referenced customer could not be resolved for this banker.")
+            return {
+                "id": user.get("id") or user.get("userId") or hint,
+                "username": user.get("username") or user.get("Username"),
+                "displayName": " ".join(str(user.get(k) or "").strip() for k in ("firstName", "lastName")).strip(),
+            }
+        doc = await self._invoke("lookup_customer", {"username": hint}, token)
+        matches = (doc or {}).get("matches") or []
+        if len(matches) == 0:
+            return _refusal("subject_not_found", "No customer matched the supplied reference.")
+        if len(matches) > 1:
+            return _refusal("ambiguous_subject", "More than one customer matched the supplied reference; no customer was selected.")
+        return dict(matches[0])
+
+    async def _invoke(self, tool_id: str, arguments: dict[str, Any], token: str) -> Any | None:
+        if self._registry.get(tool_id) is None:
+            return None
+        try:
+            return (await self._executor.invoke(tool_id, arguments, token)).data
+        except ToolInvocationError:
+            return None
 
 
 class Planner:
@@ -309,7 +408,7 @@ class Planner:
         self._assessor = assessor
         self._intent_selector = intent_selector
         self._answerer = answerer
-        self._reference_resolver = reference_resolver or ReferenceResolver()
+        self._reference_resolver = reference_resolver or ReferenceResolver(registry, executor)
         self._adverse_proposal = adverse_proposal_mode()
         self._store = store
         # The Phase 3 fan-out engine. Optional so the single-threaded planner (and every
@@ -391,7 +490,7 @@ class Planner:
 
                 if step["kind"] == "intent":
                     added, next_step_number, required, proposal_expected = await self._run_intent_step(
-                        request, stream, position, steps, next_step_number
+                        request, stream, position, steps, next_step_number, evidence
                     )
                     evidence_tools = required
                     record.required_evidence_tool_ids = tuple(required)
@@ -726,6 +825,7 @@ class Planner:
         position: int,
         steps: list[dict[str, Any]],
         next_step_number: int,
+        evidence: dict[str, Any],
     ) -> tuple[list[str], int, list[str], bool]:
         catalogue = await self._authority.policy_catalogue(request.bearer_token)
         actions = _action_specs(catalogue)
@@ -797,8 +897,27 @@ class Planner:
             )
             return added, next_step_number, [], False
 
+        if decision.kind == "propose":
+            action = actions.get(decision.action_id or "")
+            invalid = _validate_action_choice(decision, action, actions, self._registry.tool_ids)
+            if invalid is not None:
+                added, next_step_number = _insert_steps(
+                    steps,
+                    position,
+                    [_step(next_step_number, "Refuse objective", "refusal", **invalid)],
+                )
+                return added, next_step_number, [], False
+
         resolution = await self._reference_resolver.resolve(request, decision)
         decision = resolution.decision
+        evidence.update(resolution.evidence)
+        resolve_step = (
+            [_step(next_step_number, "Resolve references", "validate")]
+            if resolution.evidence
+            else []
+        )
+        if resolve_step:
+            next_step_number += 1
 
         if decision.kind == "refuse":
             added, next_step_number = _insert_steps(
@@ -817,12 +936,12 @@ class Planner:
             return added, next_step_number, [], False
 
         if decision.kind == "read":
-            validated = _validate_read_plan(decision, self._registry.tool_ids)
+            validated = _validate_read_plan(decision, self._registry, request.session.capabilities)
             if validated is not None:
                 added, next_step_number = _insert_steps(
                     steps,
                     position,
-                    [_step(next_step_number, "Refuse objective", "refusal", **validated)],
+                    [*resolve_step, _step(next_step_number, "Refuse objective", "refusal", **validated)],
                 )
                 return added, next_step_number, [], False
             planned = [
@@ -835,6 +954,7 @@ class Planner:
                 )
                 for offset, item in enumerate(decision.read_plan)
             ]
+            planned = [*resolve_step, *planned]
             planned.append(
                 _step(
                     next_step_number + len(planned),
@@ -851,28 +971,20 @@ class Planner:
 
         if decision.kind == "propose":
             action = actions.get(decision.action_id or "")
-            invalid = _validate_action_choice(decision, action, actions, self._registry.tool_ids)
-            if invalid is not None:
-                added, next_step_number = _insert_steps(
-                    steps,
-                    position,
-                    [_step(next_step_number, "Refuse objective", "refusal", **invalid)],
-                )
-                return added, next_step_number, [], False
             assert action is not None
             payload_or_error = _construct_payload(action, decision.payload_draft or {})
             if isinstance(payload_or_error, dict) and "code" in payload_or_error:
                 added, next_step_number = _insert_steps(
                     steps,
                     position,
-                    [_step(next_step_number, "Refuse objective", "refusal", **payload_or_error)],
+                    [*resolve_step, _step(next_step_number, "Refuse objective", "refusal", **payload_or_error)],
                 )
                 return added, next_step_number, [], False
             request.action_id = action.action_id
             request.payload = payload_or_error
             required = [tool_id for tool_id in action.required_evidence if tool_id in self._registry.tool_ids]
             request.facts = _facts_from_payload(request.facts, request.payload)
-            planned = [_step(next_step_number, "Validate proposed action and payload", "validate")]
+            planned = [*resolve_step, _step(next_step_number, "Validate proposed action and payload", "validate")]
             planned.extend(
                 _step(
                     next_step_number + index + 1,
@@ -1220,6 +1332,17 @@ def _step_number(step_id: str) -> int:
 
 def _action_specs(catalogue: dict[str, Any]) -> dict[str, _ActionSpec]:
     specs: dict[str, _ActionSpec] = {}
+    thresholds = {
+        str(t.get("name")): t.get("value") or t.get("default")
+        for t in catalogue.get("thresholds") or []
+        if t.get("name")
+    }
+    score_floor: Decimal | None = None
+    if thresholds.get("score_override_floor") is not None:
+        try:
+            score_floor = Decimal(str(thresholds["score_override_floor"]))
+        except InvalidOperation:
+            score_floor = None
     for raw in catalogue.get("actions") or []:
         action_id = str(raw.get("id", "")).strip()
         if not action_id:
@@ -1232,12 +1355,13 @@ def _action_specs(catalogue: dict[str, Any]) -> dict[str, _ActionSpec]:
             required_evidence=tuple(str(item) for item in raw.get("requiredEvidence") or ()),
             hash_fields=tuple(str(item) for item in raw.get("hashFields") or ()),
             money_fields=tuple(str(item) for item in raw.get("moneyFields") or ()),
+            score_override_floor=score_floor if action_id == "transaction.score.override" else None,
         )
     return specs
 
 
 def _action_wire(action: _ActionSpec) -> dict[str, Any]:
-    return {
+    wire = {
         "id": action.action_id,
         "displayName": action.display_name,
         "baseRung": action.base_rung,
@@ -1245,14 +1369,35 @@ def _action_wire(action: _ActionSpec) -> dict[str, Any]:
         "hashFields": list(action.hash_fields),
         "moneyFields": list(action.money_fields),
     }
+    if action.score_override_floor is not None:
+        wire["scoreOverrideSignableBand"] = [str(action.score_override_floor), "1.00"]
+    return wire
+
+
+def _first_present(mapping: Mapping[str, Any], *keys: str) -> Any | None:
+    for key in keys:
+        value = mapping.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _looks_like_id(value: str) -> bool:
+    return bool(re.fullmatch(r"[0-9A-Za-z_-]{8,64}", value))
+
+
+def _refusal(code: str, message: str) -> IntentDecision:
+    return IntentDecision(kind="refuse", reason_code=code, message=message)
 
 
 def _validate_read_plan(
-    decision: IntentDecision, known_tool_ids: frozenset[str]
+    decision: IntentDecision, registry: ToolRegistry, capabilities: Sequence[str]
 ) -> dict[str, str] | None:
+    capability_set = set(capabilities or ())
     for item in decision.read_plan:
         tool_id = str(item.get("toolId", "")).strip()
-        if tool_id not in known_tool_ids:
+        tool = registry.get(tool_id)
+        if tool is None:
             return {
                 "code": "objective_unmappable",
                 "message": f"The objective asked for evidence this harness cannot gather: {tool_id}.",
@@ -1261,6 +1406,18 @@ def _validate_read_plan(
             return {
                 "code": INTENT_CONTRACT_INVALID,
                 "message": "The planner model returned a read step without an arguments object.",
+            }
+        if tool.capability_scope not in capability_set:
+            return {
+                "code": "read_tool_forbidden",
+                "message": f"The selected evidence tool is outside this session's authority: {tool_id}.",
+            }
+        try:
+            jsonschema.validate(instance=item["arguments"], schema=tool.parameters)
+        except jsonschema.ValidationError:
+            return {
+                "code": INTENT_CONTRACT_INVALID,
+                "message": f"The planner model returned invalid arguments for {tool_id}.",
             }
     return None
 
@@ -1328,6 +1485,11 @@ def _construct_payload(action: _ActionSpec, draft: Mapping[str, Any]) -> dict[st
             if isinstance(money, dict):
                 return money
             value = money
+        if action.action_id == "transaction.score.override" and field == "newScore":
+            score = _normalise_score(value, action.score_override_floor)
+            if isinstance(score, dict):
+                return score
+            value = score
         _set_mapping_path(payload, field, value)
     return payload
 
@@ -1353,6 +1515,25 @@ def _normalise_money(value: Any, field: str) -> str | dict[str, str]:
             "message": f"Money field '{field}' has more than two decimal places.",
         }
     return f"{amount.quantize(Decimal('0.01')):.2f}"
+
+
+def _normalise_score(value: Any, floor: Decimal | None) -> str | dict[str, str]:
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        return {"code": "payload_invalid", "message": "newScore must be a decimal string between 0.00 and 1.00."}
+    try:
+        score = Decimal(str(value))
+    except InvalidOperation:
+        return {"code": "payload_invalid", "message": "newScore must be a decimal string between 0.00 and 1.00."}
+    if score != score.quantize(Decimal("0.01")):
+        return {"code": "payload_invalid", "message": "newScore must have exactly two decimal places or fewer."}
+    if score < Decimal("0.00") or score > Decimal("1.00"):
+        return {"code": "payload_invalid", "message": "newScore must be between 0.00 and 1.00."}
+    if floor is not None and score < floor:
+        return {
+            "code": "payload_invalid",
+            "message": f"newScore below {floor} is outside the Copilot signable band.",
+        }
+    return f"{score.quantize(Decimal('0.01')):.2f}"
 
 
 def _resolve_mapping_path(root: Mapping[str, Any], dotted: str) -> Any:
