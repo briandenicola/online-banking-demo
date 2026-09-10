@@ -207,11 +207,29 @@ export function flattenPayload(
  * `sourceToolCallId` is lifted when present so the card can scroll the trace to
  * the tool call that produced the claim — the loop that makes the trace pane a
  * citation index rather than decoration.
+ *
+ * The VALUES are carried through as `findings`. This mapper previously took the
+ * key for a label and dropped the payload on the floor, so
+ * `{ "get_account": { "accountId": "…", "balance": 59480 } }` rendered as
+ * "Get account" and nothing else — the agent's tool call, never its finding.
+ * They are flattened with `flattenPayload` so evidence and payload rows share
+ * one set of display primitives instead of inventing a second vocabulary.
  */
+const EVIDENCE_META_KEYS = new Set(['kind', 'label', 'toolCallId', 'summary', 'href']);
+
 function toEvidence(evidence: Record<string, unknown> | undefined): EvidenceRef[] {
   if (!evidence || typeof evidence !== 'object') return [];
   return Object.entries(evidence).map(([key, value]) => {
     const detail = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
+
+    // Everything that is not lifted into the ref itself is a finding. Arrays are
+    // wrapped so `flattenPayload` sees an object either way.
+    const payload: Record<string, unknown> = Array.isArray(value)
+      ? { [key]: value }
+      : Object.fromEntries(
+          Object.entries(detail).filter(([field]) => !EVIDENCE_META_KEYS.has(field))
+        );
+
     return {
       id: key,
       kind: (typeof detail.kind === 'string' ? detail.kind : 'record') as EvidenceRef['kind'],
@@ -225,6 +243,7 @@ function toEvidence(evidence: Record<string, unknown> | undefined): EvidenceRef[
             ? value
             : undefined,
       href: typeof detail.href === 'string' ? (detail.href as string) : undefined,
+      findings: flattenPayload(payload),
     };
   });
 }

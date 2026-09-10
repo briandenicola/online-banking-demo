@@ -125,6 +125,19 @@ public class InMemoryApprovalRepository : ApprovalRepositoryBase
         }
     }
 
+    public override Task<int> CountSupersedesAsync(string requesterId, DateTime sinceUtc, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            var count = ReadAll().Count(a =>
+                a.RequesterId == requesterId &&
+                a.SupersedesApprovalId is not null &&
+                a.CreatedAt >= sinceUtc);
+
+            return Task.FromResult(count);
+        }
+    }
+
     public override Task<IReadOnlyList<Approval>> FindExpiredAsync(
         long nowEpochSeconds, int batchSize, CancellationToken ct = default)
     {

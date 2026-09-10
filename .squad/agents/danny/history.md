@@ -2597,3 +2597,369 @@ My §R6 answer flipped and my §R7 fix contained a defect. Both worth keeping.
 **Die distinction:** The `die` must name its cause. "nothing flagged at all" (stream/Foundry/FLAGGING_THRESHOLD problem) vs "flagged but nothing qualifies" (model scored low, or poll window too small) send debuggers to different services.
 
 **Opt-out:** If the qualifying subject depends on a model score, a hard `die` on low-score days leaves the operator with no demo. An escape hatch with a typed flag (`--allow-unescalated` style) that degrades the run and prints what is degraded is legitimate. A *silent* default variance is not.
+
+## Learnings — 2026-09-10 (human override: the primitive was already built)
+
+**Ruling:** `.squad/decisions/inbox/danny-human-override-counter-proposal.md`
+
+### The finding that reframed the whole question
+
+Brian objected that the banker is "just the sign off" — sign or deny, no override. The brief
+framed this as a missing primitive to design. It was not. **`POST /api/authority/approvals`
+with `supersedesApprovalId` is counter-proposal, fully implemented**
+(`ApprovalService.cs:105-141`), and the supersede gate is *requester-only*.
+
+The unlock: **the copilot forwards the banker's own bearer token verbatim** to the authority
+service (`auth.py:57`, `sessions.py:163,306`, `planner/loop.py:750`). So `RequesterId` on every
+"agent-proposed" approval is the banker's own user id. **The banker already passes the
+requester-only gate.** The agent is not a principal here; it is a drafting surface operating
+under the human's identity. Nobody on the team had connected those two facts, because one lives
+in a Python auth module and the other in a C# guard clause.
+
+**Generalise this:** before designing a new primitive, check whether the backend already
+implements it and only the UI lacks it. The tell is a terminal state or enum member that exists
+in the schema, is asserted by tests, and has no user-reachable path that produces it. Here it
+was `PAYLOAD_SUPERSEDED` — present in 33 files, exercised by `demo.sh`, exposed by zero buttons.
+Write-path-first search (who *writes* this value?) found in minutes what a UI-first search would
+have missed entirely.
+
+### The hole the good news exposed
+
+`PolicyEvaluator.cs:150-153` — **slot 0 carries `MustDifferFrom = []`**. Only slots 1..n get the
+requester-exclusion. So at L1 the requester signs their own approval. Fine for an agent-drafted,
+evidence-gated payload. **Not fine for a human-authored one**, which carries no agent evidence
+for the figure the human just invented. Exposing counter-propose without a floor would have
+shipped a self-approval surface into a banking demo.
+
+**Principle worth keeping: less evidence must mean more signers, not the same.** A provenance
+change that removes an evidence trail is a rung input, and if it is not wired as one, the rung
+silently under-prices the risk.
+
+**The safe hook** is the server-controlled `context.*` namespace in
+`EvaluationContext.BuildDocument()` (`:39-41`). `context.selfDealing` is the precedent: injected
+by the service, unforgeable by the caller, readable by policy predicates. Adding
+`context.humanAuthored` + an escalator with `minRung: L2` gets a structural floor for one boolean
+and six lines of YAML, and the evaluator's `max`-only monotonicity means **config can raise it and
+the policy grammar has no verb to lower it**. When a codebase gives you a monotone evaluator, new
+risk signals are cheap — spend the design effort on getting the *signal* unforgeable, not on
+enforcement machinery.
+
+### Refusing the symmetric-looking request
+
+Brian also asked why the *supervisor* has no override. Symmetry is seductive and wrong here. The
+requester-only supersede gate is **what keeps the payload's author distinct from its second
+signer**. Let the supervisor author *and* co-sign and dual control collapses to one person doing
+both jobs — the exact failure `MustDifferFrom` exists to prevent. Said no plainly and gave the
+real answer: the supervisor's verb is deny-with-validated-reason, which *returns* the case to the
+banker to re-author. The genuine gap there is presentational — a denial reads as termination when
+it should read as "returned to you."
+
+**Watch for this shape:** when a user asks for capability X for role A and it is right, they will
+immediately ask why role B lacks X. Sometimes the asymmetry *is* the control.
+
+### Bucket ruling (Linus)
+
+Signed-but-unexecuted = **Running**, not Done. The buckets answer "what does the banker still have
+to do?" — a signed item has cleared human control. "Done" must mean nothing further will happen,
+and that is false: execution re-evaluates policy and can still void
+(`ApprovalsController.cs:110-140`). Accepted Linus's two follow-ups — key `running` on execution
+state with a visible *stalled* affordance (show the stall, don't relabel it done), and either
+implement `doneToday`'s date window or rename it (`TaskQueuePane.tsx:75`).
+
+**Honesty note I want to keep making:** I could not find the four-lane tally in `demo.sh` myself.
+I took Linus's reported numbers at face value because he ran it, and I **labelled it unverified
+in the ruling** rather than writing it as a finding. Marking the seam between what I confirmed and
+what I inherited costs one sentence and is the difference between a ruling and a guess.
+
+### The part I got wrong first, and the rule that comes out of it
+
+My first draft proposed injecting `context.humanAuthored` and asserted "the caller cannot forge
+it, exactly as `selfDealing` cannot." **Wrong, and wrong in an instructive way.** `selfDealing` is
+server-*derived* — computed from actor and target. Authorship has no such derivation, precisely
+because of the finding that made the whole ruling possible: **the agent proposes on the banker's
+token**, so agent re-plan and human counter-proposal are the same principal on the same credential
+through the same code path. And the fields that look like provenance — `AgentId`, `SessionId`,
+`AgentAssessment` — are caller-supplied body fields (`Contracts.cs:22,24,26`). I had *already
+established* the fact that killed my own mechanism and did not carry it forward two sections.
+
+**Rule: a provenance flag meaning "a human did this" is defeated by omitting it. Invert to
+fail-closed — escalate on the *absence of positive attestation*, so defeating it requires
+manufacturing evidence rather than withholding a boolean.** The corrected escalator keys on
+`context.supersedes` (a fact the service observes in the request it is handling) and treats every
+replacing payload as unattested. Costs a blanket L2 on agent re-plans too; that is the honest
+price of a system that genuinely cannot tell who wrote the payload.
+
+**The deeper architectural debt, now named:** a service that calls another service purely on the
+user's forwarded token **has no identity of its own**, and therefore *nothing it asserts about
+itself is evidence*. Convenient for authorization pass-through, fatal the moment you want to price
+risk by authorship. On-behalf-of (service credential + user identity) is the durable fix. Logged as
+a future epic, explicitly out of scope for the fast follow.
+
+### Second miss: a defence becomes an attack when a different actor drives it
+
+`Approval.IsTerminal => Denied or Executed` (`Models/Approval.cs:238`) — **`Signed` is not
+terminal**, so a signed approval can be superseded. `SupersedeSignatureVoidTests.cs` shows this is
+deliberate: it proves no signature survives a payload change, blocking an agent from smuggling an
+unsigned figure past a human. Correct, and untouchable.
+
+But hand that same mechanism to a human and it is **reviewer-shopping**: dislike your co-signature,
+supersede, re-roll for a different supervisor. The queue refuses to name a prospective signer,
+which prevents *picking* a reviewer — it does not prevent *re-rolling* until a preferred one
+appears.
+
+**Generalise: before exposing an existing mechanism to a new actor, re-derive its security property
+with that actor substituted in.** The property is a claim about (mechanism, actor) — never the
+mechanism alone. I nearly shipped "separation of duties strictly strengthened" while opening a
+re-roll path.
+
+Mitigation used the same trick as the first fix — a **live fact with no consumer**.
+`actor.mutatingProposalsInWindow` is computed and published to the predicate document
+(`EvaluationContext.cs:37`) and no escalator reads it. Worth grepping for these deliberately: a
+monotone evaluator makes an unused-but-populated fact into a guard for six lines of YAML.
+
+### On leaving the retraction visible
+
+I kept the wrong version in the ruling as a marked revision rather than editing to a clean
+document. The original reasoning was plausible enough to have shipped, and the failure mode is
+more useful to the team than a tidy artefact that hides it. Also: I found both flaws by re-reading
+my own draft adversarially *after* writing it, not while writing it. **Write the ruling, then
+attack it as if a colleague wrote it** — the mistakes are legible in a way they are not while you
+are still constructing the argument.
+
+### Revision 2 — Brian reframed it and the reframe was load-bearing
+
+Brian: *"it proposed — but again with only one option is not a proposal its a directive."* Correct,
+and conceding it changed the ruling far more than a wording fix should. I had been reasoning about
+a **missing button**. The actual defect is a **missing vocabulary**: the model has agree and
+destroy, and no way to disagree with the *specifics*. Once I accepted his frame, two findings fell
+out within minutes that I had walked straight past in draft 1.
+
+**Finding A — the ordering trap.** Supersede requires a non-terminal target
+(`ApprovalService.cs:119-122`); `IsTerminal => Denied or Executed` (`Models/Approval.cs:238`).
+So **deny permanently forecloses supersede.** The single verb the UI offers for "I disagree" is
+the one that destroys the remedy. Brian burned three approvals hunting for a door his own clicks
+were closing.
+
+**The methodological lesson, and it stings:** in draft 1 I checked whether the capability was
+*reachable* and stopped when the answer was yes. I never asked **what makes it unreachable.**
+Reachability analysis is only half the work — the other half is enumerating the transitions that
+close the door, especially the ones a user is *funnelled toward*. "Can they do X?" and "can they
+still do X after doing the obvious thing first?" are different questions with different answers.
+
+**Finding B — a mandatory input with no reader.** `DenialReasonValidator` enforces six rules
+including an explicit anti-mashing rule (`:68-121`), and the design note says *"'no' is not a
+reason."* The system works genuinely hard to extract a substantive human judgement — then stores
+it, audits it, streams it to the UI, and **shows it to no agent, ever.** The planner ends the run
+at `approval.required` (`planner/loop.py:788-790`); nothing resumes, nothing reads it back.
+
+**Generalise: look for mandatory, heavily-validated inputs whose consumers are all sinks.** High
+validation effort signals the team believed the field mattered; if every read is a store, an audit
+or a render, the belief was never cashed. That gap is usually a missing *loop*, and the fix is
+often a better primitive than the one being requested. Here it is: routing the denial reason into
+the next run gives "not that, this" **without** turning the banker into an origination surface and
+**without** an unevidenced payload — the human *directs*, the agent re-drafts with evidence. That
+resolves the exact tension the original brief said it could not resolve.
+
+**Third retraction in one document.** I had written that a supervisor's denial "returns the case
+to the banker to re-author — a round trip, not a dead end." Finding A proves that false. I
+asserted a workflow the code does not implement, because it was the *sensible* design and I
+narrated it instead of checking it. **The most dangerous claims are the ones plausible enough that
+verifying feels unnecessary.** All three retractions in this ruling were of that type.
+
+**On correcting the person who briefed me.** The revised brief said a denial destroys the evidence
+bundle. It does not — the record persists 90 days intact (`retention_seconds` = 7776000,
+`ApprovalRepositoryBase.cs:97`). Said so plainly. "No shortcuts, no lies" has to point at the
+brief as well as at the code, and here the precision decided the build: we are restoring a broken
+**link**, not recovering lost **data**. Directionally-right framing with a wrong mechanism still
+sends implementers to the wrong place.
+
+**On severity when the gap is in the claim, not the code.** Final answer was not
+demo-blocking but **claim-limiting**, plus a Tier 0 of pure copy: warn that Deny is final, and
+narrow what the demo asserts. The system is excellent at *enforcement* (nothing executes without
+human signature, two above a threshold, signatures void on payload change) and thin at
+*collaboration*. Claiming only the first is both true and strong. **When a demo overclaims, the
+fix is the sentence, not the sprint** — and giving Brian the exact honest line to say on stage was
+worth more than any code I could have recommended this week.
+
+### Revision 3 — I nearly shipped a ruling that would have refused the demo's best moment
+
+My §2.3 escalator was written `raiseBy: 1` + `minRung: L2`. Caught in final review, and it was a
+genuine near-miss: `RungOrder.RaiseBy(L2, 1) = L3` (`Models/Rung.cs:41-46`), and **L3 is not a
+rung, it is a refusal** — step 7 returns `Refuse(...)`, "outside the Copilot's authority"
+(`PolicyEvaluator.cs:144-152`). So my "add a second signer" guard would have made **superseding
+any already-L2 approval impossible**, which is exactly the marquee walkthrough beat. Turk would
+have implemented it as written.
+
+Fix: `minRung: L2` **alone**, which folds as `max(current, L2)` — a true floor, L1→L2, L2→L2. The
+validator accepts minRung with no raiseTo/raiseBy (`PolicyLoader.cs:725-730`), so this is a legal
+form. Left an explicit ⚠️ warning in the ruling telling Turk *not* to add the obvious `raiseBy`,
+because it is the natural thing to write.
+
+**The lesson, and it is a sharp one: in a ladder where the top rung means "refuse," "escalate by
+one" and "require more scrutiny" are not the same operation.** I had internalised the engine's
+monotonicity as an unconditional safety property — "escalators can only raise, so raising is
+always safe" — and wrote prose describing a *floor* while writing YAML expressing a *step*. The
+monotonicity guarantee is real and it protected me from lowering a rung; it says nothing about
+stepping off the top of the ladder. A structural guarantee constrains one failure direction, and
+believing it covers you generally is how you stop checking.
+
+**Method fix I want to keep: when recommending declarative config, evaluate it by hand against
+every input state, not just the motivating one.** I validated my rule against the L1 case that
+prompted it and never ran L2 through it. One extra line of arithmetic — `L2 + 1 = ?` — was the
+whole defect. **For any rule I propose, enumerate the input states and write down the output for
+each, including the states the rule was not written for.**
+
+**Also worth noting how it was caught.** Every one of the four errors in this ruling — the
+forgeable provenance flag, the re-roll path, the fictitious supervisor round trip, and this — was
+found by *adversarial re-reading after the document existed*, never while composing it. Three of
+the four came from a reviewer working off my own transcript. **Recommendations in declarative
+config deserve the same "run it in your head against hostile inputs" discipline as code, and they
+rarely get it, because YAML reads like prose and prose does not look like it needs testing.**
+
+## Learnings — 2026-09-10 (approval card rewrite: same hole, other side)
+
+**Ruling:** `.squad/decisions/inbox/danny-approval-card-information-architecture.md`
+
+Brian: *"The output here needs a complete rework. It's too robotic with lots of words without
+meaning or understanding."* Remit expanded to own this alongside the authority ruling, and they
+turned out to be one defect:
+
+- **No override** — the human may not disagree with the specifics.
+- **No rationale** — the human is not shown the specifics well enough to disagree.
+
+**A human cannot counter-propose against reasoning they cannot see.** So the card is a
+*precondition* for the override work, not cosmetic groundwork — shipping the override verb onto
+today's card would give bankers authority to disagree with a GUID. I reordered on that basis and
+said so explicitly, because it changed which team ships first.
+
+### Root cause worth naming: producer's view vs decider's view
+
+The card is the policy engine and the tool runner **explaining themselves**. Every element answers
+"what did the system do?" when the reader needs "what is happening and what should I do about it?"
+*"Base rung for this action. No escalators fired"* is accurate, well-engineered, and useless to a
+banker.
+
+**This will not yield to a copy pass — the wrong things are on the card.** Worth catching early:
+when someone reports tone ("robotic", "words without meaning"), check whether it is actually an
+*information architecture* defect wearing tone's clothes. Rewriting those sentences more warmly
+would have burned a cycle and fixed nothing.
+
+**The diagnostic that made it tractable:** the one line Brian did *not* complain about was the
+human-written reason — "Lockout was caused by a stale saved password on the customer's phone."
+Concrete, situational, about a person. **Find the element the user did not object to and make it
+the specification for everything else.** That gave me an objective test to hand Linus — *would a
+banker say this sentence to a colleague?* — which is far more useful than "make it less robotic."
+
+### The defect under the tone complaint
+
+`evidence[tool_id] = result.data` (`planner/loop.py:620`) writes raw tool output. The client mapper
+`toEvidence` (`api/authorityWire.ts:211-229`) only produces an `excerpt` when the value is a bare
+string or carries `.summary`; a raw data object yields neither, so the card renders the humanised
+**tool name** alone. Values are on the wire and the UI drops them.
+
+**The fix is not "make the mapper dump the object."** Raw tool payloads are arbitrary JSON and
+rendering them generically makes a worse card. It is a *contract gap* — nobody defined what an
+evidence item should say to a human. Cheapest correct fix: producer populates `label` and
+`summary`, which the existing mapper already reads, **zero client change**. Worth the pattern:
+when a renderer looks broken, check whether the field it wants was ever specified. Fixing the
+consumer would have entrenched presentation knowledge of tool payloads in the client.
+
+### Defining a contract nobody had written
+
+Turk was blocked asking whether `agentAssessment` is ever populated. Two useful moves:
+1. **Answered the empirical question as a labelled hypothesis with a five-minute test** — the
+   planner passes `primary_proposal_assessment(...)` on every propose (`loop.py:739-751`), so
+   `null` on live records is very likely a *seeder* omission. Told him to confirm by dispatching a
+   real run rather than asserting it for him.
+2. **Specified what it must contain**, field by field, with required/optional and card usage —
+   because "does it get populated" was the wrong question. A populated field whose `rationale`
+   reads *"Policy evaluation completed; no escalators fired"* satisfies the type and fails the
+   card. **Register is part of the contract, not a nicety**, and if the prompt does not ask for
+   situational explanation, changing the prompt is part of the work.
+
+### Two constraints I put in the spec that will not survive on their own
+
+- **Never blur the agent's claim with the harness's observation.** The service separates them
+  deliberately (`approval_view.py:110-117`); the card must preserve it visually. A model opinion
+  styled identically to a system fact is the most dangerous thing this card could do.
+- **Absence is information.** `concern: undefined` means the agent did not say; a ✓ there is an
+  assertion nobody made (`types.ts:212-217`). Never default, never fill.
+
+### Demote, never delete
+
+Every mechanism element I pulled off the primary surface goes into a collapsed "how this was
+decided" region — hashes, policy version, raw ids, tool ids, iteration counts. Auditors and
+sceptical bankers both need it. **A simplification ruling that deletes audit surface is a
+regression wearing a redesign's clothes**, and saying so up front stops the implementer guessing.
+
+Also gave a **priority order for a partial build** against a hard deadline, with each step
+independently valuable and an explicit *do not attempt* on the one item (subject enrichment) that
+cannot be rushed honestly.
+
+### Scope correction — Brian checked that we hadn't turned "fix this panel" into a rework
+
+> *"i want to make sure it wasn't something along the lines of Brian has now called for a complete
+> rework of the application. Cause that is not what I'm asking for lol. Just that panel detail."*
+
+Arrived after both documents were written. Checked mine honestly rather than assuming they
+complied:
+
+- **Card spec: compliant.** Genuinely card-only; I never touched queue, trace, artifact or command
+  bar. Added an explicit in/out scope block at the top anyway, because a 360-line document about
+  one panel *looks* like a rework at a glance and the reader should not have to infer scope from
+  absence.
+- **Authority ruling: partly overreached.** I was asked to rule demo-blocking / fast-follow /
+  future-epic and I delivered that — wrapped in more design than anyone authorised. Fixed by
+  adding a **one-page decision summary** with three options, sizes and a recommendation, plus a
+  note stating which sections are *decisions* and which are *sketches to size an option*. §2b in
+  particular is now explicitly labelled "not authorised, do not build from."
+
+**The lesson: a ruling and a specification are different deliverables, and length signals which
+one you think you're writing.** Asked to size a gap, I produced something shaped like an
+implementation plan. Even correct content in the wrong shape misrepresents what has been decided —
+a reader reasonably assumes a document this detailed reflects an approved direction. **When asked
+"how big is this and should we do it now," lead with a decision table and put the evidence behind
+it.** I kept the detail (it prevents a real shipping bug) but made the decision extractable in a
+page.
+
+**Second lesson, on scoping language.** My colleague's briefing sentence — "Brian has now called
+for a complete rework of the approval card" — is what prompted Brian to check. Accurate in
+substance and alarming in phrasing. **When relaying a stakeholder's dissatisfaction, name the
+artefact precisely and the scope explicitly**, because "complete rework" travels further than
+whatever noun follows it. I have started doing this in my own documents: state what is *out* of
+scope, not just what is in.
+
+**Dependency framing.** Rewrote card §6 from "backend items" to "dependencies, with owners" —
+stating what the card *requires and why*, then naming the owner, rather than designing services
+Turk owns. Where I kept a ruling (display data must never enter the hashed payload) it is flagged
+as a constraint on the signing model, which *is* mine — and it turned out to match point 6 of
+Turk's own reason-template skill independently. **Two people deriving the same constraint from
+opposite directions is the strongest signal it is real.**
+
+Also checked before writing whether my §3.7 escalator-copy request collided with the `{actual}`
+template bug Turk already owns. It did. Marked it explicitly as his and reduced my ask to the one
+genuinely new case (base-rung actions fire no escalator, so there is no template to render at
+all). **Check the team's in-flight work before specifying anything adjacent to it** — the cheapest
+duplicate to prevent is the one you cause yourself.
+
+
+### 2026-09-10 — UI and Authority Fixes Session (#332)
+
+**Session Type:** Multi-agent integrated session (Turk, Linus, Danny, Rusty)
+**Branch:** `332-beta`
+**Outcome:** Approval-card IA and counter-proposal model ruled; implementation tracked
+
+**Danny's Contributions:**
+- Ruling 1: Approval-card information architecture spec (full ruling preserved in decisions.md)
+- Ruling 2: Human override & counter-proposal model option A+B (full ruling preserved in decisions.md)
+- Open: Queue bucket semantics (signed-but-unexecuted classification)
+- Open: Footer compliance (FDIC text suppression acceptable?)
+
+**Manifest:** Two long specs (`danny-approval-card-information-architecture.md`, `danny-human-override-counter-proposal.md`) merged into decisions.md with full content preserved
+
+**Implementation Status:**
+- Turk: counter-proposal support, churn guard, L2 floor
+- Linus: centre-pane ownership rule, approval detail rendering, separation-of-duties copy rewrites
+
+**Orchestration Log:** `.squad/orchestration-log/2026-09-10T20:47:00Z-danny.md`
+**Session Log:** `.squad/log/2026-09-10T20:47:00Z-copilot-ui-and-authority-fixes.md`

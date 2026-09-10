@@ -1,0 +1,570 @@
+{
+  "count": 10,
+  "items": [
+    {
+      "id": "apr_0f105785ddf5400e93916988",
+      "status": "pending",
+      "actionId": "transaction.score.override",
+      "actionLabel": "Override an AI risk score",
+      "requesterId": "b10ef596-0b6d-4f0c-adb8-b5104427ba57",
+      "requesterUsername": "banker",
+      "sessionId": "demo-seed-l2-score-override-pending",
+      "payloadHash": "sha256:496a88c988ef6813ff20eec6b99ead412415cb824187f93bf9162a745d83c038",
+      "payloadHashShort": "496a 88c9 88ef 6813",
+      "policyVersion": "pv1:6b4dec9a0d13aa4b",
+      "policyId": "banker-copilot-authority",
+      "baseRung": "L2",
+      "requiredRung": "L2",
+      "requiredSigners": 2,
+      "signaturesCollected": 0,
+      "createdAt": "2026-09-10T13:06:33.999457Z",
+      "expiresAt": "2026-09-10T21:06:33.999457Z",
+      "terminalAt": null,
+      "terminalReason": null,
+      "terminalDetail": null,
+      "executionState": "not_attempted",
+      "callerMaySign": true,
+      "callerMaySignReason": null,
+      "payload": {
+        "transactionId": "44b67543-39c8-4994-9bf0-1b323e586532",
+        "newScore": "0.25",
+        "rationale": "The beneficiary is the customer's own account at another institution, verified against the payment instruction on file."
+      },
+      "evidence": {},
+      "agentAssessment": null,
+      "firedEscalators": [],
+      "signatureSlots": [
+        {
+          "ordinal": 0,
+          "minSeniority": 1,
+          "mustDifferFrom": [],
+          "signedBy": null,
+          "signedByUsername": null,
+          "signedAt": null,
+          "comment": null,
+          "filled": false
+        },
+        {
+          "ordinal": 1,
+          "minSeniority": 2,
+          "mustDifferFrom": [
+            "b10ef596-0b6d-4f0c-adb8-b5104427ba57"
+          ],
+          "signedBy": null,
+          "signedByUsername": null,
+          "signedAt": null,
+          "comment": null,
+          "filled": false
+        }
+      ]
+    },
+    {
+      "id": "apr_c00b18c1bde54fd8a181f51d",
+      "status": "pending",
+      "actionId": "account.balance.adjust",
+      "actionLabel": "Post a balance adjustment",
+      "requesterId": "b10ef596-0b6d-4f0c-adb8-b5104427ba57",
+      "requesterUsername": "banker",
+      "sessionId": "demo-seed-esc-high-risk-customer",
+      "payloadHash": "sha256:1c2a10e3a9cf6d6ab6228b505db42c9e5f6e354fe1571f09595e40ff32062570",
+      "payloadHashShort": "1c2a 10e3 a9cf 6d6a",
+      "policyVersion": "pv1:6b4dec9a0d13aa4b",
+      "policyId": "banker-copilot-authority",
+      "baseRung": "L1",
+      "requiredRung": "L2",
+      "requiredSigners": 2,
+      "signaturesCollected": 0,
+      "createdAt": "2026-09-10T13:06:30.7389378Z",
+      "expiresAt": "2026-09-10T21:06:30.7389378Z",
+      "terminalAt": null,
+      "terminalReason": null,
+      "terminalDetail": null,
+      "executionState": "not_attempted",
+      "callerMaySign": true,
+      "callerMaySignReason": null,
+      "payload": {
+        "accountId": "e3bdc96d-d8ad-48f0-8a06-2f7f7606a76c",
+        "amount": 920,
+        "direction": "debit",
+        "reason": "Goodwill fee refund requested for this customer."
+      },
+      "evidence": {},
+      "agentAssessment": null,
+      "firedEscalators": [
+        {
+          "key": "high-risk-customer",
+          "raisedTo": "L2",
+          "scope": "escalator",
+          "thresholdName": null,
+          "thresholdValue": null,
+          "reason": "The customer's risk tier is {actual}.\n"
+        }
+      ],
+      "signatureSlots": [
+        {
+          "ordinal": 0,
+          "minSeniority": 1,
+          "mustDifferFrom": [],
+          "signedBy": null,
+          "signedByUsername": null,
+          "signedAt": null,
+          "comment": null,
+          "filled": false
+        },
+        {
+          "ordinal": 1,
+          "minSeniority": 2,
+          "mustDifferFrom": [
+            "b10ef596-0b6d-4f0c-adb8-b5104427ba57"
+          ],
+          "signedBy": null,
+          "signedByUsername": null,
+          "signedAt": null,
+          "comment": null,
+          "filled": false
+        }
+      ]
+    },
+    {
+      "id": "apr_a4bbd3392e134d7b9fc23405",
+      "status": "pending",
+      "actionId": "account.balance.adjust",
+      "actionLabel": "Post a balance adjustment",
+      "requesterId": "b10ef596-0b6d-4f0c-adb8-b5104427ba57",
+      "requesterUsername": "banker",
+      "sessionId": "demo-seed-esc-policy-exception",
+      "payloadHash": "sha256:d776b433853743383718ad641437dce7cc3aeb8e07f94fac19b7b80b3214fd19",
+      "payloadHashShort": "d776 b433 8537 4338",
+      "policyVersion": "pv1:6b4dec9a0d13aa4b",
+      "policyId": "banker-copilot-authority",
+      "baseRung": "L1",
+      "requiredRung": "L2",
+      "requiredSigners": 2,
+      "signaturesCollected": 0,
+      "createdAt": "2026-09-10T13:06:29.1889237Z",
+      "expiresAt": "2026-09-10T21:06:29.1889237Z",
+      "terminalAt": null,
+      "terminalReason": null,
+      "terminalDetail": null,
+      "executionState": "not_attempted",
+      "callerMaySign": true,
+      "callerMaySignReason": null,
+      "payload": {
+        "accountId": "e3bdc96d-d8ad-48f0-8a06-2f7f7606a76c",
+        "amount": 880,
+        "direction": "debit",
+        "reason": "Goodwill correction requested by the branch."
+      },
+      "evidence": {},
+      "agentAssessment": null,
+      "firedEscalators": [
+        {
+          "key": "policy-exception",
+          "raisedTo": "L2",
+          "scope": "escalator",
+          "thresholdName": "policy_exception_count_floor",
+          "thresholdValue": "1",
+          "reason": "The case carries policy exceptions, so it is not a routine decision.\n"
+        }
+      ],
+      "signatureSlots": [
+        {
+          "ordinal": 0,
+          "minSeniority": 1,
+          "mustDifferFrom": [],
+          "signedBy": null,
+          "signedByUsername": null,
+          "signedAt": null,
+          "comment": null,
+          "filled": false
+        },
+        {
+          "ordinal": 1,
+          "minSeniority": 2,
+          "mustDifferFrom": [
+            "b10ef596-0b6d-4f0c-adb8-b5104427ba57"
+          ],
+          "signedBy": null,
+          "signedByUsername": null,
+          "signedAt": null,
+          "comment": null,
+          "filled": false
+        }
+      ]
+    },
+    {
+      "id": "apr_291fd071ec2544d18de39ba8",
+      "status": "pending",
+      "actionId": "account.balance.adjust",
+      "actionLabel": "Post a balance adjustment",
+      "requesterId": "b10ef596-0b6d-4f0c-adb8-b5104427ba57",
+      "requesterUsername": "banker",
+      "sessionId": "demo-seed-esc-low-agent-confidence",
+      "payloadHash": "sha256:c681cda3804c20e5f00c94aac4417c167df551c919b72f3f7cf37ab5e05c5b28",
+      "payloadHashShort": "c681 cda3 804c 20e5",
+      "policyVersion": "pv1:6b4dec9a0d13aa4b",
+      "policyId": "banker-copilot-authority",
+      "baseRung": "L1",
+      "requiredRung": "L2",
+      "requiredSigners": 2,
+      "signaturesCollected": 0,
+      "createdAt": "2026-09-10T13:06:27.5820307Z",
+      "expiresAt": "2026-09-10T21:06:27.5820307Z",
+      "terminalAt": null,
+      "terminalReason": null,
+      "terminalDetail": null,
+      "executionState": "not_attempted",
+      "callerMaySign": true,
+      "callerMaySignReason": null,
+      "payload": {
+        "accountId": "76c73dfb-fe20-4a19-970e-b7487193af40",
+        "amount": 940,
+        "direction": "debit",
+        "reason": "Possible duplicate card fee; the pattern is not conclusive."
+      },
+      "evidence": {},
+      "agentAssessment": null,
+      "firedEscalators": [
+        {
+          "key": "low-agent-confidence",
+          "raisedTo": "L2",
+          "scope": "escalator",
+          "thresholdName": "agent_confidence_floor",
+          "thresholdValue": "0.70",
+          "reason": "The agent's own confidence ({actual}) is below the floor of {threshold}.\n"
+        }
+      ],
+      "signatureSlots": [
+        {
+          "ordinal": 0,
+          "minSeniority": 1,
+          "mustDifferFrom": [],
+          "signedBy": null,
+          "signedByUsername": null,
+          "signedAt": null,
+          "comment": null,
+          "filled": false
+        },
+        {
+          "ordinal": 1,
+          "minSeniority": 2,
+          "mustDifferFrom": [
+            "b10ef596-0b6d-4f0c-adb8-b5104427ba57"
+          ],
+          "signedBy": null,
+          "signedByUsername": null,
+          "signedAt": null,
+          "comment": null,
+          "filled": false
+        }
+      ]
+    },
+    {
+      "id": "apr_568c9b80d385463ebc0212d4",
+      "status": "pending",
+      "actionId": "account.balance.adjust",
+      "actionLabel": "Post a balance adjustment",
+      "requesterId": "b10ef596-0b6d-4f0c-adb8-b5104427ba57",
+      "requesterUsername": "banker",
+      "sessionId": "demo-seed-l1-superseded",
+      "payloadHash": "sha256:74631104e9049f91522bb5007c2f1b0d0c249ac48a210af4695643c2a86985ad",
+      "payloadHashShort": "7463 1104 e904 9f91",
+      "policyVersion": "pv1:6b4dec9a0d13aa4b",
+      "policyId": "banker-copilot-authority",
+      "baseRung": "L1",
+      "requiredRung": "L1",
+      "requiredSigners": 1,
+      "signaturesCollected": 0,
+      "createdAt": "2026-09-10T13:06:23.9059773Z",
+      "expiresAt": "2026-09-10T21:06:23.9059773Z",
+      "terminalAt": null,
+      "terminalReason": null,
+      "terminalDetail": null,
+      "executionState": "not_attempted",
+      "callerMaySign": true,
+      "callerMaySignReason": null,
+      "payload": {
+        "accountId": "76c73dfb-fe20-4a19-970e-b7487193af40",
+        "amount": 900,
+        "direction": "debit",
+        "reason": "Corrected fee reversal \u2014 figure taken from the published fee schedule."
+      },
+      "evidence": {},
+      "agentAssessment": null,
+      "firedEscalators": [],
+      "signatureSlots": [
+        {
+          "ordinal": 0,
+          "minSeniority": 1,
+          "mustDifferFrom": [],
+          "signedBy": null,
+          "signedByUsername": null,
+          "signedAt": null,
+          "comment": null,
+          "filled": false
+        }
+      ]
+    },
+    {
+      "id": "apr_a6dcbb7c87e14516b28b1d3f",
+      "status": "denied",
+      "actionId": "account.balance.adjust",
+      "actionLabel": "Post a balance adjustment",
+      "requesterId": "b10ef596-0b6d-4f0c-adb8-b5104427ba57",
+      "requesterUsername": "banker",
+      "sessionId": "demo-seed-l1-superseded",
+      "payloadHash": "sha256:83a0edcfd55ae1f13a5ddbeacb5e17b579993722076f95e975fe5270605af6af",
+      "payloadHashShort": "83a0 edcf d55a e1f1",
+      "policyVersion": "pv1:6b4dec9a0d13aa4b",
+      "policyId": "banker-copilot-authority",
+      "baseRung": "L1",
+      "requiredRung": "L1",
+      "requiredSigners": 1,
+      "signaturesCollected": 0,
+      "createdAt": "2026-09-10T13:06:23.0943723Z",
+      "expiresAt": "2026-09-10T21:06:23.0943723Z",
+      "terminalAt": "2026-09-10T13:06:23.97627Z",
+      "terminalReason": "PAYLOAD_SUPERSEDED",
+      "terminalDetail": "Replaced by apr_568c9b80d385463ebc0212d4 after the agent revised the plan.",
+      "executionState": "not_attempted",
+      "callerMaySign": false,
+      "callerMaySignReason": "This approval is denied and is not awaiting a signature.",
+      "payload": {
+        "accountId": "76c73dfb-fe20-4a19-970e-b7487193af40",
+        "amount": 975,
+        "direction": "debit",
+        "reason": "Provisional fee correction \u2014 figure taken from the customer's statement."
+      },
+      "evidence": {},
+      "agentAssessment": null,
+      "firedEscalators": [],
+      "signatureSlots": [
+        {
+          "ordinal": 0,
+          "minSeniority": 1,
+          "mustDifferFrom": [],
+          "signedBy": null,
+          "signedByUsername": null,
+          "signedAt": null,
+          "comment": null,
+          "filled": false
+        }
+      ]
+    },
+    {
+      "id": "apr_90715118989643bab28fe75a",
+      "status": "signed",
+      "actionId": "account.balance.adjust",
+      "actionLabel": "Post a balance adjustment",
+      "requesterId": "b10ef596-0b6d-4f0c-adb8-b5104427ba57",
+      "requesterUsername": "banker",
+      "sessionId": "demo-seed-l1-signed",
+      "payloadHash": "sha256:57168b408c752a2af2eba5cb42ee973994b57f7ad7630519ee8c37c20e7fe817",
+      "payloadHashShort": "5716 8b40 8c75 2a2a",
+      "policyVersion": "pv1:6b4dec9a0d13aa4b",
+      "policyId": "banker-copilot-authority",
+      "baseRung": "L1",
+      "requiredRung": "L1",
+      "requiredSigners": 1,
+      "signaturesCollected": 1,
+      "createdAt": "2026-09-10T13:06:18.4118036Z",
+      "expiresAt": "2026-09-10T21:06:18.4118036Z",
+      "terminalAt": null,
+      "terminalReason": null,
+      "terminalDetail": null,
+      "executionState": "not_attempted",
+      "callerMaySign": false,
+      "callerMaySignReason": "This approval is signed and is not awaiting a signature.",
+      "payload": {
+        "accountId": "76c73dfb-fe20-4a19-970e-b7487193af40",
+        "amount": 975,
+        "direction": "debit",
+        "reason": "Duplicate maintenance fee charged twice in the same cycle."
+      },
+      "evidence": {},
+      "agentAssessment": null,
+      "firedEscalators": [],
+      "signatureSlots": [
+        {
+          "ordinal": 0,
+          "minSeniority": 1,
+          "mustDifferFrom": [],
+          "signedBy": "b10ef596-0b6d-4f0c-adb8-b5104427ba57",
+          "signedByUsername": "banker",
+          "signedAt": "2026-09-10T13:06:19.2009825Z",
+          "comment": "Fee reversal agreed with the customer; posting the debit correction.",
+          "filled": true
+        }
+      ]
+    },
+    {
+      "id": "apr_1ad330cd825b41b297f876ac",
+      "status": "pending",
+      "actionId": "user.unlock",
+      "actionLabel": "Unlock a customer account",
+      "requesterId": "b10ef596-0b6d-4f0c-adb8-b5104427ba57",
+      "requesterUsername": "banker",
+      "sessionId": "demo-seed-l2-pending-awaiting-cosigner",
+      "payloadHash": "sha256:b8da732d1dc4f432ab75d9652f6f05b1765ad665029a9a25b5bcbc85c41da5aa",
+      "payloadHashShort": "b8da 732d 1dc4 f432",
+      "policyVersion": "pv1:6b4dec9a0d13aa4b",
+      "policyId": "banker-copilot-authority",
+      "baseRung": "L2",
+      "requiredRung": "L2",
+      "requiredSigners": 2,
+      "signaturesCollected": 1,
+      "createdAt": "2026-09-10T13:06:16.001498Z",
+      "expiresAt": "2026-09-10T21:06:16.001498Z",
+      "terminalAt": null,
+      "terminalReason": null,
+      "terminalDetail": null,
+      "executionState": "not_attempted",
+      "callerMaySign": false,
+      "callerMaySignReason": "You requested this action, so you cannot also approve it. Dual control means two people, not two clicks.",
+      "payload": {
+        "userId": "ffa7fb22-4430-4388-ac2b-d803d134f3ff",
+        "reason": "Lockout was caused by a stale saved password on the customer's phone."
+      },
+      "evidence": {},
+      "agentAssessment": null,
+      "firedEscalators": [],
+      "signatureSlots": [
+        {
+          "ordinal": 0,
+          "minSeniority": 1,
+          "mustDifferFrom": [],
+          "signedBy": "b10ef596-0b6d-4f0c-adb8-b5104427ba57",
+          "signedByUsername": "banker",
+          "signedAt": "2026-09-10T13:06:16.8161983Z",
+          "comment": "Identity re-verified against the customer record; releasing the lock.",
+          "filled": true
+        },
+        {
+          "ordinal": 1,
+          "minSeniority": 2,
+          "mustDifferFrom": [
+            "b10ef596-0b6d-4f0c-adb8-b5104427ba57"
+          ],
+          "signedBy": null,
+          "signedByUsername": null,
+          "signedAt": null,
+          "comment": null,
+          "filled": false
+        }
+      ]
+    },
+    {
+      "id": "apr_5797f84b014e439786b90910",
+      "status": "pending",
+      "actionId": "account.balance.adjust",
+      "actionLabel": "Post a balance adjustment",
+      "requesterId": "b10ef596-0b6d-4f0c-adb8-b5104427ba57",
+      "requesterUsername": "banker",
+      "sessionId": "demo-seed-l1-pending-needs-you",
+      "payloadHash": "sha256:3bae0fa936d1bd45d9c5908d73572e115de470538d913f3f040af911884436c6",
+      "payloadHashShort": "3bae 0fa9 36d1 bd45",
+      "policyVersion": "pv1:6b4dec9a0d13aa4b",
+      "policyId": "banker-copilot-authority",
+      "baseRung": "L1",
+      "requiredRung": "L1",
+      "requiredSigners": 1,
+      "signaturesCollected": 0,
+      "createdAt": "2026-09-10T13:06:14.2380106Z",
+      "expiresAt": "2026-09-10T21:06:14.2380106Z",
+      "terminalAt": null,
+      "terminalReason": null,
+      "terminalDetail": null,
+      "executionState": "not_attempted",
+      "callerMaySign": true,
+      "callerMaySignReason": null,
+      "payload": {
+        "accountId": "76c73dfb-fe20-4a19-970e-b7487193af40",
+        "amount": 970,
+        "direction": "debit",
+        "reason": "Duplicate ATM fee charged twice in the same statement cycle."
+      },
+      "evidence": {},
+      "agentAssessment": null,
+      "firedEscalators": [],
+      "signatureSlots": [
+        {
+          "ordinal": 0,
+          "minSeniority": 1,
+          "mustDifferFrom": [],
+          "signedBy": null,
+          "signedByUsername": null,
+          "signedAt": null,
+          "comment": null,
+          "filled": false
+        }
+      ]
+    },
+    {
+      "id": "apr_c4d44f003a3840a6a469baf6",
+      "status": "pending",
+      "actionId": "account.balance.adjust",
+      "actionLabel": "Post a balance adjustment",
+      "requesterId": "b10ef596-0b6d-4f0c-adb8-b5104427ba57",
+      "requesterUsername": "banker",
+      "sessionId": "sess_f8192275202a4a01",
+      "payloadHash": "sha256:ccad95101381bf92460044baafa3a13f67f4573dd3c0adab732c27c941b05bc5",
+      "payloadHashShort": "ccad 9510 1381 bf92",
+      "policyVersion": "pv1:6b4dec9a0d13aa4b",
+      "policyId": "banker-copilot-authority",
+      "baseRung": "L1",
+      "requiredRung": "L2",
+      "requiredSigners": 2,
+      "signaturesCollected": 0,
+      "createdAt": "2026-09-10T13:06:09.0650114Z",
+      "expiresAt": "2026-09-10T21:06:09.0650114Z",
+      "terminalAt": null,
+      "terminalReason": null,
+      "terminalDetail": null,
+      "executionState": "not_attempted",
+      "callerMaySign": true,
+      "callerMaySignReason": null,
+      "payload": {
+        "accountId": "76c73dfb-fe20-4a19-970e-b7487193af40",
+        "amount": "2500.00",
+        "direction": "debit",
+        "reason": "Duplicate posting identified during case review; reversing the second copy."
+      },
+      "evidence": {},
+      "agentAssessment": null,
+      "firedEscalators": [
+        {
+          "key": "large-adjustment",
+          "raisedTo": "L2",
+          "scope": "action_rule",
+          "thresholdName": "balance_adjustment_dual_control_amount",
+          "thresholdValue": "1000.00",
+          "reason": "The adjustment is {actual}, at or above the {threshold} dual-control limit.\n"
+        }
+      ],
+      "signatureSlots": [
+        {
+          "ordinal": 0,
+          "minSeniority": 1,
+          "mustDifferFrom": [],
+          "signedBy": null,
+          "signedByUsername": null,
+          "signedAt": null,
+          "comment": null,
+          "filled": false
+        },
+        {
+          "ordinal": 1,
+          "minSeniority": 2,
+          "mustDifferFrom": [
+            "b10ef596-0b6d-4f0c-adb8-b5104427ba57"
+          ],
+          "signedBy": null,
+          "signedByUsername": null,
+          "signedAt": null,
+          "comment": null,
+          "filled": false
+        }
+      ]
+    }
+  ]
+}

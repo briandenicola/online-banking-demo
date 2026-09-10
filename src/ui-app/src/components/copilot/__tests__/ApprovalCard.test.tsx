@@ -14,7 +14,7 @@
  */
 
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import ApprovalCard, { TerminalApprovalCard } from '../ApprovalCard';
 import { CopilotProvider } from '../CopilotContext';
 import { demoApproval } from '../demoFixture';
@@ -91,6 +91,37 @@ describe('ApprovalCard', () => {
   });
 });
 
+describe('evidence shows findings, not just tool names', () => {
+  it('renders the values the agent returned', () => {
+    // The second of the two drops: even with `findings` populated, the list
+    // rendered `item.label` and nothing else. Fixing the mapper alone would have
+    // changed nothing on screen.
+    const approval: Approval = {
+      ...demoApproval,
+      evidence: [
+        {
+          id: 'get_account',
+          kind: 'record',
+          label: 'Get account',
+          findings: [
+            { path: 'balance', label: 'Balance', value: 59480, format: 'currency', material: true },
+            { path: 'count', label: 'Count', value: 3, format: 'text', material: false },
+          ],
+        },
+      ],
+    };
+    renderCard(approval);
+
+    // The panel is collapsed by default when the two positions concur, so open it.
+    const toggle = screen.getByRole('button', { name: /evidence/i });
+    fireEvent.click(toggle);
+
+    expect(screen.getByText('Get account')).toBeInTheDocument();
+    expect(screen.getByText(/59,480|59480/)).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
+  });
+});
+
 describe('TerminalApprovalCard', () => {
   it('does not call a TTL expiry a denial by a person', () => {
     const expired: Approval = {
@@ -139,8 +170,24 @@ describe('co-signature identity clarity', () => {
     renderCard(demoApproval);
     expect(screen.getByText(/Signing as/i)).toBeInTheDocument();
     expect(screen.getByText('A Reyes')).toBeInTheDocument();
-    // At L2 it names the co-signature and the different-identity requirement.
-    expect(screen.getByText(/independent supervisor co-signature/i)).toBeInTheDocument();
+  });
+
+  it('never calls the opening signature an independent co-signature', () => {
+    // The old copy branched on the rung alone and told EVERY L2 signer they were
+    // "providing the independent supervisor co-signature ... because you are a
+    // different identity from the requester". Brian, signed in as `banker` on his
+    // own request, was told his signature counted because he was not `banker`.
+    window.localStorage.setItem('auth_email', 'banker@banking-demo.com');
+    renderCard({ ...demoApproval, requesterUsername: 'banker' });
+    expect(screen.queryByText(/independent supervisor co-signature/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/different identity from the requester/i)).not.toBeInTheDocument();
+
+    // Positive assertion, deliberately: the slot cases are covered against the
+    // pure function, but nothing else pins the COMPONENT passing the right
+    // identity into it. Swap `identity.id` for the email or display name and the
+    // requester branch would never match again — the copy would quietly degrade
+    // to the neutral fallback while every other test stayed green.
+    expect(screen.getByText(/you raised this request/i)).toBeInTheDocument();
   });
 
   it('points the acting identity at their own unfilled slot without naming a reviewer at proposal time', () => {

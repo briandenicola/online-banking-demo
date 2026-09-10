@@ -735,3 +735,456 @@ hunting a `BackgroundService` bug that does not exist.
 - Non-secret env for every service flows through the shared `banking-demo-config` ConfigMap via
   `envFrom`. Only `authority-service` sets `POLICY_FILE_PATH`, so it is the sole policy loader —
   the added keys are inert in the other twelve pods.
+
+---
+
+## Learnings (2026-09-10 — shipping Linus's `/api/api` fix to AKS, `332-beta`)
+
+Brian was blocked mid-walkthrough. Linus's fix was uncommitted in the working tree; my job was
+to ship it, not edit it. Total elapsed: ~6 minutes.
+
+### The reusable deploy sequence for ONE service
+
+This is the whole loop. Write it down because I keep re-deriving it:
+
+```bash
+# 0. baseline FIRST — with :latest the tag never moves, so the digest is the only proof
+kubectl get pods -n banking-demo -l app=ui-app \
+  -o custom-columns='NAME:.metadata.name,START:.status.startTime,IMAGEID:.status.containerStatuses[*].imageID'
+kubectl get configmap banking-demo-config -n banking-demo -o jsonpath='{.data.POLICY_APPROVAL_TTL_SECONDS}'
+
+# 1. pre-flight compile (NOT the shipped artifact — the Dockerfile builds its own)
+cd src/ui-app && CI=false npm run build
+
+# 2. build + push. az acr build uploads the LOCAL DIR, so uncommitted changes ARE included.
+task cloud:build:ui-app          # -> az acr build --registry $ACR --image ui-app:latest ./src/ui-app/
+
+# 3. roll ONE deployment. Never `task cloud:deploy` for a single service.
+kubectl rollout restart deployment/ui-app -n banking-demo
+kubectl rollout status  deployment/ui-app -n banking-demo --timeout=300s
+
+# 4. prove it: digest changed, and the served asset changed
+kubectl get pods -n banking-demo -l app=ui-app -o custom-columns='...IMAGEID:...'
+curl -s https://onlinebankingdemo.bjdazure.tech/ | grep -o '/static/js/main\.[a-z0-9]*\.js'
+```
+
+Run: ACR digest `sha256:aaee5e41…` → `sha256:6d92ae1e…`; served bundle
+`main.b2660634.js` → `main.6e93dcd0.js`, byte-identical hash to my local pre-flight build,
+which is a free extra proof that the image carries the tree I compiled.
+
+### `task cloud:deploy` is the wrong tool for a one-service fix
+
+Its last step is `kubectl rollout restart deployment -n banking-demo` — **every** deployment —
+and it re-runs `_configmap:apply`, which streams values out of Terraform state. On a demo day
+with a live env override in `deploy/kustomize/base/configmap.yaml`, that is the one path that
+can silently revert it. `cloud:build:<svc>` + a targeted `rollout restart` touches exactly one
+workload.
+
+### Establish the negative control BEFORE you overwrite the evidence
+
+I nearly grepped the new bundle for `/api/api` and called it proof. The old bundle contained
+**zero** occurrences of `/api/api` — the doubling happened at *runtime*, from axios
+`baseURL: '/api'` concatenated with an absolute path from config. Grepping for the symptom
+would have "passed" against the broken build too.
+
+What actually works: grep for **strings unique to the fix**. Confirmed absent from the old
+bundle, present in the new:
+
+| marker | old `b2660634` | new `6e93dcd0` |
+|---|---|---|
+| `does not start with the client baseURL` | 0 | 1 |
+| `the request did not reach authority-service` | 0 | 1 |
+
+**Generalisation: a runtime-composed bug leaves no literal in the artifact. Grep for the fix's
+fingerprint, not the bug's symptom — and verify the fingerprint is absent from the artifact you
+are replacing, or the check proves nothing.**
+
+### The strongest evidence was a four-line curl, from outside
+
+```
+POST /api/api/copilot/sessions      -> 405 text/html          (nginx refuses; SPA fallback)
+GET  /api/api/authority/approvals   -> 200 text/html          <-- the silent killer
+POST /api/copilot/sessions          -> 401 application/json   (reached the service)
+GET  /api/authority/approvals       -> 401
+```
+
+That 200 + `text/html` is the whole defect in one line: the SPA history fallback answers any
+unmatched GET with `index.html` and a success code, so `response.data.items` is `undefined` and
+an empty list renders over a full queue. **A 200 whose `content-type` is `text/html` from a JSON
+API is a routing failure wearing a success code.** Assert on content-type, not just status.
+
+### Someone else deployed into the same namespace while I was building
+
+All 13 other pods restarted at 18:32:58-18:33:01Z (annotation `restartedAt 2026-09-10T13:32:57-05:00`)
+— a namespace-wide `task cloud:deploy` by another agent, concurrent with my ACR build. My ui-app
+pod is 18:34:24Z. I only knew this was not my doing because I had timestamped the baseline before
+starting; otherwise I would have spent ten minutes proving a negative.
+
+Two real hazards it created, both checked rather than assumed:
+1. That restart re-pulled `ui-app:latest` at 18:32:58 — **before** my push finished at 18:34:15.
+   Had I skipped step 3 and trusted the ambient restart, the pod would have run the OLD image
+   with a fresh timestamp. Timing alone would have looked convincing.
+2. It re-applied the ConfigMap. Verified the override survived **in the running process**, not
+   just in the ConfigMap object: `kubectl exec deployment/authority-service -- printenv
+   POLICY_APPROVAL_TTL_SECONDS` → `28800`, and the pod logged `pv1:6b4dec9a0d13aa4b`, the
+   overridden hash. A ConfigMap read alone would not have proven the pod ingested it.
+
+**Baseline everything you will later claim to have changed, with timestamps, before you act. In
+a shared namespace you cannot distinguish your effect from someone else's after the fact.**
+
+### Approvals survive pod restarts
+
+Brian's 10 seeded approvals are in Cosmos, not pod memory. The full-namespace restart did not
+touch them; the expiry sweeper came back clean (`interval 00:01:00, batch 100`). Worth stating
+plainly because "everything restarted" reads like "the fixtures are gone" and it is not true.
+
+### Note for whoever runs the walkthrough
+
+Deployed `runtime-config.js` still has `bankerCopilot: false`, so `/copilot` needs the `?ff=`
+override or a localStorage toggle. Unchanged by this deploy, and Brian already had it on.
+
+### Addendum (same day) — timing check: did the build catch Linus's *final* writes?
+
+Brian flagged that Linus was still writing when I was spawned. Resolved by measurement, not by
+arithmetic on wall-clock times.
+
+**mtimes of the last three files Linus touched** — the newest file anywhere under
+`src/ui-app/src` is `describeHttpFailure.test.ts` at **13:29:02**. My local pre-flight build ran
+at 13:32 and the ACR build at 13:32-13:34, so every write preceded both. Nothing under
+`src/ui-app/src` is newer than 13:29:02, which is the check that matters — a single file mtime
+answers "did this one land", `find -newermt` answers "did anything land after me".
+
+**The canary Brian asked for came back clean but nearly misled me.** Two greps on the served
+`main.6e93dcd0.js`:
+
+- `It is not running on the server` (the old hardcoded harness error) → **0**. Correct.
+- `describeHttpFailure` (the new function) → **0**. *Also* zero — and that proves nothing.
+
+**Minification mangles local identifiers; it preserves string literals.** Grepping a production
+bundle for a function name is a test that fails on a correct build. Had I stopped at that line I
+would have rebuilt a perfectly good image, or worse, reported a stale deploy. The absence of the
+old string is real evidence because it *is* a string; the absence of the symbol is an artefact of
+the toolchain.
+
+What actually proved the second fix shipped — four string literals from `errors.ts` /
+`CopilotContext.tsx`, all present in the live bundle, all confirmed **absent from `git show
+HEAD:`** so the marker is genuinely new:
+
+| marker | HEAD | live bundle |
+|---|---|---|
+| `The endpoint URL looks wrong rather than the service being down` | 0 | 1 |
+| `Your session may have expired` | 0 | 1 |
+| `The harness request` | 0 | 1 |
+| `copilot: intent submission failed (status=` | 0 | 1 |
+
+**Rule: to verify a minified bundle, grep for user-visible string literals, never for identifiers.
+Pair every "new string is present" with "old string is absent" and confirm both against the
+artifact you replaced.**
+
+One loose end worth naming so nobody trips on it: `It is not running on the server` still appears
+once in the tree, in `__tests__/describeHttpFailure.test.ts` — the test asserting the string is
+gone. Test files are not in the production bundle, so this does not contaminate the canary, but a
+naive `grep -r` across `src/` will report a hit and look like a stale build.
+
+File set shipped matches Linus's expected list exactly: 5 modified sources + 6 new test files.
+No rebuild required.
+
+---
+
+## Learnings (2026-09-10 — SSE stream withholds headers for 15s; layer verdict, `332-beta`)
+
+Brian's approval card refused to enable Sign: "Live updates are interrupted… Reconnecting."
+Reported as an SSE stream that never opens. **Verdict: application, not ingress.** Not mine.
+Not patched — reported to Turk.
+
+### The hypothesis I was handed was wrong, and my own charter is what made it plausible
+
+My charter says "nginx gateway — SSE requires `proxy_buffering off`", so the natural read was a
+buffering proxy. **There is no nginx in the cloud request path at all.** `src/ui-app/nginx.conf`
+serves the SPA only; `infra/local/gateway.nginx.conf` is docker-compose. In AKS it is Istio:
+`banking-demo-vs` VirtualService → `banker-copilot-service`, `/api/copilot/` prefix,
+`timeout: 3600s`. **A charter note about the local topology nearly sent me to reconfigure a
+component that is not deployed.** Check which proxy is actually in the path before tuning one.
+
+### Three measurements, escalating, each cheaper than the next step
+
+1. **Unauthenticated request through the public URL** — no token needed, and it settled the layer
+   in one call: `401` in 0.55s with `x-envoy-upstream-service-time: 17`. Envoy flushes headers
+   fine. Whatever hangs, hangs *after* auth, inside the app.
+2. **Authenticated, with a window wider than the suspected timeout** — `time_starttransfer=15.55s`,
+   `HTTP 200`, `content-type: text/event-stream`, and decisively
+   **`x-envoy-upstream-service-time: 15030`**. That header is Envoy timing the *upstream*. It is
+   the proxy testifying that the delay was not the proxy.
+3. **`kubectl port-forward` to pod:8005, Envoy entirely removed** — `time_starttransfer=15.51s`,
+   `server: uvicorn`. Identical. Ingress exonerated beyond argument.
+
+**`x-envoy-upstream-service-time` is the cheapest proxy-vs-app discriminator in this cluster and I
+should reach for it first.** The port-forward confirmed what it already said, for ~50ms of doubt.
+
+Note the service port is **8005**, not 8000 — my first port-forward failed with `connection
+refused` inside the netns. Read `.spec.template.spec.containers[*].ports[*].containerPort`;
+guessing the port costs a round trip.
+
+### The cause, in Turk's file
+
+`src/banker-copilot-service/app/routes/sessions.py:353`, inside `stream_session`:
+
+```python
+if stream is None:
+    stream = await runs.await_next_run(session_id, timeout=heartbeat_seconds)
+```
+
+This `await` sits **before** the `StreamingResponse` is returned. Starlette cannot emit
+`http.response.start` until the handler returns, so attaching to a session with no active run —
+the normal UI order, and exactly Brian's case — withholds the status line for a full heartbeat
+interval. The generator `_events()` already handles the no-run case correctly with heartbeats;
+the pre-flight await duplicates that work in the one place where it costs the response headers.
+**The fix is to let `_events()` do it: drop the pre-flight await so the first heartbeat yields
+immediately.** The code even documents the intent — "open the stream anyway and let the
+heartbeats carry it" — the ordering just defeats it.
+
+`COPILOT_SSE_HEARTBEAT_SECONDS=15` in `banking-demo-config`, confirmed as `15` inside the pod.
+15 × 1s = the 15.03s Envoy measured. The number matched the knob exactly, which is what turned a
+plausible story into a diagnosis.
+
+### Why the reporter saw a hard hang and I saw a slow 200
+
+They ran `--max-time 15`. First byte lands at **15.51s**. They timed out 0.5 seconds under the
+boundary, so curl exited 28 having received zero headers — indistinguishable from a dead socket.
+**A timeout set near the value you are trying to measure reports absence instead of latency.**
+When a stream "never opens", re-run with a window several times wider before believing it. One
+flag turned a 15-second delay into a phantom outage and sent the diagnosis at the wrong layer.
+
+### Why I did not just lower the knob, though it is mine to lower
+
+Tempting: it is config, it is in my ConfigMap, Brian is blocked, one restart. I held, for reasons
+that are worth keeping:
+
+- `heartbeat_seconds` is **overloaded** — it is also the queue poll timeout *and* the increment in
+  `waited += heartbeat_seconds` against the 3600s idle budget. At 2s every open stream emits ~1800
+  heartbeat frames instead of ~240. Whether Linus's client reads that cadence as healthy or as
+  churn is untested, and I cannot test it without driving Brian's UI.
+- **I do not know the gate's predicate.** The card says "cannot verify this is still the current
+  payload", which may require a payload-hash event rather than merely open headers. Shortening
+  time-to-headers to 2s could leave the button greyed anyway.
+
+**Do not ship a change whose success criterion you cannot evaluate.** Tuning a shared constant to
+mask a sequencing bug trades a 15s symptom for an untested cadence and leaves the cause in place.
+Offer it as a stopgap someone else authorises; do not quietly apply it and call it fixed.
+
+### Housekeeping
+
+Probe sessions `sess_2c322a144c324ac9` (mine) created **no runs and no approvals**. Brian's 10
+seeded approvals untouched; `POLICY_APPROVAL_TTL_SECONDS` re-verified **28800** in-process after
+all of this. Port-forwards cleaned up.
+
+One trap while cleaning up: `pgrep -f "port-forward -n banking-demo"` **matches its own command
+line**, so it reported a fresh PID after every kill and looked like a respawning process. `ps -eo
+pid,cmd | grep kubectl` showed the truth — nothing running. A self-matching pattern is a fake
+infinite loop.
+
+### Addendum — was the SSE fault new, and who deployed? (2026-09-10)
+
+Asked to test whether the unattributed 18:32:57Z full-namespace deploy *caused* the SSE outage.
+Answer: **the defect is pre-existing; the deploy is what made it visible.** Both halves matter and
+collapsing them either way is wrong.
+
+**Pre-existing, three independent ways:**
+- `git blame` puts the blocking await at commit `bcfd8b9`, **2026-09-04** — six days old.
+- The running image digest `d3eb82f4…` was pushed **2026-09-09T12:00:28Z**, yesterday. Only two
+  ACR runs happened today (`dt29`, `dt2a`) and **both built `ui-app`**. No copilot image was built
+  today; the deploy restarted the pod onto the same binary.
+- The pod came back clean: `READY=true`, `RESTARTS=0`, zero errors or tracebacks in the whole log.
+
+**But the deploy is not innocent, and this is the part I nearly missed.** `RunStreamRegistry` is
+constructed in `lifespan.py` and its own docstring says *"In-process registry of live runs.
+Durability lives in the sink, not here."* — `self._runs: dict[str, RunStream]`, per process. The
+18:32:59 restart **destroyed every in-flight run stream.** A browser attached to a live run lost it
+permanently; on reconnect `latest_for_session` returns `None`, which routes straight into the
+`await runs.await_next_run(...)` path and the 15s of no headers. Brian's banner at ~18:35 is two
+minutes after the restart because **the restart converted a latent ordering defect into a visible
+outage.** "Pre-existing" and "triggered by the deploy" are both true.
+
+**Generalisation: "was it already broken?" and "did the deploy break it?" are different questions.
+A latent defect on a cold path plus a restart that forces everyone onto that cold path produces an
+outage that is genuinely new while the code is genuinely old.**
+
+**I raised a false alarm mid-investigation and want it recorded.** The log showed
+`GET /api/copilot/stream → 404` and `GET /api/copilot/approvals/stream → 404`, and I flagged it as
+"a second fault, this changes the diagnosis". It did not. Neither string appears anywhere in the
+repo, in `src/ui-app/src/`, or in the deployed bundle — they were manual URL guesses from whoever
+probed before me. **Before escalating a suspicious request path found in a server log, grep the
+client for it. A 404 in an access log proves someone asked; it does not prove your software asked.**
+
+The genuinely useful log check was the reporter's own suggestion: whether the connection appears at
+all. It does — my probes logged as `200 OK` after the client gave up — which independently confirms
+the request reaches the app and the app owns the delay.
+
+### Attribution: it was Brian's own interactive shell, not a pipeline
+
+`~/.zsh_history` carries epoch timestamps and durations:
+
+```
+1789064972:152;task cloud:build:ui-app   -> 2026-09-10 18:29:32Z, ran 152s
+1789065133:0;task cloud:deploy           -> 2026-09-10 18:32:13Z
+```
+
+That lines up exactly: ACR QuickRun `dt29` started 18:29:41Z and built **ui-app** digest
+`b1c0f189…`; `cloud:deploy` then stamped `restartedAt 2026-09-10T13:32:57-05:00`. Someone was
+shipping the same ui-app fix in parallel with me and superseded nothing — my `dt2a` build
+(`6d92ae1e…`) landed after and is what runs now.
+
+**Not CI.** There is **no deploy workflow** in `.github/workflows/` at all (build-and-test,
+mutation-testing, preview-sdk-pin-guard, squad-*, dependabot only), and the most recent Actions run
+was 12:06Z. Corroborating: the `restartedAt` offset is **`-05:00`**, i.e. the kubectl client was in
+CDT — a GitHub-hosted runner would have stamped UTC.
+
+**Three attribution signals worth reusing, cheapest first:** the `restartedAt` timezone offset
+(local vs runner), `az acr task list-runs` with `--run-id` to see *which image* each run produced,
+and `~/.zsh_history` epoch:duration pairs. My own commands never appear in zsh history because this
+tool runs non-interactive bash — useful to know when reading that file as evidence, in both
+directions.
+
+### The feature flag cannot affect the stream
+
+`bankerCopilot` is read only by `featureFlags.ts`, `App.tsx`, `AppShell.tsx` and
+`FeatureFlagPanel.tsx` — mount and nav. `copilotStream.ts` builds its URL from
+`getCopilotConfig().endpoints.sessionStream`, which never consults a flag. The `?ff=` override
+decides whether the surface renders, not how it connects. Ruled out.
+
+### Addendum — the control case that isolates the await, and a log heuristic that is wrong here
+
+**The single cleanest piece of evidence, found last and worth the most.** Same endpoint, same
+token, same session, same ingress — only one variable changed, whether execution reaches the
+`await`:
+
+```
+GET /sessions/{sid}/stream                       -> 15.51s, 200
+GET /sessions/{sid}/stream?runId=run_doesnotexist ->  0.77s, 404
+```
+
+`?runId=` routes into `raise HTTPException(404)` at line 346, *before* line 353. The handler,
+auth, Envoy and TLS are all held constant and it answers in under a second. **A control case that
+differs by exactly one branch converts "the app is slow" into "line 353 is the cause."** My own
+history says a control case is the only thing standing between a plausible story and a wrong
+decision; this is the third time it has paid.
+
+**A proposed diagnostic that would have sent me back to the ingress.** The brief said: *"whether the
+probe connections appear in the logs is itself diagnostic — if the service never logs the
+connection, the request is dying in front of it."* Their authenticated probes appear **nowhere** in
+the log (`sess_68f79e6874c04a7d`: 0 hits; the single `sess_1d8f4c6eba5e4b50` line is a **401**, which
+was my own *unauthenticated* probe, not theirs). By that rule the verdict would be "dying in front
+of the service" ⇒ ingress ⇒ mine.
+
+That rule is wrong here. **uvicorn writes its access line when the response completes, not when the
+request is accepted.** Their curl aborted at `--max-time 15`, half a second before the first byte at
+15.51s, so no response line ever existed to log. Their 404 probes logged because those returned
+instantly. Absence of an access-log entry for an aborted long-poll is expected, not diagnostic.
+
+**Generalisation: an access log records completions, so it cannot testify about requests still in
+flight. Use it to prove presence, never absence.** What actually proves the request reached the app
+is `x-envoy-upstream-service-time: 15030` and the port-forward reproducing the delay with Envoy
+gone.
+
+**Not evidence, and I did not use it:** a green seeder run proves nothing about SSE — the seeder
+polls `/api/copilot/runs/{id}/trace`, a plain GET. Flagged in the brief and correct.
+
+**What I deliberately did not run:** starting a real run would have demonstrated the fast path
+directly, but the planner can propose an approval, and Brian's 10 seeded approvals are his only
+fixtures. The `?runId=` control gives the same isolation with zero writes. **Prefer the
+side-effect-free control over the realistic one when someone else's fixtures are on the line.**
+
+Restart health, re-confirmed for the record: `READY=true`, `RESTARTS=0`, started 18:32:59Z, no
+errors or tracebacks in the log. **The service did not come back degraded** — the tempting simple
+explanation is false.
+
+---
+
+## Learnings (2026-09-10 — deploying Turk's SSE fix, `bd01a1b`, `332-beta`)
+
+The fix I diagnosed, shipped and verified. **15.55s → 0.56s time-to-first-byte**;
+`x-envoy-upstream-service-time` **15030 → ~32**. Same curl, same session shape (no active run),
+same ingress. Acceptance met.
+
+```
+task cloud:build:banker-copilot-service
+kubectl rollout restart deployment/banker-copilot-service -n banking-demo
+kubectl rollout status  deployment/banker-copilot-service -n banking-demo --timeout=300s
+```
+
+Headers now: `200`, `content-type: text/event-stream`, `x-accel-buffering: no`, first frame
+`event: heartbeat` — all inside 0.6s. Four independent samples (0.62 / 0.59 / 0.50 / 0.52 / 0.56s),
+because a single timing datapoint is an anecdote when the thing you are measuring is latency.
+
+### Two agents built the same image three seconds apart, and mine lost
+
+This is the concrete instance of the race I wrote up this morning as a hypothetical.
+
+| run | started | finished | digest |
+|---|---|---|---|
+| `dt2b` (mine) | 19:10:10 | 19:11:03 | `30f06f55…` |
+| `dt2c` (Brian's) | 19:10:13 | **19:11:12** | `0aea3595…` |
+
+Both push `:latest`. **Brian's finished last, so `:latest` moved to his digest**, and my
+`rollout restart` at 19:11:12 pulled *his* image. The running pod is `0aea3595…` — not the digest
+my own build produced.
+
+I only noticed because I compared the pod's `imageID` against the digest my build *reported*, not
+merely against the previous digest. **"The digest changed" is not "my image is running."** The
+weaker check passes here and would have let me claim provenance I did not have. Both builds came
+from the same commit and the behavioural test passes, so the outcome is correct — but the claim
+I could honestly make was narrower than the one I nearly made.
+
+**Rule: with a mutable tag, record the digest your build emitted and assert the pod matches *that*.
+If it does not, find out whose image you are running before reporting success.**
+
+### The verification failed for a reason that had nothing to do with the fix
+
+Mid-verification, three consecutive probes returned `http=000` and `ttfb=0`. The instinct is to
+suspect the thing just deployed. It was not: **Brian had launched another full-namespace
+`cloud:deploy` at 19:13:12Z** and every deployment was mid-rollout — 4 pods not ready, `/api/auth/login`
+itself returning `000`. The site root still answered `200`, just slowly (5.8s).
+
+I resisted debugging the SSE path and instead checked whether the *platform* was up. `kubectl get
+pods` showed the answer in one call. **When a verification that passed 90 seconds ago starts
+failing at a different layer than the change, check the environment before re-litigating the fix.**
+Waiting ~40s for the rollout to settle and re-running produced three clean samples.
+
+That churn also re-rolled `banker-copilot-service` onto a fresh pod (`6cccd4d755-f2mdr`), which is
+an unplanned bonus datapoint: **the fix survives an independent redeploy**, still `0aea3595…`, still
+sub-second. Verifying after someone else's deploy is stronger evidence than verifying after my own.
+
+### What I confirmed did not move
+
+`POLICY_APPROVAL_TTL_SECONDS` = **28800**, read in-process from the *new* authority pod after
+Brian's redeploy — the override survived two full-namespace deploys today.
+`COPILOT_SSE_HEARTBEAT_SECONDS` = **15**, untouched, which was the point: the fix is a code
+ordering change, not a threshold tuned to hide a symptom. Zero errors in the copilot log,
+`RESTARTS=0`.
+
+No approvals created, signed or denied. No runs started — throwaway sessions only, exactly as
+before, because the planner can propose approvals and Brian's fixtures are the afternoon.
+
+
+### 2026-09-10 — Platform Analysis Session (#332)
+
+**Session Type:** Infrastructure diagnostics and platform coordination
+**Branch:** `332-beta`
+**Outcome:** SSE layer identified, deployment coordination guidance documented, root cause traced
+
+**Rusty's Contributions:**
+- Diagnosed SSE header stall: blocking await in `stream_session`, not Istio/Envoy
+- Provided evidence (x-envoy-upstream-service-time, port-forward control)
+- Identified single-service redeploy path as preferred over full `cloud:deploy`
+- Traced unattributed 18:32:57Z restart to local `task cloud:deploy` in Brian's shell
+- Documented deployment coordination guards for walkthrough period
+
+**Manifest:**
+- `rusty-sse-headers-withheld-service-layer.md`: SSE diagnostic (merged to decisions.md)
+- `rusty-single-service-redeploy-path.md`: Deployment governance proposal (merged to decisions.md)
+- `rusty-unattributed-deploy-attribution.md`: Root-cause analysis (merged to decisions.md)
+
+**Implementation:** Turk implemented SSE ordering fix per Rusty's recommendation; deployment model remains proposed
+
+**Orchestration Log:** None (platform-only, no implementation artifacts)
+**Session Log:** `.squad/log/2026-09-10T20:47:00Z-copilot-ui-and-authority-fixes.md`

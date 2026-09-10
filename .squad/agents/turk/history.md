@@ -3089,3 +3089,64 @@ reproduced in the suite. With the fix: `200`, `text/event-stream`, first frame a
 reconnects with a cursor from a dead run and attaches to a *new* run silently drops that run's
 first `lastSeq` frames — and `replay_available_from` cannot catch it, because `_recent` is empty
 at that moment. Unchanged by my fix, present before it. Filed for Linus and Danny.
+
+### 2026-09-10 — Authority Reason Rendering and Seeded Assessment Diagnosis (#332)
+
+**Unblocking facts:** slot 0 is the requesting banker's legitimate first signature; slot 1 is the independent senior signer because only slot 1 carries `mustDifferFrom: [requesterId]`. `agentAssessment` is not null everywhere: live planner-created approval `apr_20ffbebe073343bd9f871b66` carried a full Foundry primary assessment; direct seeded approvals were the null class.
+
+**Fixes:**
+1. `PolicyEvaluator` now renders `{actual}` from the predicate's evaluated field and `{threshold}` as the resolved threshold value, then trims YAML trailing newlines.
+2. If any reason placeholder remains unresolved, the sentence containing it is omitted; if nothing remains, the signer gets a neutral non-templated fallback rather than a literal `{placeholder}`.
+3. `scripts/demo/demo.sh` now attaches an honest `seeded-demo` assessment to direct authority-service seeded approvals, stating that no primary planner assessment was formed instead of leaving `agentAssessment` null or inventing a model verdict.
+
+**Verification:** live probe run through `/api/copilot/sessions/{id}/runs` produced pending approval `apr_20ffbebe073343bd9f871b66` with non-null `agentAssessment`. Local validation passed: banker-copilot Python tests 414 passed; authority-service.UnitTests 142 passed; authority-service.Tests 224 passed; demo dataset test 10 check groups passed; targeted PolicyEvaluator subset 13 passed.
+
+**Learning:** Reason-template rendering must expose evaluator-observed values explicitly; generic dotted-path replacement is not enough for semantic tokens like `{actual}` or aliases like `{threshold}`. Direct demo seeders must not masquerade as agents: if they bypass the planner, persist a positive “no primary assessment was formed” record.
+
+### 2026-09-10 — Free-Text Command Path Is Inert (#332)
+
+**Unblocking diagnosis:** my earlier live success `apr_20ffbebe073343bd9f871b66` did **not** exercise Brian's free-text UI path. It was created by `scripts/demo/demo.sh show --probe`, whose `proposePathProbe` supplies `actionId: account.balance.adjust` and a bound payload directly to `POST /api/copilot/sessions/{sid}/runs`.
+
+**Live reproduction of Brian's path:** created a normal `/copilot` session, posted the free-text message, then started the run with the UI's actual body shape: `{ objective: <intent> }`. Run `run_80e2d2382152489c` produced exactly: `run.started`, `plan.proposed`, `step.started`, `artifact.created`, `step.completed`, `run.done`; the plan contained only `Assemble evidence bundle`, gathered `{}`, made zero tool calls, and emitted zero approval frames.
+
+**Root cause:** `src/ui-app/src/components/copilot/CopilotContext.tsx` sends only `{ objective: intent }` to `startRun`; `src/ui-app/src/api/copilot.ts` makes `actionId`, `payload`, and `facts` optional. `src/banker-copilot-service/app/routes/sessions.py` maps that body directly into `PlannerRequest.action_id`. In `src/banker-copilot-service/app/planner/loop.py`, `_required_evidence()` immediately returns `[]` when `request.action_id` is missing, `_plan_steps()` adds assess/propose steps only when `action_id` is present, and the primary Foundry assessor is only invoked by an assess step. Therefore a free-text run never asks a model to choose an action, bind entities, gather discretionary evidence, or propose.
+
+**Cluster mode:** deployed `banker-copilot-service` is not deterministic. Pod env shows `COPILOT_PLANNER_MODE=foundry`, `FOUNDRY_MODEL=gpt-5.4-mini`, and a Foundry project endpoint. The fail-loud planner-mode design held; the inert free-text path is not a mode fallback.
+
+**Regression answer:** this appears to have been true since Phase 2 introduced the harness (`bcfd8b9`). That initial implementation already returned no required evidence without `action_id` and only appended the propose step when `action_id` was present. Later work made the primary/supervisor reasoning real after an action is known, but did not add intent-to-action planning.
+
+### 2026-09-10 — Approval card backend fields and counter-proposal floor
+
+**Issue:** Danny's approval-card rewrite needed backend-owned display fields (`evidence.*.label`, `evidence.*.summary`, `subject`) and Brian chose counter-proposal option B (`supersedesApprovalId`) with a policy floor.
+
+**Fixes:**
+- Added display-only evidence enrichment in `ApprovalResponse.From()`: labels and situational summaries are derived server-side from stored evidence without mutating the stored evidence or payload.
+- Added display-only `subject` derivation for customer and account approvals from existing evidence/payload; no domain lookup yet, so it is safe and hash-neutral but limited to facts already gathered.
+- Added `context.supersedes` to policy evaluation and a `superseding-proposal` escalator with `minRung: L2` and no `raiseBy`, preserving Danny's warning that an L2 replacement must not become L3.
+- Added a repeated-supersede churn guard backed by repository counts of recent superseding proposals by requester.
+
+**Verification:** 414 banker-copilot Python tests passed; 150 authority unit tests passed; 224 authority integration tests passed; demo dataset checks passed (10 groups).
+
+**Key Learning:** Counter-proposal guardrails should be expressed as display/linkage and monotone policy predicates, not payload changes. Display-only context (`subject`, labels, summaries, assessment copy) must stay outside hash fields; structural authority changes (`context.supersedes`) enter evaluator facts only.
+
+
+### 2026-09-10 — UI and Authority Fixes Session (#332)
+
+**Session Type:** Multi-agent integrated session (Turk, Linus, Danny, Rusty)
+**Branch:** `332-beta`
+**Outcome:** Chain of UI defects fixed; approval-card architecture ruled; counter-proposal model approved
+
+**Turk's Contributions:**
+- Fixed SSE header stall by removing pre-flight await and reordering `_events()` loop
+- Implemented reason-template rendering with semantic token resolution
+- Added counter-proposal support via `context.supersedes` with L2 floor and churn guard
+- Re-authored 32-case verification corpus with dynamic subject resolution from demo dataset
+- Verified: 414 Python, 150 unit, 224 integration tests passed; 10/10 demo groups
+
+**Related Work Tracked:**
+- Linus: API prefix fix, pane layout, centre-pane architecture, SSE terminal frame
+- Danny: Approval-card IA ruling, counter-proposal model option A+B ruling
+- Rusty: Platform analysis (SSE layer, deploy coordination, unattributed restart root cause)
+
+**Orchestration Log:** `.squad/orchestration-log/2026-09-10T20:47:00Z-turk.md`
+**Session Log:** `.squad/log/2026-09-10T20:47:00Z-copilot-ui-and-authority-fixes.md`

@@ -1592,3 +1592,433 @@ Upstream gap flagged: `src/banker-copilot-service/README.md:191` still lists "fi
 
 **2026-09-09 (Scribe)** — Canonicalizer guard added to test-demo-dataset.sh. Note for following work: the canonicalizer forbids floating-point numbers in non-money fields and requires strings for any fractional part on non-money values. Guard is applied to resolved payloads (after placeholder substitution), not literals. Resolves placeholders using jq arithmetic, exactly as the seeder does. Covers `approvals[*].payload`, `approvals[*].revisedPayload`, and `proposePathProbe.payload`. Rule parsed from `Canonicalizer.cs` and `moneyFields` from policy YAML — no hand-maintained list.
 
+
+### 2026-09-10 — Banker Copilot task queue rendered empty over 10 live approvals
+
+**Symptom:** `/copilot` Task queue showed 0 in all four buckets ("Nothing here.") while
+`GET /api/authority/approvals?limit=200` returned 10 items for `banker`.
+
+**The "10" was a red herring.** The footer "Signed this session 0 of 10" is
+`config.sessionSignatureSoftLimit` (`copilotConfig.ts:129`), NOT an approval count. No count
+of 10 ever reached the component. Chasing the bucketing logic on that premise would have
+burned the whole window — `groupApprovals` in `TaskQueuePane.tsx` was correct all along and
+reads exactly the fields the service emits.
+
+**Root cause — double `/api` prefix, hidden by the SPA fallback:**
+- `api/client.ts` created the axios instance with `baseURL: '/api'`.
+- `authorityUrl()` / `copilotUrl()` in `config/copilotConfig.ts` return ABSOLUTE app paths
+  (`/api/authority/approvals`, defaults at lines 113-114).
+- axios concatenates: `/api` + `/api/authority/approvals` = `/api/api/authority/approvals`.
+
+Verified live against the deployment, no credentials needed:
+```
+/api/authority/approvals      -> 401   (route exists, auth required)
+/api/api/authority/approvals  -> 200   content-type: text/html  <!doctype html>...
+```
+The doubled path fell through to the SPA history fallback, which answers **200 with
+index.html**. So nothing threw, no 404, no interceptor fired, and `listApprovals` hit its own
+defensive `Array.isArray(data.items) ? ... : []` and returned an empty array. A silent
+failure with a success status code.
+
+**Scope was wider than the queue.** All four `api/copilot.ts` calls (`createSession`,
+`startRun`, `sendMessage`, `fetchRunTrace`) were doubled identically — the whole harness was
+dead, not just the queue. `api/copilotStream.ts` was NOT affected and must not be changed:
+it uses raw `fetch`, not the axios instance, so it needs the full `/api/copilot/...`.
+
+**Fix:** exported `API_BASE_PATH` and `apiPath()` from `api/client.ts`. `apiPath()` subtracts
+the client baseURL, passes absolute URLs through, and `logger.error`s when the prefix is
+absent rather than silently forwarding. Applied at the two path builders, not at ten call
+sites. `baseURL` itself untouched — every other page depends on it.
+
+Also made `listApprovals` log an error when a 200 body carries no `items` array. Returning
+`[]` for a non-list 200 is precisely what hid this; an empty queue and an unreachable service
+must not look the same.
+
+**Lessons:**
+1. **Absolute app paths + an axios `baseURL` is a silent-failure generator in an SPA.** The
+   history fallback converts every mis-built API path into a 200 full of HTML. Prefer paths
+   relative to the client, and never let a mapper treat an unexpected 200 shape as "empty".
+2. **Check the denominator before trusting the numerator.** "0 of 10" looked like data
+   reaching the component. It was a config constant that happened to equal the item count.
+3. **An unauthenticated 401-vs-404 probe is a free routing test.** It separated "wrong URL"
+   from "auth problem" without a token and without touching Brian's live seed.
+
+**Also noted, not changed:** `toExecutionState` maps the wire's `"not_attempted"` to
+`'not_started'` via its default branch. Semantically right, and grep confirms nothing renders
+or gates on `executionState` today — inert, left alone.
+
+**Bucket-count divergence (raised for Danny):** with the real payload the UI yields
+7 / 1 / 1 / 1, not the 7 / 1 / 0 / 1 that `scripts/demo/demo.sh` prints. The UI puts the
+`signed` item in "Running" (signed, awaiting execution) and the `denied` one in "Done today";
+demo.sh calls the signed one done. Two classifications, one queue. Did not silently change
+bucket semantics to match a shell script — decision written to the inbox.
+
+**Tests:** `api/__tests__/approvalsRequestPath.test.ts` is the regression — it resolves the
+URL the way axios does and fails on the old code with `Received: "/api/api/authority/approvals"`.
+`components/copilot/__tests__/taskQueueBuckets.test.ts` feeds the real 10-item payload through
+`toApproval` → `groupApprovals` as a contract guard. Suite: 444 passed, 13 failed, all 13 the
+pre-existing account-opening failures (AgentPipeline, DocumentUpload). No new failures.
+
+**Deployment note:** confirmed no runtime/env override for `endpoints.authorityBase` or
+`copilotBase` anywhere in `src/ui-app/public`, the Dockerfile, nginx conf, or `infra/` — the
+`DEFAULTS` (`/api/authority`, `/api/copilot`) are what actually ship, so the fix is verified
+against the deployed values. **ui-app must be rebuilt and redeployed for Brian to see the
+queue populate; a browser refresh will not do it,** since the served bundle still contains
+the doubled path. Consumer audit clean: every axios call site is now `apiPath`-wrapped and
+the only unwrapped `copilotUrl` caller is `api/copilotStream.ts:349`, the raw-`fetch` SSE
+client, which correctly keeps the full path.
+
+### 2026-09-10 (follow-up) — same root cause explains the dead centre panel; the grey Start does not
+
+Brian widened the report: the centre panel also read "No run selected" and the Start button
+looked disabled with the chip on "Idle". Both re-checked against the code and the live
+deployment.
+
+**Centre panel — same single root cause.** `submitIntent` calls `createSession`, which went
+through the same doubled path. Probed live:
+```
+POST /api/copilot/sessions      -> 401 application/json  {"detail":"Missing Authorization header"}
+POST /api/api/copilot/sessions  -> 405 text/html         <title>405 Not Allowed</title>   (nginx)
+```
+So the two HTTP verbs failed *differently* on the same doubled path, which is why the page
+looked like three unrelated bugs:
+- **GET** → SPA history fallback → **200 + index.html** → silent empty queue, no error at all.
+- **POST** → static server refuses the method → **405** → `createSession` throws, caught in
+  `submitIntent`, surfaced only as an 8-second snackbar.
+
+No session ⇒ no `activeRunId` ⇒ `TracePane.tsx:399` renders `run ? run.title : 'No run
+selected'`. One cause, three symptoms. The fix already made covers all of them.
+
+**The grey Start button is NOT a defect — retracted.** `CommandBar` disables Start on
+`busy || disabled || value.trim().length === 0`, and `CopilotHarness` **never passes
+`disabled`** (grep for `disabled` in that file returns nothing), so it is `undefined`. On a
+fresh page the only closed gate is an empty input box. "Idle" is likewise correct: it means no
+session has been opened yet, which is the true state before the first intent. Nothing fetches
+a capability or role to gate this control. Pinned by
+`components/copilot/__tests__/commandBarGating.test.tsx`, including a guard that fails if a
+`disabled` prop is ever wired in, so this diagnosis gets revisited rather than forgotten.
+
+**Lesson — one bug wearing three masks.** A doubled base path produces *method-dependent*
+failures: silent 200s on reads, hard 405s on writes. Symptoms that look unrelated (empty list,
+dead panel, grey button) collapsed to one line of config. Resisting the urge to explain each
+symptom separately was what kept the fix to three files. Corollary: two of the three "symptoms"
+were not symptoms at all — the grey Start and the Idle chip were correct behaviour being read
+as evidence. Confirm each reported symptom is genuinely anomalous before counting it.
+
+Suite after the follow-up: 449 passed, 13 failed — the same pre-existing account-opening 13.
+
+### 2026-09-10 (close-out) — the queue defect, settled end to end
+
+Brian retracted the escalation (correctly — the grey Start was the empty-input gate) and asked
+me to return to the queue panel, noting his point 2 was still open: *if the "10" is a hardcoded
+constant, the component may be receiving nothing and the fault is in the fetch rather than the
+bucketing.* That is exactly how it resolved:
+
+- The **10 is a constant** — `sessionSignatureSoftLimit`, `copilotConfig.ts:129`.
+- Therefore **the fault is in the fetch**, not the bucketing. `groupApprovals` was never wrong.
+
+One nuance worth keeping: "the whole page receives no data" and "the queue panel is empty" were
+never competing theories — they are the same defect seen at two zoom levels, because every
+authority *and* copilot call shared the one bad path helper. Narrowing the symptom did not
+narrow the cause.
+
+Proved it with `components/copilot/__tests__/taskQueuePopulates.test.tsx`: mounts the real
+surface with the real provider (not `offline`, so `refreshApprovals` actually runs), stubs only
+the HTTP layer, and returns the live `banker` payload. The stub is **URL-aware** — it serves
+data only to `/api/authority/approvals` and mimics the SPA fallback (index.html, status 200)
+for anything else, so a returning double prefix reproduces the bug instead of passing on a
+lenient mock. Observed both states:
+
+```
+PRE-FIX   ✕ requests the single-prefixed authority path
+          ✕ shows 7 in "Needs you" — not the reported 0
+          ✕ fills the other three buckets rather than leaving them all at zero
+          ✕ shapes the queue to 5 visible with the rest behind "Show 2 more"
+          ✓ renders an empty queue when the SPA fallback answers — the original bug
+POST-FIX  5 passed
+```
+
+The last case is a deliberate reproduction of Brian's screenshot and passes in BOTH states —
+it asserts the bug, not the fix. The other four are the regression.
+
+**Method note for the team.** Three times in this session a reported "symptom" turned out to be
+correct behaviour: the "0 of 10" footer, the grey Start button, the Idle chip. Each one, taken
+at face value, implied a different and wrong root cause. The habit that paid off was tracing
+every on-screen number and every disabled control to the line of code that produces it BEFORE
+letting it shape a hypothesis — and being willing to tell the requester their framing was
+wrong. Brian's own retraction proves the point better than I could.
+
+Final suite: 454 passed, 13 failed — the same pre-existing account-opening 13. Nothing added.
+
+### 2026-09-10 (final) — console trace confirms the diagnosis; misleading error fixed too
+
+Brian's browser console independently produced what the code review and the live probes had
+already established:
+```
+POST .../api/api/copilot/sessions  405 (Method Not Allowed)
+  createSession @ copilot.ts:37 → CopilotContext.tsx:235 → CopilotHarness.tsx:96 → CommandBar.tsx:56
+```
+
+**Blast radius, enumerated (this was the part worth doing carefully).** Only TWO modules ever
+built absolute `/api/...` paths and handed them to the axios client:
+
+| module | style | status |
+|---|---|---|
+| `api/copilot.ts` | `copilotUrl()` → absolute | **was doubling** — fixed |
+| `api/approvals.ts` | `authorityUrl()` → absolute | **was doubling** — fixed |
+| `api/accountOpening.ts` | relative (`/applications/...`) | correct, untouched |
+| contexts/pages (`/accounts`, `/auth/login`, `/transactions/my`, `/admin/*`, `/users/me/*`, `/chat`) | relative | correct, untouched |
+| `api/copilotStream.ts` | absolute, but raw `fetch` — no baseURL | correct, untouched |
+
+That table is the whole explanation for why login, nav and account pages worked while only the
+copilot surface was dead, and it is why the fix had to go at the two path builders rather than
+at the shared client. Changing `baseURL` would have broken every row marked correct.
+
+**One bug, not two.** The queue fetch (`refreshApprovals` → `listApprovals`) goes through the
+same doubled client, so the empty NEEDS YOU/WAITING/RUNNING/DONE TODAY panel and the rejected
+harness request have a single cause. **There is no bucketing defect** — `groupApprovals` reads
+exactly the fields the service emits and was never wrong.
+
+**Second defect fixed (separate, real).** `CopilotContext.tsx:245` mapped every possible
+failure onto "The harness did not accept that request. It is not running on the server." — a
+statement about infrastructure the client cannot observe, presented as fact. Replaced with
+`describeHttpFailure()` in `api/errors.ts`, which states the status, quotes the server's own
+message via the existing `resolveApiError`, and treats 404/405 as *routing* faults rather than
+outages. The log line now carries status and URL; the 405 was previously invisible in it.
+
+**Cost of the bad message:** ~20 minutes chasing healthy pods and a token hypothesis that the
+code had already ruled out (a stale JWT would have hit the `client.ts:59` interceptor and
+force-redirected to `/login`, not left a signed-in user on an empty page). Worth remembering:
+an error string that names a cause is a diagnosis, and a wrong diagnosis stated confidently
+costs more than no diagnosis at all.
+
+Final: **461 passed, 13 failed** — the same pre-existing account-opening 13, none added. `tsc`
+clean. Needs a ui-app image rebuild + redeploy; the fix is not live in Brian's browser until then.
+
+### Layout phase — `/copilot` responsiveness (Defects 1 & 2)
+
+**The lesson: jsdom cannot see layout, so I stopped guessing and measured in a real browser.**
+I wrote `tests/e2e/specs/layout-copilot.spec.ts` (Playwright, Chromium, 5 viewports incl.
+Brian's 1550x780) and ran it against a static build. It immediately failed 8 assertions that
+every unit test had happily passed. Every fix below came from a measurement, not a theory.
+
+1. **The command bar was clipped, and the footer was NOT the cause.** I had assumed the
+   marketing footer was eating the space. Measurement said otherwise: the command `Region`
+   was rendering **24px tall** while the panes row above it kept 567px. Cause: the command
+   `Region` inherited `flex-shrink: 1` and `Region` sets `minHeight: 0`, so flexbox was free
+   to crush it below its content; the 40px input then overflowed into the column's
+   `overflow: hidden` and vanished. Fix: `flexShrink: 0` on the command Region — it is the
+   one row that must never shrink. Verified: region now 62px, bottom edge exactly 720/720.
+
+2. **~950px of blank scrollable space below the surface.** The shell is `height: 100vh;
+   overflow: hidden`, yet the document scrolled 964px into nothing. Cause: the shell was
+   `position: static`, and **`overflow: hidden` does not clip absolutely-positioned
+   descendants unless the element is their containing block.** The escapees were the
+   visually-hidden `position: absolute` screen-reader spans in `ApprovalCountdown`. Fix: one
+   line — `position: 'relative'` on the full-bleed container. This is a general trap: any
+   `overflow: hidden` viewport shell needs `position: relative` or a11y-hidden spans leak.
+
+3. **Do not trust `documentElement.scrollHeight` alone.** It read 1684 while `body`,
+   `html` and `#root` all measured 720 — a contradiction. Screenshotting at scroll bottom
+   (blank page) and reading `window.scrollY` after a `scrollTo` proved the scroll was real.
+   When a measurement contradicts itself, add a second independent measurement.
+
+4. **The right pane is NOT unreachable.** Before recommending anything for Defect 3 I
+   checked whether the banker could physically reach the Sign button: the approval column is
+   `overflowY: auto`, h 343 / scrollHeight 1032. Cramped, yes; blocked, no. Worth checking
+   before escalating a UX complaint into a blocking bug.
+
+5. **I broke a test and found it by counting.** The baseline is 13 failures; my run showed
+   14. `agreementTriState.test.tsx` passed alone but flaked ~50% in the full suite. I did not
+   wave it away as "flaky" — I stashed my changes and ran the original tree 4x (stable 13),
+   which proved I had triggered it. Root cause: that test compares two rendered card texts
+   and strips only `0.\d+`, but `ApprovalCountdown` re-renders on a 1s tick, so two renders
+   straddling a tick differ by "MM:SS". My +34 tests slowed the suite enough to expose a
+   latent time-dependent assertion. Fixed the strip regex. 5 consecutive full runs: 13/464.
+   **Counting the baseline is what caught this. Always report the count.**
+
+6. **A new spec must be checked against the *existing* config's collection.** The shared
+   `tests/e2e/playwright.config.ts` has `testDir: './specs'` with no `testMatch`, so it would
+   have swept up my layout spec and failed CI (it needs a local static server on :8099, not
+   the deployed `BASE_URL`). Added `testIgnore: '**/layout-copilot.spec.ts'` and verified the
+   split: main config collects 0 of them, `layout.config.ts` collects 30.
+
+### Defect 3 — the centre pane now holds the selected approval
+
+Brian ruled: build it (and suppress the FDIC footer — "this is a demo, not a regulated
+deployment"). Implemented as one stateless rule, `runActive = Boolean(run)`:
+
+- **A run exists → the trace owns the centre**, including after the run finishes. Reverting
+  on completion would yank a trace away from someone still reading it.
+- **No run → the centre shows the selected approval** (`ApprovalDetailPane`, a layout
+  wrapper around the unmodified `ApprovalCard`, so every field survives the move).
+- **No run → the artifact pane is not mounted at all.** It exists to show what a run
+  produced; keeping it would reserve a third of the surface for one sentence and re-create,
+  on the right, the very "large empty pane" defect being fixed.
+- The swap is announced before it happens: the centre subtitle says the trace will take the
+  pane, and the right-hand dock is now labelled "Selected approval" so it is findable.
+
+**The lesson from this round: a pane measured EMPTY tells you nothing about the same pane
+FULL.** Brian asked me to close the "trace with real run content" gap I had flagged. Doing so
+immediately exposed a bug that had been latent for months:
+
+> Every pane is the sole child of a `display: flex` Region, and **none had `flexGrow`**, so
+> its width was CONTENT-based. `TracePane` looked correct forever because its empty-state
+> paragraph is long; the moment a real run replaced it with short step labels the Paper
+> collapsed to **426px inside a 750px region** — a 324px dead gap. Fixed on all four panes.
+> Proved the guard works by reverting just that line and re-running: `Expected <= 2,
+> Received 324`.
+
+**And the reverse lesson, same round.** My stubbed run rendered a step as "NaN." — I nearly
+filed it as a product bug. Instead I read the server: `planner/loop.py` sends
+`{stepId, index, title}` on `step.started`, while my stub sent only `stepId`. The store does
+`{...existing, ...patch}`, so my `undefined` index/title clobbered good values. **The stub was
+unfaithful; the product was fine.** An unfaithful stub does not just miss bugs, it invents
+them. (The store's overwrite-with-undefined is still latent fragility — flagged, not fixed:
+it cannot fire against the real server and reducers are the wrong thing to edit mid-demo.)
+
+**Baseline discipline paid off twice.** The count moved to 14 again and I did not wave it
+through: the offender was MY `taskQueuePopulates.test.tsx`, which used `waitFor(async () =>
+... await findByRole ...)`. A `findBy*` inside a `waitFor` callback spends its own retry
+budget on every poll, so the suite passed alone (3s) and timed out under parallel load (13s).
+Rewrote the callback to synchronous `getBy` queries — assertions unchanged. Five consecutive
+full runs: **13 failed / 464 passed**.
+
+### Phase 3 — the signing gate: every card was Deny-only
+
+**Root cause, confirmed not assumed.** `canSignUnderStream` accepts only `live`/`resumed`;
+`stream.status` initialises to `idle`; `openStream` had exactly ONE call site — inside
+`submitIntent`. So a banker who loaded `/copilot` to work the queue and never dispatched an
+agent run sat at `idle` forever and could not sign anything, **by construction**. Proven in a
+real browser before the fix: zero requests to `/stream` on a cold load, against a stream
+endpoint independently verified healthy. Not a backend fault, not a stale token.
+
+**Fix.** Establish the session and stream on MOUNT, not on first dispatch. `POST /sessions`
+executes nothing — the planner only moves when a run starts inside the session. The gate
+itself was not touched: when the stream cannot be established, signing stays disabled. That
+is the correct direction to fail.
+
+**Learnings.**
+
+1. **`route.fulfill` cannot hold an SSE connection open.** A fulfilled stream body is
+   delivered then closed, which the client correctly reads as a disconnect — so a healthy
+   stream looks broken and the test proves nothing. Verifying SSE needs a real server.
+   `tests/e2e/support/fake_copilot_stack.py` is that server; reuse it.
+2. **An unfaithful stub invents bugs — fourth time this month.** My stub did not drain the
+   POST body, so on a keep-alive connection the body bled into the next request and produced
+   a 400 that looked like a product fault. Separately, the layout spec's catch-all answered
+   `POST /sessions` with `{}`, which tripped the client's sessionId guard and put an error
+   toast on screen that read as a layout regression. Both were my harness, not the product.
+   Before filing a defect against a stub result, check the stub against the real server.
+3. **A "run once" ref plus StrictMode equals never runs.** React 18 StrictMode mounts,
+   unmounts and remounts every effect in development. The unmount lands while the async work
+   is in flight, so that attempt aborts — and the ref, already set, makes the remount skip the
+   work entirely. The guard reintroduced the very bug the effect existed to fix, in dev only,
+   invisible to a production build. Reset the ref in cleanup unless the work settled.
+4. **A bottom-anchored toast is an occlusion defect.** MUI's `Snackbar` defaults to
+   bottom-centre at `z-index: 1400` and landed squarely on the command bar — the same class of
+   fault as Brian's footer complaint, and far easier to hit once errors could surface on mount.
+   Found only because a real-browser `elementFromPoint` check failed.
+5. **Do not weaken an existing test to fit new copy.** My gate wording dropped the phrase an
+   older assertion depended on, then duplicated it so `getByText` found two nodes. The right
+   answer was to split terse (beside the button) from full (in the alert), which is better UX
+   and left the older guarantee intact.
+
+### Phase 4 — the signing attestation said the opposite of the truth
+
+**The check cleared the backend.** Before touching copy I compared
+`requesterUsername`, `callerMaySign` and the slot rules in the live `banker`
+payload. Slot 0 carries `minSeniority: 1` and an EMPTY `mustDifferFrom` — the
+opening signature, which the requester may legitimately provide. Slot 1 carries
+`minSeniority: 2` and `mustDifferFrom: [<requester uuid>]`. The service returns
+`callerMaySign: true` for the requester only while slot 0 is unfilled, and flips
+to false with "you cannot also approve it" the moment they fill it (item 7 in the
+fixture proves it). **Separation of duties is intact. It was only ever copy.**
+
+**The defect.** The attestation branched on `isL2` alone and never consulted the
+slot, so every L2 signer was told they provided "the independent supervisor
+co-signature ... because you are a different identity from the requester
+(banker)" — while signed in AS banker. False for the opening signer, and
+self-contradictory for the requester.
+
+**Learnings.**
+
+1. **The derivation already existed six lines away.** `SignatureRoster` had
+   correctly computed "the slot the caller will fill" — first unfilled — and had
+   even documented why. The banner just never used it. Before concluding a fact
+   is not derivable client-side, grep for it: a sibling component may already
+   derive it. Both now share one exported helper so they cannot disagree.
+2. **Ordinals are not array indices.** `demoApproval` numbers its slots 1 and 2.
+   Anything keyed off `ordinal === 0` silently mislabels every card built from the
+   demo fixture while passing against the wire fixture. Key off slot STATE
+   (how many remain unfilled), which is ordinal-agnostic and reads truer anyway.
+3. **A test that asserts the buggy string locks the bug in.** `ApprovalCard.test.tsx`
+   asserted `/independent supervisor co-signature/` was present. It was passing,
+   and it was defending the defect. When a test's assertion IS the bug report,
+   replace it with the inverse and say why in the test name.
+4. **Derive the claim from what you can verify.** "You are the requester" is only
+   claimed when `identity.id` actually matches `requesterUsername`; otherwise the
+   copy falls back to neutral wording that is true either way. Failing to the
+   weaker true statement beats guessing at the stronger one.
+5. Rung is the wrong axis for this sentence entirely. Whether a signature OPENS
+   an approval or CLOSES it is a property of how many remain, not of L1 vs L2 —
+   which is also why the new copy survives Danny's possible third verb.
+
+## Phase 5 — evidence findings (tool names -> what the agent learned)
+
+**Defect.** The card listed only evidence *keys* ("Get user", "List login audits") and discarded
+the payloads. The values were never missing from the API; they were dropped **client-side, in two
+places**:
+
+- `api/authorityWire.ts` `toEvidence` used the object key as a label and only filled `excerpt`
+  from a nested `summary` string or a bare string value, so `{accountId, balance}` produced nothing.
+- `ApprovalCard.tsx` `EvidenceList` rendered `item.label` only.
+
+**Fix.** `EvidenceRef` gained `findings: PayloadField[]`, populated with the existing
+`flattenPayload` + `humanLabel` primitives, so findings inherit the same formatting the payload
+table already uses — `accountId` renders masked (`····6666`) and `balance` as `$59,480.00` for free.
+Render is marked PROVISIONAL; Danny's card spec replaces the visual design, not the plumbing.
+
+**GUID -> name is a solved problem, not backend work.** `GET /api/users/{id}` in `UsersController`
+carries a plain `[Authorize]`, so a banker token resolves it today. `/admin/users` is
+`[Authorize(Roles = Admin)]` and is NOT usable from the banker surface. There is simply no client
+for it in `src/ui-app/src/api/` yet.
+
+### Lessons
+
+1. **`npx tsc --noEmit` is worthless in this project.** `target=ES5` + `moduleResolution=node10`
+   emit TS5107 and abort *before* type-checking, so it reports clean while the app does not compile.
+   It told me clean while `react-scripts build` failed on a real TS2322. **Use
+   `CI=false npx react-scripts build` as the typecheck.** The whole team may be relying on `tsc`.
+2. **A disclosure toggle that already reads "Hide X" is open.** My probe clicked it and closed the
+   panel, then reported the data missing. The check was the suspect, again. Read `aria-expanded`
+   (or the verb) before clicking, and dump the whole pane rather than a filtered subset.
+3. **Verify a reported baseline before you accept blame for it.** The stated baseline was
+   467 passed; measured, it was 473 (486 total, minus the one test that was asserting the *buggy*
+   attestation string and correctly broke when I fixed the source). 473 + 9 + 5 + 2 = 489 exactly.
+   Never explain a count delta — measure it by removing your own additions and re-running.
+
+
+### 2026-09-10 — UI and Authority Fixes Session (#332)
+
+**Session Type:** Multi-agent integrated session (Turk, Linus, Danny, Rusty)
+**Branch:** `332-beta`
+**Outcome:** UI defects fixed; pane architecture approved; approval card rebuilt
+
+**Linus's Contributions:**
+- Fixed doubled `/api/api` prefix by consolidating `apiPath()` source of truth
+- Added `describeHttpFailure()` error messaging utility
+- Fixed copilot pane layout: command bar clipping, blank scroll, flexGrow regression
+- Implemented centre-pane architecture per Danny's ruling
+- Fixed SSE terminal frame handling and reconnect-storm
+- Preserved evidence findings field through wire mapping
+- Updated signing attestation copy to banker-centric language
+- Implemented session-on-mount pattern
+- Verified: 489 passed, 13 pre-existing failures, 52/52 Playwright E2E
+
+**Findings Flagged (awaiting Danny):**
+- Queue bucket semantics: signed-but-unexecuted approval classification
+- Footer compliance: FDIC text suppression acceptable?
+
+**Orchestration Log:** `.squad/orchestration-log/2026-09-10T20:47:00Z-linus.md`
+**Session Log:** `.squad/log/2026-09-10T20:47:00Z-copilot-ui-and-authority-fixes.md`

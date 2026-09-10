@@ -4,6 +4,10 @@ const isCI = !!process.env.CI;
 
 export default defineConfig({
   testDir: './specs',
+  // Layout verification runs against a locally-served static build on its own
+  // port (tests/e2e/layout.config.ts), not against the deployed BASE_URL this
+  // config targets. Collecting it here would fail the shared suite.
+  testIgnore: ['**/layout-copilot.spec.ts', '**/stream-lifecycle.spec.ts'],
   fullyParallel: true,
   forbidOnly: isCI,
   retries: isCI ? 1 : 0,

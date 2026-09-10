@@ -3564,3 +3564,1953 @@ instead of silencing it.
 No demo or seeding script was run — Rusty runs the reseed against this deployed change. No commit.
 `scripts/demo/demo.sh`, `config/demo-dataset.json`, `tests/demo/`, `tests/fixtures/` untouched.
 `.squad/decisions-compaction-plan.md` not executed.
+
+---
+---
+
+# New Entries — 2026-09-10
+
+### 2026-09-10T19:44Z: User directive — free-text planner path must be fixed in epic #332
+**By:** Brian Denicola (via Copilot)
+**What:** "i want it fixed in this epic." — referring to the finding that free-text
+objectives submitted through the /copilot command bar never invoke the model. Without
+an `actionId`, the planner adds no assess/propose steps (loop.py:559-562, :818-846) and
+the model assessor is never called (loop.py:651-653). Every free-text run is inert:
+1 step, empty evidence, no proposal, ~241ms.
+**Scope ruling:** NOT deferred to a future epic. The free-text path must reason —
+the model must select the action from the policy allowlist — within #332.
+**Why:** The epic's thesis is an agentic harness under human authority. A harness that
+only reasons after a caller has already chosen the action does not demonstrate that.
+
+---
+
+# Approval card: information architecture spec
+
+**Author:** Danny (Lead/Architect)
+**Date:** 2026-09-10
+**Status:** Ruled — build against this. Linus (frontend), Turk (backend items flagged §6)
+**Epic:** #332, branch `332-beta`
+**Companion ruling:** `danny-human-override-counter-proposal.md` — same root cause, §0 below
+**Raised by:** Brian — *"too robotic with lots of words without meaning or understanding"*
+
+## Scope — read first
+
+**In scope: the approval card only.** The "SIGNATURE REQUIRED" panel — its content, its
+information architecture, and what a banker reads and understands there.
+
+**Out of scope, and deliberately untouched by this document:** the task queue, trace pane,
+artifact canvas and command bar; navigation, theming and the design system; every other part of
+the application. Linus's layout and pane-routing work stands and is not respecified here.
+
+**This is not an application rework.** Nothing below asks for a redesign of anything outside the
+card. Where the card needs data it does not have, §6 names the dependency and its owner rather
+than designing the service that would provide it.
+
+---
+
+---
+
+## 0. Sequencing ruling first, because Linus is blocked
+
+**Card spec first is correct. Do not hold Linus.** Ship the card against this spec while the
+authority ruling finishes.
+
+One binding constraint that comes *from* the authority ruling, and it costs nothing today:
+**the card must be built for three verbs, not two.** A counter-propose/revise action is coming
+(companion ruling, Tier 1–2). If the action row is built as a Sign/Deny pair, it gets rebuilt.
+Build it as an action *set* with a primary, a secondary and room for a third. That is the only
+coupling; everything else in this spec stands independently.
+
+**Also hold Linus's narrow co-signature-sentence fix.** §3.2 replaces that sentence outright, so
+the in-flight change would be thrown away. His `canSignUnderStream` defect is separate, still
+his, and unaffected by this spec.
+
+### Why this is the same problem as the missing override
+
+Brian's two objections are one defect seen from two sides. The system does not treat the human as
+a decision-maker; it treats them as an authorisation step:
+
+- **No override** — the human may not disagree with the specifics.
+- **No rationale** — the human is not shown the specifics well enough to disagree.
+
+**A human cannot counter-propose against reasoning they cannot see.** So fixing the card is not
+cosmetic groundwork for the authority work — it is a *precondition* for it. Shipping the override
+verb onto today's card would give bankers the power to disagree with a GUID. That reordering is
+worth stating plainly: the card is the higher-value fix and it comes first on the merits, not just
+because it is faster.
+
+---
+
+## 1. Diagnosis — endorsed, with a sharper root cause
+
+My colleague's diagnosis is right and I am adopting all five points. The root cause underneath
+them:
+
+> **The card is written from the producer's point of view, not the decider's.** It is the policy
+> engine and the tool runner explaining themselves. Almost every element answers *"what did the
+> system do?"* when the reader needs *"what is happening, and what should I do about it?"*
+
+That is why it reads robotic. It is not a tone problem and it will not yield to a copy pass — the
+*wrong things are on the card*. "Base rung for this action. No escalators fired" is a faithful,
+accurate, well-engineered sentence describing a code path. A banker has no use for it.
+
+**The tell my colleague spotted is the key to the whole rewrite**, and I want it stated as the
+governing rule: the one line Brian did not complain about was the human-written reason — *"Lockout
+was caused by a stale saved password on the customer's phone."* It is concrete, situational, and
+it says what happened to a person. **That is the register for the entire card.** Every element
+should be judged against it: *would a banker say this sentence to a colleague?* If not, it is
+engine vocabulary and it does not belong on the primary surface.
+
+Point 3 is not tone — **it is a confirmed defect** (§5). Point 2 (the raw GUID) is the most
+damaging, because it makes the card unusable rather than merely irritating: a banker cannot judge
+an unlock without knowing whose account it is.
+
+---
+
+## 2. The governing principles
+
+1. **Decider's view, not producer's.** Describe the situation and the stakes; never the mechanism,
+   unless the mechanism *is* the stake.
+2. **Nouns a banker uses.** Customers have names, accounts have numbers and types, money has
+   currency. Identifiers appear only as secondary, copyable detail — never as the primary
+   reference to a person.
+3. **Findings, not activity.** What the agent *learned*, never what it *ran*. Tool names are trace
+   content, not evidence content.
+4. **Never blur the agent's claim with the harness's observation.** The service already keeps
+   these apart deliberately (`planner/approval_view.py:110-117`): the model's verdict/rationale/
+   factors are *claims*; which tools were required, granted, or refused are *server-derived
+   facts*. The card must preserve that line visually. A model's opinion styled identically to a
+   system fact is the single most dangerous thing this card could do.
+5. **Absence is information.** `concern: undefined` means the agent did not say, and must render
+   as nothing — never a ✓ (`types.ts:212-217`). Same for `unverified` and `value`. Never default,
+   never fill.
+6. **Consequences, not classifications.** `irreversible ⚠` is a label; *"once unlocked, whoever
+   holds that phone can sign in immediately"* is a consequence.
+7. **Progressive disclosure.** The primary surface carries what is needed to decide. Mechanism,
+   hashes, policy provenance and raw identifiers move to a secondary "how this was decided"
+   region — retained in full, never deleted, because auditors and sceptical bankers both need it.
+
+---
+
+## 3. The information architecture
+
+Ordered top to bottom. The ordering is the deliverable — it is the answer to "what does a banker
+need, in what order."
+
+### 3.1 The ask, in one sentence
+
+Plain language, verb-first, naming the person and the account.
+
+> **Unlock Maria Chen's chequing account ····4471**
+
+Replaces the current `Unlock a customer account` + `user.unlock` + raw GUID. The action id and the
+customer/account identifiers move to §3.8.
+
+### 3.2 Who is being affected, and why it is not routine
+
+The customer as a person, plus the two or three situational facts that make this decision
+non-obvious. For an unlock, that is: how long locked out, how it happened, whether the customer
+is elevated-risk, and whether anything about the attempt looks unusual.
+
+> Maria Chen · customer since 2019 · standard risk
+> Locked out 3 days · 4 failed sign-ins, all from her registered device
+
+**This section does not exist today and is the single largest gap on the card.** It requires
+backend work (§6.1) — it is the difference between a card a banker can act on and a card they
+must go elsewhere to understand.
+
+**Also replaces the signer-identity sentence.** The current copy — *"you are providing the
+independent supervisor co-signature. It counts only because you are a different identity from the
+requester (banker)"* — explains the dual-control mechanism to someone who already knows they are
+a supervisor. Reduce to a quiet attribution near the action row: *"Signing as A. Reyes,
+supervisor."* The separation-of-duties fact belongs in §3.7, expressed as consequence.
+
+### 3.3 What the agent found
+
+Evidence **findings**, with values. Each row is a claim with a figure where one exists, and a link
+into the trace. This is §5's defect, and it is the highest-value fix per unit of work on the card.
+
+> ▸ No sign-in from a new device or location in 30 days · *show in trace*
+> ▸ Account in good standing · balance £59,480 · *show in trace*
+> ▸ 3 transactions in the last 24h, all under £200 · *show in trace*
+
+Rows the agent flagged as a concern are visually distinct. `concern: undefined` renders plain.
+
+### 3.4 What the agent could not establish
+
+Rendered **whenever `unverified` is non-empty**, and never collapsed by default. The field already
+exists (`types.ts:241-245`) and the card already has copy for it (`ApprovalCard.tsx:489`).
+
+> Could not be established from the evidence:
+> ▸ Whether the customer initiated the password change on 8 Sep
+
+This is the highest-value section on the card for a decider and the most likely to be
+under-weighted, because it is the section that argues *against* the action the agent proposed.
+**It must never be behind a disclosure toggle.**
+
+### 3.5 What the agent concluded, and that it is an opinion
+
+The agent's verdict and rationale, visibly attributed and visibly a claim.
+
+> **The agent recommends unlocking.** "The lockout pattern matches a stale saved credential
+> rather than an intrusion attempt: all failures came from the customer's registered device
+> within a four-minute window, with no new-device activity."
+
+Self-reported confidence, if shown at all, appears only as prose beside `unverified`, and
+**nothing may rank, sort, colour-scale, gate, hide or reveal on it** — that constraint is already
+ratified in the type (`types.ts:225-236`) and this spec does not relax it.
+
+### 3.6 What happens if you sign — the consequence, not the classification
+
+> Unlocking restores sign-in immediately to anyone holding the customer's registered device.
+> **This cannot be undone from the Copilot** — a re-lock is a separate action.
+
+This replaces the bare `irreversible ⚠` chip. Keep the chip as a scannable marker; add the
+sentence that says what it means *for this action*.
+
+### 3.7 Why this needs two people — in consequence terms
+
+Replaces *"Base rung for 'Unlock a customer account'. No escalators fired."*
+
+> Account unlocks always need a second signature, because restoring access is the step that
+> would let someone in.
+> **Signed by J. Okafor (banker) 08:06.** Awaiting a second signer — must be someone else.
+
+When escalators *did* fire, say which and why, in the same register — the policy already produces
+human-readable reason templates (`config/authority-policy.yaml`, `reasonTemplate` on every rule).
+Use them; they were written for exactly this and the card is currently ignoring them in the
+base-rung case.
+
+### 3.8 What happens if you do nothing — a decision, not a countdown
+
+> **If nobody signs by 4:52pm, this is automatically denied** and the customer stays locked out.
+> Nothing will execute. (46 minutes left)
+
+Reframes `expires in 46:05 → DENIED`. Three changes: state the outcome for the *customer*, give a
+wall-clock time as well as a relative one, and make explicit that expiry is safe — nothing runs.
+The current presentation reads as a countdown to failure with no guidance; auto-denial is a
+deliberate design property (`ttlExpiryOutcome: denied` — *"Expiry is a denial, never an
+auto-approval"*, `config/authority-policy.yaml:17`) and the card should say so with confidence.
+
+### 3.9 Actions
+
+Primary **Sign**, secondary **Deny**, and **space reserved for the third verb** (§0).
+
+Deny must warn that it is final and forecloses revision — see the companion ruling §0a. That
+warning is Tier 0 there and should land with this card if it ships first.
+
+### 3.10 "How this was decided" — collapsed, complete, never deleted
+
+Everything removed from the primary surface lives here, in full: action id, policy id and version,
+payload hash, base rung and fired escalators with their raw ids, required vs discretionary tool
+ids, assessment iterations and convergence, TTL in seconds, raw customer and account identifiers
+(copyable), and the full signature slot detail with timestamps.
+
+**Nothing in this spec deletes data.** Auditors, supervisors reviewing a disputed call, and
+engineers debugging all need this. It is being *demoted*, not removed. The payload hash in
+particular stays, with a label saying what it is for: *"Tamper check — your signature covers
+exactly these figures."*
+
+---
+
+## 4. What this spec deliberately does not do
+
+- **Does not touch the signing gate, payload hashing, or separation of duties.** Presentation only.
+- **Does not hide the mechanism.** §3.10 retains all of it.
+- **Does not invent agent claims.** Every rendered claim maps to a field the agent actually
+  produced. Where the agent said nothing, the card says nothing (principle 5).
+- **Does not add a new lifecycle state, status or terminal reason.**
+- **Does not re-bucket the queue.** That is ruled separately in the companion document §5.
+
+---
+
+## 5. The evidence defect — confirmed, with both ends cited
+
+**My colleague is right and this is a genuine bug, not a tone issue. Verified end to end against
+the exact record on Brian's card.**
+
+The service writes raw tool output, keyed by tool id: `evidence[tool_id] = result.data`
+(`planner/loop.py:620`). The seeded `user.unlock` approval — the one Brian was looking at —
+carries (`config/demo-dataset.json`, `approvals[1]`):
+
+```json
+"evidence": {
+  "get_user":          { "userId": "…", "status": "locked" },
+  "list_login_audits": { "userId": "…", "count": 4 }
+}
+```
+
+The client mapper `toEvidence` (`api/authorityWire.ts:211-229`) derives:
+- `label` — `humanLabel(key)` when no `detail.label`. `humanLabel` (`:162-168`) splits on `.`,
+  replaces `_`/`-` with spaces and capitalises the first letter, so `get_user` → **"Get user"** and
+  `list_login_audits` → **"List login audits"** — character-for-character the strings on the card.
+- `excerpt` — only when `detail.summary` is a string, **or the value itself is a bare string**.
+
+These evidence values are objects with neither a `summary` nor a `label`, so `excerpt` is
+`undefined`, and the card — which *does* render `excerpt` when present
+(`ApprovalCard.tsx:365-369`) — draws the humanised tool name alone.
+
+**The values are on the wire and the UI drops them.** `status: "locked"` and `count: 4` are both
+sitting in that record, unrendered — and both are exactly what a banker deciding an unlock needs.
+The §3.3 example rows are achievable from data we already hold.
+
+**Ruling on the fix — and it is not "make the mapper dump the object".** Raw tool payloads are
+arbitrary JSON; rendering them generically produces a worse card, not a better one. The finding is
+a *contract gap*: nobody ever defined what an evidence item should say to a human.
+
+- **Correct fix (§6.2, Turk):** the producer attaches a human-readable finding per evidence item —
+  populate `label` and `summary` on each entry so `toEvidence` picks them up **with no client
+  change at all**. The mapper already reads both. This is the cheapest correct fix in the document.
+- **Interim (Linus, only if §6.2 cannot land in time):** a small per-action projection mapping
+  known tool ids to the two or three fields worth showing. Explicitly a stopgap — it puts
+  presentation knowledge of tool payloads in the client, which is why it must not be the
+  destination.
+- **Either way:** an evidence row that resolves to nothing but a tool name is a **defect**, not an
+  empty state. Add a test that fails when an evidence item renders without a finding.
+
+---
+
+## 6. Dependencies — with owners, not designs
+
+The card needs data it does not have today. Each item below states **what the card requires and
+why**, then names the owner. **I am not designing these services** — the mechanism is the owner's
+call. Where I have ruled, it is on a constraint that protects the signing model, not on an
+implementation.
+
+Ordered by value to the card.
+
+### 6.1 Subject enrichment — the biggest gap, and the one Linus cannot fake
+
+**Owner: Turk.** **What the card needs:** the customer and account as domain objects — display
+name, tenure or relationship marker, risk tier, and per-action situational facts (for
+`user.unlock`: lockout duration, failed-attempt count, whether attempts came from a registered
+device).
+
+**Why:** §3.2 is the difference between a card a banker can act on and one they must leave to
+understand. Today the card prints a raw GUID where a person belongs.
+
+**Not available today** — `Approval.Target` resolves a service path, not a subject
+(`ApprovalService.cs:212-240`). **Mechanism is Turk's choice.**
+
+**One architectural constraint, and it is a ruling:** display-only data must **not** enter the
+hashed payload. `HashFields` are policy-declared (`ApprovalService.cs:200-202`); adding cosmetic
+fields there would couple copy changes to signature validity. *(This matches the constraint
+already recorded in Turk's own `authority-reason-template-rendering` skill, point 6 — we agree.)*
+
+**Until it lands:** §3.2 renders what it honestly can and omits the rest. **It must not print a
+GUID as the customer** — "customer record ····3453" with the full id in §3.10 is the honest
+fallback, and it is a one-line client change requiring no backend at all.
+
+### 6.2 Evidence findings — populate `label` and `summary`
+
+**Owner: Turk.** **What the card needs:** each evidence entry to carry a human-readable `label`
+and `summary`. Per §5. Highest value-to-effort ratio on this list: **no client change required**,
+because `toEvidence` already reads both fields (`authorityWire.ts:211-229`).
+
+### 6.3 `agentAssessment` — the card's content requirement
+
+**Owner: Turk (already on it).** He asked what this field must contain; nobody had defined it.
+Below is the *card's* requirement, which is my call. **Whether and how the planner populates it is
+his.**
+
+**On his open question — labelled a hypothesis, not a finding:** the planner appears to populate
+it already. `primary_proposal_assessment(...)` is passed on every propose
+(`planner/loop.py:739-751`) and its projection is a mature contract
+(`planner/approval_view.py:99-127`), so `null` on live records is very likely a **seeder**
+omission — those approvals were not produced by a run. **Confirm by dispatching a real run and
+reading the record.** Five minutes, and it decides whether there is any work here at all.
+
+**What the card requires of it:**
+
+| Field | Required? | Card use | Notes |
+|---|---|---|---|
+| `verdict` | **Yes** | §3.5 | The recommendation, as a short statement. |
+| `rationale` | **Yes** | §3.5 | 1–2 sentences, situational register (§1). The *reasoning*, not a restatement of the payload. |
+| `unverified[]` | **Yes when non-empty** | §3.4 | Omit the key entirely when there is nothing; never an empty string. |
+| `keyFactors[]` | Yes | §3.3 | Statements, not measurements. `value` only if genuinely measured; `concern` tri-state, never defaulted. |
+| `citedEvidenceIds[]` | Yes | §3.3 | Drives the trace links; already parser-validated against what was gathered. |
+| `selfReportedConfidence` | Optional | §3.5 | Prose only, beside `unverified`. Nothing may rank/sort/colour/gate on it. |
+| `agentName`, `role` | Yes | §3.5 | Attribution, so a claim is visibly a claim. |
+
+**Register is part of the requirement, not a nicety.** A `rationale` reading *"Policy evaluation
+completed; no escalators fired"* satisfies the type and fails the card. If the current prompt does
+not ask the model to explain the *situation* to a banker, that is where the work is.
+
+### 6.4 Escalator reason templates — already Turk's, do not duplicate
+
+**Owner: Turk — in flight.** The card wants the human-readable escalator reasons in §3.7, which
+depends on his active `{actual}` placeholder-resolution fix. **This spec adds no new requirement
+there and should not be read as respecifying it.** His existing rule — never emit an unresolved
+`{placeholder}`, drop the sentence instead — is right and the card relies on it.
+
+**One genuinely new item, and it is small:** in the *base-rung* case no escalator fires, so there
+is no template at all and the card currently falls back to "Base rung… No escalators fired." §3.7
+needs a per-action *"why this always needs two"* sentence. Cheapest home is a client-side map
+keyed on action id — **no backend work** — unless Turk would rather it live in the policy action
+definition. His call; either satisfies the card.
+
+---
+
+## 7. Priority order, for a build before 21:06Z
+
+If the whole spec cannot land, ship in this order. Each step is independently valuable and none
+blocks the next:
+
+1. **§3.1 + §3.2 headline** — name the action and subject in plain language; **stop printing a raw
+   GUID as the customer**. Even without §6.1, this is a large improvement.
+2. **§5 / §6.2 evidence findings** — values instead of tool names. Cheapest correct fix here.
+3. **§3.7 + §3.8** — replace "base rung / no escalators fired" and the expiry countdown with
+   consequence language.
+4. **§3.4** — surface `unverified` prominently whenever present.
+5. **§3.6** — the irreversibility sentence.
+6. **§3.10** — demote mechanism into the collapsed region.
+7. **§3.5** — full agent rationale, once §6.3 is confirmed.
+
+**Do not attempt §6.1 subject enrichment before the walkthrough.** Step 1 without it is honest and
+achievable; a rushed subject-resolution path is not.
+
+---
+
+## 8. Verification note
+
+Every claim about current behaviour in this document was read from source on `332-beta`. The §5
+defect chain was verified end to end against `config/demo-dataset.json` `approvals[1]` — the
+seeded `user.unlock` record Brian was looking at — and `humanLabel` was confirmed to produce the
+exact strings on his card rather than inferred from its name.
+
+Two items are explicitly **not** verified and are labelled as such where they appear:
+
+- **§6.3** — that `agentAssessment` is populated on real runs is a *hypothesis* from the code path
+  (`loop.py:739-751`), not an observation. Turk confirms it by dispatching a run.
+- **§6.1** — the choice between enriching evidence at propose time and resolving a subject summary
+  in the client is Turk's to make; I have ruled on the constraint (display data must never enter
+  the hashed payload), not the mechanism.
+
+---
+
+# Human override: the model has no vocabulary for disagreeing with the specifics
+
+**Author:** Danny (Lead/Architect)
+**Date:** 2026-09-10
+**Status:** Ruled (rev 2) — Tier 0+1 to Turk (backend) and Linus (frontend); Tier 2 is a new epic
+**Epic:** #332, branch `332-beta`
+**Raised by:** Brian, mid-walkthrough of the deployed `/copilot` surface
+**Companion ruling:** `danny-approval-card-information-architecture.md` — the card rewrite. Same
+root cause, and **it ships first.** A human cannot counter-propose against reasoning they cannot
+see, so exposing the override verb onto today's card would give bankers the power to disagree
+with a GUID. Read that document before implementing any tier below.
+
+---
+
+## Decision summary — one page, for Brian
+
+**The question:** the human can only sign or deny. Should there be an override?
+
+**The answer:** yes — and most of it already exists in the backend, unexposed. But the honest
+finding is that this is a **model** gap, not a missing button: the system has no vocabulary for
+disagreeing with the *specifics*.
+
+**Three things to decide, with sizes:**
+
+| # | What | Size | Recommendation |
+|---|---|---|---|
+| **A** | Warn that Deny is **permanent** and forecloses any revision. Narrow what the demo claims about human control. | **Copy only. Hours.** | **Do it before the walkthrough.** Deny currently destroys the remedy silently (§0a) — Brian burned 3 approvals hitting exactly this. |
+| **B** | Expose **counter-propose** on the card, plus two policy guards. Backend already exists (§1, §2). | **Fast follow. Days.** | **Do it, after the card rewrite.** Gives Brian "cite, don't void": the original is linked and retained, not destroyed. |
+| **C** | **Revise** — route the human's rejection reason back into an agent run as a constraint (§2b). | **New epic. Not days.** | **Decide later.** This is the only thing that makes "the human directs the agent" a true sentence, but nothing of it exists today. |
+
+**Is it demo-blocking?** **No.** Enforcement works and is genuinely strong — nothing executes
+without a human signature, two above a threshold, and signatures void when figures change.
+
+**Is it claim-limiting?** **Yes, and that is the real answer.** The surface implies more control
+than it delivers. Say *"nothing executes without human authorisation"* — true and strong. Don't
+say *"the human directs the agent."* If pressed: *"today the human can only say no — making 'not
+that, this' a first-class move is the next thing we're building."* Full stage line in §4.
+
+**Sequencing:** the **card rewrite comes first** (companion ruling). An override verb is worth
+little on a card that shows the customer as a GUID.
+
+---
+
+### On the length of this document
+
+The decision is above; the rest is evidence and implementation guardrails, and it is long for two
+reasons I want to be explicit about.
+
+**§2 and §2a are not an authorised design** — they exist because the capability is already built,
+so "expose it" is a real instruction that needs its safety conditions stated. One of those
+conditions is load-bearing: a policy rule written the obvious way (`raiseBy: 1`) would **refuse**
+the demo's best moment rather than escalate it (§2.3 warning). That warning had to be written down
+or it ships.
+
+**§2b is a sketch to size option C, not a specification.** It is not authorised and should not be
+built from. If C is chosen, it gets its own design pass.
+
+Skip to §4 for sequencing and the demo language. Turk needs §2a. Everything else is supporting
+evidence.
+
+---
+
+## Headline
+
+---
+
+**Brian's reframing is correct and I am adopting it. A proposal that admits only accept-or-reject
+is a directive with a veto attached.** The agent selects the action, the amount and the target;
+the human contributes one bit. That is not human-in-the-loop, and the ruling below does not
+defend it.
+
+Three findings, in order of how much they change what we build:
+
+1. **Counter-proposal already exists in the backend** and is reachable with the banker's own
+   token today. It is a feature to expose, not to design (§1, §2).
+2. **The ordering trap.** Counter-proposal works *only before* a denial. Deny is terminal, and
+   terminal approvals cannot be superseded — so the one verb the UI offers for disagreement
+   **permanently forecloses the remedy** (§0a).
+3. **The model-level hole, and the real answer to Brian.** The system *compels* the human to
+   write a substantive, validated reason for their disagreement — and then never shows it to any
+   agent. The denial reason is an output and never an input (§0b). Closing that is new design,
+   not latent capability, and it is what turns a directive back into a proposal.
+
+I am also correcting one claim in the brief: **the evidence bundle is not destroyed by a denial**
+(§0a). The record survives 90 days intact. What a denial destroys is *linkage* and *direction*,
+not data — which matters, because it changes what we have to build.
+
+---
+
+## 0a. "Deny is terminal and lossy" — mostly right, and the precise shape matters
+
+**Correct:** deny is terminal and irreversible. `TransitionTerminalAsync`
+(`ApprovalRepositoryBase.cs:81-100`) sets `Denied`, and `ApprovalWriteGuard.AssertTransition`
+(`:27-40`) refuses every transition out of it: *"Terminal approvals are immutable; a replacement
+approval must be created instead."*
+
+**Correct, and worse than the brief said — this is the finding to act on.** The supersede guard
+requires the original be **non-terminal** (`ApprovalService.cs:119-122`). `IsTerminal` is
+`Denied or Executed` (`Models/Approval.cs:238`). Therefore:
+
+> **Once a banker denies, that approval can never be superseded. The counter-proposal path is
+> open only *before* the denial.**
+
+The UI currently offers exactly one verb for "I disagree" — Deny — and using it **permanently
+forecloses the only mechanism that could have expressed "not that, this."** Brian's three
+`HUMAN_DENIED` records can never be counter-proposed against. He was funnelled into the one
+action that closed the door he was looking for, which is precisely why he could not find it.
+
+**Overstated, and I will not repeat it:** the evidence bundle is *not* destroyed. The denied
+approval persists as a full record — `Payload`, `Evidence`, `Facts`, `AgentAssessment`,
+`FiredEscalators` all intact — under a 90-day retention TTL
+(`retention_seconds` default `7776000`, `config/authority-policy.yaml:41-45`;
+applied at `ApprovalRepositoryBase.cs:97`). It is queryable and auditable for a quarter.
+
+The distinction is not pedantry, it decides the build: **we are not recovering lost data, we are
+restoring a broken link.** A denied approval's evidence can be cited by a successor — the only
+thing stopping us is that `supersedesApprovalId` refuses terminal targets. That is a rule we
+wrote, not a fact we are stuck with.
+
+## 0b. The hole in the model: a mandatory reason with no reader
+
+This is the centerpiece, and it is the honest answer to *"one option is not a proposal."*
+
+When a human denies, the system **demands** a real explanation. `DenialReasonValidator` enforces
+six rules (`DenialReasonValidator.cs:68-121`): present and a string (V1), a minimum length
+counted in grapheme clusters (V2), distinct non-whitespace characters (V3), an **anti-mashing
+rule** described in the source as *"the one doing the real work"* (V4), actual letters rather
+than digits or emoji padding (V5), and an upper bound (V6). The design note is explicit that
+*"'no' is not a reason — the person who reads this in six months is the point."*
+
+**Then it is never read by anything that could act on it.** I searched the whole copilot service
+unfiltered. The reason is stored on the record, published as an `ApprovalDenied` audit event
+(`ApprovalService.cs:477-478`), and streamed to the UI as an `approval.terminal` frame
+(`events/envelope.py:130-142`). **No agent ever receives it.** The planner's propose step *ends
+the run* at `approval.required` (`planner/loop.py:788-790`) and hands off; the human's sign or
+deny happens entirely outside any run's lifetime, and nothing resumes.
+
+So the system's full vocabulary for human disagreement is: *write a carefully validated
+paragraph explaining what is wrong, which no agent will ever see, and destroy the proposal.*
+Brian is right that this is not a proposal loop. **The human is compelled to articulate, and the
+system has no ear.** The one bit that flows back to the agent is that the run is over.
+
+---
+
+## 1. Ground truth — corrections to the brief
+
+Verified against source on `332-beta`. Corrections marked ⚠.
+
+| Claim in the brief | Verdict | Evidence |
+|---|---|---|
+| Required rung L1 = 1 signer, L2 = 2 with SoD | Correct | `PolicyEvaluator.cs:135-145` |
+| ⚠ Rungs are L1/L2 | **Incomplete** — there is an **L3**, meaning *refused outright, out of harness*. It is not a signable rung. | `PolicyEvaluator.cs:41-50`, `:144-152` |
+| Payload hash binds the signature | Correct, and it binds `policyVersion` too — a signature cannot be replayed under a different ruleset | `ApprovalService.cs:200-202` |
+| TTL 28800s via `POLICY_APPROVAL_TTL_SECONDS` | Correct | `config/authority-policy.yaml:15,35`; env override confirmed |
+| ⚠ "The human's only two verbs are Sign and Deny" | **True of the UI. False of the API.** There is a third verb: **propose-with-supersede.** | below |
+
+### What emits `PAYLOAD_SUPERSEDED`
+
+`ApprovalService.ProposeAsync`, `ApprovalService.cs:105-141`. It fires when a propose
+request carries `supersedesApprovalId`. The sequence is deliberately ordered so the link
+can never dangle: the replacement is written and marked pending **first**
+(`:124-125`), then the original is transitioned terminal with
+`TerminalReason.PayloadSuperseded` and a `supersededByApprovalId` pointer (`:129-136`),
+then audited (`:138-139`).
+
+Two guards, both at `:110-122`:
+1. **Requester-only** — `superseded.RequesterId == actor.UserId`, else 403 *"Only the
+   original requester may supersede an approval."*
+2. **Non-terminal only** — a denied/expired/executed approval cannot be superseded (409).
+
+### The finding that changes the recommendation
+
+**The agent proposes under the banker's own bearer token.** It is forwarded verbatim:
+`auth.py:57` (*"forwarded verbatim on every tool call"*), `sessions.py:163`, `:306`,
+`planner/loop.py:750`, into `tools/propose.py:169`.
+
+Therefore `RequesterId` on every agent-proposed approval **is the banker's own user id**
+(`ApprovalService.cs:171`). The banker *is* the original requester. **The banker already
+passes the requester-only supersede gate today.**
+
+I also checked whether any proposer allowlist blocks a human principal. There is none.
+`action.AgentMayPropose` (`PolicyEvaluator.cs:41`) gates *which actions* are proposable
+at all — it is not a check on *who* is proposing. The only actor gate is a seniority
+floor at `ApprovalService.cs:75-80`, which a banker clears by definition.
+
+**So: counter-proposal is not a feature to build. It is a feature to expose.** The
+`supersedesApprovalId` field is already plumbed end-to-end — schema at
+`tools/propose.py:34,93`, request wiring at `:191`, contract at `sessions.py:65`.
+
+---
+
+## 2. Ruling on the design question
+
+### Counter-proposal: **yes.** In-place edit: **never.**
+
+My colleague's instinct is correct and I am ratifying it. The human authors a **new
+action** with its own id, its own hash, its own attribution and its own approval chain.
+The original dies `PAYLOAD_SUPERSEDED`. Nothing is mutated; no signature is re-pointed.
+
+This touches the signing gate **not at all** — which is the point, and is why I can
+ratify it without the justification the constraints demand for gate changes. The payload
+hash is computed fresh from the new payload (`ApprovalService.cs:200-202`); the old
+approval's signatures die with it. Separation of duties is *unchanged* because it is
+enforced per-slot against the requester id (`PolicyEvaluator.cs:164`), and the requester
+of the new approval is the banker who authored it.
+
+### The hole this exposes — and this is the part that must not be skipped
+
+`PolicyEvaluator.cs:150-153`:
+
+```csharp
+new() { Ordinal = 0, MinSeniority = ..., MustDifferFrom = [] }
+```
+
+**Slot 0 has an empty `MustDifferFrom`.** At L1 there is only slot 0. So a banker who
+counter-proposes an action that stays below every threshold **signs their own
+counter-proposal**, alone, with no independent evidence behind the number they just
+invented.
+
+That is not what Brian asked for. He asked for it to be *"kicked up to the supervisor for
+review."* Shipping the button without closing this would hand him a self-service
+origination surface wearing a review tool's clothes — strictly worse than the veto he
+complained about.
+
+Note the honest nuance: the *agent* path is also self-signed at L1. The difference is
+that the agent path carries an evidence bundle the policy engine gated on
+(`PolicyEvaluator.cs:54-80`), and a human-authored number carries no agent evidence for
+the figure itself. Same signer count, materially less scrutiny. **Less evidence must mean
+more signers, not the same.**
+
+### Required shape
+
+1. **No new endpoint.** Reuse `POST /api/authority/approvals` with `supersedesApprovalId`.
+2. **Provenance — read §2a below before implementing.** My first draft of this said
+   "inject `context.humanAuthored`, set true when the actor is a human principal." **That
+   is unimplementable and I am retracting it.** The corrected mechanism is in §2a.
+3. **A structural L2 floor on every supersede**, as a new escalator in
+   `config/authority-policy.yaml` alongside `self-dealing` (`:303-309`), which is the
+   precedent to copy for shape:
+
+   ```yaml
+   - id: superseding-proposal
+     description: >
+       This payload replaces one a human has already been shown. Until agent authorship is
+       separately attested (§2a), authorship of the replacement cannot be established, so
+       it is treated as unattested and requires a second pair of eyes.
+     # minRung ALONE, deliberately — see the warning below. No raiseBy.
+     when: { field: context.supersedes, op: isTrue }
+     minRung: L2
+     reasonTemplate: >
+       The figures changed after this was put in front of a human, so it needs a second
+       pair of eyes.
+   ```
+
+   > ⚠️ **Turk — do not add `raiseBy: 1` here.** It is the obvious thing to write and it would
+   > break the demo. `Raised()` folds in `RungOrder.RaiseBy(current, 1)`, and
+   > `RaiseBy(L2, 1) = L3` (`Models/Rung.cs:41-46`, clamped at L3). Step 7 turns L3 into
+   > `Refuse(...)` — *"outside the Copilot's authority"* (`PolicyEvaluator.cs:144-152`). So
+   > `raiseBy: 1` would make **superseding any already-L2 approval impossible**, which is
+   > precisely the marquee walkthrough beat at `docs/design/banker-copilot-ui.md:1425`.
+   > `minRung` alone resolves to `max(current, L2)` — a floor: L1→L2, L2→L2. That is what the
+   > prose above describes and the only form that is correct. (I wrote `raiseBy` in an earlier
+   > draft of this ruling. It was wrong.)
+
+   Because the evaluator's only combinator is `max` over a total order
+   (`PolicyEvaluator.cs:16-21`, folding at `:110-119`), config can raise this and
+   **nothing in the policy grammar can lower it**. This is the same structural guarantee
+   the L2 dual-control floor already relies on at step 7 (`:133-146`).
+
+4. **Attribution: adequate for display, not for defence.** `RequesterId` /
+   `RequesterUsername` (`ApprovalService.cs:171-172`) name the banker and are derived from
+   the token, so they are trustworthy. `SupersedesApprovalId` (`:122`) links the chain and
+   is validated against the store. But `AgentId` and `SessionId` are **caller-supplied**
+   (`Contracts.cs:24,26`) — fine for rendering provenance, **not** evidence of authorship.
+   See §2a, Flaw 1. Render them; do not gate on them.
+
+5. **Evidence: carried forward, still gated.** The counter-proposal clears the same
+   `requiredEvidence` check as any other propose (`PolicyEvaluator.cs:54-80`). It may
+   carry forward the superseded approval's bundle, because evidence attests to *facts*
+   (KYC performed, balance read) and those do not change when the banker changes a
+   figure. Honest caveat, stated because Brian's rule is no lies: `Evidence` is a
+   caller-supplied `JObject` (`Contracts.cs:16`) in **both** paths. Carrying it forward
+   is therefore not a *weakening* — it is the existing trust level. If we ever want
+   attested evidence, that is a separate epic and it applies to the agent too.
+
+6. **UI already has the parts.** `diffPayloads` and `countMaterialChanges`
+   (`approvalPolicy.ts:456`, `:498`) already render old-vs-new field diffs, and the
+   supersede-mid-review beat is already a scripted demo moment
+   (`docs/design/banker-copilot-ui.md:1086-1092`, `:1425`). Linus is not inventing a
+   surface; he is wiring an existing one to a third verb.
+
+### What the banker's authority actually is — the answer Brian is owed
+
+**Today, the banker is a veto.** Brian is right and I am not going to dress it up: the reachable
+verbs are Sign and Deny, and Deny destroys the artefact and forecloses the remedy (§0a). One bit.
+
+The target state is **four** verbs, in increasing order of what they cost us to build:
+
+- **Sign** — "the agent was right." *(exists)*
+- **Deny** — "the agent was wrong, and nothing should happen." *(exists, and should become the
+  rare, deliberate choice rather than the only way to express disagreement)*
+- **Counter-propose** — "the agent had the right idea and the wrong number; here is my number,
+  and I accept that mine needs a second signature because it is mine." *(built, unexposed —
+  Tier 1)*
+- **Revise** — "not that, this: here is my constraint, go again." The human's judgement enters the
+  agent's next run as direction; the agent returns an evidenced proposal shaped by it.
+  *(does not exist — Tier 2, §2b)*
+
+The third verb answers *"my word is final"* by letting the banker's word **originate** an action.
+The fourth answers it better, by letting the banker's word **direct** the system without them
+having to become its author.
+
+What no verb will ever do is let one person originate *and* solely authorise the same action.
+That is not a limit on Brian's authority; it is the thing that makes his signature worth
+something to an auditor. **Authority to direct: yes. Authority to self-authorise: no** — and
+those are different sentences, which is the distinction the current UI collapses.
+
+---
+
+## 2a. Two flaws found reviewing my own first draft — **Turk, read this section**
+
+### Flaw 1: the authority service cannot tell an agent from a human. Nobody can.
+
+My first draft proposed a `context.humanAuthored` flag "set when the actor is a human
+principal," reasoning by analogy to `context.selfDealing`. **The analogy is false and the
+mechanism is unimplementable.**
+
+`selfDealing` is server-*derived* — the service computes it from the actor and the target.
+There is no equivalent derivation for authorship, because of the very finding that unlocked
+this ruling: **the agent proposes on the banker's token.** Agent re-plan and human
+counter-proposal arrive at `POST /api/authority/approvals` as the *same principal*, on the
+*same credential*, through the *same code path*. Nothing distinguishes them.
+
+Worse, the fields that look like provenance are **caller-supplied and therefore forgeable**:
+`AgentId` (`Contracts.cs:26`), `SessionId` (`:24`), `AgentAssessment` (`:22`) are plain
+request-body fields. My §2.4 claim that "attribution is already recorded — add nothing" is
+wrong for any adversarial reading. It is adequate for *display*; it is not evidence.
+
+**Corrected principle: fail closed on the absence of attestation, not on the presence of
+human authorship.** A flag meaning "a human did this" is defeated by omitting it. A floor
+that lifts unless agent authorship is *positively attested* is defeated only by
+manufacturing an attestation. That is why §2.3 keys on `context.supersedes` — a fact the
+service observes directly from the request it is processing — and treats **every** replacing
+payload as unattested.
+
+Consequence, stated plainly: **agent re-plans also move to L2.** I accept that. A figure that
+changed after a human was already looking at it is exactly the case that deserves a second
+signature, and the demo's marquee scenario (`docs/design/banker-copilot-ui.md:1425`) is
+already L2. **Turk: measure this before merging.** If any current re-plan path is L1, the
+change is visible in the walkthrough and Brian must be told before he demos, not after.
+
+**The durable fix is a separate, larger piece of work:** the copilot service needs its own
+service identity, so propose becomes on-behalf-of — a service credential attesting "this
+payload was authored by agent A in run R" alongside the user's identity. Only then can
+authorship be a trustworthy rung input and the blanket supersede floor be relaxed to apply
+to human-authored payloads only. **That is a future epic. Do not attempt it in the fast
+follow.** Until it exists, the blanket floor is the honest position, because today the
+system genuinely does not know who wrote the payload.
+
+### Flaw 2: supersede-after-signature is reviewer-shopping once a human can drive it
+
+`Approval.IsTerminal => Status is Denied or Executed` (`Models/Approval.cs:238`). **`Signed`
+is not terminal.** So the supersede guard at `ApprovalService.cs:119-122` permits superseding
+an approval that already carries signatures — deliberately. `SupersedeSignatureVoidTests.cs`
+documents why: it is a *defence*, proving no signature survives a payload change, so a
+re-planning agent cannot smuggle an unsigned figure past a human who signed a different one.
+That property is correct and must not be touched.
+
+But the same mechanism, **driven by a human instead of an agent, becomes re-rolling**: a
+banker who dislikes the supervisor co-signature they received supersedes the approval and
+proposes again, until a supervisor they prefer picks it up. Nothing in the current code stops
+this, and the queue deliberately never names a prospective signer
+(`ApprovalsController.cs:63-66`, `TaskQueuePane.tsx:62-66`) — which prevents *picking* a
+reviewer but does not prevent *re-rolling* until a preferred one appears.
+
+**I am therefore qualifying my "strictly strengthened" claim.** The L2 floor in §2.3
+strengthens the authorisation of a human-authored payload. It does **not**, by itself, address
+re-roll. That needs a second, independent guard.
+
+**The hook already exists and has no consumer.** `actor.mutatingProposalsInWindow` is
+computed and published to the predicate document (`EvaluationContext.cs:37`) and **no
+escalator in `config/authority-policy.yaml` reads it** — a live fact wired to nothing.
+Give it one, in the shape of the existing `velocity` escalator (`:319-325`):
+
+```yaml
+- id: repeated-supersede
+  description: The actor has replaced their own proposals repeatedly in a short window.
+  when: { field: actor.mutatingProposalsInWindow, op: gt, threshold: supersede_churn_limit }
+  raiseBy: 1
+  reasonTemplate: >
+    You have revised {actual} proposals recently, above the limit of {threshold}.
+```
+
+**`raiseBy: 1` is deliberate here, unlike §2.3 — and its consequence must be accepted knowingly.**
+On an approval already at L2, `RaiseBy(L2, 1) = L3` (`Models/Rung.cs:41-46`), and L3 is a refusal,
+not a rung (`PolicyEvaluator.cs:144-152`). So sustained re-rolling of an L2 approval **exits the
+Copilot entirely**. I am ruling that this is correct: a banker who has repeatedly replaced their
+own high-value proposals to shop for a reviewer is the definition of *"not a Copilot decision."*
+It matches the existing `velocity` escalator, which behaves identically (`:319-325`).
+
+**Turk: set `supersede_churn_limit` comfortably above ordinary use, and above anything the
+walkthrough does.** This guard must only bite on genuine churn. A threshold set too low would
+eject a banker making a second honest correction — and would do it by *refusing the action*, not
+by asking for another signature. Verify the demo path cannot reach it.
+
+This makes re-rolling *monotonically more expensive* rather than forbidding it outright —
+consistent with how this system treats every other pressure signal. A cheaper alternative —
+refusing supersede once any signature is filled — is the wrong trade: it would also disarm the
+agent re-plan defence that `SupersedeSignatureVoidTests` exists to protect.
+
+---
+
+## 2b. The second tier — direction, not origination. This is the actual answer to Brian.
+
+§2 restores the *verb*. It does not, by itself, answer *"one option is not a proposal."* A
+counter-proposal form still asks the human to type a number into a box — which is exactly the
+"banker becomes an origination surface" objection from the original brief, and it throws away the
+thing that makes agent proposals worth signing: an evidence bundle gathered to support the figure.
+
+**The better primitive is already half-built and nobody noticed: the denial reason.**
+
+The human's structured disagreement is captured, validated hard, and then discarded (§0b). Route
+it back into a run as a **constraint** and the loop closes properly:
+
+> The human does not author the payload. The human **directs the agent**, and the agent
+> re-proposes under that direction — with fresh evidence, its own assessment, and full
+> attribution of both the direction and the agent that acted on it.
+
+This resolves the tension the original brief could not. The human gets real authority over the
+specifics ("not that, this") **without** becoming an origination surface and **without** any
+payload arriving unevidenced. Evidence generation stays in the agent, where it belongs. It is
+also strictly better than a counter-proposal form: a banker who types an amount produces a number
+with nothing behind it, whereas a banker who says *"cap the adjustment at 5,000 and recheck the
+overdraft history"* gets a payload with an evidence bundle supporting that figure.
+
+**Shape at ruling level — detailed design is separate work:**
+
+- A **revise** verb alongside sign and deny, taking the same validated reason text. It supersedes
+  rather than denies, so the original stays non-terminal and the link survives (§0a).
+- The reason enters the next run as an explicit, attributed constraint — never blended into the
+  objective as though the agent thought of it. The audit trail must always be able to say *which
+  figure was the agent's idea and which was the human's instruction.*
+- The result is a normal agent proposal: agent-authored payload, real evidence, normal rung
+  evaluation, plus recorded human-direction provenance.
+- **Rung:** the §2.3 supersede floor still applies, because the payload still changed after a
+  human saw it. Human *direction* does not lower the bar; it restores the evidence that human
+  *authorship* would have removed.
+
+**Honest labelling, so this does not swallow the fast follow:** unlike §1 and §2, **none of this
+exists.** The planner has no resume path, no inbound denial channel and no run-continuation
+concept — the run ends at `approval.required` (`planner/loop.py:788-790`). This is new design.
+It is the right target and it is **not** a fast follow.
+
+---
+
+## 3. The supervisor half
+
+**Brian's observation is correct: the supervisor has no override. The *refusal* is right, but my
+first answer for what they do instead was wrong.**
+
+The requester-only gate (`ApprovalService.cs:112-117`) means a supervisor cannot supersede an
+approval raised by a banker. This is not an oversight. If a supervisor could author the payload
+*and* co-sign it, dual control collapses into one person doing both jobs — the precise failure
+`MustDifferFrom` exists to prevent (`PolicyEvaluator.cs:160-165`). The requester-only gate is
+*what keeps the author and the second signer distinct.* Adding supervisor supersede would be the
+one change in this document that genuinely weakens separation of duties, and I am refusing it.
+
+**Correction, forced by §0a.** I first wrote that the supervisor's denial "returns the case to
+the banker to re-author — a round trip, not a dead end." **That is false and I am retracting it.**
+A supervisor's denial is a `HUMAN_DENIED` terminal transition like any other, so it makes the
+approval permanently unsupersedeable (`Models/Approval.cs:238`, `ApprovalService.cs:119-122`).
+The supervisor cannot override *and* their rejection destroys the artefact the banker would have
+revised. For the banker, a supervisor denial is the **worst** case in the system: they lose the
+proposal, they lose the link, and they receive a paragraph of reasoning that no agent can act on.
+
+So the supervisor's real authority today is the same single bit as the banker's, aimed at a
+colleague rather than an agent. **The §2b revise verb must be available to the supervisor too** —
+not as override (they must never author a payload they will co-sign), but as *direction returned
+to the requester*: "not this, and here is what would change my mind," with the approval left
+alive and linkable. That is the honest supervisor half of the answer, and it needs no new
+authority whatsoever — only the ability to disagree without destroying.
+
+---
+
+## 4. Scope and sequencing — re-weighed against the sharpened framing
+
+**Split verdict, because the request splits.** Restoring the verb is a fast follow. Closing the
+model-level hole is the next epic. And the demo's *claim* needs narrowing today, which costs
+nothing and is the only genuinely urgent item.
+
+### Tier 0 — before the demo (hours, and I do consider this obligatory)
+
+1. **Stop the ordering trap from burning more records.** Every denial silently forecloses the
+   remedy (§0a). Until Tier 1 ships, the Deny confirmation must say so plainly: *"Denying ends
+   this proposal permanently. It cannot be revised or replaced afterwards."* One line of copy.
+   Brian burned three approvals hunting for a door that his own clicks were closing; nobody else
+   should.
+2. **Narrow the claim.** See below. Also copy, also free.
+3. **The card rewrite** (companion ruling). It is not part of this ruling's tiers, but it
+   **precedes** Tier 1 on the merits: the override verb is worth little on a card that shows a
+   customer as a GUID and evidence as tool names. Priority order for a pre-walkthrough build is
+   in that document §7.
+
+### Tier 1 — fast follow (the latent capability, §2 + §2a)
+
+Expose counter-propose *before* deny, with the L2 supersede floor and the churn guard. Backend
+is done; this is two escalators, a button, and the diff view that already exists
+(`approvalPolicy.ts:456,498`). **This alone gives Brian "cite, don't void":** supersede links both
+records via `supersededByApprovalId`, the original is retained 90 days with evidence intact, and
+the successor carries its own hash and chain. Nothing is destroyed and nothing is mutated.
+
+**Hard sequencing constraint:** both escalators — the `context.supersedes` L2 floor (§2.3) and the
+`repeated-supersede` churn guard (§2a) — ship in the **same PR** as the button. Turk's half must
+not merge behind a flag that Linus's half can outrun. If they must split, the escalators merge
+**first**: a floor with no button is inert, a button with no floor is a self-approval surface in a
+banking demo.
+
+### Tier 2 — next epic (the model hole, §2b)
+
+The revise verb and the denial-reason feedback loop. New design, genuinely epic-sized, and the
+only thing that makes "the human directs the agent" a true sentence.
+
+### Is it demo-blocking? No. Is it claim-limiting? **Yes, and that is the real answer.**
+
+The demo is not broken. Dual control, separation of duties, rung escalation, payload-hash voiding
+and the supersede-mid-review beat (`docs/design/banker-copilot-ui.md:1425`) all work and are
+genuinely strong — that beat is the best moment in the walkthrough and it survives untouched.
+
+But Brian found a seam, and the seam is in **what we say**, not what we show. The surface
+currently implies more control than it delivers, and no amount of Tier 1 work changes that
+before the demo. So the claim has to narrow to what is true. Concretely:
+
+- **Do not say:** "the human is in the loop," "the human directs the agent," "the human decides."
+- **Do say:** "the agent cannot act — only a human can authorise, two humans above a threshold,
+  and if the figures change, the signature stops counting."
+
+That is a strong, defensible, *true* claim about **enforcement**, and enforcement is what this
+system is genuinely excellent at. It is not a claim about **collaboration**, which is what Brian
+correctly identified as thin.
+
+**A line Brian can say on stage, which is honest and turns the gap into a roadmap:**
+
+> "Right now the human holds the authority to stop this system — nothing executes without a
+> human signature, and two of them above a threshold. What the human doesn't yet hold is the
+> authority to *redirect* it: today disagreement means rejection. Making 'not that, this' a
+> first-class move is the next thing we're building."
+
+If someone asks the hard version — *"so the human can only say no?"* — the honest answer is
+**yes, today, and that is why the next epic exists.** That answer lands far better than being
+caught claiming otherwise, and Brian's instinct to press on it is exactly why it will not be.
+
+### Do not gold-plate
+
+No new endpoint, no new lifecycle status, no new terminal reason — the enum stays at exactly four
+members. No amend-in-place, no draft state, no negotiation thread. **Explicitly deferred:** giving
+the copilot service its own identity so agent authorship can be attested rather than asserted
+(§2a Flaw 1). It is real, it is large, and it is not this.
+
+### One thing to measure before merging Tier 1
+
+Confirm the supersede floor changes **no** currently-working path into a refusal. The specific
+risk is not L1→L2 (harmless); it is **L2→L3**, which is not an escalation but a *refusal* — the
+action leaves the Copilot entirely (`PolicyEvaluator.cs:144-152`). The §2.3 form as written
+(`minRung` alone, no `raiseBy`) cannot do this. **Any edit that adds `raiseBy` to it will**, and
+would silently kill the walkthrough's best beat. Pin it with a test: *superseding an L2 approval
+still yields L2.*
+
+Second, check whether any currently-L1 agent re-plan moves to L2 and becomes visible in the
+walkthrough. If it does, Brian hears it before he demos, not after.
+- **Do not gold-plate:** no new endpoint, no new status, no new terminal reason. The enum
+  stays at exactly four members. No amend verb, no draft state, no negotiation thread.
+
+---
+
+## 5. Ruling on the queue bucket discrepancy (Linus's `linus-queue-bucket-semantics.md`)
+
+**A signed, unexecuted approval is Running. The UI's 7/1/1/1 is correct; `demo.sh` is
+wrong and should be changed.**
+
+Reasoning: the buckets answer *"what does the banker still have to do?"* — that is what a
+task queue is for. A signed approval has cleared human control; the banker has no further
+action on it. "Done today" must mean *nothing further will happen*, and that is false of a
+signed item, which can still fail at the execution gate
+(`ApprovalsController.cs:110-140` — execution re-evaluates policy and can void to
+`POLICY_RUNG_ESCALATED`). Filing it under done would tell the banker an outcome that has
+not occurred.
+
+Linus was right not to change it silently, and right on both follow-ups:
+
+1. **Accept his point 2 as the durable fix.** `running` should key on execution state, not
+   on `status === 'signed'`, with a visible *stalled* affordance when
+   `executionState: "not_attempted"` persists. His objection — that "Running" hides a stuck
+   queue — is legitimate and the answer is to *show the stall*, not to relabel the item as
+   done. Presentation only: **do not add a lifecycle status.** The enum is closed.
+2. **Accept his point 3.** `doneToday` does not filter by date
+   (`TaskQueuePane.tsx:75`). Either implement the window or rename the bucket. A label that
+   promises a time window the predicate does not implement is a small lie that gets
+   expensive when the store outlives a page load.
+3. **Single source of truth:** whichever wins, `demo.sh` and `groupApprovals` must cite the
+   same rule. Two independent tallies of the same list will diverge again.
+
+*Transparency note:* I could not locate the four-lane tally inside `scripts/demo/demo.sh`
+myself — greps for the bucket names and for a lane printout returned nothing. I am taking
+Linus's reported 7/1/0/1 at face value because he ran it. **Whoever implements this should
+confirm where `demo.sh` computes those counts before changing them.** Labelled as
+unverified, not as finding.
+
+---
+
+## Constraints check
+
+- **Payload-hash binding:** untouched. New payload → new hash, computed by the existing
+  path (`ApprovalService.cs:200-202`). No signature is re-pointed at a mutated payload.
+- **Separation of duties:** **strengthened for authorisation, with one caveat I am not
+  hiding.** A replacing payload moves from self-signable-at-L1 to a structural L2 floor
+  (§2.3). The caveat is re-roll: superseding after a co-signature is permitted by design
+  (`Models/Approval.cs:238`), which is a defence when an agent drives it and a
+  reviewer-shopping risk once a human can. §2a Flaw 2 gives the mitigation, and it ships
+  with the work. Without that second guard, the claim "strictly strengthened" would be
+  false, and I am not making it.
+- The one change that *would* have weakened separation of duties — supervisor supersede —
+  is explicitly refused in §3.
+- **Signing gate:** not modified. No justification owed, because nothing in
+  `SignAsync` / `EvaluateSignEligibility` (`ApprovalService.cs:303-410`) changes.
+- **Did not implement.** Recommendation only.
+
+## Revision note
+
+This ruling was revised twice, and both revisions are left visible on purpose.
+
+**Revision 1 (self-review).** §2 and the constraints check were corrected. The first draft
+proposed a `context.humanAuthored` flag and claimed existing attribution was sufficient; both
+were wrong, for the reasons in §2a. The corrected mechanism is fail-closed
+(`context.supersedes`) and carries a second guard for re-roll. The failure mode — a provenance
+flag defeated by omitting it — is worth the team seeing rather than a clean document that hides
+it.
+
+**Revision 2 (Brian's reframing).** Brian's *"with only one option it is not a proposal, it is a
+directive"* is correct and I have adopted it wholesale. That forced four changes:
+
+1. Added §0a — deny permanently forecloses supersede. This is the sharpest actionable finding in
+   the document and I had missed it entirely in draft 1, because I checked whether supersede was
+   *reachable* without checking what made it *unreachable*.
+2. Added §0b — the denial reason is mandatory, heavily validated and read by nothing. This is the
+   model-level hole, and it reframes the whole ruling from "missing button" to "missing
+   vocabulary."
+3. **Retracted a claim in §3.** I had written that a supervisor's denial "returns the case to the
+   banker to re-author — a round trip, not a dead end." §0a proves that false: it is a terminal
+   transition and it destroys the link. I had asserted a round trip that the code does not
+   implement.
+4. Re-weighed §4 from "fast follow" to a three-tier split, and added the honest limit on what the
+   demo should claim.
+
+**A correction against my own brief, too.** The brief stated a denial destroys the evidence
+bundle. It does not — the record persists 90 days intact (§0a). I have said so plainly, because
+"no shortcuts, no lies" has to cut toward the person who wrote the brief as well as away from
+them, and the distinction changes the build: we are restoring a broken link, not recovering lost
+data.
+
+---
+
+# Centre pane now shows the selected approval (built on Brian's ruling)
+
+**From:** Linus (Frontend) · **Status:** built, verified in Chromium, awaiting deploy
+
+## The rule (one sentence, stateless)
+`runActive = Boolean(run)`. **A run owns the centre pane whenever one exists; otherwise the
+centre shows the approval you selected.** No timers, no "recently viewed", nothing to desync.
+
+## Transition behaviour — stated explicitly, as asked
+- **Run starts while an approval is in the centre:** the trace takes the centre and the
+  approval moves to the right-hand dock, which is now labelled **"Selected approval"**. It is
+  not silent: the centre subtitle says so *before* it happens ("Start a task in the command
+  bar and the plan and trace take this pane; this approval stays open beside it"), and the
+  user initiated the run.
+- **Run finishes:** the centre does **not** revert. A completed trace is exactly what someone
+  needs to read after a run, and swapping it out from under them is the defect we are fixing.
+  The approval stays docked and selectable throughout.
+
+## The right pane is not orphaned
+With no run, the artifact pane is **not mounted**. It exists to show what a run *produced*;
+with no run it is one placeholder sentence. Leaving it would reserve a third of the surface
+for that sentence — the same "big empty pane" defect, just moved right. With a run it returns
+and carries artifacts plus the labelled approval dock.
+
+## Nothing was dropped from the approval
+`ApprovalDetailPane` is a layout wrapper only; it renders `ApprovalCard` **unchanged**. Rung,
+payload hash, signature slots, fired escalators, denial-reason input, terminal-reason
+rendering and the "Signing paused" banner are the same component the dock renders. Verified
+on screen at 5 viewports. **The signing gate was not touched.**
+
+## A real bug this uncovered (worth the team's attention)
+Every pane is the sole child of a `display: flex` Region and **none had `flexGrow`**, so pane
+width was *content-based*. `TracePane` looked right for months because its empty-state
+paragraph is long — with a real run's short step labels it collapsed to **426px inside a
+750px region**. Fixed on all four panes; regression test proved out at `Expected <= 2,
+Received 324` before the fix.
+
+## Flagged, deliberately NOT fixed
+`copilotStore.ts` `upsertStep` does `{...existing, ...patch}`, so a frame that omits `index`
+or `title` **clobbers** values already set by `plan.proposed` (renders "NaN."). It cannot fire
+against the real server, which always sends both. Editing a reducer mid-demo is risk without
+reward — please pick it up after the walkthrough.
+
+---
+
+# Copilot pane layout — two shipped fixes, one proposal for Danny
+
+**From:** Linus (Frontend) · **Status:** 1 & 2 fixed; 3 needs an architecture call
+
+## Fixed (frontend only, `src/ui-app/`)
+1. **Command bar clipped** — command `Region` had default `flex-shrink: 1` + `minHeight: 0`,
+   so flexbox crushed it to 24px and the input overflowed a clipped container.
+   Fix: `flexShrink: 0`. Verified in Chromium at 5 viewports.
+2. **~950px of blank scroll below a `100vh; overflow:hidden` shell** — the shell was
+   `position: static`, so it did not clip the `position: absolute` screen-reader spans in
+   `ApprovalCountdown`. Fix: `position: 'relative'` on the full-bleed container.
+3. Footer suppressed on full-bleed surfaces; queue column width now breakpoint-based
+   (`md 240 / lg 280 / xl 300`) instead of a hardcoded `300px`; layout now also keys on
+   viewport **height** (`max-height: 820px`), which it previously ignored entirely.
+
+### Tradeoff needing a second opinion
+Suppressing the footer on `/copilot` removes the FDIC / legal text from that surface.
+That is a **compliance question, not a layout one** — please confirm it is acceptable, or
+tell me to render a condensed one-line legal strip instead.
+
+## Proposal — Defect 3 (NOT built; Danny's call)
+Brian: *"What is the middle panel for? Nothing I select in the task queue appears there."*
+
+Confirmed by reading the code — the coordinator's description of the panes is **correct**:
+- left `TaskQueuePane` = "Task queue"
+- centre `TracePane` = "Plan and trace", driven **only** by `activeRunId`
+- right `ArtifactCanvas` = "Artifacts and approvals", receives the `selected` approval
+
+Selecting a queue item never touches the centre pane. So it is behaving as designed — but
+the design misallocates space: at 1550x780 the centre pane sits empty at ~600px wide while
+1032px of approval detail is crammed into a 343px scroll window in the narrow right column.
+Nuance worth noting: `TracePane`'s empty state **already** explains itself ("Describe what
+you need in the command bar below…"). The gap is that it never says where the selected item
+went.
+
+**My recommendation (smallest change that resolves the confusion):** when no run is active,
+render the selected approval's detail in the **centre** pane — the largest pane shows the
+thing the user actually clicked — and let the right pane keep artifacts. This is a
+conditional render inside `CopilotHarness`, not a re-architecture.
+
+**Cheaper alternative** if you want zero IA change: add one line to the centre empty state
+pointing right ("The item you selected is open in Artifacts and approvals →").
+
+I have **not** implemented either — reallocating pane roles is an architecture decision and
+my charter defers that to Danny.
+
+---
+
+# Decision — the copilot page opens a session and stream on mount
+
+**Author:** Linus (Frontend) · **Status:** proposed · **Scope:** `src/ui-app/`
+
+## What changed
+
+`/copilot` now calls `POST /copilot/sessions` and opens the SSE stream when the page mounts,
+instead of waiting for the first agent run to be dispatched.
+
+## Why
+
+The signing gate asks a real question — "can this client still verify that what I am about to
+sign is the current payload?" — and answers it from the live stream, because that is how
+`approval.updated` and `approval.terminal` arrive. The gate is correct.
+
+But `openStream` had exactly one call site, inside `submitIntent`. A banker who loaded the
+page to work the approval queue and never dispatched a run therefore sat at `idle` forever and
+**every card rendered Deny-only**. The queue is the primary work surface; it has to be usable
+on its own. Requiring an unrelated agent run before a banker can sign a queued approval is not
+a workaround, it is a defect.
+
+## The trade the team should know about
+
+**This creates one session per page load.** Sessions are cheap — `POST /sessions` persists a
+container and executes nothing; the planner only moves when a run starts inside it — but the
+count is no longer "sessions a banker actually worked in". Anyone reading session counts as an
+engagement metric will now be reading page loads.
+
+The bootstrap objective is the constant `Review the approval queue`, so these are
+distinguishable server-side if we ever want to exclude them.
+
+If that trade is unacceptable, the alternative is a dedicated lightweight freshness channel
+that does not require a session. That is an API-shape change and therefore Danny's call, not
+mine.
+
+## What was explicitly NOT done
+
+`canSignUnderStream` is unchanged. When the stream cannot be established, signing stays
+disabled and the copy says so honestly. The fix restores the client's ability to verify
+freshness; it does not lower the bar for signing.
+
+---
+
+# Queue bucket semantics: the UI and demo.sh disagree on a signed-but-unexecuted approval
+
+**Author:** Linus (Frontend)
+**Date:** 2026-09-10
+**Status:** Proposed — needs Danny
+**Scope:** Presentation semantics, not authority. No policy or service change implied.
+
+## Context
+
+While fixing the empty Task queue (double `/api` prefix — separate change), I ran the real
+10-item `banker` payload through the actual UI code. The buckets come out:
+
+| Bucket | UI | `scripts/demo/demo.sh` |
+|---|---|---|
+| Needs you | 7 | 7 |
+| Waiting on a co-signer | 1 | 1 |
+| Running | **1** | 0 |
+| Done today | **1** | 1 |
+
+Both are internally consistent; they classify one item differently.
+
+`TaskQueuePane.groupApprovals` defines:
+- `running` = `status === 'signed'`
+- `doneToday` = `status === 'executed' || status === 'denied'`
+
+So the one `signed` approval is "Running" and the one `denied` approval is "Done today".
+demo.sh counts the signed item as done and reports Running 0.
+
+## The question
+
+Is an approval that is **signed but `executionState: "not_attempted"`** "Running"?
+
+Arguments each way:
+- **Running:** it has cleared human control and is queued for execution. The banker has no
+  further action; it is in flight from their point of view.
+- **Done today:** nothing is actually executing — all ten items carry
+  `executionState: "not_attempted"`. Labelling a stalled item "Running" hides a stuck queue.
+
+There is a related, separate wrinkle: **`doneToday` does not filter by date at all.** It is
+every `executed`/`denied` approval the store holds, regardless of when. The label promises a
+time window the predicate does not implement. With an 8-hour TTL and a fresh store per page
+load this is invisible today, but the label is writing a cheque the code will not cash.
+
+## What I did NOT do
+
+I did not change the bucket predicates. `groupApprovals` was not the defect, the divergence
+is a genuine semantic choice, and quietly re-bucketing to match a shell script's arithmetic
+would be making a number agree rather than making a decision. Flagging instead.
+
+## Recommendation
+
+1. Danny rules on whether `signed` + `not_attempted` is Running or Done. Whichever wins,
+   make `demo.sh` and `groupApprovals` cite the same rule so the seed-time printout and the
+   screen cannot disagree again.
+2. Consider keying `running` on `executionState` (`in_flight`) rather than `status`, with
+   signed-and-waiting as its own state. That is an architecture-level call, hence Danny.
+3. Either implement the date window in `doneToday` or rename the bucket to match what it does.
+
+Whatever is decided, `components/copilot/__tests__/taskQueueBuckets.test.ts` pins the current
+behaviour against the real payload and will fail loudly if it is changed without intent.
+
+---
+
+# Finding — separation of duties is NOT broken (no action needed from Turk)
+
+**Author:** Linus (Frontend) · **Status:** informational · **Raised by:** Brian's
+contradictory attestation copy
+
+## The question
+
+Brian's card read "you are providing the independent supervisor co-signature. It
+counts only because you are a different identity from the requester (banker)"
+while he was signed in as `banker`. The coordinator rightly asked whether that
+meant `callerMaySign` was returning `true` for the requester's own L2 request —
+which would be a separation-of-duties hole.
+
+## The answer: no. The eligibility logic is correct.
+
+From the live `banker` payload, an L2 approval carries two slots:
+
+| slot | minSeniority | mustDifferFrom |
+|------|--------------|----------------|
+| 0    | 1            | `[]`           |
+| 1    | 2            | `[<requester uuid>]` |
+
+So the opening signature is open to anyone eligible **including the requester**,
+and only the second slot excludes them. That is what dual control means: two
+people, and the person who raised it may be one of them.
+
+The service enforces this exactly:
+
+- items at `0/2` — requester may sign → `callerMaySign: true` (they would fill slot 0)
+- item at `1/2`, slot 0 already filled by `banker` → `callerMaySign: false`,
+  *"You requested this action, so you cannot also approve it. Dual control means
+  two people, not two clicks."*
+
+The only remaining slot excludes them, so they are refused. Correct in both
+directions.
+
+## What was actually wrong
+
+Purely the UI copy, which branched on the rung alone and never looked at the
+slot. Fixed in `ApprovalCard.tsx`; the wording is now derived from how many
+signatures remain. **No backend change is required and none was made.**
+
+## Worth noting for the walkthrough
+
+§7.2/§7.3 depend on the bound identity being unmistakable. That has been
+preserved — the identity still leads the banner in bold in every case. What was
+removed is the engine vocabulary around it, not the safety.
+
+---
+
+# Proposed: use the single-service redeploy path, not `task cloud:deploy`, for one-service fixes
+
+**Author:** Rusty (Platform/Infra)
+**Date:** 2026-09-10
+**Branch:** `332-beta`
+**Status:** proposed
+
+## Context
+
+Shipping Linus's `/api/api` doubled-prefix fix to AKS mid-walkthrough, I deliberately avoided
+`task cloud:deploy`. While my ACR build was running, another agent ran it anyway: every one of
+the 13 non-ui deployments in `banking-demo` restarted at 18:32:58-18:33:01Z.
+
+`task cloud:deploy` ends in `kubectl rollout restart deployment -n banking-demo` (all
+deployments) and re-runs `_configmap:apply`, which streams values from Terraform state. On a
+demo day this is two live risks: it re-pulls `:latest` for every service, and it can revert an
+env override applied through `deploy/kustomize/base/configmap.yaml` — today, the active
+`POLICY_APPROVAL_TTL_SECONDS=28800` that keeps Brian's seeded approvals alive for the
+walkthrough. (It survived this time; verified in-process, not merely on the ConfigMap object.)
+
+There is a second, sharper hazard. The ambient full restart re-pulled `ui-app:latest` at
+18:32:58 — **83 seconds before my push completed at 18:34:15**. A restart that *looks* like it
+picked up your change can predate your push. Only a digest comparison distinguishes the two.
+
+## Proposal
+
+For a change confined to one service, the standard path is:
+
+```bash
+task cloud:build:<service>
+kubectl rollout restart deployment/<service> -n banking-demo
+kubectl rollout status  deployment/<service> -n banking-demo --timeout=300s
+```
+
+Reserve `task cloud:deploy` for genuine full-environment deploys (new/changed ConfigMap,
+SecretProviderClass, gateway, or TLS wiring), and announce it before running it — it is not a
+local operation, and during a walkthrough it is a shared-blast-radius one.
+
+Two supporting rules:
+
+1. **Baseline before acting.** Capture `.status.containerStatuses[].imageID` and pod
+   `startTime` *before* the build. With `:latest` the tag never moves, so the digest is the only
+   proof the new binary is running — and in a shared namespace it is the only way to tell your
+   effect from someone else's afterwards.
+2. **Verify env overrides in the running process**, via
+   `kubectl exec deploy/<svc> -- printenv <VAR>`, not by reading the ConfigMap. The ConfigMap
+   can be correct while the pod predates it.
+
+## Falsifier
+
+If a single-service `rollout restart` is ever shown to leave a service inconsistent with cluster
+state that only `cloud:deploy` reconciles, this narrows to "build+restart for image-only
+changes; `cloud:deploy` whenever manifests or config change." I found no such case today.
+
+## Impact if rejected
+
+Every one-line UI fix during a demo restarts all 13 services and re-streams config from
+Terraform, putting deliberate env overrides at risk from an unrelated change.
+
+---
+
+# SSE stream withholds headers for one heartbeat interval — owner: banker-copilot-service (Turk)
+
+**Author:** Rusty (Platform/Infra)
+**Date:** 2026-09-10
+**Branch:** `332-beta`
+**Status:** proposed — needs Turk to implement, Danny to arbitrate if contested
+**Blocking:** Brian's §7.1 / §7.3 walkthrough. Seed fixtures expire 21:06Z.
+
+## Verdict
+
+**The layer is the application, not the ingress.** `banker-copilot-service` withholds the SSE
+response status line for a full `COPILOT_SSE_HEARTBEAT_SECONDS` (15s) when a client attaches to
+a session that has no active run. Istio/Envoy is not buffering and needs no change.
+
+## Evidence
+
+| probe | result |
+|---|---|
+| Unauth GET stream via public URL | `401` in 0.55s, `x-envoy-upstream-service-time: 17` |
+| Auth GET stream via public URL, 40s window | `200 text/event-stream`, first byte **15.55s**, **`x-envoy-upstream-service-time: 15030`** |
+| Auth GET stream via `port-forward` to pod:8005, **Envoy bypassed** | first byte **15.51s**, `server: uvicorn` |
+| **Control — same session/token/ingress, `?runId=run_doesnotexist`** | **0.77s, `404`** |
+
+The control is decisive: `?runId=` routes into the `404` at line 346, *before* the await at line
+353. Handler, auth, Envoy and TLS held constant; one branch changed; 15.51s → 0.77s.
+
+`x-envoy-upstream-service-time: 15030` is Envoy timing the upstream: the proxy testifying the
+delay was not the proxy. The port-forward removes Envoy entirely and reproduces it identically.
+The app already sets `x-accel-buffering: no` and `cache-control: no-cache` correctly.
+
+There is no nginx in the cloud path — `src/ui-app/nginx.conf` serves the SPA only, and
+`infra/local/gateway.nginx.conf` is docker-compose. Routing is `banking-demo-vs` →
+`banker-copilot-service`, prefix `/api/copilot/`, `timeout: 3600s`.
+
+### The service did not come back degraded
+
+`READY=true`, `RESTARTS=0`, started 18:32:59Z, no errors or tracebacks in the log. The simpler
+"restarted into a bad state" explanation is false.
+
+### Access logs cannot prove absence
+
+Authenticated probes aborted at `--max-time 15` appear nowhere in the log, because uvicorn writes
+its access line on response *completion*, not on accept — and the first byte lands at 15.51s. This
+is expected for an aborted long-poll and is **not** evidence the request died before the service.
+
+## Cause
+
+`src/banker-copilot-service/app/routes/sessions.py:353`, in `stream_session`:
+
+```python
+if stream is None:
+    stream = await runs.await_next_run(session_id, timeout=heartbeat_seconds)
+```
+
+This `await` precedes the `StreamingResponse`. Starlette cannot emit `http.response.start` until
+the handler returns, so attach-before-dispatch — the normal UI order, and the comment above the
+line says so — stalls the status line for one full heartbeat.
+
+## Proposed fix (Turk)
+
+Remove the pre-flight await and let `_events()` handle the no-run case, which it already does
+correctly: its `while stream is None` loop waits and yields `_heartbeat_frame()`. The first
+heartbeat then flushes headers immediately and the client's connection verifies at once. This is
+a deletion, not new logic, and it preserves the documented intent — "open the stream anyway and
+let the heartbeats carry it".
+
+## Stopgap I did NOT apply, and why
+
+`COPILOT_SSE_HEARTBEAT_SECONDS` is in `banking-demo-config` (currently `15`) and is mine to
+change. Lowering it to ~2 would cut time-to-headers to ~2s. I held because:
+
+1. The variable is **overloaded** — also the queue poll timeout and the `waited +=
+   heartbeat_seconds` increment against the 3600s idle budget. At 2s each open stream emits ~1800
+   heartbeat frames instead of ~240. Whether Linus's client reads that as healthy or as churn is
+   untested.
+2. **The gate's predicate is unknown.** "Cannot verify this is still the current payload" may
+   require a payload-hash event, not merely open headers. The button could stay greyed.
+
+Available on request as an explicit, reversible stopgap: edit the key, then
+`kubectl rollout restart deployment/banker-copilot-service -n banking-demo` (that service only).
+
+## Is it new or pre-existing? Both, precisely
+
+**The defect is pre-existing.** `git blame` dates the blocking await to `bcfd8b9`, 2026-09-04. The
+running image `d3eb82f4…` was pushed 2026-09-09T12:00:28Z; the only two ACR runs today (`dt29`,
+`dt2a`) both built `ui-app`, so no copilot binary changed. The pod is `READY`, `RESTARTS=0`, with
+no errors in its log.
+
+**The 18:32:57Z deploy is nevertheless the trigger.** `RunStreamRegistry` (`app/events/bus.py:164`)
+is an explicitly in-process registry — *"Durability lives in the sink, not here."* The restart at
+18:32:59 destroyed every in-flight run stream. A reconnecting client finds `latest_for_session ==
+None` and falls into exactly the `await runs.await_next_run(...)` path, i.e. the 15s stall. Brian's
+banner ~2 minutes later is consistent with that and not a coincidence.
+
+A latent defect on a cold path, plus a restart that forces every client onto that cold path, is a
+new outage from old code. Fixing the ordering removes the class of failure regardless.
+
+## Not a second fault
+
+`GET /api/copilot/stream` and `GET /api/copilot/approvals/stream` appear as 404s in the service log.
+Neither string exists anywhere in the repo, in `src/ui-app/src/`, or in the deployed bundle. They
+were manual probes, not client traffic. No action.
+
+## Falsifier
+
+If Linus confirms the client's signing gate unblocks on response headers alone, and a 2s cadence
+is benign to it, the ConfigMap stopgap becomes a legitimate immediate unblock and only the
+ordering fix remains outstanding.
+
+## Diagnostic note worth keeping
+
+The original report said "zero headers in 15 seconds — a hard hang". It was `--max-time 15`
+against a 15.51s first byte: 0.5s under the boundary. A timeout set near the value being measured
+reports absence rather than latency, and sent the diagnosis to the wrong layer.
+
+---
+
+# Unattributed cluster deploy at 18:32:57Z — identified: local `task cloud:deploy`, not a pipeline
+
+**Author:** Rusty (Platform/Infra)
+**Date:** 2026-09-10
+**Branch:** `332-beta`
+**Status:** informational + proposed guard
+
+## Question
+
+Who ran the full-namespace deploy that restarted all 13 `banking-demo` deployments at 18:32:57Z,
+mid-test, unauthorised?
+
+## Answer: a local interactive shell on Brian's machine
+
+`~/.zsh_history` (epoch:duration format):
+
+```
+1789064972:152;task cloud:build:ui-app   -> 2026-09-10 18:29:32Z, ran 152s
+1789065133:0;task cloud:deploy           -> 2026-09-10 18:32:13Z
+```
+
+Corroborated by three independent signals:
+
+| signal | value | meaning |
+|---|---|---|
+| ACR run `dt29` | started 18:29:41Z, `QuickRun`, output `ui-app:latest` `b1c0f189…` | matches the 152s build |
+| `restartedAt` annotation | `2026-09-10T13:32:57-05:00` | **CDT offset** — a local client, not a UTC CI runner |
+| `.github/workflows/` | build-and-test, mutation-testing, preview-sdk-pin-guard, squad-*, dependabot | **no deploy workflow exists**; last Actions run 12:06Z |
+
+**Nothing in this environment deploys on its own.** There is no CD pipeline targeting this cluster.
+The actor was someone driving `task` from Brian's terminal — shipping the same ui-app fix in
+parallel with me, unaware I was doing it.
+
+My own work is distinguishable: ACR run `dt2a` (18:32:02Z, `ui-app` `6d92ae1e…`) and
+`restartedAt 13:34:23-05:00` on `ui-app` only. Commands issued through my tooling run in
+non-interactive bash and therefore never appear in `~/.zsh_history` — worth knowing when reading
+that file as evidence, in both directions.
+
+## Why it mattered
+
+`task cloud:deploy` ends in `kubectl rollout restart deployment -n banking-demo`. That restart
+wiped `RunStreamRegistry`, an in-process registry of live runs, which is the proximate trigger for
+Brian's "Live updates are interrupted" banner two minutes later. It also re-ran `_configmap:apply`
+against the live `POLICY_APPROVAL_TTL_SECONDS=28800` override (which survived — verified in-process).
+
+Two agents building the same image within three minutes is also a race: whoever pushes `:latest`
+last wins, and neither knows. It resolved correctly here only by luck of ordering.
+
+## Proposed guard
+
+1. **Announce before any namespace-wide operation** while Brian is testing. `cloud:deploy` is not a
+   local action; it has cluster-wide blast radius.
+2. **One agent owns deployment per work item.** If a fix is assigned to someone, others do not also
+   build and push it.
+3. Prefer the single-service path (`cloud:build:<svc>` + targeted `rollout restart`) — see
+   `rusty-single-service-redeploy-path.md`.
+
+## Note
+
+This is not evidence of anything rogue in the environment: no automation deployed, no external
+actor. It was uncoordinated human/agent work on a shared cluster, which is a process gap rather
+than a security one.
+
+---
+
+# Turk — card backend fields and counter-proposal guardrails
+
+Date: 2026-09-10
+Epic: #332 Banker Copilot agentic harness
+
+## Decision / implementation note
+
+Approval response display fields are server-owned and display-only:
+
+- `evidence.<tool>.label`
+- `evidence.<tool>.summary`
+- `subject`
+
+They are derived at response-mapping time from already-stored approval evidence/payload. They are not persisted as authority inputs and do not enter `hashFields` or the payload hash.
+
+Counter-proposals continue to use the existing `POST /api/authority/approvals` path with `supersedesApprovalId`. A superseding proposal now contributes `context.supersedes=true` to the evaluator and fires a global `superseding-proposal` escalator with `minRung: L2` only. It intentionally has no `raiseBy`; otherwise an L2 replacement would become an L3 refusal and break Brian's authorised option B demo path.
+
+A separate repeated-supersede churn guard counts recent superseding proposals by requester and applies `raiseBy: 1` only when the count exceeds `POLICY_SUPERSEDE_CHURN_LIMIT` within `POLICY_SUPERSEDE_CHURN_WINDOW_SECONDS`.
+
+## Evidence
+
+Validated with:
+
+- `python -m pytest tests -q` under `src/banker-copilot-service`: 414 passed
+- `dotnet test src/authority-service.UnitTests/authority-service.UnitTests.csproj --no-restore`: 150 passed
+- `dotnet test src/authority-service.Tests/authority-service.Tests.csproj --no-restore`: 224 passed
+- `tests/demo/test-demo-dataset.sh`: 10 check groups passed
+
+---
+
+# Turk — free-text `/copilot` command path is inert
+
+## Finding
+
+Brian's free-text command-bar path does not currently perform intent planning. The UI sends `startRun(sessionId, { objective: intent })`; `actionId`, `payload`, and `facts` are absent. The backend planner treats absent `action_id` as an evidence-only run: no required evidence, no assess step, no propose step.
+
+## Evidence
+
+- UI submit path: `src/ui-app/src/components/copilot/CopilotContext.tsx` sends `{ objective: intent }` to `startRun`.
+- API client shape: `src/ui-app/src/api/copilot.ts` makes `actionId`, `payload`, and `facts` optional.
+- Backend route: `src/banker-copilot-service/app/routes/sessions.py` passes body fields directly into `PlannerRequest`.
+- Planner: `src/banker-copilot-service/app/planner/loop.py` returns `[]` from `_required_evidence()` without `request.action_id`; `_plan_steps()` adds assess/propose only when `action_id` exists.
+- Live reproduction: free-text run `run_80e2d2382152489c` produced one `Assemble evidence bundle` step, `{}` evidence, zero tool calls, zero approvals.
+- Counterexample: demo probe approval `apr_20ffbebe073343bd9f871b66` was successful because the probe supplied `actionId` and payload directly.
+
+## Impact
+
+The deployed command bar demonstrates a trace shell, not natural-language agentic planning. The model is consulted only after an action and payload are already known. That is materially narrower than the surface suggests.
+
+## Proposed next ruling
+
+Danny/Brian should decide whether Phase 3 requires an intent planner now. If yes, the missing component is not UI wording; it is a backend planning stage that maps objective + session context to one of: read-only evidence plan, proposed action with payload/facts, or refused/clarification-needed. Until then, free-text action requests should fail loudly as unsupported rather than return a successful empty run.
+
+---
+
+# Turk — reason-template rendering and seeded approval assessments
+
+## Decision proposed
+
+Authority reason templates should fail closed for signer-facing prose: render known semantic tokens (`actual`, `threshold`) from evaluator-owned state, trim YAML formatting, and never emit unresolved `{placeholder}` text. If a placeholder remains unresolved, omit the sentence containing it; if that removes all prose, use a neutral fallback: “Additional human review is required by the authority policy.”
+
+## Rationale
+
+A literal placeholder on an approval card is worse than a missing sentence because it looks like a data value the system considered and failed to bind. Omitting only the bad sentence preserves any correctly rendered, reviewable reason without inventing the missing value. A non-empty fallback keeps audit/display contracts from degrading into blank strings.
+
+## Related implementation
+
+- `src/authority-service/Policy/PolicyEvaluator.cs` renders `{actual}` from the predicate field and `{threshold}` from the resolved threshold.
+- `scripts/demo/demo.sh` attaches `mode: seeded-demo` assessments to direct seeded approvals. It does **not** claim a primary model assessment happened; it explicitly records `failureReason: seeded_direct_authority_proposal`.
+
+## Payload-hash boundary
+
+No payload-hash fields changed. `agentAssessment` remains explanatory metadata on the approval record, outside the signed payload hash. If the team wants it hash-bound later, that should be a Danny-level ruling because it affects supersede/replay semantics.
+
+---
+
+# SSE: flush the first frame before waiting, and do NOT 409 a cursor with no live run
+
+**Author:** Turk (Backend)
+**Date:** 2026-09-10
+**Branch:** `332-beta`
+**Status:** implemented (code + tests), awaiting Rusty's deploy for the live measurement
+**Responds to:** `.squad/decisions/inbox/rusty-sse-headers-withheld-service-layer.md`
+**Files:** `src/banker-copilot-service/app/routes/sessions.py`,
+`src/banker-copilot-service/tests/test_api.py`
+
+## What changed
+
+1. **Removed the pre-flight `await runs.await_next_run(...)`** in `stream_session`. Anything
+   awaited before the handler returns holds back `http.response.start`. Rusty's diagnosis and
+   his evidence stand unaltered.
+2. **Reordered the `while stream is None` loop inside `_events()` to yield its heartbeat BEFORE
+   it waits.** Not the unblock — see the correction below — but defence-in-depth: the generator
+   awaited `await_next_run` before its first `yield`, so a stream opened at 0s then said nothing
+   for 15s, against a client watchdog that tolerates two missed heartbeats. Cost: one extra
+   heartbeat per stream. `waited +=` still increments only on a timeout, so the 3600s idle
+   budget is untouched.
+
+`COPILOT_SSE_HEARTBEAT_SECONDS` is **unchanged at 15** in both the ConfigMap and
+`docker-compose.yml`, as Rusty asked. No config was edited.
+
+## Correction to a shared assumption — the gate keys off HEADERS, not the first frame
+
+Rusty flagged the gate's predicate as unknown and I initially deferred it to the deploy. It is
+two greps and I should have run them first. `canSignUnderStream`
+(`src/ui-app/src/components/copilot/types.ts:623`) returns true for `live` or `resumed` only,
+and `copilotStream.ts` sets those on `response.ok` — **on the response headers**. Consequences:
+
+- **Removing the pre-flight await was on its own sufficient** to unblock signing. Rusty's
+  recommendation was complete for the reported symptom; my reorder hardens it.
+- The ConfigMap stopgap Rusty held back **would** have worked, and his falsifier is now
+  answered: the gate does unblock on headers alone. He was still right not to apply it — the
+  ordering fix removes the class of failure and costs nothing.
+- **A suspected second stall is retired, not ignored.** A client reconnecting to a run that is
+  live but quiet skips the `while stream is None` loop and yields nothing until the heartbeat
+  timeout — but its headers are out at 0s, so `streamStatus` is `live`, signing is enabled, and
+  the 30s watchdog (`heartbeatIntervalMs` 15000 x `missedHeartbeatsBeforeDegraded` 2) has room
+  for a 15s first heartbeat. No change needed there.
+
+## The 409 replay guarantee survives
+
+Asked to prove, not assert. The `runId` lookup, the 404, and `latest_for_session` all still run
+*before* the `replay_available_from` check, so every request that has a stream still gets
+checked. The only branch that loses the check is the one where a run appears mid-wait — and
+there the check was already vacuous: `replay_available_from` returns `True` when `not
+self._recent` (`app/events/bus.py`), and a run created seconds earlier has an empty `_recent`.
+It could never have fired on that path. Pinned by
+`test_stream_still_answers_409_when_the_cursor_fell_out_of_the_replay_window`.
+
+## The 409 I deliberately did NOT add — Linus and Danny should read this
+
+A cursor for a run this process never knew (the post-restart case, i.e. Brian's) is genuinely
+unresumable, and my first instinct was to answer `409 resync_required` up front. I did not,
+because `src/ui-app/src/api/copilotStream.ts:368` handles 409 by clearing `pending`, calling
+`onResyncRequired`, setting `degraded` and scheduling a reconnect — **with no visible reset of
+`lastSeq`**. If the cursor survives the reconnect, that turns a 15s stall into a permanent 409
+loop. Backend-only means I do not get to assume the client's recovery.
+
+**Open question for Linus:** does the client reset its `lastSeq` to 0 after `onResyncRequired`?
+If yes, the up-front 409 becomes the correct answer and I will ship it.
+
+## Pre-existing hole, unchanged by this fix, filed rather than fixed
+
+`RunStream.subscribe` computes `backlog = [e for e in _recent if e.seq > last_seq]`. `seq` is
+run-scoped. A client that reconnects with a cursor from a run destroyed by a pod restart and
+attaches to a *new* run silently drops that new run's first `lastSeq` frames, and
+`replay_available_from` cannot catch it because `_recent` is empty at that moment. Present
+before this change and after it. It is the same guarantee the 409 exists to defend, reached by a
+route the 409 does not cover. Needs a client-side answer or a run-scoped cursor.
+
+## Evidence
+
+- New test `test_stream_flushes_its_first_frame_without_waiting_a_heartbeat`, run against the
+  **unfixed** code with the fix stashed: `assert None == 200` — no `http.response.start` within
+  4s of a 10s heartbeat. The withheld status line, reproduced in the suite.
+- Same test against the fix: `200`, `text/event-stream`, first frame `event: heartbeat`, under
+  2s. Passes in under a second of wait.
+- The measurement is taken at the **ASGI boundary**, not through `TestClient`: Starlette's test
+  transport buffers the entire response inside its portal, so every "streamed" chunk appears to
+  arrive at completion time. A `TestClient`-based timing test reported 10.05s *with the fix
+  applied* and would have sent me chasing a fix that was already correct.
+- Suite: **412 passed** before, **414 passed** after (two tests added). `docker compose config
+  -q` clean.
+
+## What only a deploy can confirm
+
+I have no cluster access and did not use one. What is proven here is that the service emits its
+status line and its first heartbeat immediately on the no-run path, and — from the client source
+— that the signing gate flips on those headers. What is **not** proven is the end-to-end
+wall-clock through Istio against the real cluster: Rusty's live curl after
+`task cloud:build:banker-copilot-service` plus a targeted rollout restart is the measurement
+that settles it. Expect first byte in well under a second where it was 15.5s.
+
+## Not done, by instruction
+
+No seeder run, no approval created, signed or denied, no copilot run started. Brian's 10 seeded
+approvals (expiring 21:06Z) are untouched. No file under `src/ui-app/` was modified; I read
+`copilotStream.ts` and `copilotConfig.ts` only.
+
+---
+
+# Verification corpus: subjects must be resolved, and facts must be derived
+
+**Author:** Turk (Backend Dev)
+**Date:** 2026-09-10
+**Branch:** `332-beta` (uncommitted; Brian holds the index)
+**Requested by:** Brian
+**Blocks:** Livingston's stage-1 measurement
+
+---
+
+## The decision
+
+`tests/verification/e2e_cases.py` no longer contains a single account id, and no longer contains
+a single transcribed balance or transaction amount. Both are now resolved from
+`config/demo-dataset.json` — the seeder's own input — at run time.
+
+This is the wider form of Danny's wait-predicate ruling:
+
+> A seeder must wait for the thing it will later require. Any predicate used to SELECT a subject
+> must be the same predicate that TERMINATES the wait.
+
+Generalised, and the form that applies here:
+
+> **A predicate used to select a subject must survive whatever regenerates the subject.**
+
+An account UUID does not survive `scripts/demo/demo.sh`. `owner + accountType` does, because the
+dataset file the seeder reads guarantees it. So does the account's transaction set, for the same
+reason.
+
+---
+
+## What was actually wrong — the reported half and the unreported half
+
+I logged this defect yesterday as "six dead ids". That was the half that fails loudly.
+
+**The loud half.** `e2e_cases.py` pinned `A1`/`A2`/`A3` and `supervisor_cases.py` pinned four
+identifiers, all minted by one seed and deleted by the next. An unresolvable id produces an
+instrument failure nobody can miss.
+
+**The quiet half, which I understated.** The corpus also hard-coded the *ledger those accounts
+held*, in its module docstring and in the prose of every case:
+
+| pinned as | claimed history | exists today |
+|---|---|---|
+| `A1` Checking | $32,897.40, 7 txns, 3 × +$3,200.00 ACME payroll within ~90s | no |
+| `A2` Savings | $24,975.00, one −$25.00 maintenance fee | no |
+| `A3` MoneyMarket | $600.00, two −$9,500.00 overseas wires | no |
+
+Sixteen of the thirty-two cases carry `grounded: True`, asserting their framing is factually
+true against that ledger. The whole point of the corpus is that `grounded` is the most
+diagnostic field in it — a supervisor that reads evidence should track `grounded`, not tone.
+With the ledger gone, the field describes nothing.
+
+**The trap I nearly walked into.** The obvious fix is to resolve the old subjects by account
+*type*: Checking→Checking, Savings→Savings, MoneyMarket→MoneyMarket. Every id would resolve.
+Every run would complete. And it would be wrong, because **the reseed moved the roles**:
+
+| role | pre-reseed | today |
+|---|---|---|
+| thin / empty account | `A2` Savings (one fee) | `dana:Savings` — **zero** transactions, $0.00 |
+| structuring subject | `A3` MoneyMarket (overseas wires) | `casey:Savings` — three near-identical cash credits |
+| large adverse wire | — | `casey:Checking` — one $61,200.00 offshore wire |
+| routine history | `A1` Checking (payroll/rent) | `dana:Checking` — payroll, rent, utilities, refund |
+| low balance / unfunded | `A3` ($600) | `casey:MoneyMarket` ($5,028.81) |
+
+Type-only mapping would have inverted roughly half the `grounded` flags **silently**. That is
+strictly worse than the current blocked state: it converts a measurement that cannot run into a
+measurement that runs and lies. Pasting in today's fresh ids has the same property with a
+one-day fuse.
+
+---
+
+## What changed
+
+**New — `tests/verification/seed_subjects.py`.** Loads `config/demo-dataset.json` and exposes
+each seeded account under a stable handle (`dana:Checking`, `casey:Savings`, …) carrying its
+contract-derived balance and transaction set. `resolve_subjects()` turns handles into today's
+ids by logging in **as the owning customer** and reading `GET /api/accounts` — reusing the
+convention `scripts/demo/demo.sh` already established in `seeded_account_ids` and
+`resolve_account_refs` (account-service scopes reads to the owner; a banker token returns
+nothing). `verify_ledgers()` diffs each live ledger against the contract, read-only.
+
+**Rewritten — `tests/verification/e2e_cases.py`.** Each case names a `subject` handle; `account`
+does not exist until `resolve_cases()` fills it. Every amount in every framing is computed from
+the dataset, so the prose follows a reseed rather than being falsified by it. All 32 cases were
+re-authored against the current ledger, preserving the three measurement axes
+(expectation × polarity × grounded) and the adverse-and-correct polarity slice that is the
+`ef61d7b` regression coverage. `_amount()` raises **at import** if the dataset stops guaranteeing
+a transaction a case is built on.
+
+**Changed — `tests/verification/e2e_supervisor_probe.py`.** Resolves subjects before driving
+anything; resolution failure is fatal. Reads
+`balance_adjustment_dual_control_amount` from the live `/api/authority/policy` and asserts every
+case amount clears it, rather than restating `1000.00` in a comment. New `--resolve-only` mode:
+fully read-only, drives nothing.
+
+**Changed — `tests/verification/README.md`.** The 2026-09-08 result (7/31 = 22.6%) is now
+explicitly marked as measured against a seed and a corpus that no longer exist. Case ids,
+subjects and framings all changed, so it is **not** a baseline and must not be compared
+case-for-case with a future run.
+
+---
+
+## Where dynamic resolution was the wrong answer — stated, not hidden
+
+`tests/verification/supervisor_cases.py` still contains no live ids, but it does **not** resolve
+dynamically, deliberately:
+
+1. It runs in **component mode** — `kubectl cp` into the `banker-copilot-service` pod, calling
+   `FoundryDecider` directly with a hand-built `evidence` dict. **Nothing dereferences those
+   ids.** There is no fetch, no account-service call, no ledger lookup. The id is a correlation
+   key inside a fabricated payload and a token in the prompt.
+2. Only `tests/verification` is copied into the pod, so the probe has neither
+   `config/demo-dataset.json` nor a route by which to log in as a seeded customer.
+
+Adding live resolution there would introduce a failure mode and buy nothing. The fix was
+honesty: `synthetic-account-clean`, `synthetic-account-thin`, `synthetic-account-suspicious`,
+`synthetic-account-malformed`, `synthetic-user-retail` — identifiers that can never be mistaken
+for live ones and can never go stale. The `override-07-malformed-record` case, whose rationale
+claimed *"this is the REAL record live in the demo environment"*, now says what is true: the
+record was destroyed by a reseed and the case reproduces its **shape**. A comment at the top of
+the file records that if this corpus is ever promoted to drive real runs it must adopt
+`seed_subjects.resolve_subjects` — **not** a fresh set of pasted UUIDs.
+
+---
+
+## Repo-wide scan — exactly what was searched, exactly what was found
+
+Yesterday I claimed "nothing else in the repo calls this endpoint" after searching only `src/`,
+and it was false. So, the whole tree, no path filter:
+
+```
+grep -rnEo "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" \
+  tests/ scripts/ src/ config/ docs/
+grep -rnEo "[0-9a-f]{8}-...-[0-9a-f]{12}" tests/     # no exclusions at all
+```
+
+**Outside `tests/`:** zero hits in `scripts/`, `config/`, `docs/` or first-party `src/`. The only
+`src/` hits are inside `src/ui-app/node_modules` (`uuid`, `ws`, `postcss-cascade-layers` — vendor
+constants).
+
+**Inside `tests/`, after the fix — zero UUIDs remain in any executable test code.** What is left,
+and why each is correct as-is:
+
+| file | count | why it stays |
+|---|---:|---|
+| `tests/verification/results-e2e-2026-09-08.jsonl` | 32 | dated result artifact — the record of a past run; its ids are historically correct and rewriting them would falsify the record |
+| `tests/verification/stability-e2e-2026-09-08.jsonl` | 10 | same |
+| `tests/fixtures/evidence-samples/*.json` (4 files) | 39 | captured API responses; a captured response's ids are its content. Also off-limits by instruction |
+| `tests/e2e/test-results.log` | 8 | log output, not code |
+
+No other file has the same defect. Nothing else needed fixing.
+
+---
+
+## What I ran, and what I refused to run
+
+**Ran — read-only, against `https://onlinebankingdemo.bjdazure.tech`:**
+
+```
+python e2e_supervisor_probe.py --user banker --password <seed> --resolve-only
+```
+
+* 5/5 subject handles resolved to live ids.
+* Live `balance_adjustment_dual_control_amount` = `1000.00`; **32/32** case amounts clear it.
+* Ledger grounding check: **5/5** accounts — live balance and full transaction set match the
+  contract exactly. The `grounded` flags are true again.
+* Exit 0. Nothing written.
+
+Independently corroborated by direct `curl` reads of `/api/accounts` and
+`/api/transactions/account/{id}` for casey, dana and retail before any code was changed.
+
+**Refused to run — the 32-case measurement itself.** Each case drives
+`POST /api/copilot/sessions/{id}/runs`, and the probe is propose-only *by design*: **every run
+leaves a pending approval**. Thirty-two runs would have put thirty-two new pending approvals into
+the co-sign queue while Brian was about to walk the UI against this exact seed, on top of the 10
+that are already there with 8-hour TTLs. Per the instruction to surface writes rather than
+perform them, this is Brian's and Livingston's call to schedule. `--resolve-only` exists so the
+harness can be proven correct without spending the demo's state to do it.
+
+**Also refused:** no seed or reset script was run, and nothing was committed.
+
+---
+
+## Open, for Livingston
+
+The end-to-end agreement rate for the new corpus **does not exist yet**. The old 22.6% is not a
+baseline for it. When the queue is clear, `--out` a fresh run and report the new denominator; the
+harness is ready and its subjects will resolve against whatever seed is live that day.
+
+---
+

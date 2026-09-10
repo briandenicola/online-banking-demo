@@ -58,6 +58,8 @@ public class ApprovalService
         CancellationToken ct = default)
     {
         var policy = _policyProvider.Current;
+        var supersedes = !string.IsNullOrWhiteSpace(request.SupersedesApprovalId);
+        actor = await WithProposalWindowCountsAsync(actor, supersedes, policy, ct);
 
         var context = new EvaluationContext
         {
@@ -65,7 +67,8 @@ public class ApprovalService
             Payload = request.Payload,
             Evidence = request.Evidence,
             Facts = request.Facts,
-            Actor = actor
+            Actor = actor,
+            Supersedes = supersedes
         };
 
         var decision = _evaluator.Evaluate(context, policy);
@@ -674,10 +677,37 @@ public class ApprovalService
             Payload = approval.Payload,
             Evidence = approval.Evidence,
             Facts = approval.Facts,
-            Actor = RequesterContext(approval, policy)
+            Actor = RequesterContext(approval, policy),
+            Supersedes = !string.IsNullOrWhiteSpace(approval.SupersedesApprovalId)
         };
 
         return _evaluator.Evaluate(context, policy);
+    }
+
+    private async Task<ActorContext> WithProposalWindowCountsAsync(
+        ActorContext actor, bool supersedes, ResolvedPolicy policy, CancellationToken ct)
+    {
+        var count = 0;
+
+        if (supersedes)
+        {
+            var windowSeconds = policy.Threshold("supersede_churn_window_seconds").AsInt();
+            var since = DateTime.UtcNow.AddSeconds(-windowSeconds);
+            count = await _repository.CountSupersedesAsync(actor.UserId, since, ct);
+        }
+
+        return new ActorContext
+        {
+            UserId = actor.UserId,
+            Username = actor.Username,
+            Role = actor.Role,
+            EffectiveRoles = actor.EffectiveRoles,
+            Seniority = actor.Seniority,
+            SessionId = actor.SessionId,
+            SignaturesInWindow = actor.SignaturesInWindow,
+            MutatingProposalsInWindow = count,
+            SelfDealing = actor.SelfDealing
+        };
     }
 
     private static ActorContext RequesterContext(Approval approval, ResolvedPolicy policy) => new()

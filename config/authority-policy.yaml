@@ -50,6 +50,20 @@ thresholds:
     env: POLICY_BATCH_MAX_ITEMS
     description: Maximum items in a single batch approval.
 
+  supersede_churn_limit:
+    kind: count
+    default: "3"
+    env: POLICY_SUPERSEDE_CHURN_LIMIT
+    description: >
+      More than this many replacement proposals in the churn window exits the Copilot as
+      reviewer-shopping risk. Set above ordinary correction use; the demo supersedes once.
+
+  supersede_churn_window_seconds:
+    kind: duration_seconds
+    default: "3600"
+    env: POLICY_SUPERSEDE_CHURN_WINDOW_SECONDS
+    description: Window for counting replacement proposals by the same requester.
+
   # ---- Per-action TTLs -----------------------------------------------------------------
   ttl_transaction_flag_review:
     kind: duration_seconds
@@ -307,6 +321,23 @@ escalators:
     minRung: L2
     reasonTemplate: >
       This request touches an account related to you, so it cannot be self-approved.
+
+  - id: superseding-proposal
+    description: >
+      This payload replaces one a human has already been shown. Authorship of the replacement
+      cannot be attested yet, so it requires a second pair of eyes.
+    when: { field: context.supersedes, op: isTrue }
+    minRung: L2
+    reasonTemplate: >
+      The figures changed after this was put in front of a human, so it needs a second
+      pair of eyes.
+
+  - id: repeated-supersede
+    description: The actor has replaced their own proposals repeatedly in a short window.
+    when: { field: actor.mutatingProposalsInWindow, op: gt, threshold: supersede_churn_limit }
+    raiseBy: 1
+    reasonTemplate: >
+      You have revised {actual} proposals recently, above the limit of {threshold}.
 
   - id: bulk-fan-out
     description: Many approvals of the same action type in a single session.

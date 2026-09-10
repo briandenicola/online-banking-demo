@@ -293,6 +293,20 @@ export interface EvidenceRef {
   sourceToolCallId?: string;
   excerpt?: string;
   href?: string;
+  /**
+   * What the tool actually RETURNED, flattened into the same rows the payload
+   * uses.
+   *
+   * The wire sends `evidence` as an object keyed by tool name, e.g.
+   * `{ "get_account": { "accountId": "…", "balance": 59480 } }`. The mapper used
+   * to take the KEY for a label and discard the value entirely, so a banker was
+   * told the agent called a function and never what it found. These are those
+   * findings.
+   *
+   * Empty when the record carried no structured payload — never undefined, so
+   * callers do not each invent a different guard.
+   */
+  findings: PayloadField[];
 }
 
 export interface Approval {
@@ -622,6 +636,53 @@ export type StreamStatus =
  */
 export function canSignUnderStream(status: StreamStatus): boolean {
   return status === 'live' || status === 'resumed';
+}
+
+/**
+ * Why signing is gated, said honestly.
+ *
+ * The gate itself is unchanged — `canSignUnderStream` above is the only thing
+ * that decides. This only decides the WORDS.
+ *
+ * `idle` is not `reconnecting`. Every card used to say "Reconnecting — cannot
+ * verify this is still the current payload" whenever the gate was shut, which on
+ * a cold page load was simply false: nothing was reconnecting, because nothing
+ * had ever connected. That one wrong word sent this team after a healthy server,
+ * a suspected stale token, and a suspected ingress fault before anyone looked at
+ * the client's own lifecycle. A status message that states a cause must state
+ * the cause it actually observed.
+ */
+/**
+ * The terse form, shown beside the disabled Sign button where the button itself
+ * already supplies the context. Kept separate from the full explanation so the
+ * two never render the same sentence twice on one card.
+ */
+export function streamGateReasonBrief(status: StreamStatus): string {
+  switch (status) {
+    case 'idle':
+    case 'connecting':
+      return 'Connecting to live updates.';
+    case 'failed':
+      return 'Live updates could not be established.';
+    case 'closed':
+      return 'Live updates are closed.';
+    default:
+      return 'Reconnecting — payload freshness unverified.';
+  }
+}
+
+export function streamGateReason(status: StreamStatus): string {
+  switch (status) {
+    case 'idle':
+    case 'connecting':
+      return 'Connecting to live updates — signing unlocks once this payload can be confirmed current.';
+    case 'failed':
+      return 'Live updates could not be established — signing is disabled until this payload can be confirmed current.';
+    case 'closed':
+      return 'Live updates are closed — signing is disabled until they resume and this payload can be confirmed current.';
+    default:
+      return 'Reconnecting — cannot verify this is still the current payload.';
+  }
 }
 
 // ---------------------------------------------------------------------------

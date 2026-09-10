@@ -50,10 +50,23 @@ Both halves of the marker are checked. Testing the marker alone would misclassif
 model verdict that happened to name that factor; testing confidence alone would swallow any
 real 0.0-confidence opinion.
 
+Subjects are resolved, never pinned
+-----------------------------------
+The corpus names its accounts by stable handle (``owner:accountType``), and this probe turns
+those into live ids at startup via ``seed_subjects.resolve_subjects`` — logging in as each
+OWNING customer and reading ``GET /api/accounts``, the same convention ``scripts/demo/demo.sh``
+uses. Resolution happens BEFORE any run is driven and a failure is fatal, so a run can never
+be driven against an account id left over from a previous seed.
+
 Usage
 -----
     python e2e_supervisor_probe.py --base https://host --user banker --password '...' \
         --out results.jsonl [--only CASE_ID,...] [--stability]
+
+    # READ-ONLY. Resolves every subject, checks the corpus against the live dual-control
+    # threshold, prints the plan and exits. Drives nothing, creates no approvals.
+    python e2e_supervisor_probe.py --base https://host --user banker --password '...' \
+        --resolve-only
 """
 
 from __future__ import annotations
@@ -69,7 +82,11 @@ from collections import Counter, defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from e2e_cases import CASES, STABILITY_CASE_IDS, STABILITY_REPEATS  # noqa: E402
+from e2e_cases import (  # noqa: E402
+    CASES, STABILITY_CASE_IDS, STABILITY_REPEATS,
+    assert_amounts_reach_dual_control, required_handles, resolve_cases,
+)
+from seed_subjects import resolve_subjects, seed_password, verify_ledgers  # noqa: E402
 
 ACTION_ID = "account.balance.adjust"
 PRIMARY_RECOMMENDATION = "proceed"
@@ -119,6 +136,8 @@ def drive_case(base: str, token: str, case: dict, rep: int = 0) -> dict:
         "expectation": case["expectation"], "polarity": case["polarity"],
         "grounded": case["grounded"], "amount": case["amount"],
         "direction": case["direction"], "account": case["account"],
+        "subject": case["subject"], "subjectOwner": case.get("subjectOwner"),
+        "subjectAccountType": case.get("subjectAccountType"),
         "objective": case["objective"], "primaryRecommendation": PRIMARY_RECOMMENDATION,
     }
 
@@ -357,31 +376,110 @@ def summarise_stability(results: list[dict]) -> None:
 
 # ---------------------------------------------------------------------------
 
+def dual_control_threshold(base: str, token: str) -> float | None:
+    """The LIVE ``balance_adjustment_dual_control_amount``, or None if it cannot be read.
+
+    Read rather than restated. A case below this line settles at L1, never fans out, and
+    produces an instrument failure that reads like a service defect instead of a corpus defect.
+    """
+    status, body = _request("GET", f"{base}/api/authority/policy", token)
+    if status != 200 or not isinstance(body, dict):
+        return None
+    thresholds = body.get("thresholds")
+    if isinstance(thresholds, list):
+        for entry in thresholds:
+            if isinstance(entry, dict) and entry.get("name") == "balance_adjustment_dual_control_amount":
+                try:
+                    return float(entry.get("value"))
+                except (TypeError, ValueError):
+                    return None
+    elif isinstance(thresholds, dict):
+        try:
+            return float(thresholds.get("balance_adjustment_dual_control_amount"))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+# ---------------------------------------------------------------------------
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--base", default="https://onlinebankingdemo.bjdazure.tech")
     p.add_argument("--user", default="banker")
     p.add_argument("--password", default=os.environ.get("BANKER_PASSWORD", ""))
+    p.add_argument("--seed-password", default="",
+                   help="Password for the seeded CUSTOMER logins used to resolve subject "
+                        "accounts. Defaults to the demo dataset's credentials block.")
     p.add_argument("--out", default="e2e-results.jsonl")
     p.add_argument("--only", default="")
     p.add_argument("--stability", action="store_true",
                    help="Run STABILITY_CASE_IDS x STABILITY_REPEATS on byte-identical input.")
+    p.add_argument("--resolve-only", action="store_true",
+                   help="READ-ONLY. Resolve every subject handle against the live deployment, "
+                        "check the corpus against the live dual-control threshold, print the "
+                        "plan and exit WITHOUT driving any run. Creates no approvals and "
+                        "writes nothing to the environment.")
     args = p.parse_args()
 
     if not args.password:
         print("REFUSING: no password (--password or $BANKER_PASSWORD).", file=sys.stderr)
         return 2
 
+    # Subjects are resolved BEFORE anything is driven, and a failure here is fatal. Every id in
+    # a payload below is one this run just read back from the live deployment under the owning
+    # customer's own token; nothing in the corpus is pinned to a previous seed.
+    resolved_subjects = resolve_subjects(args.base,
+                                         args.seed_password or seed_password(),
+                                         required_handles())
+    print("resolved subjects (owner:accountType -> live id):", file=sys.stderr)
+    for handle in required_handles():
+        subject = resolved_subjects[handle]
+        print(f"  {handle:<22} {subject.account_id}  "
+              f"balance={subject.balance}  txns={subject.transaction_count}", file=sys.stderr)
+
     token = login(args.base, args.user, args.password)
 
+    threshold = dual_control_threshold(args.base, token)
+    if threshold is None:
+        print("WARNING: could not read balance_adjustment_dual_control_amount from the live "
+              "policy; corpus amounts were NOT checked against it.", file=sys.stderr)
+    else:
+        assert_amounts_reach_dual_control(threshold)
+        print(f"live balance_adjustment_dual_control_amount={threshold}; all "
+              f"{len(CASES)} case amounts clear it", file=sys.stderr)
+
+    cases = resolve_cases(resolved_subjects)
+
     if args.stability:
-        plan = [(c, rep) for c in CASES if c["id"] in STABILITY_CASE_IDS
+        plan = [(c, rep) for c in cases if c["id"] in STABILITY_CASE_IDS
                 for rep in range(STABILITY_REPEATS)]
         label = "stability"
     else:
         wanted = {c.strip() for c in args.only.split(",") if c.strip()}
-        plan = [(c, 0) for c in CASES if not wanted or c["id"] in wanted]
+        plan = [(c, 0) for c in cases if not wanted or c["id"] in wanted]
         label = f"{len(plan)} distinct cases"
+
+    if args.resolve_only:
+        problems = verify_ledgers(args.base, args.seed_password or seed_password(),
+                                  resolved_subjects)
+        print("\nledger grounding check (live ledger vs config/demo-dataset.json):",
+              file=sys.stderr)
+        if problems:
+            for problem in problems:
+                print(f"  MISMATCH  {problem}", file=sys.stderr)
+            print(f"  -> {len(problems)} discrepancy(ies). Every 'grounded' flag in the corpus "
+                  "is suspect until these are resolved.", file=sys.stderr)
+        else:
+            print(f"  OK — all {len(resolved_subjects)} subject ledgers match the contract "
+                  "exactly (balances and transaction sets).", file=sys.stderr)
+
+        print(f"\n--resolve-only: {len(plan)} case(s) would be driven. Nothing was sent.",
+              file=sys.stderr)
+        for case, rep in plan:
+            print(f"  {case['id']:<44} {case['subject']:<20} {case['direction']:<6} "
+                  f"{case['amount']:>10}  -> {case['account']}", file=sys.stderr)
+        return 1 if problems else 0
 
     print(f"base={args.base} runs={len(plan)}  PROPOSE-ONLY, signs nothing", file=sys.stderr)
 

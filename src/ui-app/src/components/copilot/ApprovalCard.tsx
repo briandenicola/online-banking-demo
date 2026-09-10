@@ -50,6 +50,8 @@ import {
   Approval,
   AgentAssessment,
   canSignUnderStream,
+  streamGateReason,
+  streamGateReasonBrief,
   SignatureSlot,
   StreamStatus,
 } from './types';
@@ -147,19 +149,91 @@ export function unfilledSlotCopy(slot: SignatureSlot): string {
     : `${seniority} — anyone eligible under this policy`;
 }
 
+/**
+ * The slot the acting identity would fill: the first unfilled one, and only when
+ * the SERVICE says this caller may sign. Eligibility is never computed here —
+ * `callerMaySign` is authoritative. This only points at the slot the person is
+ * about to affect.
+ *
+ * "First unfilled" is sound rather than merely convenient: the opening slot
+ * carries the lowest `minSeniority` and an empty `mustDifferFrom`, so anyone
+ * eligible for a later slot is also eligible for that one. There is no case
+ * where a caller skips a slot they could have filled.
+ *
+ * Note the ordinals are NOT array indices — the demo fixture numbers its slots
+ * 1 and 2 — so nothing here may key off `ordinal === 0`.
+ */
+export function callerSignatureSlot(approval: Approval): SignatureSlot | undefined {
+  if (!approval.callerMaySign) return undefined;
+  return approval.signatureSlots.find((slot) => !slot.filled);
+}
+
+/**
+ * What this person is actually about to do, in their words rather than the
+ * policy engine's.
+ *
+ * The previous copy branched on `isL2` alone and so told EVERY L2 signer they
+ * were "providing the independent supervisor co-signature ... because you are a
+ * different identity from the requester". For the requester filling the opening
+ * slot that is simply false, and it contradicted itself in one sentence:
+ * Brian, signed in as `banker`, was told his signature counted because he was
+ * not `banker`.
+ *
+ * The truth is in the slots. Whether this signature opens the approval or
+ * closes it is a property of how many remain, not of the rung.
+ *
+ * Returns the sentence that FOLLOWS the bound identity. The identity itself is
+ * rendered separately and always, because making the bound identity
+ * unmistakable is the reason this banner exists.
+ */
+export function signingAttestation(approval: Approval, identityId?: string): string {
+  const slots = approval.signatureSlots;
+  const remaining = slots.filter((slot) => !slot.filled).length;
+
+  // Nothing derivable — say only what we know, which is who is signing.
+  if (remaining === 0) return '';
+
+  if (slots.length <= 1) {
+    return 'Yours is the only signature needed — this goes ahead once you sign.';
+  }
+
+  if (remaining === 1) {
+    const first = slots.find((slot) => slot.filled);
+    const who = first?.signedByUsername;
+    const position = slots.length === 2 ? 'the second signature' : 'the final signature';
+    return who
+      ? `You are ${position} — ${who} signed first. Once you sign, this goes ahead.`
+      : `You are ${position}. Once you sign, this goes ahead.`;
+  }
+
+  const others = remaining - 1;
+  const wait =
+    others === 1
+      ? 'It does not go ahead until a second person signs'
+      : `It does not go ahead until ${others} more people sign`;
+
+  // Only claim the caller is the requester when we can actually check it. The
+  // identity id is the local part of the signed-in email and the record carries
+  // a username; when they do not correspond we fall back to the neutral wording,
+  // which is true either way.
+  const callerIsRequester =
+    Boolean(identityId) &&
+    Boolean(approval.requesterUsername) &&
+    identityId!.toLowerCase() === approval.requesterUsername!.toLowerCase();
+
+  if (callerIsRequester) {
+    return `You raised this request, so you are signing it first. ${wait}, and that person cannot be you.`;
+  }
+  return `You are signing first. ${wait}.`;
+}
+
 export const SignatureRoster: React.FC<{ approval: Approval; activeIdentityLabel?: string }> = ({
   approval,
   activeIdentityLabel,
 }) => {
-  // The slot the acting identity would fill: the first unfilled one, and only
-  // when the SERVICE says this caller may sign. We never compute eligibility
-  // here — `callerMaySign` is authoritative — we only point at the slot the
-  // person is about to affect, so a two-session demo cannot leave anyone unsure
-  // which signature their click binds.
-  const callerSlotOrdinal =
-    approval.callerMaySign
-      ? approval.signatureSlots.find((slot) => !slot.filled)?.ordinal
-      : undefined;
+  // The slot the acting identity would fill. Shared with the attestation banner
+  // so the two can never disagree about which signature the click binds.
+  const callerSlotOrdinal = callerSignatureSlot(approval)?.ordinal;
 
   return (
     <Box>
@@ -340,31 +414,63 @@ const EvidenceList: React.FC<{ approval: Approval; onOpen: (id: string) => void;
       <Collapse in={open}>
         <Stack spacing={0.5} sx={{ mt: 0.5 }}>
           {approval.evidence.map((item) => (
-            <Stack key={item.id} direction="row" spacing={1} sx={{ alignItems: 'baseline' }}>
-              <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                ▸
-              </Typography>
-              <Typography variant="body2">{item.label}</Typography>
-              {item.sourceToolCallId && (
-                <Link
-                  component="button"
-                  variant="caption"
-                  onClick={() => {
-                    // The trace is the citation index for the recommendation.
-                    // Without this link it is ornamental.
-                    highlightNode(item.sourceToolCallId);
-                    onOpen(item.id);
-                  }}
-                >
-                  show in trace
-                </Link>
-              )}
-              {item.excerpt && (
-                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                  {item.excerpt}
+            <Box key={item.id}>
+              <Stack direction="row" spacing={1} sx={{ alignItems: 'baseline' }}>
+                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                  ▸
                 </Typography>
+                <Typography variant="body2">{item.label}</Typography>
+                {item.sourceToolCallId && (
+                  <Link
+                    component="button"
+                    variant="caption"
+                    onClick={() => {
+                      // The trace is the citation index for the recommendation.
+                      // Without this link it is ornamental.
+                      highlightNode(item.sourceToolCallId);
+                      onOpen(item.id);
+                    }}
+                  >
+                    show in trace
+                  </Link>
+                )}
+                {item.excerpt && (
+                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                    {item.excerpt}
+                  </Typography>
+                )}
+              </Stack>
+
+              {/*
+                PROVISIONAL PRESENTATION — the plumbing is the point here, not the
+                design. Danny's card specification will decide how a finding
+                should read; this exists so the values are on screen instead of
+                discarded, and so that spec has real data to land against. It
+                reuses `formatFieldValue`, the payload rows' formatter, rather
+                than inventing a second display vocabulary. Replaceable in one
+                place.
+              */}
+              {item.findings.length > 0 && (
+                <Stack spacing={0.25} sx={{ mt: 0.25, ml: 2.5 }}>
+                  {item.findings.map((field) => (
+                    <Stack
+                      key={`${item.id}:${field.path}`}
+                      direction="row"
+                      spacing={1}
+                      sx={{ alignItems: 'baseline' }}
+                    >
+                      <Typography
+                        variant="caption"
+                        sx={{ minWidth: 120, color: 'text.secondary' }}
+                      >
+                        {field.label}
+                      </Typography>
+                      <Typography variant="caption">{formatFieldValue(field)}</Typography>
+                    </Stack>
+                  ))}
+                </Stack>
               )}
-            </Stack>
+            </Box>
           ))}
         </Stack>
       </Collapse>
@@ -846,7 +952,7 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
   const blockedReason = !approval.callerMaySign
     ? approval.callerMaySignReason || 'You may not sign this request.'
     : !streamSafe
-      ? 'Reconnecting — cannot verify this is still the current payload.'
+      ? streamGateReasonBrief(streamStatus)
       : !disclosureSatisfied
         ? 'Scroll through the material fields above before signing.'
         : !dwellSatisfied
@@ -924,24 +1030,23 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
         <AuthorityRungChip rung={approval.requiredRung} requiredSigners={approval.requiredSigners} />
       </Stack>
 
-      {/* WHO is about to sign. In the two-session co-signature demo this is the
-          line that stops a supervisor signing while unsure which browser identity
-          the click binds to. Display only — eligibility is `callerMaySign`, and
-          this banner is suppressed when the service says this caller may not sign,
-          so it can never read as an invitation the policy engine would refuse. */}
+      {/* WHO is about to sign, and WHAT their signature does. In the two-session
+          co-signature demo this is the line that stops a supervisor signing while
+          unsure which browser identity the click binds to, so the identity stays
+          first and bold in every case. Display only — eligibility is
+          `callerMaySign`, and this banner is suppressed when the service says
+          this caller may not sign, so it can never read as an invitation the
+          policy engine would refuse.
+
+          The second sentence is derived from the SLOTS, not the rung. Branching
+          on `isL2` alone told the requester they were the independent
+          co-signature, which is false and was self-contradictory. */}
       {approval.callerMaySign && identity.known && (
         <Alert severity={isL2 ? 'warning' : 'info'} icon={false} sx={{ py: 0.25, mb: 0.5 }}>
           <Typography variant="body2">
             Signing as <strong>{identity.displayName}</strong>
-            {identity.email ? ` · ${identity.email}` : ''}
-            {isL2 ? (
-              <>
-                {' '}— you are providing the{' '}
-                <strong>independent supervisor co-signature</strong>. It counts only because you are
-                a different identity from the requester
-                {approval.requesterUsername ? ` (${approval.requesterUsername})` : ''}.
-              </>
-            ) : null}
+            {identity.email ? ` · ${identity.email}` : ''}.{' '}
+            {signingAttestation(approval, identity.id)}
           </Typography>
         </Alert>
       )}
@@ -1072,9 +1177,8 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
 
       {!streamSafe && (
         <Alert severity="warning" sx={{ mt: 1 }}>
-          Live updates are interrupted. Signing is disabled until the connection is verified —
-          signing against a payload we cannot confirm is current is the exact risk the payload hash
-          exists to prevent.
+          {streamGateReason(streamStatus)} Signing against a payload we cannot confirm is current
+          is the exact risk the payload hash exists to prevent.
         </Alert>
       )}
 

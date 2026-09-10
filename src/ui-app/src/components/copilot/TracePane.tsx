@@ -391,7 +391,18 @@ const TracePane: React.FC<TracePaneProps> = ({ run }) => {
       variant="outlined"
       component="section"
       aria-label="Plan and trace"
-      sx={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        minWidth: 0,
+        // Each pane is the only child of a `display: flex` Region, so without
+        // `flexGrow` its width is CONTENT-based: it fills the column only while
+        // the text inside happens to be wide. The trace pane looked correct for
+        // months because its empty-state paragraph is long, then collapsed to 426px
+        // inside a 750px region the moment a real run put short step labels in it.
+        flexGrow: 1,
+      }}
     >
       <Box sx={{ p: 1, borderBottom: 1, borderColor: 'divider' }}>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
@@ -441,7 +452,9 @@ const TracePane: React.FC<TracePaneProps> = ({ run }) => {
           <Typography variant="caption">
             {streamStatus === 'failed'
               ? 'Live updates unavailable. The run continues on the server.'
-              : 'Reconnecting — the agent is still running on the server.'}
+              : run && run.status !== 'running'
+                ? `This run is ${run.status}. Reconnecting for live updates — nothing further is expected for this run.`
+                : 'Reconnecting — the agent is still running on the server.'}
           </Typography>
         </Box>
       )}
@@ -458,7 +471,11 @@ const TracePane: React.FC<TracePaneProps> = ({ run }) => {
           setFollowTail(atBottom);
           if (atBottom) setMissedCount(0);
         }}
-        sx={{ flexGrow: 1, overflowY: 'auto', p: 1, minHeight: 200 }}
+        // `minHeight: 0`, never a pixel floor. A floor here cannot be honoured
+        // on a short viewport: the column would overflow the shell, and since
+        // the shell clips, the row it pushes out is the command bar. Scrolling
+        // a short trace is better than losing the only way to type into it.
+        sx={{ flexGrow: 1, overflowY: 'auto', p: 1, minHeight: 0 }}
       >
         {!run && (
           <Typography variant="body2" sx={{ color: 'text.secondary' }}>

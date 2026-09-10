@@ -15,6 +15,7 @@ public class EvaluationContext
     public required ActorContext Actor { get; init; }
     public JObject Evidence { get; init; } = new();
     public JObject Facts { get; init; } = new();
+    public bool Supersedes { get; init; }
 
     /// <summary>
     /// The single document the predicate resolver reads. Built once, deterministically, so the
@@ -39,6 +40,7 @@ public class EvaluationContext
 
         var context = document["context"] as JObject ?? new JObject();
         context["selfDealing"] = Actor.SelfDealing;
+        context["supersedes"] = Supersedes;
         document["context"] = context;
 
         return document;

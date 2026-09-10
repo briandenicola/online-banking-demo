@@ -184,7 +184,13 @@ describe('self-reported confidence is prose, and ranks nothing', () => {
       { verdict: 'proceed', selfReportedConfidence: 0.04 },
       'agree'
     ).textContent;
-    const strip = (t: string | null) => (t || '').replace(/0\.\d+/g, '');
+    // Also strip the TTL countdown. `ApprovalCountdown` re-renders on a one
+    // second tick, so two renders that straddle a tick differ by "MM:SS" and by
+    // the absolute expiry time in the screen-reader text — neither of which has
+    // anything to do with confidence. Left in, this assertion fails whenever the
+    // suite is slow enough for a second to elapse between the two renders.
+    const strip = (t: string | null) =>
+      (t || '').replace(/0\.\d+/g, '').replace(/\d{1,3}:\d{2}(:\d{2})?(\s?[AP]M)?/gi, '');
     expect(strip(low)).toBe(strip(high));
   });
 });

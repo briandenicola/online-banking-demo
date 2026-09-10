@@ -34,7 +34,7 @@ import {
   Stack,
   Typography,
 } from '@mui/material';
-import { Approval, PayloadField, StreamStatus, canSignUnderStream } from './types';
+import { Approval, PayloadField, StreamStatus, canSignUnderStream, streamGateReason} from './types';
 import { BatchGroup, formatFieldValue, isBatchEligible } from './approvalPolicy';
 import { PayloadHashChip } from './CopilotPrimitives';
 import { useCopilot } from './CopilotContext';
@@ -212,8 +212,8 @@ const BatchApprovalCard: React.FC<BatchApprovalCardProps> = ({ group, streamStat
       {!streamSafe && (
         <Alert severity="warning" sx={{ mt: 1 }}>
           <AlertTitle>Signing paused</AlertTitle>
-          Live updates are interrupted — batch signing is disabled until the connection is verified,
-          for the same reason a single signature is: an item&apos;s payload may have moved.
+          {streamGateReason(streamStatus)} Batch signing is gated for the same reason a single
+          signature is: an item&apos;s payload may have moved.
         </Alert>
       )}
 

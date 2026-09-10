@@ -133,8 +133,23 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
         // shell must CONSTRAIN rather than grow. `minHeight` lets a child that
         // asks for too much push the page taller than the window, which is what
         // buried the copilot command bar below the fold.
+        //
+        // `dvh` where supported: on mobile and on desktop browsers that hide
+        // chrome on scroll, `100vh` is the LARGEST viewport height, so the last
+        // row of a `100vh` column sits under the browser UI. The command bar is
+        // that last row.
         ...(fullBleed
-          ? { height: '100vh', overflow: 'hidden' }
+          ? {
+              height: '100vh',
+              '@supports (height: 100dvh)': { height: '100dvh' },
+              overflow: 'hidden',
+              // `overflow: hidden` only clips absolutely-positioned descendants
+              // when this element is their containing block. Left static, MUI's
+              // off-screen inputs (checkboxes inside collapsed sections) resolve
+              // against the initial containing block, escape the clip, and give
+              // the document ~950px of blank scrollable space below the surface.
+              position: 'relative',
+            }
           : { minHeight: '100vh' }),
       }}
     >
@@ -309,7 +324,7 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
       )}
 
       {/* Footer */}
-      {!isMobile && (
+      {!isMobile && !fullBleed && (
         <Box
           component="footer"
           sx={{

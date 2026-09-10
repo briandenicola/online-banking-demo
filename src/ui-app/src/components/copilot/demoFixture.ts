@@ -82,12 +82,20 @@ export const demoApproval: Approval = {
       label: 'Three wires to the same counterparty in 48 hours',
       sourceToolCallId: 'tc_2',
       excerpt: '2026-05-10 $8,200 · 2026-05-11 $8,100 · 2026-05-11 $8,200',
+      findings: [
+        { path: 'transferCount', label: 'Transfer count', value: 3, format: 'text', material: true },
+        { path: 'windowHours', label: 'Window hours', value: 48, format: 'text', material: false },
+        { path: 'aggregate', label: 'Aggregate', value: 24500, format: 'currency', material: true },
+      ],
     },
     {
       id: 'ev_2',
       kind: 'record',
       label: 'Counterparty first seen 6 days ago',
       sourceToolCallId: 'tc_3',
+      findings: [
+        { path: 'firstSeenDaysAgo', label: 'First seen days ago', value: 6, format: 'text', material: false },
+      ],
     },
     {
       id: 'ev_3',
@@ -95,6 +103,9 @@ export const demoApproval: Approval = {
       label: 'AML-14 structuring threshold',
       sourceToolCallId: 'tc_4',
       excerpt: 'Three or more transfers within 72h aggregating above $20,000.',
+      findings: [
+        { path: 'threshold', label: 'Threshold', value: 20000, format: 'currency', material: true },
+      ],
     },
   ],
   // Every field below is a field the REGENERATED GOLDEN WIRE FIXTURE

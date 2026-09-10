@@ -60,6 +60,8 @@ public interface IApprovalRepository
 
     Task<IReadOnlyList<Approval>> QueryAsync(ApprovalQuery query, CancellationToken ct = default);
 
+    Task<int> CountSupersedesAsync(string requesterId, DateTime sinceUtc, CancellationToken ct = default);
+
     /// <summary>The sweep query: pending approvals past <c>expiresAtEpoch</c>.</summary>
     Task<IReadOnlyList<Approval>> FindExpiredAsync(long nowEpochSeconds, int batchSize, CancellationToken ct = default);
 

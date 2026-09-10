@@ -126,6 +126,7 @@ public class ApprovalResponse
     public string? SessionId { get; set; }
     public JObject Payload { get; set; } = new();
     public JObject Evidence { get; set; } = new();
+    public ApprovalSubjectView? Subject { get; set; }
     public JObject? AgentAssessment { get; set; }
     public string PayloadHash { get; set; } = string.Empty;
     public string PayloadHashShort { get; set; } = string.Empty;
@@ -165,7 +166,8 @@ public class ApprovalResponse
         RequesterUsername = a.RequesterUsername,
         SessionId = a.SessionId,
         Payload = a.Payload,
-        Evidence = a.Evidence,
+        Evidence = ApprovalDisplay.EnrichEvidence(a.Evidence),
+        Subject = ApprovalDisplay.SubjectFor(a),
         AgentAssessment = a.AgentAssessment,
         PayloadHash = a.PayloadHash,
         PayloadHashShort = Policy.PayloadHasher.Short(a.PayloadHash),
@@ -189,6 +191,18 @@ public class ApprovalResponse
         DownstreamStatus = a.Execution.DownstreamStatus,
         ExecutionError = a.Execution.LastError
     };
+}
+
+public class ApprovalSubjectView
+{
+    public string Kind { get; set; } = "record";
+    public string Label { get; set; } = string.Empty;
+    public string? Summary { get; set; }
+    public string? UserId { get; set; }
+    public string? AccountId { get; set; }
+    public string? AccountNumber { get; set; }
+    public string? AccountType { get; set; }
+    public string? RiskTier { get; set; }
 }
 
 public class FiredEscalatorView

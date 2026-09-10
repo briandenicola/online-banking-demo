@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using AuthorityService.Models;
 using Microsoft.Azure.Cosmos;
@@ -153,6 +154,23 @@ public class CosmosApprovalRepository : ApprovalRepositoryBase
         }
 
         return await ReadAllAsync(definition, query.Limit, ct);
+    }
+
+    public override async Task<int> CountSupersedesAsync(string requesterId, DateTime sinceUtc, CancellationToken ct = default)
+    {
+        var query = new QueryDefinition(
+                "SELECT VALUE COUNT(1) FROM c WHERE c.docType = 'approval' " +
+                "AND c.requesterId = @requesterId AND IS_DEFINED(c.supersedesApprovalId) " +
+                "AND NOT IS_NULL(c.supersedesApprovalId) AND c.createdAt >= @since")
+            .WithParameter("@requesterId", requesterId)
+            .WithParameter("@since", sinceUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
+
+        using var iterator = _container.GetItemQueryIterator<int>(
+            query, requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey(requesterId) });
+
+        if (!iterator.HasMoreResults) return 0;
+        var page = await iterator.ReadNextAsync(ct);
+        return page.FirstOrDefault();
     }
 
     public override async Task<IReadOnlyList<Approval>> FindExpiredAsync(

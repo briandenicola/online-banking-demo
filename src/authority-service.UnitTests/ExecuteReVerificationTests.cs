@@ -68,6 +68,7 @@ public class ExecuteReVerificationTests
         public Task<Approval> CreateAsync(Approval a, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<Approval?> GetAsync(string id, string requesterId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<Approval>> QueryAsync(ApprovalQuery query, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<int> CountSupersedesAsync(string requesterId, DateTime sinceUtc, CancellationToken ct = default) => Task.FromResult(0);
         public Task<IReadOnlyList<Approval>> FindExpiredAsync(long nowEpochSeconds, int batchSize, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<Approval>> FindNonTerminalAsync(int batchSize, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<Approval> MarkPendingAsync(Approval a, CancellationToken ct = default) => throw new NotSupportedException();

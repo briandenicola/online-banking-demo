@@ -41,6 +41,7 @@ public class SupervisorQueueSeniorityTests
         public Task<Approval> CreateAsync(Approval approval, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<Approval?> GetAsync(string id, string requesterId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<Approval?> FindAsync(string id, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<int> CountSupersedesAsync(string requesterId, DateTime sinceUtc, CancellationToken ct = default) => Task.FromResult(0);
         public Task<IReadOnlyList<Approval>> FindExpiredAsync(long nowEpochSeconds, int batchSize, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<Approval>> FindNonTerminalAsync(int batchSize, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<Approval> MarkPendingAsync(Approval approval, CancellationToken ct = default) => throw new NotSupportedException();

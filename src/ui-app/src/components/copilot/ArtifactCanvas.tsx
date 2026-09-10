@@ -95,7 +95,18 @@ const ArtifactCanvas: React.FC<ArtifactCanvasProps> = ({
       variant="outlined"
       component="section"
       aria-label="Artifacts and approvals"
-      sx={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        minWidth: 0,
+        // Each pane is the only child of a `display: flex` Region, so without
+        // `flexGrow` its width is CONTENT-based: it fills the column only while
+        // the text inside happens to be wide. The trace pane looked correct for
+        // months because its empty-state paragraph is long, then collapsed to 426px
+        // inside a 750px region the moment a real run put short step labels in it.
+        flexGrow: 1,
+      }}
     >
       <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
         {artifacts.length > 0 ? (
@@ -152,6 +163,12 @@ const ArtifactCanvas: React.FC<ArtifactCanvasProps> = ({
             bgcolor: 'background.default',
           }}
         >
+          <Typography
+            variant="caption"
+            sx={{ fontWeight: 700, display: 'block', mb: 0.5, color: 'warning.dark' }}
+          >
+            Selected approval
+          </Typography>
           <ApprovalCard
             approval={approval}
             streamStatus={streamStatus}

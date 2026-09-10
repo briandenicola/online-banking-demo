@@ -853,19 +853,43 @@ strip_annotations() {
 }
 
 propose() {
-  local proposer="$1" action="$2" session="$3" payload="$4" evidence="$5" facts="$6" supersedes="${7:-}"
+  local proposer="$1" action="$2" session="$3" payload="$4" evidence="$5" facts="$6" supersedes="${7:-}" assessment="${8:-}"
   local body
   body=$(jq -n \
     --arg a "$action" --arg s "$session" \
     --argjson p "$(strip_annotations <<<"$payload")" \
     --argjson e "$(strip_annotations <<<"$evidence")" \
     --argjson f "$(strip_annotations <<<"$facts")" \
+    --argjson aa "${assessment:-null}" \
     --arg sup "$supersedes" \
     '{actionId: $a, sessionId: $s, payload: $p, evidence: $e, facts: $f}
+     + (if $aa == null then {} else {agentAssessment: $aa} end)
      + (if $sup == "" then {} else {supersedesApprovalId: $sup} end)')
 
   http_or_die POST /api/authority/approvals "$body" "${TOKENS[$proposer]}" \
     "Proposal of '${action}' by '${proposer}' was refused." 200 201
+}
+
+seed_agent_assessment() {
+  local key="$1" evidence="$2"
+
+  jq -n \
+    --arg key "$key" \
+    --argjson e "$(strip_annotations <<<"$evidence")" \
+    '($e | keys | sort) as $ids
+     | {
+        agentName: "Seeded demo harness",
+        evidenceToolIds: $ids,
+        requiredEvidenceToolIds: $ids,
+        discretionaryEvidenceToolIds: [],
+        refusedEvidenceRequests: [],
+        assessmentIterations: 0,
+        converged: false,
+        failure: "primary_unavailable",
+        failureReason: "seeded_direct_authority_proposal",
+        rationale: ("Demo approval " + $key + " was seeded directly through authority-service, not produced by a live planner run. No primary agent assessment was formed for this seeded record; review the payload, evidence, and policy escalator reasons before signing."),
+        mode: "seeded-demo"
+      }'
 }
 
 # =============================================================================================
@@ -1171,7 +1195,10 @@ seed_approvals() {
     facts=$(resolve_placeholders "$(jq -c '.facts' <<<"$spec")" "$THRESHOLDS" "$REFS") \
       || die "${key}: could not resolve facts placeholders."
 
-    propose "$proposer" "$action" "$session" "$payload" "$evidence" "$facts"
+    local assessment
+    assessment=$(seed_agent_assessment "$key" "$evidence")
+
+    propose "$proposer" "$action" "$session" "$payload" "$evidence" "$facts" "" "$assessment"
     local id rung fired
     id=$(jget '.id')
     rung=$(jget '.requiredRung')
@@ -1195,7 +1222,7 @@ seed_approvals() {
       sign-slot0)     sign_approval "$id" "$proposer" "$(jget_from "$spec" '.signComment')" ;;
       sign-full)      sign_to_quorum "$id" "$proposer" "$(jget_from "$spec" '.signComment')" ;;
       deny)           deny_approval "$id" "$(jget_from "$spec" '.denyBy')" "$(jget_from "$spec" '.denyReason')" ;;
-      supersede)      supersede_approval "$id" "$spec" "$proposer" "$session" "$action" "$evidence" "$facts" ;;
+      supersede)      supersede_approval "$id" "$spec" "$proposer" "$session" "$action" "$evidence" "$facts" "$key" ;;
       *)              die "${key}: unknown 'after' verb '${after}'." ;;
     esac
   done
@@ -1231,11 +1258,14 @@ deny_approval() {
 }
 
 supersede_approval() {
-  local id="$1" spec="$2" proposer="$3" session="$4" action="$5" evidence="$6" facts="$7"
+  local id="$1" spec="$2" proposer="$3" session="$4" action="$5" evidence="$6" facts="$7" key="$8"
   local revised
   revised=$(resolve_placeholders "$(jq -c '.revisedPayload' <<<"$spec")" "$THRESHOLDS" "$REFS")
 
-  propose "$proposer" "$action" "$session" "$revised" "$evidence" "$facts" "$id"
+  local assessment
+  assessment=$(seed_agent_assessment "${key}-replacement" "$evidence")
+
+  propose "$proposer" "$action" "$session" "$revised" "$evidence" "$facts" "$id" "$assessment"
   local replacement
   replacement=$(jget '.id')
 

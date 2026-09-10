@@ -350,7 +350,18 @@ const TaskQueuePane: React.FC<TaskQueuePaneProps> = ({ approvals, selectedId, on
       variant="outlined"
       component="section"
       aria-label="Task queue"
-      sx={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        minWidth: 0,
+        // Each pane is the only child of a `display: flex` Region, so without
+        // `flexGrow` its width is CONTENT-based: it fills the column only while
+        // the text inside happens to be wide. The trace pane looked correct for
+        // months because its empty-state paragraph is long, then collapsed to 426px
+        // inside a 750px region the moment a real run put short step labels in it.
+        flexGrow: 1,
+      }}
     >
       <Box sx={{ p: 1, borderBottom: 1, borderColor: 'divider' }}>
         <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>

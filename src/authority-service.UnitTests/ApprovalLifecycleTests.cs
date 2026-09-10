@@ -169,6 +169,73 @@ public class ApprovalLifecycleTests
     }
 
     [Fact]
+    public async Task Superseding_an_L1_proposal_requires_L2_but_does_not_rehash_the_original()
+    {
+        var h = TestHarness.Build();
+        var banker = TestHarness.Banker();
+
+        var first = await h.Service.ProposeAsync(TestHarness.FlagReview("100.00"), banker, null);
+        var originalHash = first.PayloadHash;
+
+        var replan = TestHarness.FlagReview("250.00");
+        replan.SupersedesApprovalId = first.Id;
+
+        var second = await h.Service.ProposeAsync(replan, banker, null);
+
+        second.BaseRung.Should().Be(Rung.L1);
+        second.RequiredRung.Should().Be(Rung.L2);
+        second.FiredEscalators.Should().Contain(e => e.Key == "superseding-proposal");
+        (await h.Repository.FindAsync(first.Id))!.PayloadHash.Should().Be(originalHash);
+    }
+
+    [Fact]
+    public async Task Superseding_an_L2_proposal_stays_L2_not_L3()
+    {
+        var h = TestHarness.Build();
+        var banker = TestHarness.Banker();
+        var dualControlAmount = h.Policies.Current
+            .Threshold("flagged_transaction_dual_control_amount")
+            .AsDecimal() + 100;
+
+        var first = await h.Service.ProposeAsync(
+            TestHarness.FlagReview(dualControlAmount.ToString("F2")), banker, null);
+
+        var replan = TestHarness.FlagReview((dualControlAmount + 100).ToString("F2"));
+        replan.SupersedesApprovalId = first.Id;
+
+        var second = await h.Service.ProposeAsync(replan, banker, null);
+
+        second.RequiredRung.Should().Be(Rung.L2);
+        second.FiredEscalators.Single(e => e.Key == "superseding-proposal").RaisedTo.Should().Be(Rung.L2);
+        second.FiredEscalators.Should().NotContain(e => e.RaisedTo == Rung.L3);
+    }
+
+    [Fact]
+    public async Task Repeated_supersedes_trip_the_churn_guard()
+    {
+        var h = TestHarness.Build(("POLICY_SUPERSEDE_CHURN_LIMIT", "0"));
+        var banker = TestHarness.Banker();
+        var dualControlAmount = h.Policies.Current
+            .Threshold("flagged_transaction_dual_control_amount")
+            .AsDecimal() + 100;
+
+        var first = await h.Service.ProposeAsync(
+            TestHarness.FlagReview(dualControlAmount.ToString("F2")), banker, null);
+
+        var secondRequest = TestHarness.FlagReview((dualControlAmount + 100).ToString("F2"));
+        secondRequest.SupersedesApprovalId = first.Id;
+        var second = await h.Service.ProposeAsync(secondRequest, banker, null);
+
+        var thirdRequest = TestHarness.FlagReview((dualControlAmount + 200).ToString("F2"));
+        thirdRequest.SupersedesApprovalId = second.Id;
+        var act = async () => await h.Service.ProposeAsync(thirdRequest, banker, null);
+
+        second.RequiredRung.Should().Be(Rung.L2);
+        (await act.Should().ThrowAsync<AuthorityException>())
+            .Which.Message.Should().Contain("revised 1 proposals recently");
+    }
+
+    [Fact]
     public async Task A_signature_binds_to_the_payload_so_tampering_is_caught()
     {
         var h = TestHarness.Build();
