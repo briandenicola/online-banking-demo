@@ -1062,6 +1062,9 @@ class Planner:
             return False
 
         evidence[tool_id] = result.data
+        if isinstance(result.data, Mapping):
+            for key, value in result.data.items():
+                request.facts.setdefault(str(key), value)
         await stream.emit(
             "tool.completed",
             {
@@ -1383,7 +1386,12 @@ def _first_present(mapping: Mapping[str, Any], *keys: str) -> Any | None:
 
 
 def _looks_like_id(value: str) -> bool:
-    return bool(re.fullmatch(r"[0-9A-Za-z_-]{8,64}", value))
+    return bool(
+        re.fullmatch(
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+            value,
+        )
+    )
 
 
 def _refusal(code: str, message: str) -> IntentDecision:
@@ -1685,6 +1693,8 @@ def _bind_arguments(schema: dict[str, Any], request: PlannerRequest) -> dict[str
     for name in (schema.get("properties") or {}):
         if name in sources and sources[name] is not None:
             bound[name] = sources[name]
+        elif name == "txId" and sources.get("transactionId") is not None:
+            bound[name] = sources["transactionId"]
     return bound
 
 

@@ -3199,3 +3199,16 @@ at that moment. Unchanged by my fix, present before it. Filed for Linus and Dann
 **Fix:** Changed authority display money formatting from `0.00` to `N2`. `ApprovalDisplay.cs` already used `CultureInfo.InvariantCulture`, so the change keeps pod-location-independent separators (`$16,143.46`, not culture-localized punctuation).
 
 **Verification:** authority-service.UnitTests passed: 151.
+
+### 2026-09-10 — Demo prompt acceptance suite (#332)
+
+**Issue:** The planner was structurally correct, but not yet proven against Brian's exact `docs/design/banker-copilot-demo-prompts.md` sentences.
+
+**Fixes:**
+- Added `test_demo_prompt_acceptance.py`, a table-driven acceptance suite that stubs the intent model at the existing boundary and asserts outcomes for Brian's exact prompts: read-only answers produce evidence/no approval; balance adjustments resolve customer/account hints and propose expected payload/rung; `user.unlock` proposes base L2; score override accepts an in-band model draft and rejects a too-deep score before proposal; refusal cases emit named terminal errors rather than empty success.
+- Fixed two planner gaps exposed by the suite: hyphenated usernames such as `verify-target` are no longer mistaken for GUID-shaped ids, and evidence outputs now seed later tool argument binding so `get_scored_transaction` can supply the `accountId` needed by subsequent required reads.
+- Recorded two strict xfails instead of hiding fixtures: the two-customer comparison prompt loses one side because evidence is keyed by tool id, and the exact score-lowering sentence lacks both a transaction id and target score unless the model guesses them.
+
+**Verification:** Demo prompt acceptance + terminal-status tests passed: 32 passed, 2 xfailed. Full banker-copilot Python passed: 438 passed, 2 xfailed. Zero-write tests passed: 31. Cloud `scripts/demo/demo.sh show --target cloud --probe` passed after the `loop.py` changes and created approval `apr_2c99097201d44fb4b8d622b7` from run `run_b0879adfd3724f9d`.
+
+**Key Learning:** Brian's score prompt still needs a policy-safe descriptor-to-transaction resolution story, and the comparison prompt needs evidence instances keyed by call/alias rather than only by tool id. Those are real demo-script gaps, not reasons to smuggle fixture ids into tests.
