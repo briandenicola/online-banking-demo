@@ -72,6 +72,14 @@ import {
   validateReason,
 } from './approvalPolicy';
 import { AuthorityRungChip, ApprovalCountdown, PayloadHashChip } from './CopilotPrimitives';
+import {
+  approvalHeadline,
+  subjectAbsence,
+  whyThisRung,
+  expiryConsequence,
+  signingClosed,
+  DENY_IS_FINAL,
+} from './approvalNarrative';
 import { verdictPresentation } from './supervisorVerdict';
 import { factorPresentation, FACTOR_COMPARISON_UNAVAILABLE } from './supervisorFactors';
 import { getCopilotConfig } from '../../config/copilotConfig';
@@ -91,8 +99,13 @@ export const EscalatorExplainer: React.FC<{ approval: Approval }> = ({ approval 
         Why this is {approval.requiredRung}
       </Typography>
       {escalators.length === 0 ? (
+        /* §6.4: a base-rung action fires no escalator, so there is no server-authored
+           template to render. "No escalators fired" described the code path rather than the
+           decision. This map is client-side by Danny's explicit assignment; the escalator
+           branch below is still rendered verbatim because THAT text is audit record. */
         <Typography variant="body2">
-          Base rung for “{approval.actionLabel}”. No escalators fired.
+          {whyThisRung(approval.actionId, approval.requiredRung) ??
+            `Base rung for “${approval.actionLabel}”. No escalators fired.`}
         </Typography>
       ) : (
         <Stack spacing={0.5} sx={{ mt: 0.5 }}>
@@ -186,7 +199,16 @@ export function callerSignatureSlot(approval: Approval): SignatureSlot | undefin
  * rendered separately and always, because making the bound identity
  * unmistakable is the reason this banner exists.
  */
-export function signingAttestation(approval: Approval, identityId?: string): string {
+export function signingAttestation(
+  approval: Approval,
+  identityId?: string,
+  now: number = Date.now()
+): string {
+  // A closed record has no future signature to describe. Previously this keyed only on the
+  // SLOTS, so a lapsed L1 with its single slot still unfilled reached the `slots.length <= 1`
+  // branch and told a banker "Yours is the only signature needed" about a dead record.
+  if (signingClosed(approval, now)) return '';
+
   const slots = approval.signatureSlots;
   const remaining = slots.filter((slot) => !slot.filled).length;
 
@@ -305,6 +327,8 @@ export const SignatureRoster: React.FC<{ approval: Approval; activeIdentityLabel
 // ---------------------------------------------------------------------------
 
 interface PayloadTableProps {
+  /** "You are signing" is false once the record is closed; the disclosure still matters. */
+  heading?: string;
   approval: Approval;
   onMaterialSeen: (path: string) => void;
   onEvidenceOpen?: (evidenceId: string) => void;
@@ -318,7 +342,7 @@ interface PayloadTableProps {
  * theatre — an actual visibility precondition. If the payload is long enough to
  * scroll, you scroll it.
  */
-const PayloadTable: React.FC<PayloadTableProps> = ({ approval, onMaterialSeen }) => {
+const PayloadTable: React.FC<PayloadTableProps> = ({ approval, onMaterialSeen, heading }) => {
   const rowRefs = useRef<Record<string, HTMLElement | null>>({});
 
   useEffect(() => {
@@ -351,7 +375,7 @@ const PayloadTable: React.FC<PayloadTableProps> = ({ approval, onMaterialSeen })
   return (
     <Box>
       <Typography variant="overline" sx={{ color: 'text.secondary' }}>
-        You are signing
+        {heading ?? 'You are signing'}
       </Typography>
       <Stack spacing={0.25} sx={{ mt: 0.5 }}>
         {approval.payload.map((field) => (
@@ -891,6 +915,10 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
   const [error, setError] = useState<string | undefined>(undefined);
 
   const terminal = approval.status === 'denied' || approval.status === 'executed';
+  // Terminality is NOT a status. An unswept record stays `pending` with `callerMaySign: true`
+  // after its window closes, which is exactly how the signing affordance survived on a record
+  // that could never be signed.
+  const closure = signingClosed(approval, now);
   const disagreement = useMemo(() => disagreementOf(approval), [approval]);
   const isL2 = approval.requiredRung === 'L2' || approval.requiredSigners > 1;
 
@@ -1020,11 +1048,13 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
         borderWidth: highStakes ? 2 : 1,
         borderColor: highStakes ? 'warning.main' : 'divider',
       }}
-      aria-label={`Signature required: ${approval.actionLabel}`}
+      aria-label={
+        closure ? `${closure.header}: ${approval.actionLabel}` : `Signature required: ${approval.actionLabel}`
+      }
     >
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap', mb: 0.5 }}>
         <Typography variant="subtitle2" sx={{ fontWeight: 800, letterSpacing: 0.5 }}>
-          SIGNATURE REQUIRED
+          {closure ? closure.header : 'SIGNATURE REQUIRED'}
         </Typography>
         <Box sx={{ flexGrow: 1 }} />
         <AuthorityRungChip rung={approval.requiredRung} requiredSigners={approval.requiredSigners} />
@@ -1041,7 +1071,16 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
           The second sentence is derived from the SLOTS, not the rung. Branching
           on `isL2` alone told the requester they were the independent
           co-signature, which is false and was self-contradictory. */}
-      {approval.callerMaySign && identity.known && (
+      {/* The outcome, stated before anything else on a closed record. A banker's first
+          question on a dead approval is whether any of it happened. */}
+      {closure && (
+        <Alert severity={closure.kind === 'signed' || closure.kind === 'executed' ? 'success' : 'info'}
+               sx={{ mb: 1 }}>
+          <Typography variant="body2">{closure.note}</Typography>
+        </Alert>
+      )}
+
+      {!closure && approval.callerMaySign && identity.known && (
         <Alert severity={isL2 ? 'warning' : 'info'} icon={false} sx={{ py: 0.25, mb: 0.5 }}>
           <Typography variant="body2">
             Signing as <strong>{identity.displayName}</strong>
@@ -1052,8 +1091,13 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
       )}
 
       <Typography variant="body1" sx={{ fontWeight: 600 }}>
-        {approval.actionLabel}
+        {approvalHeadline(approval)}
       </Typography>
+      {subjectAbsence(approval) && (
+        <Typography variant="body2" sx={{ color: 'text.secondary', mt: 0.25 }}>
+          {subjectAbsence(approval)}
+        </Typography>
+      )}
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', my: 0.5, flexWrap: 'wrap' }}>
         <ApprovalCountdown expiresAt={approval.expiresAt} createdAt={approval.createdAt} />
         <Chip size="small" variant="outlined" label={approval.actionId} />
@@ -1064,12 +1108,24 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
           label={isReversible(approval) ? 'reversible' : 'irreversible ⚠'}
         />
       </Stack>
+      {/* §3.8 — the countdown chip states a mechanism; this states the consequence, with a
+          wall-clock time, and closes the "does it fire anyway?" question a banker would
+          otherwise have to ask someone. */}
+      {expiryConsequence(approval, now) && (
+        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 0.5 }}>
+          {expiryConsequence(approval, now)}
+        </Typography>
+      )}
 
       <Divider sx={{ my: 1 }} />
       <EscalatorExplainer approval={approval} />
 
       <Divider sx={{ my: 1 }} />
-      <PayloadTable approval={approval} onMaterialSeen={onMaterialSeen} />
+      <PayloadTable
+        approval={approval}
+        onMaterialSeen={onMaterialSeen}
+        heading={closure ? 'What was proposed' : undefined}
+      />
 
       {approval.assessments.length > 0 && (
         <>
@@ -1137,7 +1193,7 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
         </Alert>
       )}
 
-      {overrideRequired && (
+      {!closure && overrideRequired && (
         <Box sx={{ mt: 1 }}>
           <Typography variant="body2" sx={{ fontWeight: 600, color: 'error.main' }}>
             ⚠ You are overriding the supervisor agent&apos;s verdict. State why:
@@ -1154,8 +1210,13 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
         </Box>
       )}
 
-      {denying && (
+      {!closure && denying && (
         <Box sx={{ mt: 1 }}>
+          {/* Priority 3 / option A. Brian burned three approvals learning this by doing it.
+              The warning has to precede the irreversible click, not confirm it afterwards. */}
+          <Alert severity="warning" sx={{ mb: 1 }}>
+            {DENY_IS_FINAL}
+          </Alert>
           <TextField
             fullWidth
             multiline
@@ -1175,18 +1236,34 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
         </Alert>
       )}
 
-      {!streamSafe && (
+      {!closure && !streamSafe && (
         <Alert severity="warning" sx={{ mt: 1 }}>
           {streamGateReason(streamStatus)} Signing against a payload we cannot confirm is current
           is the exact risk the payload hash exists to prevent.
         </Alert>
       )}
 
+      {/* Every signing affordance is gated on `closure`, not just the Sign button. A dead
+          record that still offers Deny is the same lie in a different font. */}
+      {!closure && (
+      <>
+      {/* THREE VERBS, NOT TWO. Brian authorised counter-propose (option B); Danny's ruling is
+          that the row must be built to hold it now and rebuilt never. The leading slot is that
+          third verb's place — deliberately empty rather than a disabled button, because
+          shipping a dead control teaches a banker that the card lies about what it can do.
+          Sign and Deny stay grouped at the trailing edge so the destructive pair keeps its
+          existing muscle memory when the third verb arrives to their left. */}
       <Stack
-        direction={highStakes ? 'row-reverse' : 'row'}
+        direction="row"
         spacing={1}
-        sx={{ mt: 1.5, justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}
+        sx={{ mt: 1.5, justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}
       >
+        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }} />
+        <Stack
+          direction={highStakes ? 'row-reverse' : 'row'}
+          spacing={1}
+          sx={{ justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}
+        >
         {/* Denial has the same visual weight as signing. A UI where denial is
             harder than approval has its thumb on the scale. */}
         <Button
@@ -1210,9 +1287,12 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
             </Button>
           </Box>
         </Tooltip>
+        </Stack>
       </Stack>
+      </>
+      )}
 
-      {blockedReason && (
+      {!closure && blockedReason && (
         <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5 }}>
           {blockedReason}
         </Typography>
