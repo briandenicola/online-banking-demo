@@ -428,6 +428,104 @@ async def test_free_text_identifier_shaped_customer_hint_is_resolved_not_passed_
     assert _terminal(frames) == "completed"
 
 
+async def test_free_text_guid_subject_hint_is_looked_up_before_payload_use():
+    guid = "9f6a6d1e-1111-4444-aaaa-555555555555"
+
+    class RecordingExecutor(_Executor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        async def invoke(self, tool_id: str, arguments: dict[str, Any], bearer: str) -> _FakeResult:
+            self.calls.append((tool_id, dict(arguments)))
+            if tool_id == "get_user":
+                return _FakeResult({"id": "usr_verified", "username": "verified"})
+            return await super().invoke(tool_id, arguments, bearer)
+
+    async def selector(*_args, **_kwargs):
+        return IntentDecision(
+            kind="propose",
+            action_id="account.balance.adjust",
+            subject_hints={"userId": guid},
+            payload_draft={
+                "userId": guid,
+                "accountId": "acc_1",
+                "amount": "35",
+                "direction": "credit",
+                "reason": "Goodwill overdraft fee refund.",
+            },
+        )
+
+    executor = RecordingExecutor()
+    authority = _Authority("admit")
+    frames = await _drive(
+        authority=authority,
+        executor=executor,
+        evidence_tools=("get_user", "get_account"),
+        action_id=None,
+        intent_selector=selector,
+    )
+
+    assert ("get_user", {"userId": guid}) in executor.calls
+    assert authority.propose_calls == 1
+    artifacts = [f["payload"]["content"] for f in frames if f["kind"] == "artifact.created"]
+    resolved = next(a["resolved_subject"] for a in artifacts if "resolved_subject" in a)
+    assert resolved["matched"]["userId"] == "usr_verified"
+    assert _terminal(frames) == "completed"
+
+
+@pytest.mark.parametrize(
+    "executor_error",
+    [
+        ToolInvocationError("upstream_not_found", "user-service returned 404"),
+        ToolInvocationError("upstream_forbidden", "user-service returned 403"),
+    ],
+)
+async def test_free_text_guid_subject_hint_refuses_when_lookup_cannot_verify_identity(executor_error):
+    guid = "9f6a6d1e-1111-4444-aaaa-555555555555"
+
+    class DenyingExecutor(_Executor):
+        async def invoke(self, tool_id: str, arguments: dict[str, Any], bearer: str) -> _FakeResult:
+            if tool_id == "get_user":
+                raise executor_error
+            return await super().invoke(tool_id, arguments, bearer)
+
+    async def selector(*_args, **_kwargs):
+        return IntentDecision(
+            kind="propose",
+            action_id="account.balance.adjust",
+            subject_hints={"userId": guid},
+            payload_draft={
+                "userId": guid,
+                "accountId": "acc_1",
+                "amount": "35",
+                "direction": "credit",
+                "reason": "Goodwill overdraft fee refund.",
+            },
+        )
+
+    authority = _Authority("admit")
+    frames = await _drive(
+        authority=authority,
+        executor=DenyingExecutor(),
+        evidence_tools=("get_user", "get_account"),
+        action_id=None,
+        intent_selector=selector,
+    )
+
+    assert authority.propose_calls == 0
+    assert "approval.required" not in _kinds(frames)
+    error = next(f for f in frames if f["kind"] == "run.error")
+    assert error["payload"]["code"] == "subject_not_found"
+    assert error["payload"]["message"] == "The referenced customer could not be resolved for this banker."
+    assert "403" not in error["payload"]["message"]
+    assert "404" not in error["payload"]["message"]
+    assert "forbidden" not in error["payload"]["message"].lower()
+    assert "not found" not in error["payload"]["message"].lower()
+    assert guid not in error["payload"]["message"]
+    assert _terminal(frames) == "failed"
+
+
 async def test_free_text_known_l3_action_is_refused_before_propose():
     async def selector(*_args, **_kwargs):
         return IntentDecision(kind="propose", action_id="user.delete", payload_draft={"userId": "usr_1"})

@@ -3181,3 +3181,13 @@ at that moment. Unchanged by my fix, present before it. Filed for Linus and Dann
 **Verification:** 423 banker-copilot Python tests passed; user-service tests 67 passed; account-service tests 43 passed; authority unit tests 151 passed; authority integration tests 224 passed; demo dataset checks passed (10 groups).
 
 **Key Learning:** The read branch is an authorization surface too. Model-selected read tools and model-supplied ids must be treated as untrusted claims and revalidated through the same registry/capability/read-authority path as proposals.
+
+### 2026-09-10 — Explicit GUID subject-hint bypass tests (#332)
+
+**Issue:** Danny explicitly asked for tests proving GUID-shaped subject hints are never trusted as identifiers by shape alone. My prior suite had a success-path id-shaped hint test, but it did not cover no-match, unauthorized reads, or non-disclosure.
+
+**Fix:** Added planner tests where the intent model returns a well-formed GUID in `subjectHints.userId`. The tests assert the resolver calls `get_user` before use, refuses terminally when the lookup cannot verify the identity, does not create an approval around an unverified id, and uses the same non-oracle message for 403 and 404 without echoing the GUID.
+
+**Verification:** Targeted planner tests passed: 20. Full banker-copilot Python passed: 426. Cloud `scripts/demo/demo.sh show --target cloud --probe` passed and created approval `apr_d0afd44c3e494762b2506411` from run `run_4b0d5f2b32bf4715`. Local probe could not run because `http://localhost:8080` was not listening, not because the planner path failed.
+
+**Key Learning:** A control can be functionally present and still be incomplete until the negative path is asserted. For resolver controls, 403 and 404 must collapse to the same banker-readable refusal or the error channel becomes an existence oracle.
