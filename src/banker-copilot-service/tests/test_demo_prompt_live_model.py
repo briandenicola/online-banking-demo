@@ -557,3 +557,8 @@ async def test_live_refusal_outcomes_are_named_failures_not_empty_success(
     assert run.terminal == "failed", f"{prompt}: terminal status was {run.terminal!r}"
     assert run.error_code in acceptable_codes, f"{prompt}: refused with {run.error_code!r}, expected one of {sorted(acceptable_codes)}"
     assert not any(a.kind == "evidence_bundle" and a.content == {} for a in run.store.artifacts), f"{prompt}: empty evidence bundle emitted"
+    # A live refusal must leave the same durable record a stubbed one does. `run.error` lives
+    # only in an in-memory backlog, so without this the banker loses the reason on a pod roll.
+    refusals = [a for a in run.store.artifacts if a.kind == "refusal"]
+    assert len(refusals) == 1, f"{prompt}: expected one durable refusal record, got {[a.kind for a in run.store.artifacts]}"
+    assert run.error_code in refusals[0].content, f"{prompt}: the durable record does not name the reason code"

@@ -519,6 +519,44 @@ class Planner:
                 elif step["kind"] == "validate":
                     pass
                 elif step["kind"] == "refusal":
+                    # A refusal is one of the two headline outcomes of this planner, and the
+                    # whole point of it is that the system can say WHY it declined. Until now
+                    # that reason existed only as a `run.error` frame: a banker who reloaded
+                    # still saw it, because the stream backlog replays — but the backlog is in
+                    # memory, so after a pod roll the banker came back to a run that had failed
+                    # with no stated reason. "Declined, and we no longer remember why" is worse
+                    # than never having explained. Found by Linus reading this code against the
+                    # design, which said an artifact should be emitted here and where it was
+                    # not. So the reason is persisted BEFORE it is streamed, on the same rule
+                    # the evidence bundle follows: what the banker can see, the banker can
+                    # still retrieve.
+                    #
+                    # The body is a plain string on purpose. The canvas renders artifacts by the
+                    # SHAPE of their content, so a string becomes readable prose while a mapping
+                    # becomes a JSON block in front of the person we are trying to explain
+                    # ourselves to. The reason code is carried in the last line rather than a
+                    # separate field: it is the word support and audit will search for, and it
+                    # is already the code on the `run.error` frame.
+                    artifact = new_artifact(
+                        run_id=request.run_id,
+                        session_id=request.session.id,
+                        kind="refusal",
+                        title="Why this was declined",
+                        content=f"{step['message']}\n\nNo action was proposed and nothing was signed.\n\nReason code: {step['code']}",
+                    )
+                    artifact_ids.append(artifact.id)
+                    if self._store is not None:
+                        await self._store.save_artifact(artifact)
+                    await stream.emit(
+                        "artifact.created",
+                        {
+                            "artifactId": artifact.id,
+                            "kind": artifact.kind,
+                            "title": artifact.title,
+                            "revision": artifact.revision,
+                            "content": artifact.content,
+                        },
+                    )
                     await stream.emit(
                         "run.error",
                         {
@@ -912,7 +950,12 @@ class Planner:
         decision = resolution.decision
         evidence.update(resolution.evidence)
         resolve_step = (
-            [_step(next_step_number, "Resolve references", "validate")]
+            # Titles are server-authored and land in front of a banker unchanged — the client
+            # deliberately does not remap them, because presentation knowledge of backend
+            # vocabulary in the client is exactly what was rejected for evidence labels. So
+            # "Resolve references" and "Validate proposed action and payload" are fixed here,
+            # at source, where they are written.
+            [_step(next_step_number, "Identify the customer and account", "validate")]
             if resolution.evidence
             else []
         )
@@ -984,7 +1027,7 @@ class Planner:
             request.payload = payload_or_error
             required = [tool_id for tool_id in action.required_evidence if tool_id in self._registry.tool_ids]
             request.facts = _facts_from_payload(request.facts, request.payload)
-            planned = [*resolve_step, _step(next_step_number, "Validate proposed action and payload", "validate")]
+            planned = [*resolve_step, _step(next_step_number, "Check the action is permitted and complete", "validate")]
             planned.extend(
                 _step(
                     next_step_number + index + 1,

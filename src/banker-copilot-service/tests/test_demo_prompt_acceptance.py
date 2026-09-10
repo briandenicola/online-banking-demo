@@ -559,3 +559,70 @@ async def test_demo_refusal_outcomes_are_named_failures_not_empty_success(
     assert _error_code(frames) == expected_code, f"{prompt}: received frames={frames!r}"
     assert _terminal(frames) == "failed"
     assert not any(a.kind == "evidence_bundle" and a.content == {} for a in store.artifacts), f"{prompt}: empty evidence bundle emitted"
+
+    # The refusal must OUTLIVE the process. `run.error` is a stream frame and the replay backlog
+    # is in memory, so before this artifact existed a banker who came back after a pod roll saw
+    # a run that had failed with no stated reason — the system declined and then forgot why.
+    refusals = [a for a in store.artifacts if a.kind == "refusal"]
+    assert len(refusals) == 1, f"{prompt}: expected exactly one durable refusal record, got {[a.kind for a in store.artifacts]}"
+    assert expected_code in refusals[0].content, f"{prompt}: the durable record does not name the reason code"
+    assert refusals[0].content.splitlines()[0].strip(), f"{prompt}: the durable record has no banker-readable explanation"
+
+
+@pytest.mark.parametrize(
+    ("prompt", "decision"),
+    [
+        (
+            "Reset casey's password so she can sign in",
+            IntentDecision(kind="propose", action_id="user.password.reset", subject_hints={"customer": "casey"}, payload_draft={}),
+        ),
+    ],
+)
+async def test_demo_refusal_record_is_persisted_before_it_is_streamed(prompt: str, decision: IntentDecision):
+    """Same rule the evidence bundle follows: what the banker can see, the banker can retrieve.
+
+    An artifact announced on the stream but not yet stored is a pane that renders empty after a
+    reload, and nothing distinguishes that from "there were no artifacts".
+    """
+    frames, _authority, store = await _run_prompt(prompt, decision)
+
+    assert [a.kind for a in store.artifacts] == ["refusal"]
+    kinds = [frame["kind"] for frame in frames]
+    assert kinds.index("artifact.created") < kinds.index("run.error"), (
+        "the refusal record must be emitted before the error frame that references it"
+    )
+    created = [f for f in frames if f["kind"] == "artifact.created"][0]["payload"]
+    assert created["kind"] == "refusal"
+    assert created["title"] == "Why this was declined"
+    # A string body renders as prose in the canvas; a mapping renders as a JSON block in front
+    # of the person the refusal is meant to explain itself to.
+    assert isinstance(created["content"], str)
+
+
+async def test_step_titles_shown_to_a_banker_are_not_developer_vocabulary():
+    """Titles are server-authored and reach the banker unchanged.
+
+    The client deliberately does not remap them — presentation knowledge of backend vocabulary
+    in the client is exactly what was rejected for evidence labels — so the words are fixed
+    here, at the only place they are written.
+    """
+    frames, _authority, _store = await _run_prompt(
+        PROMPTS["retail_refund"],
+        IntentDecision(
+            kind="propose",
+            action_id="account.balance.adjust",
+            subject_hints={"customer": "retail", "accountType": "Checking"},
+            payload_draft={"amount": "35", "direction": "credit", "reason": "Goodwill overdraft fee refund."},
+        ),
+    )
+
+    titles = [
+        step["title"]
+        for frame in frames
+        if frame["kind"] in {"plan.created", "plan.revised"}
+        for step in frame["payload"].get("steps", [])
+    ]
+    assert "Identify the customer and account" in titles, titles
+    assert "Check the action is permitted and complete" in titles, titles
+    assert "Resolve references" not in titles
+    assert "Validate proposed action and payload" not in titles
