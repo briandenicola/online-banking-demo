@@ -206,8 +206,13 @@ export const demoApproval: Approval = {
     },
   ],
   signatureSlots: slots,
-  createdAt: at(31_000),
-  expiresAt: at(31_000 + 15 * 60 * 1000),
+  // ANCHORED TO LOAD TIME, not to T0. Every other timestamp here is a fixed point in the
+  // scripted narrative, but a SIGNING WINDOW is not narrative — it is a live deadline the card
+  // now enforces. Pinned to May 2026 this record was four months lapsed, so the replay demo
+  // would have opened on "SIGNATURE WINDOW CLOSED" with every action suppressed. The card was
+  // right; the fixture was stale.
+  createdAt: new Date(Date.now() - 31_000).toISOString(),
+  expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
   executionState: 'not_started',
   callerMaySign: true,
 };

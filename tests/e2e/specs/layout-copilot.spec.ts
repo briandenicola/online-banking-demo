@@ -19,6 +19,16 @@ const fixturePath = path.join(
 );
 const approvals = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
 
+// The fixture was seeded in September and its signing windows have since closed. The card now
+// (correctly) suppresses every signing affordance on a lapsed record, so a stale fixture would
+// silently turn the attestation assertions below into tests of the closed state instead. Re-date
+// the windows so these tests keep testing what they claim to test.
+approvals.items = approvals.items.map((item: any) => ({
+  ...item,
+  createdAt: new Date(Date.now() - 60_000).toISOString(),
+  expiresAt: new Date(Date.now() + 45 * 60_000).toISOString(),
+}));
+
 async function boot(page: Page) {
   await page.route('**/api/**', async (route) => {
     const url = route.request().url();

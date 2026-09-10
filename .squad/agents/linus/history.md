@@ -2022,3 +2022,140 @@ for it in `src/ui-app/src/api/` yet.
 
 **Orchestration Log:** `.squad/orchestration-log/2026-09-10T20:47:00Z-linus.md`
 **Session Log:** `.squad/log/2026-09-10T20:47:00Z-copilot-ui-and-authority-fixes.md`
+
+## Phase 6 — the reconnect storm and the heartbeat that never landed
+
+Brian: 24 identical `GET …/stream?runId=…&lastSeq=6`, all 200 in 29ms, while the run had
+already reached `run.done`. Four distinct causes, three of them mine.
+
+1. **Heartbeats were dropped before they could pet the watchdog.** The real server emits
+   `event: heartbeat` + `data: {"serverTs": …}` — **no `seq`, no `id:`** — so `toEnvelope`
+   rejected it ("no numeric seq") and `armHeartbeatWatchdog` was never re-armed. A perfectly
+   healthy idle stream was therefore declared `degraded` after
+   `heartbeatIntervalMs * missedHeartbeatsBeforeDegraded` (30s shipped) and every card went
+   Deny-only. **This, not the storm, is what Brian saw on a cold load.** Handle heartbeats at
+   the FRAME level, before envelope parsing, and never require a seq of them.
+2. **No terminal handling.** `run.done` was dispatched to the reducer (hence "completed ·
+   1 steps" on screen) but `openCopilotStream` never looked at `event.kind`, so EOF after a
+   finished run was indistinguishable from a dropped connection.
+3. **`attempt = 0` on `response.ok`.** A 200 is not success — a session-scoped attach to a
+   finished run answers 200 and ends immediately. Resetting the backoff there turns
+   200-then-EOF into an unbounded tight loop. Only a real frame may clear the backoff, and
+   the status is now claimed on the first FRAME rather than on `response.ok`.
+4. **Not mine:** the server cannot hold a session stream open once that session's latest run
+   has finished (`latest_for_session` returns closed runs; the `await_next_run` wait loop is
+   only reachable when a session has never had a run). Routed to Turk, not worked around —
+   see `.squad/decisions/inbox/linus-session-stream-cannot-outlive-a-finished-run.md`.
+
+Also: `seq` is scoped to the RUN (`bus.py`: `RunStream._seq`), so the resume cursor MUST be
+reset at a run boundary. Carrying run A's cursor into run B makes the server replay from
+seq+1 and silently swallow run B's opening frames.
+
+### Lessons
+
+1. **My stub lied again — sixth time.** It sent `{"kind": "heartbeat", "seq": n}`. One
+   invented field, and the Phase 3 gate spec passed green while the heartbeat-drop bug was
+   live in production the whole time. Diff the stub against the real emitter, field by field,
+   before trusting a green run.
+2. **`addInitScript` cannot configure this app.** `public/runtime-config.js` *assigns*
+   `window.__RUNTIME_CONFIG__`, clobbering anything set earlier. My first spec therefore ran
+   with the shipped 30s watchdog, waited 12s and "passed" against the unfixed client. Route
+   `**/runtime-config.js` instead, and ASSERT the override landed.
+3. **Sampling once cannot see a flap.** The pre-fix failure is live → degraded → live within
+   a few hundred ms. A single assertion after the window lands in a `Live` phase and reports
+   all-clear. Sample continuously and judge the whole window.
+4. **jsdom has no `ReadableStream`, no `TextEncoder`, no `TextDecoder`.** Without polyfills
+   the decode step throws inside `connect()`, the error is caught as a lost connection, and
+   every frame vanishes — the suite then reports a reconnect loop that is an artefact of the
+   test environment. Supply `body.getReader()` directly and polyfill the codecs from `util`.
+5. **A test that passes before the fix proves nothing.** Two of my four new unit tests passed
+   against the pre-fix file; I rewrote one into a real discriminator and kept the other as an
+   explicitly-labelled regression guard for the new code. Always run new tests against the
+   unfixed source.
+6. **Check what HEAD is before using `git checkout` as a time machine.** A commit landed
+   mid-session and swept my working tree into it, so a "pre-fix" run silently tested the
+   fixed code. Pin the parent SHA (`git show <parent>:<path>`) instead of trusting HEAD.
+
+### Phase 6 addendum — the run timer, and two more tests that passed for the wrong reason
+
+`TracePane` recomputed `now - startedAt` on every tick and ignored the `durationMs` that
+`run.done` carries and the reducer already stores, so a run the service finished in 241ms
+displayed "181s and counting" beside "the agent is still running on the server". Two lies on
+one line. Prefer the server's number the moment it exists; sub-second runs now render "0.2s"
+rather than flooring to "0s", which reads as a missing value.
+
+7. **`getByRole('button', { name: /sign/i })` matches far more than the Sign button.** It also
+   matches the batch group's "Sign 2 items" and every queue row whose accessible name contains
+   "DENIED". My gate test passed in 525ms against one of those while the dwell-gated button it
+   was supposed to be watching was still disabled. **A suspiciously fast pass is a failing
+   test.** Enumerate what a selector actually matched before trusting it — `/^Sign — /` is the
+   card's button, and it correctly reads `Sign — … (enabled in 0:26)`.
+8. The gate now passes HONESTLY and untouched: pre-fix build, Sign is still `disabled` after
+   40s; post-fix it enables at 26.6s, after the full L2 dwell. Both measured in a real browser.
+
+## Phase 7 — Danny's approval-card IA spec, §7 steps 1/3/4 + option A
+
+**Built** `components/copilot/approvalNarrative.ts` — pure functions, wired into `ApprovalCard`:
+- `approvalHeadline` (§3.1): verb-first ask with the money. Unknown action → falls back to
+  `actionLabel`. That fallback IS the safety property: a card that does not know an action must
+  degrade to today's wording, never to a confident sentence about the wrong thing.
+- `subjectAbsence` (§3.2, honest-absence form): §6.1 is Turk's and has not landed, so the card
+  says plainly that it cannot identify the customer instead of printing a GUID as if it were an
+  answer. Returns null when there is no customer subject.
+- `whyThisRung` (§3.7/§6.4, client-side by Danny's assignment): replaces "Base rung … No
+  escalators fired." Keyed on action AND rung together — keyed on action alone it would
+  confidently tell a single-signer approval it "always needs two people". The escalator branch
+  is untouched and still renders server text verbatim; that text is audit record.
+- `expiryConsequence` (§3.8), `DENY_IS_FINAL` (priority 3, before the click).
+- Action row restructured for THREE verbs; third slot deliberately EMPTY, not a disabled button.
+
+**Two lessons, both the same lesson.**
+1. `flattenPayload` keys rows on `path`, not `key`. My `.key` lookup returned undefined for
+   every field, so all five sentences silently degraded to their fallbacks — and the fallbacks
+   are plausible, so the card looked fine. 6 of 22 tests caught it. Read the producer's shape;
+   do not assume the obvious property name.
+2. **The browser caught what 22 unit tests could not.** Against expired fixtures the card read
+   "If nobody signs by 4:06 PM, this is automatically denied" on an approval whose window had
+   ALREADY closed — a future-tense forecast about a thing that has already happened. My tests
+   passed because they used a fixture I read as current. `expiryConsequence` now takes `now`
+   (fed by `useNow()`) and returns null past expiry. Third time this session the browser has
+   found a defect the unit tests were structurally incapable of seeing.
+
+**Verified:** 518 passed / 13 failed (13 = the two pre-existing account-opening suites,
+unchanged); narrative suite 23/23; layout 52/52 in a real browser, twice; `CI=false
+react-scripts build` compiles.
+
+## Phase 8 — terminal-state signing affordances
+
+**The defect:** a card whose signing window had closed still read "SIGNATURE REQUIRED" and
+"Yours is the only signature needed — this goes ahead once you sign." A second report: `Deny`
+stayed enabled and red on a fully SIGNED approval.
+
+**Root cause — terminality is not a status.** The card's `terminal` flag was
+`status === 'denied' || status === 'executed'`. Expiry is not a status: the service had not yet
+swept the record, so it arrived `pending` with `callerMaySign: true` while the countdown three
+lines above rendered "signature window closed — DENIED" from an independent time comparison.
+`signed` was missing too — terminal for SIGNING, non-terminal for execution.
+
+**Fix:** one predicate, `signingClosed(approval, now)` in `approvalNarrative.ts`, driving the
+header, the aria-label, the attestation, and the WHOLE action row — including the reserved
+third verb, so counter-propose cannot inherit the bug. Rule: an affordance renders only when
+acting on it can change the record. It only ever narrows, so it cannot weaken the gate.
+
+**Checked the server before touching the UI:** `ApprovalService.cs:446-455` rejects a deny on a
+signed record with a 409. Purely a UI honesty bug, no escalation.
+
+**Lesson — my own rule, nearly missed.** My first signed-record browser test PASSED while
+asserting `getByRole('button', {name: /^Deny$/}).toHaveCount(0)` — because the card never
+rendered at all. A signed record is not auto-selected. Assertions about the ABSENCE of
+something pass trivially when the thing that would contain it is absent; always assert
+something POSITIVE about the rendered surface first (here: the header text).
+
+**Second-order find:** `demoApproval.expiresAt` was pinned to May 2026, four months lapsed, and
+`demoEvents` feeds the replay path in `BankerCopilotPage`. Once this fix deployed, the scripted
+demo would have opened on a fully suppressed card. The card was right; the fixture was stale.
+Anchored that ONE window to load time; every other fixture timestamp is narrative and stays fixed.
+
+**Verified:** 524 passed / 13 failed (13 pre-existing account-opening); layout 52/52; two new
+real-browser terminal-state guards. 16 tests broke mid-change and were fixed by re-dating stale
+fixtures, never by deleting assertions.

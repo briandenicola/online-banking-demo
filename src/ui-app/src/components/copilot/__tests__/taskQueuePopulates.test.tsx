@@ -40,7 +40,15 @@ function stubHttp() {
       const scope = (config as { params?: { scope?: string } } | undefined)?.params?.scope;
       // The server excludes the caller's own requests from `awaiting-me`, and
       // every seeded item was requested by `banker`.
-      const items = scope === 'awaiting-me' ? [] : fixture.items;
+      // The fixture's windows closed in September. The card now suppresses signing language on
+      // a lapsed record, so a stale fixture would quietly convert the assertions below into
+      // tests of the CLOSED card. Re-date so they keep testing the open one.
+      const live = fixture.items.map((item) => ({
+        ...item,
+        createdAt: new Date(Date.now() - 60_000).toISOString(),
+        expiresAt: new Date(Date.now() + 45 * 60_000).toISOString(),
+      }));
+      const items = scope === 'awaiting-me' ? [] : live;
       return Promise.resolve({ data: { count: items.length, items } });
     }
 
