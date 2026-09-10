@@ -3212,3 +3212,26 @@ at that moment. Unchanged by my fix, present before it. Filed for Linus and Dann
 **Verification:** Demo prompt acceptance + terminal-status tests passed: 32 passed, 2 xfailed. Full banker-copilot Python passed: 438 passed, 2 xfailed. Zero-write tests passed: 31. Cloud `scripts/demo/demo.sh show --target cloud --probe` passed after the `loop.py` changes and created approval `apr_2c99097201d44fb4b8d622b7` from run `run_b0879adfd3724f9d`.
 
 **Key Learning:** Brian's score prompt still needs a policy-safe descriptor-to-transaction resolution story, and the comparison prompt needs evidence instances keyed by call/alias rather than only by tool id. Those are real demo-script gaps, not reasons to smuggle fixture ids into tests.
+
+### 2026-09-10 — CRITICAL: Facts-map cross-subject bug discovered by Danny (#332)
+
+**Issue:** Danny's review of the two-customer-comparison xfail uncovered a **data-boundary breach** in the planner's multi-subject handling. The evidence dict uses last-writer-wins (later subject overwrites), while the facts map uses first-writer-wins merge across subjects. The two collections disagree about subject on the second lookup, and stale facts from the first subject travel to authority attached to the second subject's approval record.
+
+**Evidence:** Traced the approval hash preimage (`PayloadHasher.Compute` → `evidence` is not in it). Canonicalization risk is zero. The real bug is not canonicalization; it is facts binding.
+
+**Hazards:**
+1. Evidence dict overwrite: multi-subject runs lose one subject's evidence silently (last-writer-wins)
+2. **🔴 CRITICAL:** Facts map cross-subject merge: stale subject's accountId/userId flow to authority in wrong customer's proposal
+3. A model-selectable read path (policy-forbidden) could layer a second subject into facts and influence later tool arguments
+
+**Required fix:** One change affecting both collections:
+- Evidence dict: per-invocation keys within planner (bare tool id on first call, `#2` on second, etc.), projected to bare tool ids at authority seam only
+- Facts map: first-writer-wins merge is fine, but **no cross-subject merge**; carry only first-invocation results, or scope facts per resolved subject entirely
+
+**Test requirements:** Three tests covering bundle shape, `already_gathered` refusal still fires, and facts carry no cross-subject value after a two-subject run.
+
+**Wire constraint:** Authority `propose` call wire bytes must stay identical for all existing traces. Projection happens at the authority seam, never in citation layer or bundle content.
+
+**Status:** Blocked on Turk's implementation; facts-map fix is blocking Linus and merge.
+
+**Key Learning:** Last-writer-wins and first-writer-wins in the same accumulation flow create a binding race condition when subject identity is involved. The entire multi-subject planner must be deterministic about which subject "owns" a fact or evidence item.

@@ -2186,3 +2186,17 @@ fixtures, never by deleting assertions.
   filter added with the storm fix. It does — `completedRuns` is empty on a fresh
   client — but that had to be asserted, not assumed. Durable across reload,
   LOST on service restart.
+
+### 2026-09-10 — Session stream lifecycle bug found (#332)
+
+**Issue:** When a session has completed at least one run and that run is finished, attaching to the session (no explicit `runId`) resolves to the closed run, immediately replays backlog, and disconnects (200-EOF). The client cannot hold a stream open at all, so signing buttons go dead until page reload.
+
+**Root Cause:** `routes/sessions.py` `latest_for_session()` returns closed runs. The wait loop that would otherwise re-enter for the next run (`await_next_run()`) is never reached because `stream is None` is false.
+
+**Proposal (deferred to server):** When no `runId` was requested and the latest run is already closed and fully replayed, fall through to the same `await_next_run` loop rather than replaying-and-returning.
+
+**Client-side mitigation (implemented):** Stop hammering; stop re-dispatching the closed run's frames; report accurate run state rather than faking liveness. The gate must not sign without live stream freshness, so faking liveness weakens control.
+
+**Verification:** `tests/e2e/specs/stream-lifecycle.spec.ts` with `STREAM_MODE=completed-run` measures stream requests before/after fix: 15 requests in 12s before, 5 requests after.
+
+**Key Learning:** Signing gates depend on stream liveness as a freshness oracle. If the client cannot hold a stream open, it must not sign. A gate-weakening workaround trades correctness for demo convenience — do not do it.

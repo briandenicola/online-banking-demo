@@ -5514,3 +5514,1242 @@ harness is ready and its subjects will resolve against whatever seed is live tha
 
 ---
 
+# Epic #332 — merge readiness assessment
+
+**Author:** Danny (Lead/Architect)
+**Date:** 2026-09-10, 16:56 local
+**Branch:** `332-beta`, **111 commits ahead of `main`**
+**Question:** is #332 safe to merge and demo?
+
+---
+
+## Decision summary
+
+> **Do not merge tonight. One thing stands between here and a defensible merge: nobody has watched
+> the free-text planner run in a browser, because the code that does it is not deployed. I proved
+> that rather than inferred it. Deploy, run three prompts by hand, then merge.**
+
+**The work itself is good.** The directory lookup is *better as shipped than as I specified* — I
+went looking for the corners I'd have got wrong and found them already handled. The authority
+model is intact. Nothing in tonight's six commits alarms me.
+
+**The gap is evidence, not quality.** The epic's thesis is an agentic harness under human
+authority. The part that makes it *agentic* has never executed outside a test process.
+
+| # | Item | Status | Blocking? |
+|---|---|---|---|
+| 1 | Free-text planner deployed | ❌ **Not deployed — proven** | 🔴 **Blocks merge** |
+| 2 | Customer directory deployed | ❌ **Not deployed — proven** | 🔴 **Blocks merge** |
+| 3 | Planner observed in a browser | ❌ Never, by anyone | 🔴 **Blocks merge** |
+| 4 | Directory lookup implementation | ✅ Sound, exceeds spec | — |
+| 5 | Authority model / rung ladder | ✅ Intact, verified | — |
+| 6 | Acceptance suite (31 prompts) | ⚠️ Proves routing, **not reasoning** | 🟡 Desirable |
+| 7 | Non-disclosure enforced one layer above the data | ⚠️ Real residual risk | 🟡 Desirable |
+| 8 | 2 demo prompts unresolvable | ⚠️ Already `xfail`-documented | 🟢 Brian's call |
+
+**Brian's first three actions, in order:** deploy both services → run three prompts in a browser →
+merge if they behave. That is plausibly under an hour and it converts the entire assessment from
+amber to green.
+
+**If he must demo tomorrow with no further work:** cut free-text. Demo the `actionId` path, which
+*is* deployed and *has* been exercised live. §5.
+
+---
+
+## 1. Proven versus merely green
+
+Asked for explicitly, and it is the heart of this assessment.
+
+### 1.1 🔴 Neither headline feature is deployed. This is proven, two independent ways.
+
+I did not take the deployment state on report, and it is not what the pod list suggests at a
+glance — every pod is 36 minutes old, which *looks* current.
+
+**It is not.** Pods rolled at roughly **16:20**. Tonight's six commits landed **16:49–16:53**.
+Every pod predates every commit.
+
+Two direct confirmations:
+
+- **The running copilot image has no intent planner.** Listing `app/planner/` inside the live
+  `banker-copilot-service` container returns the *old* module set — `loop.py`, `primary_model.py`,
+  `supervisor_model.py` and the rest, with **`intent_model.py` absent**. The file exists in the
+  tree. It is not in the image.
+- **The directory endpoint 404s in the cluster, against a working control.** From inside the
+  cluster, `GET user-service/api/customer-directory/lookup?username=cas` → **404**, while
+  `GET user-service/api/users/me` → **401** on the same host in the same call. The 401 proves the
+  service is up and enforcing auth; the 404 proves the route does not exist in the deployed build.
+
+So *"the planner has never run in a browser"* is no longer a concern — it is a **measured fact**,
+and it extends further than that: **the planner has never run outside a Python test process at
+all, and the directory lookup has never served a request in the cluster.**
+
+### 1.2 ⚠️ The 31-prompt acceptance suite proves routing, not reasoning
+
+This is the claim most likely to be over-read in the morning, so let me be precise about what it
+does and does not establish.
+
+`src/banker-copilot-service/tests/test_demo_prompt_acceptance.py` (555 lines, 8 tests, currently
+**untracked** — it is not committed) **imports `IntentDecision` and `EvidenceAnswer` from
+`intent_model` and constructs them directly** (`:17`, used at `:311-315`, `:347`). The intent model
+is **never invoked**. Tool results are hand-built fixtures (`:123`).
+
+**Therefore:** a fully green run proves the planner *routes* a decision correctly, builds payloads,
+and enforces the allowlist. **It cannot prove the model produces a sane decision from Brian's
+English, because no model runs.** Those are the two different questions, and only the cheaper one
+is answered.
+
+That is a legitimate and well-built suite — pinning routing is exactly what it should do. It is
+simply not evidence for the sentence "the free-text path works."
+
+### 1.3 The pattern tonight already proved twice
+
+Two independent cases tonight where green proved nothing: jsdom blindness swallowing every SSE
+frame, and a reconnect storm being a rate over a wall clock that no jest assertion can observe. In
+both, the suite was green **and the feature was broken in a browser**.
+
+The free-text planner is now the third instance of the same shape, and the largest: **a
+model-driven path, verified only where the model does not run.** Linus's fix for the storm is the
+template — he ran the repaired suite against deployed code and confirmed the *correct failure
+signature* first. That is what "proven" means here, and it is what free-text has not had.
+
+### 1.4 What genuinely is proven
+
+Credit where it is due, verified against the live cluster earlier this session: evidence
+`label`/`summary` rendering, the escalator template fix, `agentAssessment` populated, and the
+signing gate end to end — **Brian signed a live approval at 4:16:45 PM.** The `actionId` path is
+real, deployed, and exercised by a human. That is the demo's floor and it is solid.
+
+---
+
+## 2. Residual risk in the new attack surface
+
+I assessed the shipped code, not my spec. **The implementation is better than what I specified**,
+and I want that on record because I went in expecting to find the corners.
+
+**What is right:**
+
+- **Exact-match short-circuits prefix in both repositories** — `CosmosUserRepository.cs:51-60` and
+  `InMemoryUserRepository.cs:37-44`, each returning early on `exact.Count == 1`. This is the
+  `banker`/`banker2` collision I flagged, closed in both implementations rather than one.
+- **`STARTSWITH` with a bound parameter, not `LIKE`** (`CosmosUserRepository.cs:53-67`). This is
+  stronger than my spec required. I had been ready to flag that the controller rejects `*` and `%`
+  but not `_` — a `LIKE` wildcard. It does not matter: `STARTSWITH` has no wildcard semantics and
+  the value is parameterised. The controller's character rejection is belt-and-braces over a
+  construction that is already safe.
+- **The cap is enforced three times independently** — `Limit = 5` (`CustomerDirectoryController.cs:13`),
+  `Math.Clamp(limit, 1, 5)` in the service (`UserService.cs:46`), and again in the repository
+  (`CosmosUserRepository.cs:50`). No caller can widen it.
+- **Identity-only projection** — id, username, display name, coarse status
+  (`CustomerDirectoryController.cs:42-48`). No email, no balances, no risk tier. The plane
+  separation holds.
+- **Audit line on every lookup** with caller, query and result count (`:33-38`).
+- **Minimum length and wildcard rejection** before any query runs (`:26-30`).
+- The widened `/api/authority/policy` projection is **complete** — both `HashFields` and
+  `MoneyFields` ship (`PolicyController.cs:65-66`), so the planner's money canonicalisation reads
+  live policy rather than a copy. No drift.
+
+### 2.1 🟡 The one thing that gives me pause
+
+**The API returns the full candidate list; the non-disclosure rule lives one layer above it.**
+
+My §1.4 ruling was that an ambiguity refusal must never name the candidates, because a refusal that
+lists them is the search API we declined to build, one query at a time. That rule is enforced — but
+it is enforced **in the copilot's resolver**, while the data is exposed by the **user-service
+endpoint**, which faithfully returns up to 5 `{id, username, displayName, status}` records with a
+`count`.
+
+For the harness this is correct and the property holds: the resolver is the only caller, and the
+GUID pass-through and 403/404 tests now enforce it by construction. **The risk is structural, not
+present-tense:** the endpoint is a general-purpose route under a role held by every banker and
+supervisor. **The second consumer inherits none of the discipline.** Anything else that calls it —
+a future service, a script, a curious operator with a token — gets the candidate list with no
+ambiguity refusal in the path.
+
+**Not a merge blocker.** The bound is real today. It should be written down as an ADR note on the
+endpoint so the constraint travels with the code rather than living in a decision file, because
+the next person to call it will not read this document.
+
+### 2.2 Nit, correct as written
+
+`CustomerDirectoryController.cs:33` uses the string literal `"userId"` where the rest of the
+service uses `ClaimNames.UserId`. I checked — the constant's value **is** `"userId"`
+(`Constants.cs:29`), so the audit line is correct today. It is a drift hazard, not a defect.
+Footnote, not a finding.
+
+---
+
+## 3. The demo script as acceptance — Brian's call, with options
+
+Both prompts my colleague predicted would fail honestly, do.
+
+**The suite is already honest about it.** `:499` carries
+`@pytest.mark.xfail(strict=True, reason="The exact sentence gives no transaction id and no target
+score; no resolver maps 'offshore wire' to a scored transaction.")` — `strict=True`, so if it ever
+starts passing the suite *fails*. That is the right way to record a known gap and Turk deserves
+credit for it.
+
+These are **demo-script decisions, not bugs.** Brian has three options for each:
+
+**A. "Casey's offshore wire is legitimate… lower its risk score."** Needs a descriptor
+("offshore wire") mapped to a scored transaction id. No such resolver exists.
+- **Reword the prompt** to carry a discriminator the resolver can use — cheapest, zero code, and
+  honest. *Recommended.*
+- **Build descriptor→transaction resolution** — a third resolver class, new surface, not tonight.
+- **Cut the prompt** from the script.
+
+**B. "Compare dana's checking history against casey's."** Resolves **two** subjects in one
+objective; the resolver as designed handles one.
+- **Cut it from the demo, keep it as a known limitation** — it is a read-only prompt, so it
+  demonstrates nothing about the authority model, which is the epic's actual thesis.
+  *Recommended.*
+- **Split into two prompts.**
+- **Extend the resolver to multi-subject** — real work, and it multiplies the ambiguity surface I
+  bounded in §1.4. I would not do this for a demo.
+
+**My honest read:** neither prompt demonstrates human authority over an agent. Cutting both costs
+the demo nothing it cannot afford, and pretending they work would cost a great deal.
+
+---
+
+## 4. What must happen before merge
+
+**🔴 Blocking — in order. If Brian does only the first three, he is in good shape.**
+
+1. **Deploy `banker-copilot-service` and `user-service` from `332-beta`.** Everything else is
+   blocked on this and it is proven necessary (§1.1). Confirm by re-running the two probes: the
+   directory route must return 401 rather than 404, and `intent_model.py` must be present in the
+   running image.
+2. **Run three free-text prompts in a real browser** — one read-only, one that reaches an approval,
+   one that must be refused. Watch the trace render live. This is the single check that converts
+   the epic's central claim from asserted to observed.
+3. **Confirm one directory lookup resolves and one ambiguous lookup refuses**, in the browser, with
+   the refusal naming no candidates. Use `banker` as the exact-match case — it is the collision
+   that would otherwise reach an audience.
+
+**🟡 Desirable — worth doing, does not block.**
+
+4. **Commit the acceptance suite.** It is currently untracked and would be lost by a stray clean.
+5. **Label it for what it proves** — one comment at the top stating that intent decisions are
+   injected and no model runs, so nobody reads a green run as proof of reasoning (§1.2).
+6. **Add the endpoint note from §2.1** so the non-disclosure constraint travels with the code.
+7. **Settle the two demo prompts** (§3) — a decision, not development.
+
+---
+
+## 5. What I would cut for a demo tomorrow with no further work
+
+**Cut free-text entirely and demo the `actionId` path.**
+
+It is deployed, it is exercised, and Brian personally signed a live approval on it at 4:16:45 PM.
+It shows the evidence bundle, the rung reasoning, separation of duties, the payload-hash binding
+and — since tonight — counter-proposal, which is the strongest answer to the objection he himself
+raised. **That is the epic's thesis, fully demonstrable, on proven code.**
+
+Free-text is the more impressive demo and it is currently the unproven one. Fifteen minutes of
+deployment and browser time (§4, steps 1–3) is what moves it from the cut list to the headline. I
+would spend that fifteen minutes rather than cut it — but I would cut it before I would show it
+untested to an audience.
+
+**The line I would not cross:** demonstrating free-text having never watched it run. Not because it
+is likely broken — the code reads well — but because tonight produced two separate cases where
+green suites concealed browser-only failures, and this path has strictly weaker evidence than
+either of those had.
+
+---
+
+## 6. So, is #332 done?
+
+**The work is done. The proof is not.** Brian's instinct to catch himself — *"but we have to get
+Turk's epic done"* — was sound, though not for the reason he thought: Turk's work *is* finished and
+in the tree. What is missing is that **nobody has seen it run.**
+
+That is an hour of work, not another epic. I would not open the PR before then, and I would not
+lose sleep after.
+# Free-text planner: subject resolution and risk-score override
+
+**Author:** Danny (Lead/Architect)
+**Date:** 2026-09-10
+**Status:** Ruled — Turk is unblocked on both. No item below needs Brian tonight.
+**Epic:** #332, branch `332-beta`
+**Reviews:** `.squad/decisions/inbox/turk-free-text-planner-design.md`
+**Related:** `danny-human-override-counter-proposal.md`, `danny-approval-card-information-architecture.md`
+
+---
+
+## Decision summary
+
+| # | Question | Ruling |
+|---|---|---|
+| **1** | Add lookup tools? | **Yes.** Confirmed independently — no banker-safe path exists (§1.1). |
+| **1a** | What may they return, to whom? | **Bounded directory *lookup*, not search.** New authority `CustomerDirectoryLookup`; username exact/prefix only; min 3 chars; hard cap 5; id + username + display name + status; **no email, no PII, no financial data**; incapable of listing the directory (§1.3). |
+| **1b** | Ambiguity / no-match? | **Both terminal refusals. The model never chooses between customers.** The refusal must **not** list candidates — that is a search API through the error channel (§1.4). |
+| **1c** | Intent phase or evidence phase? | **Its own phase between them**, as Turk drew it. Deterministic, server-side, a visible trace step, **and its output lands in the evidence bundle** — that is what stops it being a side channel (§1.5). |
+| **2** | Who picks `newScore`? | **The model proposes it, bounded; both L2 signers see it; it is hash-bound.** Not the human at sign time (§2.2). |
+| **2a** | Human-picks = payload edit? | **Yes, and it is already solved by option B.** Disagree with the number → counter-propose → new hash, fresh L2 chain. **No option C needed** (§2.2). |
+| **2b** | What constrains the model? | A `ratio` floor threshold plus one action rule raising to L3. **Expressible today, zero grammar change** (§2.3). |
+| **2c** | "Downgrades are inexpressible in policy" — gap or boundary? | **Neither — a category error.** The one-directional ladder is a *named, enforced* invariant (I-4, `PolicyLoader.cs:733-736`) and must stay. `newScore` is a *payload value*. The real gap is payload **domain constraints**, which is small and separate (§2.1). |
+
+**Plus four defects in Turk's design** (§3), two of which are security-relevant and one of which
+he cannot see from where he is standing.
+
+---
+
+## Ruling 1 — subject resolution
+
+### 1.1 Ground truth — Turk is right, verified independently
+
+I checked rather than taking it on report, as asked.
+
+- **`GET /api/admin/users` exists but is not usable.** `[Authorize(Roles = Admin)]`
+  (`user-service/Controllers/AdminController.cs:12`) — a banker cannot reach it. And it returns
+  **every user, unbounded**, via `GetAllUsersAsync()` (`:102-121`), with no query parameter. Even
+  if it were banker-reachable it is a full customer dump, which is the exact capability we must
+  not hand the harness.
+- **`GET /api/accounts` is caller-scoped** — `GetUserAccounts()` reads `userId` from the caller's
+  own claims (`account-service/Controllers/AccountsController.cs:48-58`). Own accounts only, as
+  Turk said.
+- **Cross-customer account read already exists and is already banker-permitted** —
+  `ownerUserId == callerUserId || BankingRoles.Holds(User, BankingRoles.CustomerFinancialRead)`
+  (`AccountsController.cs:113`), where `CustomerFinancialRead = "banker,Banker,supervisor,Supervisor"`
+  (`shared/Auth/BankingRoles.cs:105`).
+- `GET /api/accounts/number/{accountNumber}` exists (`AccountsController.cs:85`) — a useful
+  deterministic discriminator, see §1.4.
+
+**Conclusion: no existing path resolves a name to an id for a banker.** Turk has not missed
+anything. Add the capability.
+
+### 1.2 The distinction that governs the whole ruling
+
+The codebase already draws the line I need, and states it better than I would
+(`BankingRoles.cs:90-95`):
+
+> *"Reading a customer's balance is BANKING authority; reading an identity record is PLATFORM
+> authority."*
+
+That is why `CustomerFinancialRead` deliberately excludes `admin` and is a separate constant from
+`IdentityRead`.
+
+**A name→id lookup is identity-plane discovery.** It is neither the financial read bankers hold
+nor the platform identity read admins hold. It is a third thing, and it must be named as one.
+
+The file is also already honest about the accepted blast radius (`BankingRoles.cs:99-104`): one
+compromised banker credential reads every customer's balances **by id**, with relationship
+scoping and purpose-of-access capture ticketed but absent.
+
+**That is precisely why unbounded name search is not a small addition.** It converts *"reads any
+customer he can already identify"* into *"enumerates the customer base"* — and it does so inside
+an agent harness whose entire thesis is rationed authority. My colleague's instinct here is
+correct and I am ruling with it: this would be a broader capability than most of what the policy
+carefully rations.
+
+### 1.3 What the tool may return, and to whom
+
+**Add a new authority constant `CustomerDirectoryLookup = "banker,Banker,supervisor,Supervisor"`
+in `shared/Auth/BankingRoles.cs`.** Same members as `CustomerFinancialRead` today, separate on
+purpose — the file's own precedent (`:111-117`) is that two authorities which happen to coincide
+are still two authorities, and the day directory lookup needs relationship scoping must be a
+one-line change here rather than an audit of call sites. Document the blast radius in the same
+register as the existing constants.
+
+**It is a lookup, not a search.** Binding constraints:
+
+| Constraint | Value | Why |
+|---|---|---|
+| Match mode | **Exact match short-circuits; prefix only if exact finds nothing** | See the collision note below — this ordering is load-bearing, not a nicety. |
+| Minimum query | **3 characters** | `"a"` must not return the world. |
+| Result cap | **5, as a cap and not a page size** | Since >1 is already a refusal (§1.4), the cap is *not* paging and must not be implemented as it — no cursor, no offset, no `page` parameter. It exists so a broad prefix is bounded work for the server and so the ambiguity refusal can honestly say "5 or more". |
+| Projection | `id`, `username`, display name, coarse status (active/locked) | Enough to disambiguate and to drive `user.unlock`. **No email. No risk tier. No balances. No PII beyond the above.** |
+| Empty/wildcard query | **Rejected at the endpoint** | The endpoint must be structurally *incapable* of returning the directory. Enforce server-side, not in the tool manifest, so the property holds for every caller. |
+
+Risk tier and financial detail stay on the financial-read tools the banker already has, used
+*after* an id is known. Keeping the planes separate is the point: discovery returns identity,
+never money.
+
+**⚠️ Exact match must short-circuit prefix match, and this is not hypothetical.** The seeded
+usernames in `config/demo-dataset.json` are `admin`, `banker`, `banker2`, `supervisor`, `retail`,
+`verify-target`, `casey`, `dana`. **`banker` prefix-matches both `banker` and `banker2`** — so a
+naive prefix implementation makes an exact, unambiguous username fire my own `ambiguous_subject`
+refusal. Required behaviour: resolve exact match first; if exactly one exists, that is the answer
+and prefix matching never runs. Only when exact finds nothing does prefix apply. This wants a test
+using `banker` specifically, because it is the case that will otherwise reach Brian.
+
+Match on `username` only — every demo subject is a username, and substring matching across names
+and emails builds a people-finder we do not need.
+
+**Account resolution** ("retail's checking") needs a sibling on account-service: list accounts for
+a given `userId`, gated on the existing `CustomerFinancialRead` — that one *is* the financial
+plane and needs no new authority. Filtering to "checking" is the resolver's job, deterministically.
+
+**Audit every lookup** — caller, query string, result count — as customer-data access. A discovery
+capability with no access log is the one version of this I would refuse.
+
+**No rung.** Rungs govern *actions*; reads are not actions and the ladder does not reach them. The
+control set here is authority + bounding + audit + trace visibility, and that is sufficient.
+
+### 1.4 Ambiguity and no-match
+
+My call, as asked, and both are terminal:
+
+- **0 matches → `subject_not_found`.** Terminal, named, no fallback.
+- **>1 match → `ambiguous_subject`.** Terminal. **The model must never choose between customers.**
+  No evidence available to it can safely disambiguate two people, and silent selection of the
+  first is exactly the failure we cannot ship.
+
+**The refusal message must not list the candidates.** State the count and the discriminator needed:
+*"2 customers match 'casey' — give the username or an account number."* Listing them turns the
+error channel into the search API we just declined to build, one query at a time. This is the
+detail most likely to be lost in implementation, so it is a hard requirement, and it wants a test.
+
+**One permitted narrowing:** >1 match is not ambiguous if the objective supplies a second
+discriminator the resolver can apply **deterministically** — an account number, an account type
+that matches exactly one candidate account. The *resolver* applies it. Never the model.
+
+Both codes already exist in Turk's failure taxonomy. Endorsed as written.
+
+### 1.5 Where resolution belongs
+
+**Its own phase, between intent and evidence — exactly as Turk drew it (`Resolve references`).**
+He is right; I am endorsing rather than amending. Four reasons, and the fourth is the one that
+answers the side-channel concern:
+
+1. **Deterministic and server-side.** Folding it into the intent phase invites the model to do the
+   resolving, which §1.4 forbids.
+2. **Ordering.** Evidence tools take ids; resolution must precede them.
+3. **Visibility.** A banker reading the run must see *which* Casey was chosen and on what basis.
+   The step is the control.
+4. **Resolution output must be written into the evidence bundle**, not used and discarded —
+   e.g. `resolved_subject: {query: "casey", matched: "usr_3f2a…", basis: "exact username match"}`.
+   This is what keeps resolution inside the frame rather than beside it: it becomes evidence the
+   approval carries, that a human reads on the card, and that an auditor can replay. **A
+   resolution that leaves no trace in the bundle is precisely the side channel we must not
+   create.**
+
+This also feeds the card spec's §3.2 directly — resolution is where the customer stops being a
+GUID.
+
+---
+
+## Ruling 2 — `newScore`
+
+### 2.1 First, dissolve the "downgrades are inexpressible" tension
+
+My colleague asks whether this is a gap or a deliberate boundary. **It is neither, and naming it
+correctly matters because acting on the wrong reading would be dangerous.**
+
+The monotone ladder (`raiseTo`/`raiseBy`/`minRung`) governs **how much human authority an action
+requires**. It is deliberately one-directional — and the code says so in as many words. From
+`PolicyLoader.ValidateRaise` (`:733-736`), rejecting a negative `raiseBy`:
+
+> *"Nothing may lower a rung (**invariant I-4**), and the grammar does not admit a lowering
+> operator."*
+
+So this is not an oversight anyone forgot to implement. It is a **named, enforced invariant**, and
+it stays.
+
+`newScore` is a **payload value**. Lowering a risk score is not a rung downgrade — it is a field
+whose value happens to be lower than another number. **The policy language needs no downgrade
+vocabulary to express it, and must not acquire one.** "We need downgrades in policy" would be a
+genuinely damaging change; it is also not what is needed here.
+
+**The real gap Turk found is different and much smaller:** the policy can declare *which* payload
+fields exist (`hashFields`, `moneyFields`) but cannot express a field's **domain** — no min/max,
+no enum. That is why `direction in {credit,debit}` and score bounds are untyped today. Worth a
+follow-up; not a blocker, because §2.3 gets the bound we need through the existing rule grammar.
+
+### 2.2 Who picks the value
+
+**The model proposes it. Both L2 signers see it. It is bound to the signature.**
+
+- **Not the human at sign time.** `newScore` is in `hashFields`
+  (`config/authority-policy.yaml:439`), so editing it at sign time either breaks the payload-hash
+  binding or is a counter-proposal wearing a disguise. Ruled out, consistent with the
+  counter-propose ruling.
+- **And it does not need to be.** **Option B already solves this and shipped today.** A banker who
+  disagrees with the agent's number counter-proposes: new payload, new hash, its own L2 chain,
+  attributed to them. That is "the agent had the right idea and the wrong number" working exactly
+  as intended, on its first real use case. **No option C. Nothing new to build.**
+- **Not a fixed policy delta.** A constant ignores the evidence, which is the entire point of the
+  run.
+
+The safety properties are already in place: `baseRung: L2` with `baseSigners: 2` (`:431-432`) means
+two humans see the number; `rationale` is hash-bound alongside it (`:439`) so the justification
+cannot drift from the figure; and `requiredEvidence` (`:441`) forces the prior score to be gathered
+before anything is proposed.
+
+**Additional requirement:** the model must state the **prior score** in the rationale — *"lowered
+from 0.91 to 0.30 because…"*. `get_scored_transaction` is required evidence, so the number is in
+hand. This gives both signers the delta with no new plumbing, and it is the single cheapest thing
+that makes the card's §3.5 honest for this action.
+
+### 2.3 What constrains the model — expressible today, zero grammar change
+
+Two additions to `config/authority-policy.yaml`:
+
+```yaml
+# thresholds — precedent is agent_confidence_floor (:177-181), kind: ratio
+  score_override_floor:
+    kind: ratio
+    default: "0.25"
+    env: POLICY_SCORE_OVERRIDE_FLOOR
+    description: Below this risk score, an override is not a Copilot decision.
+```
+
+```yaml
+# transaction.score.override currently has `rules: []` (:442)
+    rules:
+      - id: deep-score-reduction
+        when: { field: newScore, op: lt, threshold: score_override_floor }
+        raiseTo: L3
+        reasonTemplate: >
+          Reducing a risk score below {threshold} is not a Copilot decision.
+```
+
+**This works with the engine as it stands. I traced every link rather than assuming, because this
+is the same shape as the `raiseBy` near-miss in my last ruling — mechanism verified, outcome not:**
+
+- Bare `newScore` resolves against the payload — `PredicateEvaluator.Resolve` falls back to
+  `document["payload"]` (`:46-54`), the same shorthand `decision` already uses in
+  `account_opening.application.review`.
+- `lt` compares against a named threshold (`PredicateEvaluator.cs:38`).
+- `kind: ratio` already exists and is already used with `lt` (`agent_confidence_floor`, `:177-181`,
+  `:360`).
+- **`raiseTo: L3` is valid on an action *rule*, and mine would be the first in the file** — so I
+  checked rather than inferring. `PolicyLoader` validates rules through `ValidateRaise`
+  (`:695`), which accepts any value `RungOrder.Parse` accepts (`:738-750`). `L3` parses. The
+  service boots.
+- **A *rule-produced* L3 refuses, not just a declared `baseRung: L3`.** The L3 gate sits at step 7
+  of `PolicyEvaluator` (`:145-152`) — *after* action rules (step 5) and escalators (step 6) — and
+  collects `fired.Where(f => f.RaisedTo == Rung.L3)` regardless of which produced it. So the
+  refusal carries my `reasonTemplate` text to the banker.
+
+**⚠️ Turk: use `raiseTo`, not `minRung`, and do not substitute one for the other.** Action rules
+call `Raised(rung, rule.RaiseTo, rule.RaiseBy, minRung: null)` — `minRung` is passed `null`
+explicitly (`PolicyEvaluator.cs:92`). It is an *escalator*-only field. A `minRung` on a rule would
+load (the loader passes `minRung: null` to its own validator at `:695`) and then do nothing. This
+is the mirror image of last ruling's trap, so it is worth stating outright.
+
+**Effect:** the agent may lower a score, but not arbitrarily. Below the floor the action leaves the
+harness entirely and becomes a human process. A real bound, monotone, no new vocabulary, and it
+composes with everything already ruled.
+
+**`0.25` is a starting default and it is env-overridable** — Brian can change it in one line
+without a deploy if he wants a different risk posture. That is why this does not need him tonight.
+
+**⚠️ The floor will eat Brian's demo beat unless the model is told about it.** *"Casey's offshore
+wire is legitimate — she notified us in advance"* invites a confident model to pick `0.1` or
+`0.05`, which lands below `0.25` and produces a **refusal** — turning the demo's cleanest override
+into a dead end. Do not fix this by lowering the floor.
+
+**Requirement: the intent prompt must state the signable band `[score_override_floor, 1.0]`,
+projected from live policy through the same widened `/api/authority/policy` response used for the
+action allowlist (§3.5) — never a constant in the prompt.** Instruct the model that a value below
+the floor is out of the Copilot's authority and must not be proposed. Belt and braces: prompt
+guidance shapes the number, the rule enforces it, and the refusal remains correct if the model
+ignores both. Same discipline as the action allowlist — projected, not copied, so the two cannot
+drift.
+
+**Also required, in the planner preflight** (Turk's §5): reject `newScore` outside `[0,1]` and
+non-canonical numeric forms before proposing. `moneyFields: []` for this action (`:440`) so the
+authority canonicalizer does not cover it — Turk is right about that, and it is the §2.1 domain
+gap showing up in practice. Enforce in the planner now; policy-level typing later.
+
+---
+
+## 3. Defects and gaps in Turk's design
+
+Asked for, and the last two matter more than the two questions above.
+
+### 3.1 🔴 The resolver must never accept an id from the model
+
+Turk's intent shape returns `subjectHints`, and the resolver maps hints to ids. **The design does
+not say what happens if the model returns something already id-shaped in a hint.** If a
+pass-through exists, the model can supply an arbitrary `userId`/`accountId` and **skip resolution
+entirely** — same bypass class as returning a forbidden action id, but through the data channel
+rather than the action channel.
+
+**Ruling: hints are strings to match, never identifiers to use.** The resolver resolves every
+subject through the lookup path, even when the hint looks like a GUID. If a banker legitimately
+pastes a GUID, it resolves via a by-id read that confirms existence and authority — it is never
+trusted because of its shape. Wants an explicit test.
+
+### 3.2 🔴 The `read` branch is the unguarded one
+
+Turk enforces the allowlist rigorously for `kind: propose` — build `proposable_actions` from live
+policy, re-check after the model replies, refuse unknown or non-proposable ids. Good.
+
+**`kind: read` has no equivalent gate.** A `readPlan` is a list of tools chosen by the model, and
+the design does not state that it is validated. **Ruling: the read plan must be validated against
+the registered tool registry and the caller's authority before execution, exactly as the propose
+path is** — unknown tool id, unregistered tool, or a tool the caller may not invoke is a refusal,
+not a skipped step. The manifest loader's guarantees (GET-only, pattern-confined path parameters)
+are load-time properties of the *registry*; they do not validate a *model-selected plan* against
+it. Do not let "read" become the soft branch because it feels harmless.
+
+### 3.3 🟡 Objective text is untrusted input to action selection
+
+The design correctly says the answer model must treat evidence text as untrusted data, never
+instructions. **The same rule is not stated for the intent model** — and the intent model is the
+one that *selects an action*.
+
+The objective is typed by a banker, but bankers paste: a memo line, a customer's message, a
+transaction descriptor. That text now influences which action gets proposed. **Ruling: the same
+untrusted-data framing applies to the intent prompt, and it should be stated in the design.**
+Server-side allowlist enforcement is the real control and it holds — this is defence in depth, and
+cheap.
+
+### 3.4 🟡 `hashFields` as required fields — right for now, do not merge the concepts
+
+Turk proposes treating `hashFields` as the required payload set. **Correct for this pass, and I
+am ruling it in.** But keep them conceptually distinct: `hashFields` is *what the signature binds*;
+required-fields is *what must be present to propose*. They coincide today.
+
+**The trap to avoid:** if they ever diverge, do not add a field to `hashFields` merely to make it
+required. That silently changes the hash semantics of an action and invalidates the comparison
+between old and new approvals. If a required-but-unbound field is ever genuinely needed, it gets
+its own list. Same reasoning as `CustomerFinancialRead` / `CustomerFinancialWrite`
+(`BankingRoles.cs:111-117`), and the same reason my colleague's separate question about
+`requiredFields` is worth keeping open rather than closing by merge.
+
+### 3.5 🟢 Widening `GET /api/authority/policy` — endorsed, bounded
+
+Exposing `hashFields` and `moneyFields` is fine: payload *shape* is not secret, and deriving it
+from the loader kills the drift risk of a hand-maintained Python table. That is the right call.
+
+**Bound it to payload shape.** Do not broaden the same endpoint into a general policy dump —
+thresholds and escalator predicates tell a reader exactly where the rung boundaries sit, which is
+useful to someone shaping a payload to stay under one. Fired escalators and their resolved
+thresholds are already disclosed per-approval to signers, which is the correct place for them:
+scoped to a decision a human is making, not enumerable in advance.
+
+### 3.6 🟢 Endorsed without change
+
+No deterministic fallback in foundry mode; distinct failure codes per cause; a durable refusal
+artifact so the pane survives reload; latency made legible as model steps; intent kept out of
+`primary_model.py`; L2 fan-out left exactly where it is. All correct, several of them non-obvious.
+The failure taxonomy in particular is better than most production systems manage.
+
+---
+
+## 4. Sequencing
+
+Turk's build sequence is sound. Two amendments:
+
+1. **Move the lookup tools earlier — to step 1 or 2.** They are the load-bearing dependency: every
+   action prompt in the demo fails at the first hop without them, and they need a
+   `BankingRoles.cs` change plus two service endpoints, which is the longest pole and the one most
+   likely to need review. Do not discover that at step 3.
+2. **Add the §2.3 policy threshold and rule in step 1**, alongside the authority policy-summary
+   widening. Both are `config/authority-policy.yaml` edits with existing precedents; batching them
+   is one review instead of two.
+
+## 5. Nothing here needs Brian tonight
+
+Both rulings are mine to make and I have made them. The only judgement he might want to revisit is
+the **`0.25` score floor**, which is a risk-posture preference rather than an architectural
+question — and it is env-overridable (`POLICY_SCORE_OVERRIDE_FLOOR`), so he can change it in one
+line whenever he checks in. Everything else follows from constraints already ratified.
+
+If he wants it in one line: *"Agent proposes the new score, two humans sign it, and it can't go
+below 0.25 without leaving the Copilot — change that number if you want a different posture."*
+# Ruling — the two strict-xfail demo prompts
+
+**Author:** Danny (Lead/Architect)
+**Date:** 2026-09-10
+**Status:** Ruled. Turk/Rusty are unblocked. Nothing here needs Brian, but §B5 is his line to say.
+**Epic:** #332, branch `332-beta`
+**Subjects:** `src/banker-copilot-service/tests/test_demo_prompt_acceptance.py:332` and `:499`
+**Related:** `danny-free-text-planner-subject-resolution-and-score.md`, `turk-free-text-planner-design.md`
+
+---
+
+## Summary
+
+| Prompt | Ruling | One line |
+|---|---|---|
+| **A — two-customer comparison** | **BUILD IT.** | The canonicalization risk does not exist. I traced the hash preimage: evidence is not in it. The real hazards are elsewhere and I name all four. |
+| **B — "lower its risk score"** | **CUT THE UTTERANCE.** | Not because search is forbidden — that argument does *not* carry to the transaction plane. Because the capability it would demonstrate is already demonstrated by prompts that pass. |
+
+Both xfails get **rewritten, not deleted** (§A6, §B4).
+
+---
+
+# Prompt A — "Compare dana's checking history against casey's"
+
+## A1. The premise of the question is false, and I can prove it
+
+The brief says the fix "touches canonicalization, and canonicalization feeds the approval hash."
+The first clause is what I was asked to rule on, and it is **not true**. This is proof, not
+inference — I read the preimage construction end to end.
+
+`PayloadHasher.Compute` (`src/authority-service/Policy/PayloadHasher.cs`) builds exactly this:
+
+```
+canonical    = Canonicalizer.Canonicalize(Project(payload, action.HashFields), moneyPaths, scale)
+preimage     = "bcp.v2" \n actionId \n policyVersion \n canonical
+payloadHash  = "sha256:" + hex(SHA256(preimage))
+```
+
+Four arguments enter: `payload`, the action's `HashFields`/`MoneyFields`, `actionId`,
+`policyVersion`. **`evidence` is not one of them.** `Canonicalizer.Project` projects the *payload*
+onto `hashFields` and nothing else; `AssertProjectable` walks the *payload*. The word `evidence`
+does not appear in either file.
+
+Confirmed on the verification side too: `VerifyStoredHash`
+(`ApprovalService.cs:783-806`) recomputes from `approval.Payload` and `approval.HashFields` only.
+Evidence is carried on the approval (`ApprovalService.cs:68, 192, 622, 678`) and shown to signers,
+but it is carried, not hashed.
+
+**Therefore: changing how the planner keys evidence changes no hash, invalidates no signature, and
+alters the meaning of no previously signed approval. The canonicalization risk I was asked to
+weigh is zero.** The `hashFields` constraints from my last ruling (§3.4 — never add a field to
+`hashFields` merely to make it required) remain in force and are simply not engaged by this change.
+
+Two further things this ruling does not disturb, stated so nobody has to re-derive them:
+
+- The failing prompt is a **read-only** run. It never calls authority-service at all. There is no
+  proposal, no payload, no hash, no signature anywhere on its path.
+- Duplicate invocation of one tool is, today, **structurally a read-plan-only phenomenon**.
+  Required evidence is one call per required tool id (`loop.py:985`), and a discretionary re-request
+  of an already-gathered tool is refused `already_gathered` (`evidence_ceiling.py`). The propose
+  path cannot currently produce two results for one tool id.
+
+## A2. Where the real boundary is — evidence *keys* are load-bearing, just not for the hash
+
+The key is not security-critical. It is **correctness**-critical in two places, and an
+implementation that changes it globally will break both silently.
+
+**1. Authority evidence completeness.** `PolicyEvaluator.EvidenceComplete` does an exact-key
+lookup — `evidence[key]`, where `key` is the policy evidence id (`PolicyEvaluator.cs:211-218`),
+then checks that entry's `requiredFields`. A suffixed key is simply a missing key: the action
+comes back `evidence_incomplete` / 422. **This fails closed, which is the good direction, but it
+fails every propose run.**
+
+**2. The evidence ceiling's `already_gathered` refusal.** `_run_assess_step` passes
+`gathered=evidence.keys()` into `additional_evidence` (`loop.py:1112-1114`). If those keys stop
+being bare tool ids, `ALREADY_GATHERED` stops matching. It does not error — it silently grants
+re-reads of tools already gathered, consuming budget and inflating the stage-1 demand measurement
+with duplicates. **This fails open and fails quietly, which is the bad direction.** It is the
+defect most likely to ship unnoticed.
+
+### The boundary, stated precisely
+
+> **Inside the change:** the planner's in-memory evidence accumulator may be keyed per
+> *invocation*, and the `evidence_bundle` artifact may carry those per-invocation keys.
+>
+> **Outside the change — must not move:**
+> 1. The `evidence` object sent to `POST` authority `propose` stays keyed by **policy evidence id**
+>    (= tool id). For every run that exists today the wire bytes must be **identical**. If a
+>    propose path ever does gather one tool twice, the authority-facing map carries the **first**
+>    invocation for that id — and that must be a written decision, not an emergent one.
+> 2. `additional_evidence(gathered=...)` is fed the **projected tool-id set**, never the raw
+>    accumulator keys.
+> 3. `hashFields`, `moneyFields`, the canonicalizer, and the preimage are untouched. Nothing in
+>    this work has any business in `src/authority-service/Policy/`.
+
+The projection *is* the boundary. One accumulator, one deterministic `tool_id -> first result`
+projection at the authority seam. Do not build two parallel accumulators that can drift.
+
+## A3. 🔴 The bug is not only in the evidence dict — `facts` has it too, one layer down
+
+This is the finding that matters most, and it is not in the xfail's reason string.
+
+`_run_tool_step` does two things with a result (`loop.py:1064-1067`):
+
+```python
+evidence[tool_id] = result.data                    # last writer wins
+for key, value in result.data.items():
+    request.facts.setdefault(str(key), value)      # FIRST writer wins
+```
+
+`facts` is not decoration. It feeds `_bind_arguments` (`loop.py:1690`), which fills tool parameters
+the plan did not supply — and it is **sent to authority** in the proposal body (`loop.py:1183`).
+
+So on a two-subject run the two collections disagree about who the subject is: the evidence dict
+ends up holding **Dana's** ledger while `facts` still holds **Casey's** `accountId`/`userId` from
+the first read. Any later tool whose arguments are bound from facts reads the wrong customer, and
+on a propose path those stale facts travel to authority attached to the other customer's approval.
+
+**Ruling: fixing the evidence key without fixing `facts` is a half-fix and I will not accept it.**
+The two must land in one change. My preference — and I am ruling it, not suggesting it — is that
+**a multi-subject run must not populate the flat `facts` map by cross-subject merge at all.**
+Either scope facts per resolved subject, or on a multi-subject read plan populate no facts and
+require every read step to carry explicit arguments (which the read-plan validation already
+demands, per my §3.2). A silent first-wins merge across two customers is the same data-boundary
+breach `evidence_ceiling.py` opens by naming: *"a model that could choose arguments could read
+another customer's account and file it in this customer's approval record."* Here the harness does
+it to itself, with no model involved.
+
+## A4. Two hazards I checked and cleared — do not spend time re-checking
+
+- **Redaction is safe.** `test_redaction.py` keys redaction rules by tool id, which looked like a
+  leak risk. It is not: `ToolExecutor` applies `redact(payload, tool.redaction)` to the response
+  *before* the result leaves the executor (`app/tools/executor.py:190`), keyed off the tool
+  definition, never off the bundle key. Suffixed bundle keys cannot leak SSN/DOB. **Verified, not
+  assumed** — this is exactly the kind of C#/JSON-boundary near-miss I got wrong once already.
+- **The UI does not index evidence by tool id.** The comparison telemetry treats `evidenceId` as an
+  opaque string (`ui-app/src/telemetry/comparison.ts:377-390`). No renderer hard-codes
+  `evidence['get_account']`.
+
+## A5. What the key must look like
+
+Not a UUID. The keys become `citedEvidenceIds` in the answer and the assessment
+(`loop.py:671`, `intent_model.py`), which means a human reads them on the card and a model is asked
+to produce them. Requirements:
+
+1. **Deterministic, ordered, and bare-first.** The first invocation of a tool id keeps the **bare
+   tool id**; the second and subsequent invocations take the next ordinal suffix. So a two-ledger
+   run yields `list_account_transactions` and `list_account_transactions#2` — **not** `#1` and `#2`.
+   Stated as a rule: *suffix on collision, with the next ordinal.* That needs no lookahead, is
+   deterministic under replay, and leaves every existing trace, artifact and citation
+   byte-identical. This supersedes any reading of point 4 below as a separate case — it is the same
+   rule, and there is only one.
+2. **Each entry carries its own `toolId` and the arguments it was called with.** The key
+   disambiguates; the entry explains. Without this the card shows two ledgers and no way to say
+   which is Dana's.
+3. **Each multi-subject entry carries its resolved subject**, per §1.5 of my last ruling —
+   resolution that leaves no trace in the bundle is the side channel we must not create. Two
+   histories side by side with no subject labels is a worse artifact than one history.
+4. **The citation layer must see the same keys as the bundle.** The answer and assessment prompts
+   are given the **accumulator** keys, and any validation of `citedEvidenceIds` compares against
+   those same accumulator keys — **never** against the projected tool-id set. If the model is shown
+   `list_account_transactions` for two different ledgers it will cite one id for both, and the
+   subject labelling in point 3 is undone at the citation layer while the bundle still looks
+   correct. The projection exists for the authority seam and for nothing else.
+
+## A6. The test
+
+Rewrite `:332`; do not delete it. It currently asserts `key == "list_account_transactions"` for
+both entries, which is the bug's own shape. Replace with: both account ids present exactly once
+across the bundle, each entry self-describing its `toolId`/arguments/subject, run `completed`, no
+approval. **Add a second test that `facts` carries no cross-subject value after a two-subject
+run** — §A3 has no coverage today and is the half of the bug nobody is looking at.
+
+---
+
+# Prompt B — "Casey's offshore wire is legitimate — she notified us in advance. Lower its risk score."
+
+## B1. Half the xfail's stated reason is already stale — against my own ruling
+
+The reason string gives two blockers: *"no transaction id and no target score."*
+
+**The target score is solved and shipped.** §2.3 ruled that the model proposes `newScore` bounded
+by `score_override_floor`, two humans sign it, and a value below the floor escalates to L3 and
+refuses. Two tests in this very file already prove it: `:452` proposes `0.30` in-band and reaches
+an L2 approval; `:475` proposes `0.10` and is refused `payload_invalid` with no authority call.
+**The missing-score half of this xfail contradicts a decision that is already enforced by passing
+tests.** Whatever we do with the prompt, that reason string must go.
+
+So exactly one blocker is real: **resolving "offshore wire" to a transaction id.**
+
+## B2. Is the "lookup, not search" prohibition load-bearing here? Partly — and not for the reason it was written
+
+I was asked directly, and the honest answer has two halves.
+
+**The blast-radius half does not carry over.** §1.2 refused customer name-search because it converts
+*"reads any customer he can already identify"* into *"enumerates the customer base"* — identity-plane
+discovery, a capability broader than anything the policy rations. Once Casey is resolved and the
+banker holds `CustomerFinancialRead` over her accounts, filtering *her* transactions by a word in
+the description discloses nothing he could not already read by listing them. **It is not a new
+capability and I will not pretend it is.** Anyone arguing "search is banned, therefore cut" is
+using my ruling to mean something it does not say.
+
+**The determinism half carries over completely, and it is the stronger half.** §1.4: the model must
+never choose between candidates; ambiguity and no-match are terminal. Matching "offshore wire" to a
+row is a *semantic* judgement over free text. Either the resolver does it with a literal substring
+match — deterministic but brittle, and it works here only because `config/demo-dataset.json:277`
+happens to spell it *"Wire transfer to offshore account"* — or the model does it, and then the model
+is selecting the subject of a money-affecting, risk-reducing action. That is precisely what §1.4
+forbids and §3.1 closes ("hints are strings to match, never identifiers to use").
+
+And unlike the customer case, there is no clean escape valve. My §1.4 requires that an ambiguity
+refusal **not name candidates**. For transactions that rule is arguably too strict — the banker may
+read them all anyway — but carving a per-plane exception into a security rule to rescue one demo
+sentence is how rules rot. I decline to carve it for this.
+
+## B3. What building it would actually cost — verified, because the shape of the gap decides the ruling
+
+I checked the data plane rather than reasoning from the design docs.
+
+- The only list tool the copilot has in the risk plane is `list_flagged_transactions`
+  (`config/copilot-tools.yaml:36`), which calls `GET /api/admin/flagged-transactions` — and that
+  returns **every** flagged transaction, globally, unfiltered by customer
+  (`src/ai-service/app/routes/api.py:226-240`).
+- **`FlaggedTransaction` has no `userId` and no `description`** (`src/ai-service/app/models/schemas.py:52-73`)
+  — only `accountId`, `amount`, `type`, `riskScore`, `reason`, `flags`. So the one list the harness
+  can reach **cannot be matched on "offshore" at all**, and cannot honestly assert whose transaction
+  a row is without a further account read. That is the same shape as `list_login_audits`, which
+  §R5 quarantined for exactly this reason.
+- `ScoredTransaction` *does* carry `userId` and `description` (`schemas.py:22-40`), but its list
+  endpoint `GET /api/admin/transactions` is gated on `require_observability_read`, is not
+  `risk.read`, is globally unbounded, and **is not in the tool manifest**. Only `get_scored_transaction`
+  by id is a tool.
+
+So "resolvable within existing bounds" is **no**. It needs a new subject-scoped ai-service endpoint
+(scored transactions for a resolved `accountId`), an authority decision about which constant gates
+it, a manifest entry, a descriptor matcher with exact-one-or-refuse semantics, and an exception to
+§1.4's no-candidates rule to make its refusal usable. That is not four days of risk-free work; it is
+a new read capability in the risk plane, added under demo pressure, to serve one sentence.
+
+## B4. Ruling
+
+**Cut the utterance from the 31-prompt bar. Keep the capability, which already works.**
+
+The scope argument I made under time pressure was: *neither failing prompt demonstrates human
+authority over an agent.* The brief is right that a scoping argument weakens when the schedule
+loosens, so I retested it — and for **Prompt A it does not hold**, which is why A flips to build.
+For **Prompt B it holds independently of schedule**, because the demo loses no capability:
+
+- `:452` already shows the agent proposing a bounded `newScore` on a score override, reaching L2,
+  two signers.
+- `:475` already shows the floor→L3 control refusing a too-deep reduction. **That is the
+  human-authority beat**, and it is the more interesting one.
+- `"Why was casey's offshore wire flagged?"` already passes as a read, so the offshore wire appears
+  in the demo narrative regardless.
+
+What is lost is one *phrasing* — a banker naming a transaction by description instead of selecting
+it. That is a UI affordance question (select the flagged case, then act on it), not an agent-authority
+question. Selecting the case first is also how the product should work: a banker overriding a risk
+score should be looking at the transaction.
+
+**Test action:** rewrite `:499`, do not delete it. As written it asserts a proposal succeeds from a
+model-supplied payload with no transaction id — which my §3.1 forbids outright.
+
+**I ran it rather than predicting it.** The exact sentence today produces `run` terminal `failed`,
+error code **`payload_unfillable`**, and **zero authority calls**. That is already the honest,
+named, terminal behaviour the taxonomy demands — no silent success, no empty evidence bundle
+dressed as completion. So the current *behaviour* is correct and only the *assertion* is wrong.
+Replace it with a strict passing test asserting exactly that triple: `failed`,
+`payload_unfillable`, `propose_calls == []`. Then the exact sentence is covered by a green test
+that asserts the honest behaviour, instead of a red one asserting behaviour we have decided not to
+build. **31 prompts stay in the doc; one of them documents a refusal.** Mark it in
+`docs/design/banker-copilot-demo-prompts.md` as a refusal case with the reason, so nobody re-opens
+this in three weeks.
+
+## B5. What Brian says if someone asks
+
+> "It refuses, on purpose. The agent can lower a risk score — you'll see it do that, and you'll see
+> it blocked when it tries to go too far. What it won't do is guess *which* transaction you meant
+> from a phrase. Pick the transaction, then tell it what to do. We'd rather it ask than guess when
+> the next step is two people signing."
+
+That answer is true, it is short, and it makes the refusal a feature rather than a gap — because
+here it genuinely is one.
+
+---
+
+## Sequencing
+
+1. **A first, and as one change:** per-invocation evidence keys + the authority-seam projection +
+   the `facts` cross-subject fix (§A3). Three tests: bundle shape, `already_gathered` still fires,
+   facts carry no cross-subject value.
+2. **B is a test rewrite and a doc note.** No production code. Half an hour.
+3. Neither depends on Turk's live-model work, and neither should touch it.
+# For Turk — a session stream cannot be held open once its latest run has finished
+
+**From:** Linus (frontend)
+**Status:** proposal — server-side, NOT actioned by me
+**Date:** 2026-09-10
+
+## What I found while fixing the reconnect storm
+
+Brian's Network tab showed 24 identical `GET /sessions/{id}/stream?runId=…&lastSeq=6`
+requests, all `200`, all `29ms`. Three of the four causes were mine and are fixed in
+`src/ui-app/src/api/copilotStream.ts`. The fourth is a server capability gap and is yours.
+
+`routes/sessions.py`:
+
+```python
+stream = runs.get(runId) if runId else runs.latest_for_session(session_id)
+...
+while stream is None:                      # only reachable if the session has NEVER had a run
+    yield _heartbeat_frame()
+    stream = await runs.await_next_run(session_id, timeout=heartbeat_seconds)
+...
+if stream.closed and queue.empty():
+    return
+```
+
+`events/bus.py`:
+
+```python
+def latest_for_session(self, session_id):
+    run_ids = self._by_session.get(session_id) or []
+    return self._runs.get(run_ids[-1]) if run_ids else None   # returns CLOSED runs too
+```
+
+So once a session has had one run and that run has finished:
+
+- a session-scoped attach resolves to the **closed** run,
+- `stream is None` is false, so the `await_next_run` wait loop is never reached,
+- the backlog is replayed and the response ends immediately.
+
+Every reattach is 200-then-EOF, forever. There is no way for the client to sit and wait for
+the *next* run in that session.
+
+## Why it matters beyond the storm
+
+The signing gate keys on the client's ability to verify payload freshness, which it does from
+the live stream. On a session whose run has finished the client cannot hold a stream open at
+all, so after any run completes the banker's Sign buttons go dead until the page is reloaded
+(a reload mints a fresh session, which has no run, which *can* be held open).
+
+I did not work around this on the client. Faking liveness would be exactly the kind of
+gate-weakening we agreed not to do — if the client genuinely cannot verify freshness it must
+not sign. What the client now does instead is stop hammering, stop re-dispatching the finished
+run's frames, and report the run's real state rather than "the agent is still running".
+
+## Suggested change (yours to accept or reject)
+
+When no `runId` was requested and the latest run for the session is already closed, fall
+through to the same `await_next_run` wait loop rather than replaying-and-returning:
+
+```python
+stream = runs.get(runId) if runId else runs.latest_for_session(session_id)
+if stream is not None and runId is None and stream.closed and lastSeq >= stream.last_seq():
+    stream = None       # nothing left to say about that run — wait for the next one
+```
+
+That keeps the deliberate "a finished run is complete, not idle" behaviour for an explicit
+`?runId=`, which is the case that comment is about, while letting the queue surface hold a
+connection the way it does before the first run.
+
+Client-side evidence, reproducible: `tests/e2e/specs/stream-lifecycle.spec.ts` with
+`STREAM_MODE=completed-run` (see `tests/e2e/support/fake_copilot_stack.py`). Measured 15
+stream requests in 12s before my fix, 5 after. With the server change above it should be 1.
+# Turk — free-text planner design for epic #332
+
+Date: 2026-09-10
+Author: Turk
+Status: design for review; no implementation yet
+
+## Problem statement
+
+Today a UI command-bar run that sends only `{ objective }` produces one empty artifact step and never reaches a model. The existing working path is the explicit `actionId` path: the caller already knows the action, the planner gathers that action's required evidence, the primary assesses the known action, and authority-service proposes it for signature.
+
+That is not enough for Brian's demo or for the epic thesis. The missing capability is an intent phase that can turn a banker's free-text objective into one of three honest outcomes:
+
+1. a read-only evidence-backed answer, with no approval;
+2. a permitted authority-policy action, evidence, assessment, and signable proposal;
+3. a named refusal explaining why no safe plan exists.
+
+## Non-negotiable controls this design preserves
+
+- `authority-service` remains the authority for action definitions, rungs, escalators, evidence requirements, canonical payload hashing, separation of duties, and `agentMayPropose`.
+- `banker-copilot-service` continues to register zero write tools. The only write-shaped affordance remains `propose_action`, which posts a proposal to authority-service and never signs or executes.
+- A model reply is never trusted as authority. It may suggest an action/payload/read plan; server code checks it against the live policy catalogue and tool registry before doing anything.
+- `COPILOT_PLANNER_MODE=foundry` keeps failing loudly if model access/configuration is missing. Free-text planning must not create a deterministic fallback that quietly returns "no action found" when the true cause is model unavailability.
+- The existing explicit `actionId` path remains unchanged: if `StartRunRequest.actionId` is present, the planner skips intent selection and uses the current `_required_evidence()` -> `_plan_steps()` path.
+
+## Where action selection happens
+
+Add a new intent-selection phase before `_required_evidence()` and before `_plan_steps()` **only when `PlannerRequest.action_id` is absent**.
+
+Do **not** fold this into the existing primary assessment step. `primary_model.py` is intentionally scoped to judging a known requested action over gathered evidence; its callable signature is `(objective, action_id, payload, evidence)`. Expanding it to choose the action would collapse two different questions:
+
+- intent phase: "What kind of task is this objective, and what evidence/action would be safe?"
+- assessment phase: "Given this named action and gathered evidence, is the action supportable?"
+
+The new module should reuse the common Foundry plumbing in `model_call.py` (`extract_json`, prompt/response hashing, attribution pattern), but it needs its own instructions and parser. I would call it `intent_model.py` or `free_text_model.py`, not reuse `primary_model.py` or `supervisor_model.py`.
+
+### Proposed internal result shape
+
+The intent parser accepts exactly one of:
+
+```json
+{ "kind": "read", "readPlan": [...], "answerGoal": "...", "subjectHints": {...} }
+{ "kind": "propose", "actionId": "account.balance.adjust", "payloadDraft": {...}, "subjectHints": {...} }
+{ "kind": "refuse", "reasonCode": "ambiguous_subject|out_of_scope|...", "message": "..." }
+```
+
+The model can suggest; server code decides whether the suggestion is executable.
+
+## Step list and trace shape
+
+The UI renders step names live, so free-text must show what it is doing instead of completing in 320ms with an empty artifact.
+
+### Read-only objective
+
+Example: `Summarise casey's accounts and recent activity`
+
+1. `Interpret objective` — Foundry intent call; emits `intent.selected` with `kind=read`, not raw private prompt text.
+2. `Resolve references` — deterministic lookups for names/account types/transaction hints.
+3. `Gather evidence: <tool display name>` — one step per selected read tool, using the existing executor and trace events.
+4. `Answer from evidence` — a second Foundry call over the gathered evidence, producing an answer/memo artifact.
+5. `Assemble evidence bundle` — existing artifact, now non-empty.
+6. `run.done status=completed` only if evidence-backed answer exists.
+
+No `approval.required` event is emitted.
+
+### Action objective
+
+Example: `Refund a $35 overdraft fee on retail's checking as goodwill`
+
+1. `Interpret objective` — Foundry intent call returns `kind=propose` plus a candidate `actionId` and payload draft.
+2. `Resolve references` — map `retail` and `checking` to real `userId`/`accountId`, or fail distinctly.
+3. `Validate proposed action and payload` — server-side allowlist and payload checks before any proposal is attempted.
+4. `Gather evidence: <policy-required tool>` — current required-evidence path, from authority policy.
+5. `Assess the evidence` — current primary assessment call, unchanged.
+6. `Assemble evidence bundle` — existing artifact.
+7. `Propose <actionId> for human signature` — current authority proposal path; emits `approval.required` only if authority admits it.
+
+L2 fan-out remains exactly where it is today: after authority returns an admitted L2 approval.
+
+### Honest refusal
+
+Example: `Delete casey's user` or `Change the authority policy`
+
+1. `Interpret objective`
+2. `Refuse objective` — emits `run.error` or `run.done status=failed` with a banker-readable message and a distinct code. It must not emit an empty evidence bundle as success.
+
+I prefer still emitting a refusal artifact/memo so the pane has a durable explanation after reload.
+
+## How the model learns the allowlist, without drift
+
+The allowlist must be projected from `authority-service`, not copied into banker-copilot.
+
+Current `GET /api/authority/policy` already returns `actions[].id`, `displayName`, `baseRung`, `agentMayPropose`, and `requiredEvidence`. It does **not** currently expose `hashFields` or `moneyFields`. To satisfy Brian's payload constraints without copying YAML into Python, I would widen this authority response to include at least:
+
+- `hashFields`
+- `moneyFields`
+- `requiredEvidence`
+- `baseRung`
+- `agentMayPropose`
+- optionally a derived `payloadFields` alias for current required payload fields
+
+The intent prompt receives only the server-filtered proposable projection:
+
+- action exists in the live authority catalogue;
+- `agentMayPropose == true`;
+- `baseRung != L3` / not out-of-harness;
+- registered required evidence can be gathered by the tool registry.
+
+The server repeats those checks after the model replies. If the model returns anything else, the planner refuses before evidence gathering/proposal.
+
+This keeps sync mechanically: policy YAML -> authority loader -> authority `/policy` response -> banker-copilot prompt and validator. There is no hand-maintained Python action table.
+
+## L3 / forbidden action enforcement
+
+Prompt instruction is not a control. Enforcement is server-side:
+
+1. Build `proposable_actions = { action.id | action.agentMayPropose is true and action.baseRung != "L3" }` from the live authority catalogue.
+2. If the model returns an unknown action id: refuse as `objective_unmappable` or `intent_contract_invalid` depending on whether it is syntactically malformed.
+3. If the model returns a known but non-proposable action id (`user.delete`, `user.role.promote`, `user.password.reset`, `events.replay`, `authority.policy.edit`): refuse as `forbidden_action`, with a message like "That action is outside the Copilot harness and must be handled through the admin/break-glass process."
+4. Still let authority-service be the final backstop: `agentMayPropose: false` and L3 rules remain enforced there too.
+
+The forbidden action ids may appear in the prompt only as examples of refused categories, not as selectable options. The parser must nevertheless recognize them from the full catalogue so it can produce the right refusal rather than calling them unmappable.
+
+## Payload construction and validation
+
+The model may draft a payload, but the server constructs the final payload.
+
+Server validation sequence for `kind=propose`:
+
+1. Resolve references first, replacing names/account-type hints with real ids.
+2. Merge only fields declared for the selected action. Drop/refuse extra fields; do not pass arbitrary model keys to authority.
+3. Require every current `hashFields` field to be present and non-empty. If Danny/Brian intended a separate `requiredFields` list for action payloads, the policy needs to gain that explicit field; today the shipped action required payload is effectively the `hashFields` list.
+4. For every `moneyFields` entry, accept integer/decimal strings only, normalize to the authority currency scale, and reject floats/non-canonical values before proposal. The authority canonicalizer remains the final guard.
+5. Enforce small action-specific domains that the policy implies but does not type today, e.g. `direction in {credit,debit}`, review decisions, score bounds if a score override is selected.
+6. Call the existing authority proposal path. If authority refuses for canonicalization, evidence, or policy, emit a failed propose step and `run.error`; do not fabricate or repair an approval.
+
+For unfillable payloads, the first implementation should refuse rather than ask a follow-up question. The current UI flow is a one-shot command bar; adding interactive clarification is option C territory and was not authorised.
+
+## Subject/reference resolution
+
+This is the main backend gap and should be treated as part of the free-text fix, not a UI problem.
+
+Current registered read tools mostly require ids (`get_user`, `get_account`, `list_account_transactions`, `get_scored_transaction`). Brian's objectives use human references: `casey`, `dana`, `retail`, `verify-target`, `checking`, `savings`, `offshore wire`.
+
+I propose a deterministic `ReferenceResolver` between intent selection and evidence gathering:
+
+1. The model extracts structured hints only: customer name/username, account type, amount, direction, transaction descriptor. It does not choose ids.
+2. The resolver performs read-only lookups using registered tools/endpoints.
+3. Ambiguity and no-match are terminal, named failures; the resolver must not pick the first matching account/user silently.
+
+### Required backend support
+
+Existing endpoints are not enough for all demo prompts:
+
+- `get_user` can fetch by id, but there is no banker-safe `resolve_user_by_username` tool today.
+- `get_account` can fetch by id, and account-service `GET /api/accounts` lists the caller's own accounts, not arbitrary customer accounts. There is no banker-safe `list_customer_accounts(userId)` tool today.
+- `list_flagged_transactions` can help find "casey's offshore wire", but the score-override path still needs a deterministic selected scored/flagged transaction id.
+
+So the implementation likely needs new **read-only** capabilities:
+
+- user-service: banker/supervisor-gated customer lookup by username/name, returning a bounded candidate list without secrets;
+- account-service: banker/supervisor-gated account list by `userId`, returning accounts the caller has `CustomerFinancialRead` authority to read;
+- banker-copilot tool manifest entries for those endpoints, still GET-only and `*.read` scoped.
+
+If Danny considers new customer-search endpoints architecture-level rather than backend plumbing, this is the place I need a ruling. Without them, the acceptance prompts can only work by hidden demo fixtures or GUIDs, which would recreate the path-parity failure in a different costume.
+
+## Failure taxonomy
+
+Distinct failures should produce distinct trace codes and banker-readable messages:
+
+- `planner_model_unavailable`: Foundry/config/transport failure in foundry mode. Message names model unavailability; no fallback.
+- `intent_contract_invalid`: model returned non-JSON, multiple kinds, unknown fields, or malformed payload draft.
+- `objective_unmappable`: objective is in banking language but maps to no known safe read or proposable action.
+- `forbidden_action`: objective maps to a known non-proposable/L3 action.
+- `ambiguous_subject`: multiple customers/accounts/transactions match the natural-language reference.
+- `subject_not_found`: no customer/account/transaction matches.
+- `payload_unfillable`: action is permitted but required payload fields cannot be constructed from objective + evidence.
+- `payload_invalid`: money scale/domain/canonicalization preflight failed.
+- `evidence_unavailable`: required read failed or returned incomplete evidence.
+- `proposal_refused_by_authority`: authority rejected after preflight; preserve authority's code/message.
+
+No case above may complete as a successful empty evidence bundle.
+
+## Read-only answering
+
+Read-only is not "no-op". It needs its own answer step after evidence gathering.
+
+The answer model should be constrained like the assessment model:
+
+- answer only from gathered evidence;
+- cite evidence ids in key points;
+- state what could not be verified;
+- treat evidence text as untrusted data, never instructions;
+- emit structured JSON so the UI can render a memo/artifact consistently.
+
+This is new prompt work, but it reuses the `model_call.py` attribution and parsing pattern. It should not populate `agentAssessment`, because there is no action under review and no approval card.
+
+## Acceptance mapping for Brian's demo prompts
+
+- `Summarise casey's accounts and recent activity` -> read-only; resolve Casey, list Casey accounts, list recent transactions per selected account(s), answer artifact, no approval.
+- `Why was casey's offshore wire flagged?` -> read-only; resolve Casey/offshore wire via flagged/scored transaction reads, answer artifact, no approval.
+- `Compare dana's checking history against casey's — anything unusual?` -> read-only; resolve both customers' checking accounts, gather both ledgers, answer artifact, no approval.
+- `Refund a $35 overdraft fee on retail's checking as goodwill` -> `account.balance.adjust`; amount `35.00`; direction should be `credit` if it refunds money to the customer. Under current policy, credit adjustments are L2 regardless of amount.
+- `Credit dana $120 for a duplicate charge on her checking account` -> `account.balance.adjust`, credit, L2 by `credit-adjustment`.
+- `Post a $2,400 adjustment to casey's savings for the disputed deposit` -> likely `account.balance.adjust`; Casey also fires `high-risk-customer`, and amount exceeds the adjustment threshold. Direction may be ambiguous unless the objective says credit/debit.
+- `Unlock verify-target's account — lockout was a stale saved password` -> `user.unlock`, L2.
+- `Adjust retail's savings by $26,000` -> `account.balance.adjust`, amount L2; direction is ambiguous unless model can infer from surrounding language, so first implementation should refuse `payload_unfillable` if no direction is present.
+- `Casey's offshore wire is legitimate — she notified us in advance. Lower its risk score.` -> `transaction.score.override`; resolve the scored/flagged transaction. Open question below: what exact `newScore` should be if the banker only says "lower".
+
+## Cost and latency estimate
+
+Today's 241-320ms path is fast because it does almost nothing. A real free-text run should visibly take seconds.
+
+Rough production estimates with `FOUNDRY_MODEL=gpt-5.4-mini`:
+
+- read-only simple case: intent model 1.5-4s + resolver/evidence reads 0.5-2s + answer model 1.5-4s = about 4-10s;
+- action case: intent model 1.5-4s + resolver/evidence reads 0.5-2s + primary assessment 1.5-4s + authority proposal <1s = about 4-11s;
+- L2 action with supervisor fan-out: add the existing second-opinion model/read time, likely another 3-8s.
+
+Trace should make that latency legible: "Interpret objective" and "Answer/Assess" are model steps, not hidden idle time.
+
+## Open questions / tensions
+
+1. **Policy says credit adjustments are L2; the demo doc's L1 section includes refund/credit examples.** Brian's latest note says any credit is L2. I will follow the policy/latest note unless told otherwise.
+2. **Action `requiredFields` are not explicit in the current YAML.** The action declares `hashFields` and `moneyFields`; evidence entries declare `requiredFields`. I propose treating action `hashFields` as required payload fields for this pass, or adding a real action `requiredFields` field if Danny wants a distinct concept.
+3. **Name/account resolution requires new read-only backend support.** If we do not add banker-safe lookup/list endpoints and tools, the natural-language demo prompts cannot be resolved honestly.
+4. **Score override target value.** "Lower its risk score" does not name a numeric `newScore`, while the action payload requires one. Options: allow the model to propose a numeric score with rationale and have the human sign it, or refuse as `payload_unfillable` until the banker gives a target. I need Brian/Danny's preference because this is a demo-script prompt.
+5. **Clarification UX is not designed.** For this pass I recommend one-shot refusal with a clear message over an interactive revise/clarify loop, because option C was not authorised.
+
+## Build sequence after approval
+
+1. Widen authority policy summary to expose hash/money payload fields and add tests that it is derived from `config/authority-policy.yaml`.
+2. Add intent model/parser and failure tests; no deterministic fallback in foundry mode.
+3. Add reference resolver and any required read-only customer/account lookup tools/endpoints.
+4. Add planner branch: if `actionId` present, old path; otherwise intent -> resolve -> read/propose/refuse path.
+5. Add read-only answer model/artifact path.
+6. Add path-parity tests using the exact UI request shape and every prompt in `docs/design/banker-copilot-demo-prompts.md`.
+7. Re-run banker-copilot tests, authority tests, and demo dataset checks.

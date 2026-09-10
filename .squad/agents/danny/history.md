@@ -2963,3 +2963,226 @@ duplicate to prevent is the one you cause yourself.
 
 **Orchestration Log:** `.squad/orchestration-log/2026-09-10T20:47:00Z-danny.md`
 **Session Log:** `.squad/log/2026-09-10T20:47:00Z-copilot-ui-and-authority-fixes.md`
+
+### Free-text planner: subject resolution and `newScore` (epic #332)
+
+- **Verify "no endpoint exists" claims by reading authorization attributes, not route lists.**
+  Turk said no banker-safe user lookup existed. A route list showed `GET /api/admin/users` — which
+  looks like a counterexample and is not: `[Authorize(Roles = Admin)]` (`AdminController.cs:12`)
+  and it returns every user unbounded. The route existing and the route being *reachable by this
+  principal* are different questions. Always read the class-level attribute before concluding a
+  capability is available.
+- **The codebase had already ruled the distinction I needed.** `BankingRoles.cs:90-95` states that
+  reading a balance is *banking* authority while reading an identity record is *platform*
+  authority. That single sentence decided Ruling 1: a name→id lookup is identity-plane discovery,
+  so it is a third authority, not a reuse of either. Read the doc comments on shared constants
+  before inventing a distinction — a previous ruling may already be encoded there, and reusing its
+  vocabulary makes the new ruling consistent for free.
+- **Blast radius is a step change, not a gradient.** Bankers can already read any customer's
+  balances *by id* (accepted and documented, `BankingRoles.cs:99-104`). Adding name search sounds
+  incremental but converts "reads anyone he can identify" into "enumerates the customer base."
+  When assessing a new read capability, ask what it changes about *discovery*, not about *access*.
+- **A refusal that lists candidates is the search API you just declined to build.** Ambiguity
+  handling looked like a UX question and was actually the security question: returning "2 matches:
+  casey.reid, casey.moore" leaks the directory one query at a time through the error channel.
+  Check every failure path for whether it re-grants the capability the success path withholds.
+- **Watch for category errors framed as missing features.** I was asked whether the policy
+  grammar's lack of *downgrade* vocabulary was a gap or a boundary. It was neither: the ladder
+  governs authority-required, while `newScore` is a payload value. Acting on the stated framing
+  would have meant making the monotone ladder bidirectional — a genuinely dangerous change — to
+  solve a problem that was really "policy cannot express payload field domains." When a request
+  implies a change to a structural invariant, re-derive what the requester actually needs first.
+- **Prefer a ruling expressible in the grammar that already exists.** The `newScore` bound needed
+  no new policy vocabulary: a `ratio` threshold (precedent `agent_confidence_floor`) plus one rule
+  using `raiseTo: L3`, which is a refusal rather than a rung. Verified each link before writing it
+  — payload fallback in `PredicateEvaluator.Resolve:46-54`, `lt` at `:38`, L3 gate at
+  `PolicyEvaluator.cs:144-152`. A recommendation you have traced through the evaluator is worth
+  more than one that merely sounds consistent.
+- **A shipped primitive answers the next question for free.** "Who picks the number, and is
+  human-picks a payload edit?" looked like it needed new mechanism. Counter-propose (option B) had
+  landed hours earlier and already solved it exactly. Before designing, check what shipped since
+  the last ruling — the same instinct as the latent-capability audit, applied to your own recent
+  decisions.
+- **Review the unglamorous branch.** Turk's `propose` path was rigorously allowlisted; the `read`
+  path had no equivalent validation because reads feel harmless. Same for `subjectHints`: the
+  resolver accepting an id-shaped hint would let the model skip resolution entirely. Both were
+  bypasses through the channel nobody was guarding. When a design defends one branch well, spend
+  the review budget on the other one.
+- **Second occurrence of the same trap class — verify the OUTCOME, not the mechanism.** I wrote
+  `raiseTo: L3` on an action rule citing an earlier read of the L3 gate. Under challenge I checked
+  properly and found three things I had assumed: no existing rule in the file uses `raiseTo: L3`
+  (mine is the first), the loader accepts it only because `ValidateRaise` defers to
+  `RungOrder.Parse`, and rule-produced L3 reaches `Refuse` only because the gate sits at step 7
+  *after* rules and escalators. All three held — but I had not earned the claim. Related discovery
+  in the same pass: action rules receive `minRung: null` explicitly
+  (`PolicyEvaluator.cs:92`), so `minRung` on a rule loads silently and does nothing. The mirror
+  image of the previous ruling's trap, in the same file.
+- **Run the constraint against the actual demo data before shipping it.** My "prefix match on
+  username" rule collided with seeded `banker` / `banker2` — an exact, unambiguous username would
+  have fired my own `ambiguous_subject` refusal. Cost: one grep of `demo-dataset.json`. Any bound
+  written as a rule should be replayed against the fixtures the demo will actually use.
+- **A bound that is correct can still break the thing it protects.** The 0.25 score floor is right,
+  and the demo prompt ("legitimate, she notified us in advance") invites a model to propose 0.1 —
+  below the floor, hence a refusal, killing the marquee beat. The fix is not a looser bound but
+  telling the model the signable band, *projected from live policy* rather than pasted into the
+  prompt. When adding an enforcement bound, ask what the actor does when it does not know the
+  bound exists.
+- **Primary evidence beats reasoning when it is available.** I argued from first principles that
+  the monotone ladder was deliberate. `PolicyLoader.cs:733-736` names it — "invariant I-4" — which
+  settles it outright. Grep for the invariant before constructing the argument for it.
+
+### Merge-readiness assessment for #332
+
+- **"Deployed" is a claim to test, not a state to read off a pod list.** Every pod showed 36m age
+  on a `:latest` tag, which reads as current. Commit times (16:49–16:53) against pod age (~16:20)
+  proved the pods predate every commit. `:latest` destroys the tag as evidence, so age plus commit
+  time is the only honest inference — and even that is circumstantial until confirmed directly.
+- **Two cheap probes settle deployment questions outright.** For an interpreted service, `kubectl
+  exec ... ls` the module directory: a missing file in the running image is proof, not inference.
+  For a compiled one, probe the route **with a control in the same call** — the directory endpoint
+  returned 404 while `/api/users/me` returned 401 on the same host, so the 401 rules out "service
+  down" and the 404 can only mean the route is absent. A probe without a control proves nothing.
+- **Second false negative this session from a careless grep, and this one nearly reached a
+  deliverable.** I grepped `hashFields\|moneyFields` (JSON casing) against C# source, matched
+  `HashFields` only because I had separately included the capitalised form, and concluded
+  `MoneyFields` was missing from the policy projection. I had already drafted it as a defect —
+  "a money-canonicalisation guard that silently no-ops because its input never arrives" — which
+  was vivid, plausible, and wrong. `PolicyController.cs:66` emits it. **When a grep produces an
+  absence across a naming-convention boundary (C# PascalCase vs JSON camelCase, snake vs camel),
+  confirm the absence by reading the region before building anything on it.** Absence evidence
+  from a case-sensitive tool is the weakest evidence there is.
+- **Check what a test suite actually exercises before citing it as proof.** The 31-prompt
+  acceptance suite looked like strong evidence. It imports `IntentDecision` from `intent_model` and
+  constructs decisions directly — the model never runs. So it pins routing and payload handling,
+  and says nothing about whether the model reasons. The distinction was the load-bearing claim of
+  the whole assessment; "8 tests, all green" would have been true and deeply misleading.
+- **Assess as shipped, and be willing to find it better than you specified.** I went into the
+  directory-lookup review expecting to catch the corners (exact-match short-circuit, `_` as an
+  unblocked LIKE wildcard). Both were already handled — and the `LIKE` concern was moot because the
+  implementation uses parameterised `STARTSWITH`, which has no wildcard semantics at all. Saying so
+  explicitly is worth more than manufacturing a finding.
+- **Distinguish present-tense risk from structural risk.** The directory API returns the candidate
+  list while the non-disclosure rule lives in the copilot resolver one layer above. Today the
+  property holds because the resolver is the only caller. That is a note-on-the-endpoint, not a
+  blocker — and conflating the two would have inflated a good design into a false alarm.
+- **When quality and evidence diverge, say which one is missing.** The honest headline was not
+  "the epic is unfinished" — the work was done and good. It was "nobody has watched it run." Those
+  need different remedies (an hour of deployment, not another epic), and naming the right one is
+  the entire value of the assessment.
+
+## 2026-09-10 — Ruling on the two strict-xfail demo prompts (#332)
+
+Ruled: build the two-customer comparison fix; cut the "lower its risk score" utterance.
+Written to `.squad/decisions/inbox/danny-two-xfail-prompts.md`.
+
+- **Check the premise of the question before answering the question.** I was asked to weigh a
+  unique evidence key against canonicalization risk. I traced `PayloadHasher.Compute` and
+  `Canonicalizer` end to end: the preimage is `scheme \n actionId \n policyVersion \n
+  canonical(project(payload, hashFields))`. Evidence is *not* an argument. `VerifyStoredHash`
+  recomputes from the stored payload only. **The risk I was asked to trade against did not exist**,
+  and the whole ruling flipped on that one read. A hard question can dissolve rather than resolve —
+  but only if you read the preimage instead of reasoning about it.
+- **"Not in the hash" is not "not load-bearing."** The same evidence key that is irrelevant to the
+  signature is an exact-match lookup in `PolicyEvaluator.EvidenceComplete` and the `already_gathered`
+  check in the evidence ceiling. First fails closed (422 on every propose); second **fails open and
+  silent** (re-reads granted, stage-1 demand numbers corrupted). Always ask of a key change: which
+  consumer fails loudly, and which one just gets quietly wrong?
+- **Look one layer below the reported bug.** The xfail blamed `evidence[tool_id]` (last writer
+  wins). Directly beneath it, `request.facts.setdefault(...)` has the mirror bug (**first** writer
+  wins) — and `facts` binds tool arguments *and* ships to authority. So a two-customer run leaves
+  evidence holding one subject and facts holding the other, with the stale subject travelling to a
+  real approval. Fixing only the reported half would have looked like a fix and left the more
+  dangerous side intact.
+- **Verify the near-miss you would have made last time.** Redaction rules are keyed by tool id, so
+  suffixed bundle keys looked like an SSN/DOB leak. They are not: the executor redacts off the tool
+  *definition* before the result leaves it. Same class as the case-sensitive-grep near-miss —
+  checked, cleared, and said so rather than shipping a plausible finding.
+- **A prohibition can be right and still be the wrong reason.** Cutting prompt B on "search is
+  forbidden" would have been lazy. The blast-radius argument behind the customer-search refusal
+  does *not* carry to the transaction plane: once the subject is authorised, filtering her own
+  transactions discloses nothing new. What carries is the **determinism** half — a description is a
+  semantic match, and the model must never pick the subject of a signable action. Reusing a rule
+  requires re-deriving *which part* of it applies.
+- **Re-test a scoping argument when the schedule loosens.** I said neither prompt demonstrates human
+  authority over an agent. Retested with four extra days: **false for A** (it flipped to build),
+  **still true for B** — because `:452` already shows a bounded score proposal reaching L2 and
+  `:475` already shows the floor→L3 refusal. B loses a phrasing, not a capability. An argument that
+  survives the removal of the pressure that produced it is a different, better argument.
+- **Half a stale reason string is still a stale reason string.** The B xfail cited "no transaction
+  id and no target score." The score half was closed by my own §2.3 ruling and is covered by two
+  passing tests in the same file. Test reasons rot silently; they are documentation nobody lints.
+- **Rewrite xfails, do not delete them.** Both encode something worth keeping: `:332` holds the
+  bug's shape, `:499` holds the exact demo sentence. Deleting removes the evidence that we
+  considered the case. Converting `:499` into a green test asserting a *named refusal* keeps the
+  31-prompt bar intact with one prompt documenting a deliberate refusal.
+- **Run the test before costing the fix.** I wrote that B was "a test rewrite and a doc note, half
+  an hour" while only knowing the xfail asserted `propose_calls` was truthy — i.e. that *something*
+  refused. Running it printed `failed / payload_unfillable / propose_calls == []`: the exact honest
+  triple. The estimate held, but it held by luck until I checked. If it had completed with an empty
+  bundle, B would have been a live taxonomy violation, not a doc note. Ten seconds of pytest is
+  cheaper than a wrong ruling.
+- **A spec that gives two examples of one rule will be implemented as two rules.** My key-format
+  section illustrated `#1, #2` in one bullet and "bare id first, suffix from the second" in
+  another. Both were me describing the same intent; either could ship. Fixed to one statement:
+  *suffix on collision with the next ordinal.* Prescriptive docs need the rule said once.
+- **Follow the observation you made to its consumer.** I noted evidence keys become
+  `citedEvidenceIds` and then never said which key set the citation layer validates against. With a
+  projection now in the design, "the obvious one" is ambiguous — and picking the projected set
+  would have quietly re-created the collision at the citation layer while the bundle looked fixed.
+  Naming a new seam obliges you to route every existing consumer across it explicitly.
+
+### 2026-09-10 — Epic #332 merge readiness assessment (#332)
+
+**Question:** Is #332 safe to merge and demo?
+
+**Answer:** Work is done; proof is not. Deploy + 3 browser prompts, then merge.
+
+**Findings (proven):**
+- Free-text planner not deployed: image lacks `intent_model.py`; does not appear on running pod path
+- Directory endpoint not deployed: returns 404 in cluster; control probe returns 401 (proves service up)
+- Pods pre-date commits by 36 minutes
+- Acceptance suite proves routing only, not reasoning (model injected, never invoked)
+- What IS deployed and proven: `actionId` path is real, exercised live, authority model intact, Brian personally signed a live approval at 4:16:45 PM
+
+**Blocking merge (in order):**
+1. Deploy both services from `332-beta`
+2. Run three prompts in browser (read-only, reaching approval, refusing)
+3. Confirm directory lookup resolves exact match and refuses ambiguous
+
+**Residual risk (non-blocking):**
+- Non-disclosure rule lives one layer above data (enforced in resolver, exposed by endpoint); should be documented as ADR constraint on endpoint
+- One demo prompt pair flagged as xfail; rulings follow separately
+
+**Recommendation:** Fifteen minutes of deployment + browser time converts amber to green.
+
+### 2026-09-10 — Two xfail demo prompts (#332)
+
+**Prompt A: "Compare dana's checking history against casey's"**
+
+**Ruling:** BUILD IT. Canonicalization risk is zero (proved by tracing preimage: evidence is not in it). Real hazards:
+- Evidence dict last-writer-wins overwrite (multi-subject runs lose one subject silently)
+- **🔴 CRITICAL:** Facts map first-writer-wins merge across subjects (stale subject travels to approval)
+- Redaction keyed by tool id (safe; checked)
+- Citation key consistency (safe; checked)
+
+**Fix:** Per-invocation keys in accumulator; authority-facing evidence keyed by tool id (bare on first call, `#2` on second). Facts map carries only first-invocation results; no cross-subject merge.
+
+**Tests:** Three required: bundle shape, `already_gathered` refusal still fires, facts carry no cross-subject value.
+
+**Prompt B: "Lower its risk score"**
+
+**Ruling:** CUT THE UTTERANCE. Keep the capability (score override already demonstrated by passing tests). Determinism > feature coverage. Model cannot deterministically resolve "offshore wire" without semantic search, which violates §1.4 (model never chooses between candidates).
+
+**Tests:** Rewrite `:499` to green test asserting named refusal (`failed / payload_unfillable / propose_calls == []`), not as failure. Thirty-one prompts, one documents deliberate refusal.
+
+### 2026-09-10 — Subject resolution and risk-score override authority (#332)
+
+**Ruling 1 — Subject Resolution:** Add lookup tools (no banker-safe path exists; verified independently). New authority constant `CustomerDirectoryLookup` (same members as `CustomerFinancialRead` today, separate on purpose). Bounded lookup (not search): exact/prefix match, 3-char min, 5-candidate cap, identity projection only (id, username, display name, status; no email, PII, financial data). Both terminal refusals (ambiguous and no-match) must never list candidates — that is the search API declined.
+
+**Ruling 2 — Risk-Score Override:** Model proposes `newScore` bounded; both L2 signers see it; it is hash-bound (payload value, not in canonicalization). No human edit at sign time (option C already solved by counter-proposal: disagree → new hash, fresh L2 chain).
+
+**Ruling 3 — Constraints:** Ratio-floor threshold plus one action rule raising to L3; expressible in policy today, zero grammar change.
+
+**Ruling 4 — Gap:** Payload domain constraints are new (separate from canonicalization). Define action `requiredFields` explicitly or treat action `hashFields` as required.
+
+**Defects found in Turk's design:** Refusal xfail structure, evidence key boundary, facts-map cross-subject merge (critical), answer model prompt isolation, payload validation sequence.
