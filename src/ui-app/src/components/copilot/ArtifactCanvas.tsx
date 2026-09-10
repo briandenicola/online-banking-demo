@@ -16,8 +16,92 @@ import React, { useState } from 'react';
 import { Box, Chip, Paper, Stack, Tab, Tabs, Typography } from '@mui/material';
 import ApprovalCard from './ApprovalCard';
 import { Approval, Artifact, RunState, StreamStatus } from './types';
+import { answerContent } from './runOutcome';
+
+/**
+ * The read-only answer.
+ *
+ * A read-only objective — the first three prompts of Brian's demo script — now
+ * produces an evidence-backed answer and NO approval. Nothing rendered this: the
+ * content is an object, so it fell to `ArtifactBody`'s last branch and appeared
+ * as a JSON dump on the surface the banker is meant to read.
+ *
+ * `unverified` is the field that matters most and it renders last on purpose. It
+ * is the same move the approval card makes with "Could not be established from
+ * the evidence": an answer that states its own limits is worth more than one
+ * that reads as complete. An EMPTY `unverified` renders nothing at all — an
+ * empty heading would imply the agent checked and found no gaps, which is a
+ * different and stronger claim than staying silent.
+ */
+const AnswerBody: React.FC<{ answer: ReturnType<typeof answerContent> }> = ({ answer }) => {
+  if (!answer) return null;
+  return (
+    <Stack spacing={1.5}>
+      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+        {answer.answer}
+      </Typography>
+
+      {answer.keyPoints.length > 0 && (
+        <Box>
+          <Typography variant="overline" sx={{ color: 'text.secondary' }}>
+            Key points
+          </Typography>
+          <Stack component="ul" spacing={0.5} sx={{ m: 0, pl: 2.5 }}>
+            {answer.keyPoints.map((point) => (
+              <Typography component="li" variant="body2" key={point}>
+                {point}
+              </Typography>
+            ))}
+          </Stack>
+        </Box>
+      )}
+
+      {answer.unverified.length > 0 && (
+        <Box>
+          <Typography variant="overline" sx={{ color: 'warning.dark' }}>
+            Could not be established from the evidence
+          </Typography>
+          <Stack component="ul" spacing={0.5} sx={{ m: 0, pl: 2.5 }}>
+            {answer.unverified.map((item) => (
+              <Typography component="li" variant="body2" key={item}>
+                {item}
+              </Typography>
+            ))}
+          </Stack>
+        </Box>
+      )}
+
+      {answer.citedEvidenceIds.length > 0 && (
+        <Box>
+          <Typography variant="overline" sx={{ color: 'text.secondary' }}>
+            Cited evidence
+          </Typography>
+          <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', gap: 0.5 }}>
+            {answer.citedEvidenceIds.map((id) => (
+              <Chip key={id} size="small" variant="outlined" label={id} />
+            ))}
+          </Stack>
+        </Box>
+      )}
+
+      {/*
+        Said plainly rather than left to be inferred from an absent approval
+        dock. A banker who has watched every previous run end in a signature
+        needs to know this one is not waiting on them.
+      */}
+      <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+        This was a read-only question. Nothing was proposed and there is nothing to sign.
+      </Typography>
+    </Stack>
+  );
+};
 
 const ArtifactBody: React.FC<{ artifact: Artifact }> = ({ artifact }) => {
+  // Shape first, as below: an answer is recognised by carrying a non-empty
+  // `answer` string, not by its `kind`.
+  const answer = answerContent(artifact);
+  if (answer) return <AnswerBody answer={answer} />;
+
   // Rendered by the SHAPE of the content, not by a kind whitelist. A
   // `comparison` and an `evidence_bundle` are both row sets; keying the
   // renderer off the kind means a new kind renders as raw JSON in front of

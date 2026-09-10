@@ -231,3 +231,49 @@ describe('a finished run stops the connection loop outright', () => {
     h.close();
   });
 });
+
+describe('a refused run on a cold load', () => {
+  /**
+   * The refusal has to survive being REPLAYED, not just being watched live.
+   *
+   * A free-text refusal is carried on `run.error` and nothing else: the planner
+   * emits no refusal artifact, so there is no durable record to re-fetch. If the
+   * banker reloads — or opens the page after the run ended, which is the common
+   * case for a run that finished in seconds — the only way the refusal reaches
+   * the screen is the server replaying the backlog.
+   *
+   * That collides with the replay filter this suite exists to protect. The filter
+   * drops frames for runs THIS CLIENT saw finish, and on a cold load it has seen
+   * nothing, so the backlog must pass through. Asserted rather than assumed,
+   * because a filter that swallowed `run.error` would render the refusal card
+   * blank in Brian's browser while every test above stayed green.
+   */
+  function payloadFrame(kind: string, seq: number, runId: string, payload: unknown): string {
+    return `id: ${seq}\nevent: ${kind}\ndata: ${JSON.stringify({ kind, seq, runId, payload })}\n\n`;
+  }
+
+  it('replays run.error to the reducer when the client never saw the run live', async () => {
+    const backlog = [
+      payloadFrame('run.started', 1, 'run_x', { title: 'Adjust retail\u2019s savings by $26,000' }),
+      payloadFrame('step.started', 2, 'run_x', { stepId: 's1', title: 'Interpret objective' }),
+      payloadFrame('run.error', 3, 'run_x', {
+        code: 'payload_unfillable',
+        message: 'The direction of the adjustment was not stated.',
+        recoverable: false,
+      }),
+      payloadFrame('run.done', 4, 'run_x', { status: 'failed', durationMs: 5200, finalSeq: 4 }),
+    ];
+
+    const h = await drive([backlog]);
+
+    const error = h.events.find((e) => e.kind === 'run.error');
+    expect(error).toBeDefined();
+    expect((error as { payload: { code: string } }).payload.code).toBe('payload_unfillable');
+
+    // And the run still terminates cleanly rather than reopening the stream: a
+    // refused run is a finished run.
+    expect(h.events.some((e) => e.kind === 'run.done')).toBe(true);
+    expect(h.urls.length).toBe(1);
+    h.close();
+  });
+});

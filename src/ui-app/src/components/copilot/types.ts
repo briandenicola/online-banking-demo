@@ -560,7 +560,7 @@ export interface ApprovalTerminalPayload {
   policyVersion?: string;
 }
 
-export type ArtifactKind = 'decision_memo' | 'payload' | 'comparison' | 'evidence_bundle';
+export type ArtifactKind = 'decision_memo' | 'payload' | 'comparison' | 'evidence_bundle' | 'answer';
 
 export interface ArtifactPayload {
   artifactId: string;

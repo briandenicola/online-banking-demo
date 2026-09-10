@@ -40,7 +40,55 @@ import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { NodeStatusGlyph, visuallyHidden } from './CopilotPrimitives';
 import { useCopilot, useNow } from './CopilotContext';
 import { PlanStep, RunState, SubagentRun, ToolCall, TraceDensity } from './types';
+import { refusalCopy } from './runOutcome';
 import { getCopilotConfig } from '../../config/copilotConfig';
+
+/**
+ * A refused run, stated as a refusal.
+ *
+ * Before the free-text planner this could not happen: every run either produced
+ * an approval or errored at the transport. Now a run can end because the Copilot
+ * declined to form a plan, and the structural invariant Turk implemented — no
+ * case completes as a successful empty evidence bundle — has to hold VISUALLY
+ * too. Without this the trace showed a `failed` chip and a short step list, and
+ * a banker reads that as "it did nothing" rather than "it refused, for a reason".
+ *
+ * The server message is rendered only for the named codes. The planner's
+ * catch-all emits `str(exc)`, and a Python exception string is neither
+ * banker-readable nor vetted for disclosure.
+ */
+const RunRefusalNotice: React.FC<{ code?: string; message?: string }> = ({ code, message }) => {
+  const copy = refusalCopy(code);
+  return (
+    <Box
+      role="note"
+      aria-label="This run was refused"
+      sx={{ p: 1.5, borderBottom: 1, borderColor: 'error.main', bgcolor: 'error.main', color: 'error.contrastText' }}
+    >
+      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+        Refused — {copy.title}
+      </Typography>
+      <Typography variant="body2" sx={{ mt: 0.5 }}>
+        {copy.what}
+      </Typography>
+      {copy.showServerMessage && message && (
+        <Typography variant="body2" sx={{ mt: 0.5, fontStyle: 'italic' }}>
+          {message}
+        </Typography>
+      )}
+      {copy.next && (
+        <Typography variant="body2" sx={{ mt: 0.5 }}>
+          {copy.next}
+        </Typography>
+      )}
+      <Typography variant="caption" sx={{ display: 'block', mt: 0.75, opacity: 0.85 }}>
+        Nothing was signed and nothing was executed
+        {copy.readsPerformed === 'none' ? '. No tools were called.' : '.'}
+        {code ? ` · ${code}` : ''}
+      </Typography>
+    </Box>
+  );
+};
 
 // ---------------------------------------------------------------------------
 
@@ -453,6 +501,10 @@ const TracePane: React.FC<TracePaneProps> = ({ run }) => {
           </Typography>
         )}
       </Box>
+
+      {run?.error && !run.error.recoverable && (
+        <RunRefusalNotice code={run.error.code} message={run.error.message} />
+      )}
 
       {incomplete && (
         <Box sx={{ p: 1, bgcolor: 'warning.main', color: 'warning.contrastText' }}>
