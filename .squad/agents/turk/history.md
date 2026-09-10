@@ -2953,3 +2953,139 @@ it.** Provenance prose that names a cause is a claim, and a claim needs its cont
 **Why I did not fix it:** Silently re-pinning case definitions mid-measurement is the failure mode the rulings warn against. This is Livingston's call and the ownership boundary of the measurement harness, not my boundaries. Flagged instead of edited.
 
 **Next action:** Livingston should verify, update, and re-run.
+
+## Learnings — 2026-09-10, un-pinning the verification corpus from the seed
+
+Brian asked me to fix the defect I logged yesterday under "Open items": `e2e_cases.py` and
+`supervisor_cases.py` hard-coded account and user UUIDs that the reseed had deleted. It blocks
+Livingston's stage-1 measurement.
+
+**The defect was bigger than the one I reported, and my own report understated it.**
+
+Yesterday I wrote that six ids were dead. That was true and it was the *small* half. The ids
+fail loudly — an unresolvable account id produces an instrument failure you cannot miss. What
+does not fail loudly is that the corpus also hard-coded the *ledger*: `A1` was documented as
+"$32,897.40, 7 txns, 3 × +3,200.00 ACME payroll within ninety seconds", `A2` as "one −25.00
+maintenance fee", `A3` as "two −9,500.00 overseas wires". Half the cases carry a `grounded`
+flag asserting their prose is TRUE against that ledger.
+
+None of those transactions exist any more. The reseeded dataset moved the *roles*, not just the
+ids: the empty account is now `dana:Savings`, the structuring subject is `casey:Savings` (three
+near-identical cash credits), the offshore-wire subject is `casey:Checking`. Had I resolved the
+old A1/A2/A3 by account *type* — Checking→Checking, Savings→Savings — every id would have
+resolved, every run would have completed, and roughly half the `grounded` flags would have been
+silently inverted. **A fix that makes the loud failure quiet while leaving the quiet failure in
+place is worse than no fix**, because it converts a blocked measurement into a wrong one.
+
+**The generalisation of Danny's wait-predicate ruling.** His ruling was: the predicate that
+SELECTS a subject must be the predicate that TERMINATES the wait. The wider form, which is what
+bit here: *a predicate used to select a subject must survive whatever regenerates the subject.*
+`config/demo-dataset.json` is that predicate — it is the seeder's own input, so the seeder
+cannot diverge from it. Owner + account type is stable; the id is not; and, critically, neither
+is the *history*, so the facts a case quotes have to be derived from the same contract rather
+than transcribed from a live read.
+
+So `seed_subjects.py` now derives both halves from the dataset: the handle (`dana:Checking`)
+that resolves to today's id via the owner's own token — the convention `scripts/demo/demo.sh`
+already uses in `seeded_account_ids`/`resolve_account_refs`, reused rather than reinvented — and
+the contract-derived balance and transaction set. `e2e_cases.py` types no amount at all; every
+figure in every framing is computed from the dataset, so the prose follows a reseed instead of
+being falsified by one. `_amount()` raises at import if the dataset stops guaranteeing a
+transaction a case is built on, which is the loud failure I want in place of a quiet one.
+
+**Where dynamic resolution was the WRONG answer, and saying so.** `supervisor_cases.py` runs in
+component mode: `kubectl cp` into the pod, `FoundryDecider` called directly with a hand-built
+`evidence` dict. Nothing dereferences those ids — there is no fetch — and the probe has neither
+`config/demo-dataset.json` nor a route to log in as a seeded customer. Wiring live resolution in
+there would add a failure mode to buy nothing. The right fix was honesty: replace the real-looking
+UUIDs with `synthetic-account-clean` and friends, so no reader can mistake fabricated evidence
+for a read of the real environment, and correct the one case whose prose claimed "this is the
+REAL record live in the demo environment" — that record died with the seed. Recorded explicitly
+rather than left as a silent exception.
+
+**On my scoping failure from the day before.** I said "nothing else in the repo calls this
+endpoint" after searching only `src/`. This time I ran the UUID scan across the whole tree with
+no path filter and reported the exact command. Result: after the fix, zero UUIDs remain in any
+executable test code; the only ones left under `tests/` are in dated `.jsonl` result artifacts,
+`tests/e2e/test-results.log`, and `tests/fixtures/evidence-samples/`, all of which are *records
+of a past read* where a historical id is the correct content. Naming the exclusions is part of
+the finding, not a footnote to it.
+
+**What I did not run, and why.** The end-to-end probe leaves a pending approval per run — 32
+runs, 32 approvals — and Brian was about to walk the UI against this exact seed. Driving it to
+produce a headline number would have been the most impressive-looking thing I could do today and
+also the one thing I had been told not to do. I built `--resolve-only` instead: it resolves every
+subject, checks all 32 amounts against the LIVE dual-control threshold read from
+`/api/authority/policy`, and diffs each live ledger against the contract. All green, nothing
+written. The measurement itself is Brian's call to schedule.
+
+---
+
+## Learnings — 2026-09-10 — SSE headers withheld for one heartbeat (banker-copilot-service)
+
+**The defect and the fix.** `stream_session` awaited `runs.await_next_run(session_id,
+timeout=heartbeat_seconds)` *before* returning `StreamingResponse`. Anything awaited before the
+handler returns holds back `http.response.start`, so a client attaching to a session with no
+active run — the normal UI order, and the state every client lands in after a pod restart, since
+`RunStreamRegistry` is in-process — got no status line for a full 15s. The client read that as a
+connection that never opened and disabled approval signing. Removed the pre-flight await; the
+`while stream is None` loop inside `_events()` already does that waiting.
+
+**Rusty's diagnosis was right and his fix, taken literally, was incomplete.** The generator's
+loop awaited `await_next_run` *before* its first `yield`, so deleting the pre-flight await alone
+would have left the first *frame* 15s away: headers flush on `http.response.start`, which
+uvicorn writes as soon as the handler returns, but the generator then waited before yielding
+anything. I reordered the loop to yield `_heartbeat_frame()` first, then wait. One extra frame
+per stream; `waited +=` still increments only on a timeout, so the 3600s idle budget is
+unchanged. **Check what the surviving code does before its first yield, not just that the
+blocking call is gone.**
+
+**I nearly shipped a wrong reason for a right change, and only checking the client caught it.**
+I wrote — and Rusty and I both assumed — that the signing gate needs a frame. It does not:
+`canSignUnderStream` in `components/copilot/types.ts:623` accepts `live` or `resumed`, and
+`copilotStream.ts` sets those on `response.ok`, i.e. **on headers**. So removing the pre-flight
+await was on its own sufficient to unblock Brian; my reorder is defence-in-depth against the
+30s heartbeat watchdog (`heartbeatIntervalMs` 15000 x `missedHeartbeatsBeforeDegraded` 2), not
+the unblock. The same read retires a suspected second stall: a live-but-quiet run yields no
+frame until the heartbeat timeout, but its headers are out at 0s, so signing is enabled and the
+watchdog has 30s of room. **Two of us reasoned about a predicate neither of us had read; it took
+two greps.**
+
+**The 409 replay guarantee survives, and the argument is in the code, not in my confidence.**
+The `runId` lookup, the 404 and `latest_for_session` all still run before the check, so any
+request that HAS a stream still gets the check. The branch that no longer runs it is the one
+where a run appears mid-wait — and there the check was already vacuous:
+`replay_available_from` returns `True` when `not self._recent`, and a just-created run has an
+empty `_recent`. It could never have fired. I pinned this with a test rather than leaving it as
+reasoning.
+
+**The 409 I nearly added would have been worse than the bug.** My first instinct was
+`stream is None and lastSeq > 0 → 409 resync_required`, since a cursor for a run this process
+never knew is genuinely unresumable. Then I read the client: `copilotStream.ts:368` handles 409
+by clearing `pending`, calling `onResyncRequired`, setting `degraded` and scheduling a reconnect
+— with no visible reset of `lastSeq`. If the cursor survives the reconnect, that is a 409 loop:
+a 15s stall converted into a permanently dead stream. **Backend-only means I do not get to
+assume how the client recovers; if the recovery path is unread, the safe change is the one that
+does not depend on it.**
+
+**`TestClient` cannot measure time-to-first-byte and will lie to you convincingly.** Starlette's
+test transport runs the whole app inside a portal via `portal.call(self.app, ...)` and only then
+builds an httpx response, so every "streamed" chunk appears to arrive at completion time. My
+first attempt at a timing test measured 10.05s *with the fix applied* and looked like a failed
+fix. The honest measurement is at the ASGI boundary: drive `app(scope, receive, send)` yourself
+and timestamp the first `http.response.body`. Two further traps — a raw `asyncio.ensure_future`
+task blows up inside Starlette's `is_disconnected` because anyio does not own it, and so does a
+task group opened in a pytest-asyncio test task. Run the whole measurement inside
+`anyio.from_thread.start_blocking_portal("asyncio")`, exactly as `TestClient` does.
+
+**Evidence.** Against the unfixed code the new test fails with `assert None == 200` — no
+`http.response.start` at all within 4s of a 10s heartbeat, i.e. the withheld status line
+reproduced in the suite. With the fix: `200`, `text/event-stream`, first frame a heartbeat, under
+2s. Full suite `412 passed` before, `414 passed` after (two tests added). `docker compose config
+-q` clean; no env or ConfigMap value touched — `COPILOT_SSE_HEARTBEAT_SECONDS` stays at 15.
+
+**Pre-existing hole I did NOT fix, recorded so it is not lost.** `RunStream.subscribe` filters
+`backlog = [e for e in _recent if e.seq > last_seq]`. `seq` is run-scoped, so a client that
+reconnects with a cursor from a dead run and attaches to a *new* run silently drops that run's
+first `lastSeq` frames — and `replay_available_from` cannot catch it, because `_recent` is empty
+at that moment. Unchanged by my fix, present before it. Filed for Linus and Danny.

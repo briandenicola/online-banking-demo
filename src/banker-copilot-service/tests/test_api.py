@@ -369,6 +369,185 @@ def test_stream_attached_before_any_run_stays_open_and_heartbeats(client):
     assert "event: heartbeat" in body
 
 
+async def _asgi_call(app, method, path, headers, body=b"", first_chunk_timeout=None):
+    """Drive the ASGI app directly and time the first body chunk.
+
+    `TestClient` cannot answer this question: it buffers the whole response inside the
+    portal and only then builds an httpx object, so every "streamed" chunk appears to
+    arrive at completion time. Time-to-first-byte is exactly the quantity this defect is
+    about, so the measurement has to happen at the ASGI boundary, which is also the layer
+    uvicorn writes the status line from.
+
+    Returns `(status, headers, seconds_to_first_chunk, first_chunk)`; the latency is
+    ``None`` if no chunk arrived within `first_chunk_timeout`.
+    """
+    import time
+
+    import anyio
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": method,
+        "path": path.split("?", 1)[0],
+        "raw_path": path.split("?", 1)[0].encode(),
+        "query_string": path.split("?", 1)[1].encode() if "?" in path else b"",
+        "root_path": "",
+        "scheme": "http",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        "client": ("testclient", 50000),
+        "server": ("testserver", 80),
+        "state": {},
+    }
+
+    sent = False
+    captured: dict = {"headers": {}}
+    first_chunk = anyio.Event()
+    started = time.monotonic()
+
+    async def receive():
+        nonlocal sent
+        if not sent:
+            sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        # Never disconnect on our own: a disconnect would end the stream and make a slow
+        # server look like a finished one.
+        await anyio.sleep(3600)
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            captured["status"] = message["status"]
+            captured["headers"] = {
+                k.decode().lower(): v.decode() for k, v in message.get("headers", [])
+            }
+        elif message["type"] == "http.response.body":
+            chunk = message.get("body", b"")
+            if chunk and "chunk" not in captured:
+                captured["chunk"] = chunk
+                captured["latency"] = time.monotonic() - started
+                first_chunk.set()
+            if not message.get("more_body", False) and not first_chunk.is_set():
+                first_chunk.set()
+
+    # Spawned through anyio, not `asyncio.ensure_future`: Starlette's `is_disconnected`
+    # opens an anyio cancel scope, and a raw asyncio task is not registered with anyio's
+    # task-state store, so it blows up before the code under test ever runs.
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(app, scope, receive, send)
+        with anyio.move_on_after(first_chunk_timeout if first_chunk_timeout else 3600):
+            await first_chunk.wait()
+        tg.cancel_scope.cancel()
+
+    return (
+        captured.get("status"),
+        captured["headers"],
+        captured.get("latency"),
+        captured.get("chunk", b""),
+    )
+
+
+async def _open_stream_and_time_first_frame(asgi_app):
+    auth = _auth(**BANKER)
+    async with asgi_app.router.lifespan_context(asgi_app):
+        status, _, _, created = await _asgi_call(
+            asgi_app,
+            "POST",
+            "/api/copilot/sessions",
+            {**auth, "content-type": "application/json"},
+            body=json.dumps({"objective": "x"}).encode(),
+        )
+        assert status == 201, created
+        session_id = json.loads(created)["sessionId"]
+
+        return await _asgi_call(
+            asgi_app,
+            "GET",
+            f"/api/copilot/sessions/{session_id}/stream",
+            auth,
+            first_chunk_timeout=4.0,
+        )
+
+
+def test_stream_flushes_its_first_frame_without_waiting_a_heartbeat(monkeypatch):
+    """A session with no run yet must produce a frame AT ONCE, not one heartbeat later.
+
+    The client verifies the connection on its first frame and gates approval signing on that
+    verification. Any wait performed before the handler returns — or before the generator's
+    first yield — withholds the status line and the frame for a whole heartbeat interval, so
+    the client reads a healthy server as a dead one and greys out signing. The heartbeat here
+    is deliberately long, so "flushed immediately" and "waited a heartbeat" are far apart and
+    cannot be mistaken for each other.
+
+    The whole measurement runs inside a blocking portal, the way `TestClient` runs its app:
+    Starlette's `is_disconnected` opens an anyio cancel scope, and anyio will not honour one
+    in a task it does not own.
+    """
+    import importlib
+
+    import anyio.from_thread
+
+    monkeypatch.setenv("COPILOT_SSE_HEARTBEAT_SECONDS", "10")
+
+    import app.main as main_module
+
+    importlib.reload(main_module)
+
+    with anyio.from_thread.start_blocking_portal("asyncio") as portal:
+        status, headers, latency, chunk = portal.call(
+            _open_stream_and_time_first_frame, main_module.app
+        )
+
+    assert status == 200, (
+        "no `http.response.start` was sent within 4s: the status line itself is being "
+        "withheld, which is what the client reads as a connection that never opened"
+    )
+    assert headers["content-type"].startswith("text/event-stream")
+    assert latency is not None, (
+        "no frame arrived within 4s against a 10s heartbeat: the stream is waiting before it "
+        "flushes, so the client cannot verify the connection and signing stays disabled"
+    )
+    assert latency < 2.0, f"the first frame took {latency:.2f}s against a 10s heartbeat"
+    assert b"event: heartbeat" in chunk, (
+        "the first frame must be a heartbeat the client understands, not an empty flush"
+    )
+
+
+def test_stream_still_answers_409_when_the_cursor_fell_out_of_the_replay_window(monkeypatch):
+    """Removing the pre-flight wait must not cost us the resync guarantee.
+
+    The 409 is what stops a client being handed a trace with a hole in it that looks
+    complete. It is reached whenever a stream exists for the request — the `runId` lookup and
+    `latest_for_session` both still run before it, and only the *waiting* moved into the
+    generator. A run whose replay window has rolled past the cursor must still be refused up
+    front rather than silently resumed from the wrong place.
+    """
+    import importlib
+
+    monkeypatch.setenv("COPILOT_SSE_REPLAY_WINDOW", "2")
+
+    import app.main as main_module
+
+    importlib.reload(main_module)
+    with TestClient(main_module.app) as test_client:
+        session = test_client.post(
+            "/api/copilot/sessions", json={"objective": "x"}, headers=_auth(**BANKER)
+        ).json()
+        run = test_client.post(
+            f"/api/copilot/sessions/{session['sessionId']}/runs", json={}, headers=_auth(**BANKER)
+        ).json()
+
+        response = test_client.get(
+            f"/api/copilot/sessions/{session['sessionId']}/stream"
+            f"?runId={run['runId']}&lastSeq=1",
+            headers=_auth(**BANKER),
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "resync_required"
+
+
 def test_stream_rejects_a_non_numeric_last_event_id(client):
     """The resume cursor is the seq. A cursor we cannot interpret must not be treated as
     'start from the beginning' — that silently replays the run as duplicates."""
