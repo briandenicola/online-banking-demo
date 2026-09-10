@@ -36,6 +36,25 @@ def extract_json(text: str) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+def as_chat_messages(prompt: str) -> list[Any]:
+    """Turn a prompt string into the message sequence the Agent Framework chat clients want.
+
+    Every model call in this service used to pass the prompt string straight to
+    ``get_response``. The signature is ``Sequence[Message]``, and a ``str`` IS a sequence — of
+    single characters — so the client walked the prompt letter by letter and died on
+    ``'str' object has no attribute 'role'`` before a single request left the process. Nothing
+    caught it, because every test in the suite stubs the transport: the string was never handed
+    to a real client anywhere, in CI or in the cloud.
+
+    ``normalize_messages`` is the framework's own public converter (``str`` -> one user
+    message) and is present in every pinned version this repo uses, so this is the framework's
+    answer rather than ours. It is stated once, here, for all four call sites.
+    """
+    from agent_framework import normalize_messages
+
+    return normalize_messages(prompt)
+
+
 def sha256_text(text: str) -> str:
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -76,4 +95,4 @@ class Attribution:
         return wire
 
 
-__all__ = ["extract_json", "sha256_text", "Attribution"]
+__all__ = ["as_chat_messages", "extract_json", "sha256_text", "Attribution"]

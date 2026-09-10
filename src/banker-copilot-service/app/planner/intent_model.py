@@ -17,7 +17,7 @@ from typing import Any, Mapping, Sequence
 import jsonschema
 import structlog
 
-from app.planner.model_call import Attribution, extract_json, sha256_text
+from app.planner.model_call import Attribution, as_chat_messages, extract_json, sha256_text
 
 logger = structlog.get_logger("banker-copilot-service")
 
@@ -189,6 +189,13 @@ def build_intent_prompt(
         "scoreOverrideSignableBand, newScore must be inside that band and the rationale must name "
         "the prior score and proposed replacement score. If a needed amount is missing, refuse "
         "instead of guessing.\n"
+        "Identifiers are the one exception, and they are not yours to supply. `accountId` and "
+        "`userId` are resolved server-side from subjectHints against the live directory before "
+        "the payload is signed. Put the words the banker used in subjectHints — `customer` for a "
+        "username or display name, `accountType` for \"Checking\" or \"Savings\" — omit those id "
+        "fields from payloadDraft, and do NOT refuse merely because the objective names a person "
+        "and an account in words rather than by id. Never invent an id: an id you guessed would "
+        "be discarded, and refusing a resolvable subject fails the banker just as badly.\n"
         "Known forbidden actions are listed so you can refuse them honestly; never choose them.\n"
         "For read, choose only registered read tools and provide concrete arguments. If a name "
         "must be resolved, place the text in subjectHints; ids and id-shaped text are hints only "
@@ -309,7 +316,7 @@ class FoundryIntentSelector:
             prompt_sha256=sha256_text(prompt),
         )
         try:
-            response = await asyncio.wait_for(self._ensure_client().get_response(prompt), timeout=self.timeout_s)
+            response = await asyncio.wait_for(self._ensure_client().get_response(as_chat_messages(prompt)), timeout=self.timeout_s)
         except asyncio.TimeoutError:
             return _failure(
                 PLANNER_MODEL_UNAVAILABLE,
@@ -367,7 +374,7 @@ class FoundryEvidenceAnswerer:
             prompt_sha256=sha256_text(prompt),
         )
         try:
-            response = await asyncio.wait_for(self._ensure_client().get_response(prompt), timeout=self.timeout_s)
+            response = await asyncio.wait_for(self._ensure_client().get_response(as_chat_messages(prompt)), timeout=self.timeout_s)
         except asyncio.TimeoutError:
             return EvidenceAnswer(
                 answer="",

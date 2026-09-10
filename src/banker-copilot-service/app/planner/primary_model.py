@@ -63,7 +63,7 @@ from typing import Any, Mapping, Sequence
 
 import structlog
 
-from app.planner.model_call import Attribution, extract_json, sha256_text
+from app.planner.model_call import Attribution, as_chat_messages, extract_json, sha256_text
 from app.planner.verdicts import RECOMMENDATIONS
 
 logger = structlog.get_logger("banker-copilot-service")
@@ -481,7 +481,7 @@ class FoundryPrimaryAssessor:
         )
         try:
             client = self._ensure_client()
-            response = await asyncio.wait_for(client.get_response(prompt), timeout=self.timeout_s)
+            response = await asyncio.wait_for(client.get_response(as_chat_messages(prompt)), timeout=self.timeout_s)
         except asyncio.TimeoutError:
             logger.warning("Primary assessor timed out", timeout_s=self.timeout_s)
             return replace(

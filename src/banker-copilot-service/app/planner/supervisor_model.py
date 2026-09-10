@@ -40,7 +40,7 @@ import structlog
 
 from app.config import ConfigurationError, env_with_legacy
 from app.planner.fanout import SecondOpinion, SupervisorInput
-from app.planner.model_call import Attribution, extract_json, sha256_text
+from app.planner.model_call import Attribution, as_chat_messages, extract_json, sha256_text
 from app.planner.verdicts import RECOMMENDATIONS
 
 logger = structlog.get_logger("banker-copilot-service")
@@ -278,7 +278,7 @@ class FoundryDecider:
         prompt = build_prompt(spawn, own_evidence)
         try:
             client = self._ensure_client()
-            response = await asyncio.wait_for(client.get_response(prompt), timeout=self.timeout_s)
+            response = await asyncio.wait_for(client.get_response(as_chat_messages(prompt)), timeout=self.timeout_s)
         except asyncio.TimeoutError:
             logger.warning("Supervisor model timed out", timeout_s=self.timeout_s)
             return _failsafe(f"the model did not answer within {self.timeout_s:g}s")

@@ -182,6 +182,46 @@ docker compose up banker-copilot-service        # port 8005, gateway /api/copilo
 cd src/banker-copilot-service && python -m pytest tests/ -q
 ```
 
+## Proving the free-text path against a REAL model
+
+`tests/test_demo_prompt_acceptance.py` stubs the intent boundary: it proves the planner
+executes a structured intent correctly, and it deliberately proves nothing about whether a
+model turns a banker's English into a sane intent. `tests/test_demo_prompt_live_model.py`
+runs the SAME prompt corpus through the real `intent_model.py` call path.
+
+It is **deselected by default** (`addopts = -m "not live_model"` in `pyproject.toml`), so the
+normal run stays hermetic, offline and credential-free and reports the live tests as
+`deselected` — never as passed and never as skipped.
+
+```bash
+BANKER_COPILOT_LIVE_MODEL=1 \
+FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>" \
+FOUNDRY_MODEL="gpt-5.4-mini" \
+python -m pytest -m live_model -q -s
+```
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `BANKER_COPILOT_LIVE_MODEL` | yes | `1`/`true`/`yes`. Without it the tests are deselected. |
+| `FOUNDRY_PROJECT_ENDPOINT` | yes | The **project** endpoint, not the account endpoint. `az rest --method get --url ".../accounts/<account>/projects?api-version=2025-06-01"` prints it under `properties.endpoints["AI Foundry API"]`. The legacy `AZURE_AI_PROJECT_ENDPOINT` is still accepted. |
+| `FOUNDRY_MODEL` | yes | The **deployment** name, e.g. `gpt-5.4-mini`. Legacy `AZURE_AI_MODEL_DEPLOYMENT` accepted. |
+| an Azure credential | yes | `az login`, or `AZURE_TENANT_ID`/`AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET`, or a projected workload identity. The identity needs a role granting data-plane inference on the Foundry project, and the resource must be reachable — several Foundry accounts in this subscription have `publicNetworkAccess: Disabled` and are unreachable from a laptop. |
+
+`COPILOT_PLANNER_MODE` is forced to `foundry` by the suite. Missing configuration or a
+credential that cannot mint a token for `https://ai.azure.com/.default` **aborts the whole run**
+with `pytest.exit` and a non-zero exit code, naming the missing piece. It never skips: a skipped
+live test reads like a passing one, and a run that proved nothing must never look green.
+
+Real: the intent model, the evidence answerer, the intent prompt, the JSON contract, the
+planner loop, subject resolution, the action allowlist and payload revalidation. Fixtures: the
+banking upstreams and authority-service (so a failure is attributable to the model, not to an
+outage) and the primary assessor (this suite is about intent, not assessment).
+
+Assertions are about invariants — chosen action, resolved subject, read vs approval vs refusal,
+refusal code, and that the allowlist held. Direction and required rung are printed, not
+asserted, because a live model may reasonably read "refund a fee" as a credit or a debit and
+the rung is derived from the direction.
+
 ## Known gaps in the upstreams (found by reading the real controllers)
 
 The epic's manifest was written against intended shapes. The deployed services differ, and

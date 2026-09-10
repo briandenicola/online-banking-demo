@@ -36,6 +36,15 @@ pytest-asyncio = ">=0.24,<2.0"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# The live-model acceptance suite (tests/test_demo_prompt_live_model.py) is DESELECTED by
+# default, not skipped. A skipped test still reports on the same line as the passes and reads
+# like one; a deselected test reports as "N deselected" and cannot be mistaken for coverage.
+# The default run therefore stays hermetic, offline and credential-free, exactly as before.
+# To run it:  BANKER_COPILOT_LIVE_MODEL=1 pytest -m live_model -s
+addopts = "-m 'not live_model'"
+markers = [
+    "live_model: calls a REAL Foundry model. Requires BANKER_COPILOT_LIVE_MODEL=1, FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_MODEL and an Azure credential. Deselected by default.",
+]
 
 # Mutation testing config. This MUST live in a config file, not on the command
 # line: mutmut 3.x loads config at import time, so `mutmut run --paths-to-mutate`

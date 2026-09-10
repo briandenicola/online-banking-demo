@@ -333,13 +333,29 @@ def test_a_model_that_hangs_withholds():
     assert "0.05s" in opinion.strongest_counter_argument
 
 
+def _prompt_text(messages) -> str:
+    """Read the prompt back out of what the client was actually handed.
+
+    Asserted, not assumed: `get_response` takes a `Sequence[Message]`, and a `str` satisfies
+    that annotation as a sequence of single characters. Every call site in this service passed
+    a bare string, so the SDK walked the prompt letter by letter and raised
+    `'str' object has no attribute 'role'` before any request left the process — and no test
+    caught it, because the transport is stubbed everywhere. This helper refuses a bare string
+    so that regression cannot come back silently.
+    """
+    assert not isinstance(messages, str), (
+        "the chat client must be handed a message sequence, never a bare prompt string"
+    )
+    return "\n".join(str(getattr(message, "text", message)) for message in messages)
+
+
 def test_the_decider_returns_what_the_model_actually_decided():
     """The positive case: a real verdict travels through unchanged. Without this, a decider
     hard-wired to the failsafe would pass every other test in this file."""
 
     class Model:
-        async def get_response(self, prompt):
-            assert "acct-400123" in prompt
+        async def get_response(self, messages):
+            assert "acct-400123" in _prompt_text(messages)
             return type("R", (), {"text": '{"recommendation": "decline", "confidence": 0.9, '
                                           '"keyFactors": ["frozen"], '
                                           '"strongestCounterArgument": "The freeze is recent."}'})()
