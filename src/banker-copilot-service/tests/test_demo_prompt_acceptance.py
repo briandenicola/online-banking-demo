@@ -361,16 +361,22 @@ async def test_demo_compare_prompt_needs_multi_subject_evidence_not_duplicate_to
     ("name", "decision", "expected_rung", "expected_payload", "expected_escalators"),
     [
         (
+            # Brian's ruling, 2026-09-10: refunding a fee is money going BACK to the customer,
+            # so it is a credit, and `credit-adjustment` in config/authority-policy.yaml raises
+            # any credit to L2 because crediting an account creates money. This case was mapped
+            # as a debit against an L1 heading in the demo doc; the heading was the error. The
+            # rung is the point of the case: an L1 refund would route a customer refund through
+            # less signature ceremony than crediting money deserves.
             "retail_refund",
             IntentDecision(
                 kind="propose",
                 action_id="account.balance.adjust",
                 subject_hints={"customer": "retail", "accountType": "Checking"},
-                payload_draft={"amount": "35", "direction": "debit", "reason": "Goodwill overdraft fee refund."},
+                payload_draft={"amount": "35", "direction": "credit", "reason": "Goodwill overdraft fee refund."},
             ),
-            "L1",
-            {"accountId": "acct_retail_checking", "amount": "35.00", "direction": "debit", "reason": "Goodwill overdraft fee refund."},
-            set(),
+            "L2",
+            {"accountId": "acct_retail_checking", "amount": "35.00", "direction": "credit", "reason": "Goodwill overdraft fee refund."},
+            {"credit-adjustment"},
         ),
         (
             "dana_credit",
@@ -535,7 +541,7 @@ async def test_demo_score_override_exact_sentence_cannot_yet_be_constructed_with
                 kind="propose",
                 action_id="account.balance.adjust",
                 subject_hints={"customer": "nobody-here", "accountType": "Checking"},
-                payload_draft={"amount": "35", "direction": "debit", "reason": "Goodwill overdraft fee refund."},
+                payload_draft={"amount": "35", "direction": "credit", "reason": "Goodwill overdraft fee refund."},
             ),
             "subject_not_found",
         ),

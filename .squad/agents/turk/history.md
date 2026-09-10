@@ -3259,3 +3259,31 @@ at that moment. Unchanged by my fix, present before it. Filed for Linus and Dann
 **Config archaeology, so nobody repeats it:** a live run needs `BANKER_COPILOT_LIVE_MODEL=1`, `FOUNDRY_PROJECT_ENDPOINT` (the **project** endpoint, `https://<account>.services.ai.azure.com/api/projects/<project>` — not the `.cognitiveservices.azure.com` account endpoint), `FOUNDRY_MODEL` (the deployment name), and an Azure credential able to mint a token for `https://ai.azure.com/.default`. The endpoint in the repo `.env` (`probable-bluebird-8762`) is NXDOMAIN — that resource is gone. Working one at the time of writing: `serval-37447-project` with `gpt-5.4-mini`. Note `model-osprey-55220-foundry` has `publicNetworkAccess: Disabled` and is unreachable from a laptop. All documented in the service README.
 
 **Verification:** default `pytest -q` run before and after (identical), gate-set-without-config and gate-set-with-bad-credentials both proven to abort with exit code 2 rather than skip, and eight full or partial live runs against a real Foundry deployment.
+
+### 2026-09-10 (later) — Brian's ruling: the $35 refund is a CREDIT, and therefore L2
+
+**Ruling:** "Refund a $35 overdraft fee" is money going back to the customer. It is a credit, it fires `credit-adjustment`, and it is **L2**. I had encoded it as `direction: debit` / L1 to match a heading in `docs/design/banker-copilot-demo-prompts.md`; Brian confirmed the heading was his error, not my reading of it.
+
+**Where that prompt was encoded, and what changed:**
+- `tests/test_demo_prompt_acceptance.py` — `retail_refund` now drafts `direction: credit`, expects rung **L2** and escalator `{credit-adjustment}`. The `nobody-here` refusal case uses the same corrected draft.
+- `tests/test_demo_prompt_live_model.py` — the live parametrization now carries expected direction and a required escalator, and **asserts `requiredRung == "L2"` for all four write prompts**.
+- `docs/design/banker-copilot-demo-prompts.md` — the "L1 — one signer" heading is gone; both credits sit under L2 with the reason stated inline.
+- `tests/test_run_terminal_status.py` already used `direction: credit` for the same refund — it was right all along, which is a small piece of evidence that the doc heading was the outlier.
+- `config/authority-policy.yaml` untouched: `credit-adjustment` (`direction == credit` → `raiseTo: L2`, "Crediting an account creates money, which is always dual-control") already says exactly this.
+
+**Key Learning — "assert only what the English determines" is not the same as "never assert the rung".** My first live cut printed direction and rung instead of asserting them, reasoning that a model could read "refund a fee" either way. That reasoning was wrong in a specific and expensive way: the direction *is* determined by the English, and the rung is derived from it, so declining to assert either meant a model that read the refund as a debit would produce an **L1** approval — a customer refund routed through less signature ceremony than crediting money deserves — and the suite would have printed it and passed. The right rule is narrower: assert the rung always (it is the authority a human must muster), assert the direction where the sentence fixes it, and print it only where the sentence genuinely leaves it open ("post a $2,400 adjustment", "adjust by $26,000" — both L2 on amount whichever way the money moves, so the rung is asserted for those too).
+
+**Live verification of the ruling (real gpt-5.4-mini, `serval-37447-project`):** across 13 live runs of the refund prompt today, the model proposed `direction: credit` at rung **L2** with `credit-adjustment` fired in **every single proposal** — it never once chose debit. So the model agrees with Brian, and it disagreed with the doc heading I had encoded.
+
+**Measured per-prompt live reliability (today's runs, worth knowing before 9/14):**
+
+| Prompt | Proposed correctly |
+| --- | --- |
+| `Refund a $35 overdraft fee on retail's checking as goodwill` | 12 / 13 |
+| `Credit dana $120 for a duplicate charge on her checking account` | 6 / 7 |
+| `Post a $2,400 adjustment to casey's savings for the disputed deposit` | 7 / 7 |
+| `Adjust retail's savings by $26,000` | ~2 / 5 |
+
+The failures are refusals or read-to-resolve plans, never a wrong rung. `Adjust retail's savings by $26,000` is the weak one: the model calls it "too vague to map safely", which is a defensible reading of a sentence that names no reason and no direction. Reported to Brian rather than fixed by tuning the prompt again.
+
+**One thing I did not do:** the doc now has no L1 example at all, and `## Escalation triggers` still names `large-flagged-amount` where `account.balance.adjust` actually fires `large-adjustment` (`config/authority-policy.yaml:520` vs `:424`). Both are Brian's/Danny's calls, not mine — flagged, not changed.

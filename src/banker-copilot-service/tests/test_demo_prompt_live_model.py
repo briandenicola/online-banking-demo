@@ -442,25 +442,42 @@ async def test_live_compare_prompt_needs_multi_subject_evidence(live_models):
 
 
 @pytest.mark.parametrize(
-    ("name", "expected_account_id", "expected_amount"),
+    ("name", "expected_account_id", "expected_amount", "expected_direction", "required_escalator"),
     [
-        ("retail_refund", "acct_retail_checking", "35.00"),
-        ("dana_credit", "acct_dana_checking", "120.00"),
-        ("casey_savings", "acct_casey_savings", "2400.00"),
-        ("retail_large", "acct_retail_savings", "26000.00"),
+        # Brian's ruling, 2026-09-10: refunding a fee is money going BACK to the customer, so
+        # the direction IS determined by the English — credit — and `credit-adjustment` raises
+        # it to L2. A live model reading this as a debit would produce an L1 approval, routing
+        # a customer refund through less signature ceremony than crediting money deserves. That
+        # is a rung error, not a label error, and it is exactly what this gate is for.
+        ("retail_refund", "acct_retail_checking", "35.00", "credit", "credit-adjustment"),
+        ("dana_credit", "acct_dana_checking", "120.00", "credit", "credit-adjustment"),
+        # "Post a $2,400 adjustment" and "Adjust ... by $26,000" do NOT state a direction, so
+        # direction stays unasserted and is printed instead. The rung is still determined:
+        # both are at or above the dual-control amount whichever way the money moves.
+        ("casey_savings", "acct_casey_savings", "2400.00", None, None),
+        ("retail_large", "acct_retail_savings", "26000.00", None, None),
     ],
 )
-async def test_live_balance_adjustment_prompt_picks_the_right_action_subject_and_amount(
-    name: str, expected_account_id: str, expected_amount: str, live_models
+async def test_live_balance_adjustment_prompt_picks_the_right_action_subject_amount_and_rung(
+    name: str,
+    expected_account_id: str,
+    expected_amount: str,
+    expected_direction: str | None,
+    required_escalator: str | None,
+    live_models,
 ):
     """Asserts what Brian's English DETERMINES, and only that.
 
-    The action, the account the sentence names, the amount the sentence states, and the fact
-    that it routed to approval rather than to an answer or a refusal. Direction and required
-    rung are deliberately NOT asserted: a live model may reasonably read "refund a fee" as
-    either a credit or a debit, and the rung is derived from the direction, so asserting the
-    rung would smuggle a prose judgement back in as an invariant. Both are printed by
-    `report()` so a human can read what the model chose.
+    The action, the account the sentence names, the amount it states, the fact that it routed
+    to approval rather than to an answer or a refusal — and **the required rung**, because the
+    rung is the authority a banker must muster and getting it low is the expensive mistake.
+    Every prompt here is L2: the two credits because crediting an account creates money, the
+    two large adjustments because they are at or above the dual-control amount whichever way
+    the money moves.
+
+    Direction is asserted only where the sentence fixes it. "Refund a fee" and "credit dana"
+    do; "post an adjustment" and "adjust by" do not, and for those the direction is printed by
+    `report()` rather than asserted, so a wording judgement never masquerades as an invariant.
     """
     prompt = PROMPTS[name]
     run = await _run_live_prompt(prompt, live_models)
@@ -470,7 +487,21 @@ async def test_live_balance_adjustment_prompt_picks_the_right_action_subject_and
     payload = run.proposed_payload
     assert payload["accountId"] == expected_account_id, f"{prompt}: resolved the wrong account"
     assert payload["amount"] == expected_amount, f"{prompt}: the sentence states an amount and it was not honoured"
-    assert run.proposal is not None, f"{prompt}: no approval; error={run.error_code}"
+    if expected_direction is not None:
+        assert payload["direction"] == expected_direction, (
+            f"{prompt}: the sentence fixes the direction as {expected_direction!r}; the model chose "
+            f"{payload.get('direction')!r}, which sends the money the wrong way and lands the "
+            "approval on the wrong rung"
+        )
+    approval = run.proposal
+    assert approval is not None, f"{prompt}: no approval; error={run.error_code}"
+    fired = {item["key"] for item in approval.get("firedEscalators", [])}
+    if required_escalator is not None:
+        assert required_escalator in fired, f"{prompt}: expected {required_escalator!r} to fire, got {sorted(fired)}"
+    assert approval["requiredRung"] == "L2", (
+        f"{prompt}: required rung is {approval['requiredRung']!r}, expected 'L2'. Escalators fired: "
+        f"{sorted(fired)}. An under-rung approval is the failure this gate exists to catch."
+    )
     assert run.terminal == "completed", f"{prompt}: {run.error_code}"
 
 

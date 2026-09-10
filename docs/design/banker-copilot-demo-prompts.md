@@ -11,7 +11,12 @@ Surface: `https://onlinebankingdemo.bjdazure.tech/copilot?ff=bankerCopilot` — 
 - `Why was casey's offshore wire flagged?`
 - `Compare dana's checking history against casey's — anything unusual?`
 
-## L1 — one signer (`account.balance.adjust` under $1,000)
+## L2 — two signers (credits: `credit-adjustment`)
+
+Both of these are **credits**: a refund and a duplicate-charge correction are money going back
+to the customer. `credit-adjustment` raises any credit to L2 — crediting an account creates
+money, which is always dual-control. They sat under an "L1 — one signer" heading until
+2026-09-10; the heading was wrong, not the policy. There is now no L1 example in this list.
 
 - `Refund a $35 overdraft fee on retail's checking as goodwill`
 - `Credit dana $120 for a duplicate charge on her checking account`
