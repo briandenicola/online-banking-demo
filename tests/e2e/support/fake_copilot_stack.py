@@ -52,6 +52,63 @@ _COMPLETED_RUN_FRAMES = [
     {"kind": "run.done", "seq": 4, "runId": "run_done1", "payload": {"status": "completed"}},
 ]
 
+#: A free-text objective the planner REFUSED. Frames mirror `loop.py`'s refusal
+#: branch exactly: `run.error` with `recoverable: false`, then `step.failed`,
+#: then `run.done status=failed`. There is no refusal artifact, because the
+#: planner does not emit one — which is the whole reason this has to render from
+#: `run.error` alone.
+_REFUSED_RUN_FRAMES = [
+    {"kind": "run.started", "seq": 1, "runId": "run_ref1",
+     "payload": {"objective": "Adjust retail's savings by $26,000", "title": "Adjust retail's savings by $26,000"}},
+    {"kind": "step.started", "seq": 2, "runId": "run_ref1",
+     "payload": {"stepId": "s1", "index": 1, "title": "Interpret objective"}},
+    {"kind": "step.completed", "seq": 3, "runId": "run_ref1",
+     "payload": {"stepId": "s1", "index": 1, "title": "Interpret objective"}},
+    {"kind": "step.started", "seq": 4, "runId": "run_ref1",
+     "payload": {"stepId": "s2", "index": 2, "title": "Refuse objective"}},
+    {"kind": "run.error", "seq": 5, "runId": "run_ref1",
+     "payload": {"code": "payload_unfillable",
+                 "message": "The direction of the adjustment was not stated.",
+                 "recoverable": False}},
+    {"kind": "step.failed", "seq": 6, "runId": "run_ref1",
+     "payload": {"stepId": "s2", "error": "payload_unfillable", "willRetry": False}},
+    {"kind": "run.done", "seq": 7, "runId": "run_ref1",
+     "payload": {"status": "failed", "durationMs": 5200, "finalSeq": 7}},
+]
+
+#: A read-only objective: evidence-backed answer artifact, NO approval. The
+#: content keys are exactly those `loop.py` writes for `kind="answer"`.
+_ANSWER_RUN_FRAMES = [
+    {"kind": "run.started", "seq": 1, "runId": "run_ans1",
+     "payload": {"objective": "Summarise casey's accounts and recent activity",
+                 "title": "Summarise casey's accounts and recent activity"}},
+    {"kind": "step.started", "seq": 2, "runId": "run_ans1",
+     "payload": {"stepId": "s1", "index": 1, "title": "Interpret objective"}},
+    {"kind": "step.completed", "seq": 3, "runId": "run_ans1",
+     "payload": {"stepId": "s1", "index": 1, "title": "Interpret objective"}},
+    {"kind": "step.started", "seq": 4, "runId": "run_ans1",
+     "payload": {"stepId": "s2", "index": 2, "title": "Answer from evidence"}},
+    {"kind": "artifact.created", "seq": 5, "runId": "run_ans1",
+     "payload": {"artifactId": "art_ans1", "kind": "answer", "title": "Copilot answer",
+                 "revision": 1,
+                 "content": {
+                     "answer": "Casey holds a checking and a savings account. Recent activity is dominated by a single large payroll credit.",
+                     "keyPoints": ["Checking balance is $16,143.46",
+                                   "One offshore wire is flagged for review"],
+                     "citedEvidenceIds": ["list_customer_accounts", "list_account_transactions"],
+                     "unverified": ["Whether the offshore wire was pre-notified by the customer"]}}},
+    {"kind": "step.completed", "seq": 6, "runId": "run_ans1",
+     "payload": {"stepId": "s2", "index": 2, "title": "Answer from evidence"}},
+    {"kind": "run.done", "seq": 7, "runId": "run_ans1",
+     "payload": {"status": "completed", "durationMs": 7400, "finalSeq": 7}},
+]
+
+_REPLAY_MODES = {
+    "completed-run": _COMPLETED_RUN_FRAMES,
+    "refused-run": _REFUSED_RUN_FRAMES,
+    "answer-run": _ANSWER_RUN_FRAMES,
+}
+
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -133,12 +190,12 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         try:
-            if STREAM_MODE == "completed-run":
+            if STREAM_MODE in _REPLAY_MODES:
                 # What the server does for a session whose latest run has FINISHED:
                 # `runs.latest_for_session` returns the closed run, its backlog is replayed,
                 # and then `if stream.closed and queue.empty(): return` ends the response.
                 # 200, immediately, every time — the shape that produced the 24-request storm.
-                for event in _COMPLETED_RUN_FRAMES:
+                for event in _REPLAY_MODES[STREAM_MODE]:
                     if event["seq"] > _last_seq(parse_qs(urlparse(self.path).query)):
                         self.wfile.write(
                             f"id: {event['seq']}\nevent: {event['kind']}\n"
