@@ -204,7 +204,7 @@ public static partial class ApprovalDisplay
     private static string? Money(JToken? token)
     {
         if (Decimal(token) is not { } amount) return null;
-        return string.Create(CultureInfo.InvariantCulture, $"${amount:0.00}");
+        return string.Create(CultureInfo.InvariantCulture, $"${amount:N2}");
     }
 
     private static decimal? Decimal(JToken? token)

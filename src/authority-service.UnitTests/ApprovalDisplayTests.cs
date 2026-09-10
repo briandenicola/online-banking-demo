@@ -82,7 +82,7 @@ public class ApprovalDisplayTests
         response.Subject.Should().NotBeNull();
         response.Subject!.Kind.Should().Be("account");
         response.Subject.Label.Should().Be("Checking account ····1234");
-        response.Subject.Summary.Should().Be("Balance $59480.00");
+        response.Subject.Summary.Should().Be("Balance $59,480.00");
         response.Subject.AccountId.Should().Be("acct-abc-1234");
         response.Subject.AccountType.Should().Be("Checking");
     }

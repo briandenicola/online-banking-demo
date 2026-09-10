@@ -3191,3 +3191,11 @@ at that moment. Unchanged by my fix, present before it. Filed for Linus and Dann
 **Verification:** Targeted planner tests passed: 20. Full banker-copilot Python passed: 426. Cloud `scripts/demo/demo.sh show --target cloud --probe` passed and created approval `apr_d0afd44c3e494762b2506411` from run `run_4b0d5f2b32bf4715`. Local probe could not run because `http://localhost:8080` was not listening, not because the planner path failed.
 
 **Key Learning:** A control can be functionally present and still be incomplete until the negative path is asserted. For resolver controls, 403 and 404 must collapse to the same banker-readable refusal or the error channel becomes an existence oracle.
+
+### 2026-09-10 — Invariant money formatting in approval display (#332)
+
+**Issue:** Evidence/subject summaries were server-formatted as `$16143.46` while the client money table already formatted `$2,500.00` correctly. The display string belongs server-side because the evidence summary is server-owned presentation text.
+
+**Fix:** Changed authority display money formatting from `0.00` to `N2`. `ApprovalDisplay.cs` already used `CultureInfo.InvariantCulture`, so the change keeps pod-location-independent separators (`$16,143.46`, not culture-localized punctuation).
+
+**Verification:** authority-service.UnitTests passed: 151.
