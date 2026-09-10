@@ -40,7 +40,7 @@ import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { NodeStatusGlyph, visuallyHidden } from './CopilotPrimitives';
 import { useCopilot, useNow } from './CopilotContext';
 import { PlanStep, RunState, SubagentRun, ToolCall, TraceDensity } from './types';
-import { refusalCopy } from './runOutcome';
+import { isNonDisclosing, refusalCopy } from './runOutcome';
 import { getCopilotConfig } from '../../config/copilotConfig';
 
 /**
@@ -59,6 +59,13 @@ import { getCopilotConfig } from '../../config/copilotConfig';
  */
 const RunRefusalNotice: React.FC<{ code?: string; message?: string }> = ({ code, message }) => {
   const copy = refusalCopy(code);
+  // Danny's non-disclosure ruling enforced HERE, not merely honoured in the copy
+  // above. Turk's current strings for these two codes are safe, but "safe because
+  // the author was careful" is not a control: the message is server-authored and
+  // can change without this file being touched. For the two subject codes the
+  // server message is dropped entirely — the copy above already says the same
+  // thing, and dropping it cannot leak a name, an id or a count.
+  const showMessage = copy.showServerMessage && !isNonDisclosing(code);
   return (
     <Box
       role="note"
@@ -71,7 +78,7 @@ const RunRefusalNotice: React.FC<{ code?: string; message?: string }> = ({ code,
       <Typography variant="body2" sx={{ mt: 0.5 }}>
         {copy.what}
       </Typography>
-      {copy.showServerMessage && message && (
+      {showMessage && message && (
         <Typography variant="body2" sx={{ mt: 0.5, fontStyle: 'italic' }}>
           {message}
         </Typography>

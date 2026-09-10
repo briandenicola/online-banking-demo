@@ -93,4 +93,22 @@ test.describe('a read-only answer run', () => {
     // The JSON fallback would have put the raw field names on screen.
     await expect(page.getByText(/"citedEvidenceIds"/)).toHaveCount(0);
   });
+
+  test('the new planner steps read as sense, and the timing is the run\u2019s own', async ({ page }) => {
+    await boot(page);
+    await expect(page.getByText(/dominated by a single large payroll credit/i)).toBeVisible({
+      timeout: 15000,
+    });
+
+    // The new phases are visible to a banker rather than hidden idle time. These
+    // titles are SERVER-authored; the client renders them verbatim by design, so
+    // this asserts what is shipped rather than a client-side rewording.
+    await expect(page.getByText('Interpret objective')).toBeVisible();
+    await expect(page.getByText('Answer from evidence')).toBeVisible();
+
+    // A real free-text run takes seconds. The old inert path finished in 241ms of
+    // doing nothing, and the pane once showed "181s and still counting" for it.
+    // 7.4s is what `run.done` reported, so that is what must be on screen.
+    await expect(page.getByText(/2 steps · 7s/)).toBeVisible();
+  });
 });

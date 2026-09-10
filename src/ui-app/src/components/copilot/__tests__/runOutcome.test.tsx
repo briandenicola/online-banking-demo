@@ -173,6 +173,28 @@ describe('a refused run in the trace pane', () => {
     expect(screen.queryByText(/KeyError/)).toBeNull();
   });
 
+
+  it('drops the server message entirely for the two non-disclosing codes', () => {
+    // The UI must ENFORCE the ruling, not merely honour it. Turk's current
+    // strings are safe, but the message is server-authored and can change
+    // without this file being touched, so the guard is tested with a message
+    // that deliberately leaks: a count and a name. Neither may reach the DOM.
+    render(
+      <TracePane
+        run={refusedRun(
+          'ambiguous_subject',
+          '3 customers matched: casey.reed, casey.morgan, casey.two'
+        )}
+      />
+    );
+
+    const notice = screen.getByRole('note', { name: /refused/i });
+    expect(notice).toHaveTextContent(/was not unique/i);
+    expect(screen.queryByText(/casey\.reed/)).toBeNull();
+    expect(notice.textContent).not.toMatch(/casey/i);
+    expect(notice.textContent).not.toMatch(/3 customers/);
+  });
+
   it('says nothing when a run merely completed', () => {
     const run = refusedRun('objective_unmappable', 'x');
     render(<TracePane run={{ ...run, status: 'completed', error: undefined } as RunState} />);
