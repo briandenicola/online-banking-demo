@@ -46,6 +46,25 @@ async function boot(page: Page) {
       body: `window.__RUNTIME_CONFIG__ = { featureFlags: { copilotHarness: true, classicAdminTabs: true }, copilot: { heartbeatIntervalMs: 3000, missedHeartbeatsBeforeDegraded: 2 } };`,
     })
   );
+  // The wire fixture is pinned to a real seeding run whose signing windows closed at
+  // 21:06Z. Now that the card enforces the window, a lapsed fixture silently converts an
+  // open-card test into a closed-card test: `Sign` is absent, and the failure looks like a
+  // gate regression when it is the fixture being honestly out of date. Re-date the windows
+  // relative to now so the spec keeps asserting what it was written to assert.
+  await page.route('**/authority/approvals*', async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    const items = (body.items || []).map((item: Record<string, unknown>) => ({
+      ...item,
+      createdAt: new Date(Date.now() - 60_000).toISOString(),
+      expiresAt: new Date(Date.now() + 45 * 60_000).toISOString(),
+    }));
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ...body, items }),
+    });
+  });
   await page.addInitScript(() => {
     localStorage.setItem('auth_token', 'test-token');
     localStorage.setItem('auth_email', 'banker@banking-demo.com');
@@ -101,6 +120,34 @@ test.describe('SSE lifecycle', () => {
     expect(observed).toEqual(['Live']);
   });
 
+  test('the signing gate opens honestly once the stream is verified live', async ({ page }) => {
+    // The gate itself is UNTOUCHED — `canSignUnderStream` still accepts only `live`/`resumed`.
+    // What changed is that a healthy stream is now allowed to REACH those states and stay
+    // there. This asserts the gate passes on its own terms, not that it was bypassed: the
+    // dwell timer still has to elapse first, which is deliberate friction, not the gate.
+    await boot(page);
+    await expect(page.getByText(/^Live$/).first()).toBeVisible({ timeout: 10000 });
+
+    await page.getByText('Post a balance adjustment').first().click();
+
+    // Target the CARD's sign button specifically. `/sign/i` also matches the batch group's
+    // "Sign 2 items" and every queue row whose accessible name contains "DENIED", and an
+    // earlier version of this test passed in 525ms against one of those — the dwell-gated
+    // button it was supposed to be watching was still disabled at the time.
+    const sign = page.getByRole('button', { name: /^Sign — / }).first();
+
+    // Disabled first, and honestly so: the L2 dwell is 25s of deliberate friction. If this
+    // is ever enabled immediately, the dwell has been lost, not the gate fixed.
+    await expect(sign).toBeDisabled();
+    await expect(sign).toHaveText(/enabled in \d+:\d+/);
+
+    // Then it opens on its own terms, because the stream is genuinely live.
+    await expect(sign).toBeEnabled({ timeout: 40000 });
+
+    // And the banner that was telling Brian signing was disabled must be gone.
+    await expect(page.getByText(/Live updates are interrupted/i)).toHaveCount(0);
+  });
+
   test('a held-open healthy stream is opened exactly once', async ({ page }) => {
     const streamRequests: string[] = [];
     await page.route('**/stream*', async (route) => {
@@ -144,11 +191,41 @@ test.describe('after a run has finished', () => {
 
     // Pre-fix this was unbounded: `attempt` was reset on `response.ok`, so a 200-then-EOF
     // loop reconnected on the base delay forever.
-    // Measured: 15 pre-fix, 3 post-fix, over the same 12s window.
+    // Measured over the same 12s window: 15 with no fix, 5 with backoff only, 1 now. The
+    // threshold is 1 — the initial attach and nothing after it. A cap of 6 would have let the
+    // backoff-only behaviour pass, and that is exactly what cost Brian 213 requests.
     console.log(`completed-run stream requests in 12s: ${streamRequests.length}`);
-    expect(streamRequests.length).toBeLessThanOrEqual(6);
+    expect(streamRequests.length).toBe(1);
 
     // And the trace must not claim the agent is still working. The run reached `run.done`.
     await expect(page.getByText(/the agent is still running on the server/i)).toHaveCount(0);
+
+    // The banner must state the outcome, not a contradiction. It previously read
+    // "This run is completed. Reconnecting for live updates — nothing further is expected
+    // for this run." — a sentence written to describe the storm rather than stop it.
+    await expect(page.getByText(/Reconnecting for live updates/i)).toHaveCount(0);
+    await expect(
+      page.getByText(/Live updates have stopped because there is nothing left to send/i)
+    ).toBeVisible();
+
+    // THE INFERENCE I HAVE NOT PROVEN UNTIL NOW. Stopping the reconnect settles the status
+    // at `closed`, and `canSignUnderStream` accepts only `live`/`resumed`. So a banker on a
+    // finished run cannot sign. My claim was that this is NOT a regression — the gate was
+    // already shut in that state, because the pre-fix reattach delivered nothing but
+    // already-consumed frames, which the replay filter drops without ever promoting the
+    // status. Assert the honest consequence rather than leaving it as reasoning.
+    //
+    // Target the QUEUE ROW by its rung chip. `getByText('Post a balance adjustment')` matches
+    // the batch group's "Review 2 together" toggle first, and clicking that collapses a
+    // group instead of selecting a card — which is precisely how the first version of this
+    // assertion failed. Assert something POSITIVE about the rendered card before asserting
+    // any absence, or an absence passes trivially on a card that never rendered.
+    await page.getByRole('button', { name: /Post a balance adjustment L1 · one signer/ }).first().click();
+    await expect(page.getByText(/You are signing/i).first()).toBeVisible();
+
+    // The record is open — it keeps its Sign button and its disclosure. What it must not do
+    // is offer an ENABLED one on a stream that is no longer live. If this ever enables, the
+    // gate has been weakened, not fixed.
+    await expect(page.getByRole('button', { name: /^Sign — / }).first()).toBeDisabled();
   });
 });

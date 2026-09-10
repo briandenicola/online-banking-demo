@@ -474,10 +474,42 @@ export function openCopilotStream(opts: CopilotStreamOptions): CopilotStreamHand
         }
       }
 
-      if (!closed) {
-        setStatus('reconnecting');
-        scheduleReconnect();
+      if (closed) return;
+
+      /**
+       * THE STORM'S REAL CAUSE — an EOF that can never carry new information.
+       *
+       * Backoff was never the issue. Once a run reaches `run.done`, the server's attach path
+       * finds the closed run via `latest_for_session`, replays its backlog and returns
+       * immediately (`sessions.py`: `if stream.closed and queue.empty(): return`). It never
+       * reaches the heartbeat loop, so every reattach is 200-then-EOF carrying only frames we
+       * have already consumed. My earlier fix made that loop back off to 15s instead of 500ms
+       * — which converted a fast storm into a slow one. Brian still paid 213 requests and
+       * 8.5 MB for it.
+       *
+       * Reconnecting cannot help, and this is the part that decides it: `approval.updated`
+       * and `approval.terminal` are emitted on the RUN stream (`planner/fanout.py:649`).
+       * With the run closed there is no channel on which an approval event could arrive, so
+       * a reattach buys exactly nothing — not freshness, not liveness, not a signable status
+       * (replayed frames are filtered and never promote it). It is pure cost.
+       *
+       * So: stop. Not a retry cap, not a slower backoff — zero further connections. A new
+       * run reopens the stream explicitly through `startRun`, and a session that has not yet
+       * run anything takes the heartbeat path above and is untouched by this.
+       */
+      if (currentRunId === undefined && completedRuns.size > 0) {
+        // Disarm first. The watchdog outlives the connection that armed it, and on firing it
+        // sets `degraded` and aborts — which re-enters the loop this branch just left. A stop
+        // that leaves a timer running is not a stop.
+        if (heartbeatTimer) clearTimeout(heartbeatTimer);
+        heartbeatTimer = null;
+        clearGapTimer();
+        setStatus('closed');
+        return;
       }
+
+      setStatus('reconnecting');
+      scheduleReconnect();
     } catch (error) {
       if (closed || (error as Error)?.name === 'AbortError') return;
       logger.warn('copilotStream: connection lost', error);

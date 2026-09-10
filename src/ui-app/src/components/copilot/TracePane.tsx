@@ -384,7 +384,23 @@ const TracePane: React.FC<TracePaneProps> = ({ run }) => {
     }
   }, [steps.length, followTail]);
 
-  const elapsed = run?.startedAt ? Math.max(0, now - new Date(run.startedAt).getTime()) : 0;
+  /**
+   * A finished run's elapsed time is a FACT the server already told us, not something to keep
+   * counting. `run.done` carries `durationMs` (166ms for the trace Brian pulled) and the
+   * reducer stores it — but this pane recomputed `now - startedAt` on every tick regardless,
+   * so a run that finished in 241ms displayed "181s and counting" beside the words "the agent
+   * is still running on the server". Prefer the server's number the moment it exists.
+   */
+  const elapsed =
+    run?.durationMs !== undefined
+      ? run.durationMs
+      : run?.startedAt
+        ? Math.max(0, now - new Date(run.startedAt).getTime())
+        : 0;
+  // Sub-second runs are the norm on the free-text path; flooring them to "0s" reads as a
+  // missing value rather than a fast run.
+  const elapsedLabel =
+    elapsed < 1000 ? `${(elapsed / 1000).toFixed(1)}s` : `${Math.floor(elapsed / 1000)}s`;
 
   return (
     <Paper
@@ -432,7 +448,7 @@ const TracePane: React.FC<TracePaneProps> = ({ run }) => {
         </Stack>
         {run && (
           <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-            {steps.length} steps · {Math.floor(elapsed / 1000)}s
+            {steps.length} steps · {elapsedLabel}
             {run.revisions.length > 0 ? ` · plan v${run.planVersion}` : ''}
           </Typography>
         )}
@@ -450,10 +466,15 @@ const TracePane: React.FC<TracePaneProps> = ({ run }) => {
       {streamStatus !== 'live' && streamStatus !== 'resumed' && streamStatus !== 'idle' && (
         <Box sx={{ p: 1, bgcolor: 'action.hover' }}>
           <Typography variant="caption">
+            {/* The old line said "This run is completed. Reconnecting for live updates —
+                nothing further is expected for this run." It stated a contradiction: if
+                nothing further is expected there is nothing to reconnect for. It was written
+                to describe the storm instead of stopping it. The client now opens zero further
+                connections once a run ends, so the sentence is simply the outcome. */}
             {streamStatus === 'failed'
               ? 'Live updates unavailable. The run continues on the server.'
               : run && run.status !== 'running'
-                ? `This run is ${run.status}. Reconnecting for live updates — nothing further is expected for this run.`
+                ? `This run is ${run.status}. Live updates have stopped because there is nothing left to send.`
                 : 'Reconnecting — the agent is still running on the server.'}
           </Typography>
         </Box>
