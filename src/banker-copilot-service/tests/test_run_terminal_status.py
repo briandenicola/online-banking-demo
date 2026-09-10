@@ -26,6 +26,7 @@ import pytest
 from conftest import judging_assessor, shipped_assessment_limits
 
 from app.events.bus import InMemoryTraceSink, RunStreamRegistry
+from app.planner.intent_model import EvidenceAnswer, IntentDecision
 from app.planner.loop import Planner, PlannerRequest
 from app.tools.executor import ToolInvocationError
 from app.tools.propose import ProposeRejected
@@ -111,16 +112,26 @@ class _Authority:
         self.propose_behaviour = propose_behaviour
         self.evidence = list(evidence)
         self.propose_calls = 0
+        self.last_body = None
 
     async def policy_catalogue(self, bearer_token: str):
         return {
             "actions": [
-                {"id": "account.balance.adjust", "requiredEvidence": self.evidence}
+                {
+                    "id": "account.balance.adjust",
+                    "displayName": "Post a balance adjustment",
+                    "baseRung": "L1",
+                    "agentMayPropose": True,
+                    "requiredEvidence": self.evidence,
+                    "hashFields": ["accountId", "amount", "direction", "reason"],
+                    "moneyFields": ["amount"],
+                }
             ]
         }
 
     async def propose(self, body, *, bearer_token, session_id, agent_id, correlation_id):
         self.propose_calls += 1
+        self.last_body = body
         if self.propose_behaviour == "unrecoverable":
             # Exactly what run_6f19b2eb4ec54a20 hit: refused inside this service, before
             # anything left it, because `amount` was a JSON number with a fractional part.
@@ -151,6 +162,9 @@ async def _drive(
     executor: _Executor,
     evidence_tools: tuple[str, ...] = (),
     action_id: str | None = "account.balance.adjust",
+    intent_selector=None,
+    answerer=None,
+    objective: str = "Propose account.balance.adjust for human signature",
 ) -> list[dict[str, Any]]:
     """Run the REAL planner and return the frames it actually emitted."""
     registry = _FakeRegistry(evidence_tools)
@@ -162,12 +176,14 @@ async def _drive(
         max_iterations=12,
         assessment_limits=shipped_assessment_limits(),
         assessor=judging_assessor(),
+        intent_selector=intent_selector,
+        answerer=answerer,
         store=_Store(),
     )
     request = PlannerRequest(
         session=_Session(),
         run_id="run_under_test",
-        objective="Propose account.balance.adjust for human signature",
+        objective=objective,
         action_id=action_id,
         payload={"amount": "245.00", "accountId": "acc_1"},
         facts={"transactionId": "tx_1"},
@@ -272,24 +288,160 @@ async def test_successful_propose_reports_completed():
 
 
 async def test_evidence_only_run_completes_without_an_approval():
-    """The one legitimate way to finish with no approval: nobody asked for an action.
+    """A read-only free-text intent gathers evidence and answers without an approval."""
 
-    Named explicitly so `completed` here is a deliberate no-op outcome rather than the
-    default leaking back in.
-    """
+    async def selector(*_args, **_kwargs):
+        return IntentDecision(
+            kind="read",
+            read_plan=({"toolId": "get_flagged_transaction", "arguments": {"transactionId": "tx_1"}},),
+            answer_goal="Explain the flagged transaction.",
+        )
+
+    async def answerer(*_args, **_kwargs):
+        return EvidenceAnswer(
+            answer="The wire was flagged because its amount is unusual.",
+            key_points=({"label": "large flagged wire", "citedEvidenceIds": ["get_flagged_transaction"]},),
+            cited_evidence_ids=("get_flagged_transaction",),
+        )
+
     frames = await _drive(
         authority=_Authority("admit", evidence=("get_flagged_transaction",)),
         executor=_Executor(),
         evidence_tools=("get_flagged_transaction",),
         action_id=None,
+        intent_selector=selector,
+        answerer=answerer,
+        objective="Why was tx_1 flagged?",
     )
 
-    # No `action_id` means the planner never asks the policy what evidence is required, so
-    # this run is the artifact step alone. Stated because it is not obvious from the setup.
-    assert "tool.started" not in _kinds(frames)
     assert "approval.required" not in _kinds(frames)
+    assert "tool.started" in _kinds(frames)
     assert "artifact.created" in _kinds(frames)
     assert _terminal(frames) == "completed"
+
+
+async def test_free_text_without_intent_model_fails_loudly_not_empty_success():
+    frames = await _drive(
+        authority=_Authority("admit"),
+        executor=_Executor(),
+        action_id=None,
+    )
+
+    error = next(f for f in frames if f["kind"] == "run.error")
+    assert error["payload"]["code"] == "planner_model_unavailable"
+    assert "approval.required" not in _kinds(frames)
+    assert _terminal(frames) == "failed"
+
+
+async def test_free_text_propose_path_selects_action_validates_payload_and_proposes():
+    async def selector(*_args, **_kwargs):
+        return IntentDecision(
+            kind="propose",
+            action_id="account.balance.adjust",
+            payload_draft={
+                "accountId": "acc_1",
+                "amount": "35",
+                "direction": "credit",
+                "reason": "Goodwill overdraft fee refund.",
+                "ignoredByServer": "not forwarded",
+            },
+        )
+
+    authority = _Authority("admit", evidence=("get_flagged_transaction",))
+    frames = await _drive(
+        authority=authority,
+        executor=_Executor(),
+        evidence_tools=("get_flagged_transaction",),
+        action_id=None,
+        intent_selector=selector,
+        answerer=None,
+        objective="Refund $35 on acc_1.",
+    )
+
+    assert authority.propose_calls == 1
+    assert authority.last_body["payload"] == {
+        "accountId": "acc_1",
+        "amount": "35.00",
+        "direction": "credit",
+        "reason": "Goodwill overdraft fee refund.",
+    }
+    assert "approval.required" in _kinds(frames)
+    assert _terminal(frames) == "completed"
+
+
+async def test_free_text_known_l3_action_is_refused_before_propose():
+    async def selector(*_args, **_kwargs):
+        return IntentDecision(kind="propose", action_id="user.delete", payload_draft={"userId": "usr_1"})
+
+    class _AuthorityWithForbidden(_Authority):
+        async def policy_catalogue(self, bearer_token: str):
+            body = await super().policy_catalogue(bearer_token)
+            body["actions"].append(
+                {
+                    "id": "user.delete",
+                    "displayName": "Delete a user",
+                    "baseRung": "L3",
+                    "agentMayPropose": False,
+                    "requiredEvidence": [],
+                    "hashFields": ["userId"],
+                    "moneyFields": [],
+                }
+            )
+            return body
+
+    authority = _AuthorityWithForbidden("admit")
+    frames = await _drive(
+        authority=authority,
+        executor=_Executor(),
+        action_id=None,
+        intent_selector=selector,
+    )
+
+    assert authority.propose_calls == 0
+    error = next(f for f in frames if f["kind"] == "run.error")
+    assert error["payload"]["code"] == "forbidden_action"
+    assert "approval.required" not in _kinds(frames)
+    assert _terminal(frames) == "failed"
+
+
+async def test_free_text_unfillable_payload_is_refused_before_propose():
+    async def selector(*_args, **_kwargs):
+        return IntentDecision(
+            kind="propose",
+            action_id="account.balance.adjust",
+            payload_draft={"accountId": "acc_1", "amount": "35.00", "direction": "credit"},
+        )
+
+    authority = _Authority("admit")
+    frames = await _drive(authority=authority, executor=_Executor(), action_id=None, intent_selector=selector)
+
+    assert authority.propose_calls == 0
+    error = next(f for f in frames if f["kind"] == "run.error")
+    assert error["payload"]["code"] == "payload_unfillable"
+    assert "reason" in error["payload"]["message"]
+    assert _terminal(frames) == "failed"
+
+
+async def test_free_text_noncanonical_money_is_refused_before_propose():
+    async def selector(*_args, **_kwargs):
+        return IntentDecision(
+            kind="propose",
+            action_id="account.balance.adjust",
+            payload_draft={
+                "accountId": "acc_1",
+                "amount": 35.125,
+                "direction": "credit",
+                "reason": "Goodwill refund.",
+            },
+        )
+
+    authority = _Authority("admit")
+    frames = await _drive(authority=authority, executor=_Executor(), action_id=None, intent_selector=selector)
+
+    assert authority.propose_calls == 0
+    error = next(f for f in frames if f["kind"] == "run.error")
+    assert error["payload"]["code"] == "payload_invalid"
+    assert _terminal(frames) == "failed"
 
 
 async def test_planner_exception_reports_failed():

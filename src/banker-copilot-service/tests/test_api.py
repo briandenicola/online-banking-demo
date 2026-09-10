@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import time
 
 import httpx
 import pytest
 
 from conftest import judging_assessor, shipped_assessment_limits
 from fastapi.testclient import TestClient
+from app.planner.intent_model import EvidenceAnswer, IntentDecision
 
 from tests.conftest import make_token
 
@@ -537,6 +539,7 @@ def test_stream_still_answers_409_when_the_cursor_fell_out_of_the_replay_window(
         run = test_client.post(
             f"/api/copilot/sessions/{session['sessionId']}/runs", json={}, headers=_auth(**BANKER)
         ).json()
+        time.sleep(0.2)
 
         response = test_client.get(
             f"/api/copilot/sessions/{session['sessionId']}/stream"
@@ -564,6 +567,64 @@ def test_stream_rejects_a_non_numeric_last_event_id(client):
 def test_artifacts_produced_by_a_run_are_readable_after_the_stream_closes(client):
     """A streamed artifact the banker cannot retrieve after a reload is worse than none:
     the pane renders empty, and nothing distinguishes that from 'no artifacts'."""
+    async def selector(*_args, **_kwargs):
+        return IntentDecision(
+            kind="read",
+            read_plan=({"toolId": "list_flagged_transactions", "arguments": {}},),
+            answer_goal="Summarise the flagged transactions.",
+        )
+
+    async def answerer(*_args, **_kwargs):
+        return EvidenceAnswer(
+            answer="One flagged transaction is waiting for review.",
+            key_points=({"label": "one flagged transaction", "citedEvidenceIds": ["list_flagged_transactions"]},),
+            cited_evidence_ids=("list_flagged_transactions",),
+        )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/authority/policy":
+            return httpx.Response(
+                200,
+                json={
+                    "actions": [
+                        {
+                            "id": "account.balance.adjust",
+                            "displayName": "Post a balance adjustment",
+                            "baseRung": "L1",
+                            "agentMayPropose": True,
+                            "requiredEvidence": [],
+                            "hashFields": ["accountId", "amount", "direction", "reason"],
+                            "moneyFields": ["amount"],
+                        }
+                    ]
+                },
+            )
+        if request.url.path == "/api/admin/flagged-transactions":
+            return httpx.Response(200, json=[{"id": "flag_1", "amount": 1000}])
+        return httpx.Response(404, json={"error": "not_found"})
+
+    client.app.state.http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    from app.planner.loop import Planner
+    from app.tools.executor import ToolExecutor
+    from app.tools.propose import AuthorityClient
+
+    registry = client.app.state.registry
+    client.app.state.executor = ToolExecutor(registry, client.app.state.http)
+    client.app.state.authority = AuthorityClient(
+        "http://authority-service:8080", client.app.state.http, 8000
+    )
+    client.app.state.planner = Planner(
+        registry=registry,
+        executor=client.app.state.executor,
+        authority=client.app.state.authority,
+        max_iterations=12,
+        assessment_limits=shipped_assessment_limits(),
+        assessor=judging_assessor(),
+        intent_selector=selector,
+        answerer=answerer,
+        store=client.app.state.session_store,
+    )
+
     session = client.post(
         "/api/copilot/sessions", json={"objective": "review"}, headers=_auth(**BANKER)
     ).json()

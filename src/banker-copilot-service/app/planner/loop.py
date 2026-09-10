@@ -21,9 +21,11 @@ built from a stale one with 422 anyway.
 from __future__ import annotations
 
 import os
+import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from decimal import Decimal, InvalidOperation
+from typing import Any, Mapping, Sequence
 
 import structlog
 
@@ -41,6 +43,12 @@ from app.planner.evidence_ceiling import (
     additional_evidence,
 )
 from app.planner.limits import AssessmentLimits
+from app.planner.intent_model import (
+    EvidenceAnswer,
+    INTENT_CONTRACT_INVALID,
+    IntentDecision,
+    PLANNER_MODEL_UNAVAILABLE,
+)
 from app.planner.primary_model import PrimaryAssessment, unavailable
 
 logger = structlog.get_logger("banker-copilot-service")
@@ -251,6 +259,29 @@ class PlannerRequest:
     correlation_id: str | None = None
 
 
+@dataclass(frozen=True)
+class _ActionSpec:
+    action_id: str
+    display_name: str
+    base_rung: str
+    agent_may_propose: bool
+    required_evidence: tuple[str, ...]
+    hash_fields: tuple[str, ...]
+    money_fields: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _ReferenceResolution:
+    decision: IntentDecision
+
+
+class ReferenceResolver:
+    """Reference-resolution seam; lookup-backed name search intentionally lives behind this."""
+
+    async def resolve(self, request: PlannerRequest, decision: IntentDecision) -> _ReferenceResolution:
+        return _ReferenceResolution(decision=decision)
+
+
 class Planner:
     def __init__(
         self,
@@ -260,6 +291,9 @@ class Planner:
         max_iterations: int,
         assessment_limits: AssessmentLimits,
         assessor,
+        intent_selector=None,
+        answerer=None,
+        reference_resolver: ReferenceResolver | None = None,
         store=None,
         fanout=None,
     ) -> None:
@@ -273,6 +307,9 @@ class Planner:
         # runs without a judgement and looks identical to one that has one.
         self._assessment_limits = assessment_limits
         self._assessor = assessor
+        self._intent_selector = intent_selector
+        self._answerer = answerer
+        self._reference_resolver = reference_resolver or ReferenceResolver()
         self._adverse_proposal = adverse_proposal_mode()
         self._store = store
         # The Phase 3 fan-out engine. Optional so the single-threaded planner (and every
@@ -302,8 +339,12 @@ class Planner:
         )
 
         try:
-            evidence_tools = await self._required_evidence(request)
-            steps = _plan_steps(evidence_tools, request.action_id)
+            if request.action_id:
+                evidence_tools = await self._required_evidence(request)
+                steps = _plan_steps(evidence_tools, request.action_id)
+            else:
+                evidence_tools = []
+                steps = _free_text_initial_steps()
             # The plan is the authority on what this run set out to do. Reading it here (rather
             # than trusting the request) means a plan that silently dropped its propose step
             # cannot report success for a signature it never sought.
@@ -348,7 +389,52 @@ class Planner:
                 )
                 step_started = time.monotonic()
 
-                if step["kind"] == "tool":
+                if step["kind"] == "intent":
+                    added, next_step_number, required, proposal_expected = await self._run_intent_step(
+                        request, stream, position, steps, next_step_number
+                    )
+                    evidence_tools = required
+                    record.required_evidence_tool_ids = tuple(required)
+                    outcome.proposal_expected = proposal_expected
+                    if added:
+                        plan_version += 1
+                        await stream.emit(
+                            "plan.revised",
+                            {
+                                "version": plan_version,
+                                "at": _now(),
+                                "reason": "The planner interpreted the free-text objective.",
+                                "addedStepIds": added,
+                                "removedStepIds": [],
+                                "steps": [
+                                    {
+                                        "id": s["id"],
+                                        "index": s["index"],
+                                        "title": s["title"],
+                                        "status": s["status"],
+                                    }
+                                    for s in steps
+                                ],
+                            },
+                        )
+                elif step["kind"] == "validate":
+                    pass
+                elif step["kind"] == "refusal":
+                    await stream.emit(
+                        "run.error",
+                        {
+                            "code": step["code"],
+                            "message": step["message"],
+                            "recoverable": False,
+                        },
+                    )
+                    outcome.aborted = True
+                    await stream.emit(
+                        "step.failed",
+                        {"stepId": step["id"], "error": step["code"], "willRetry": False},
+                    )
+                    break
+                elif step["kind"] == "tool":
                     ok = await self._run_tool_step(request, stream, step, evidence)
                     if not ok and step.get("discretionary"):
                         # A discretionary read that fails does NOT fail the run. It was never
@@ -432,6 +518,62 @@ class Planner:
                     # Persist BEFORE emitting. An artifact the banker can see in the stream but
                     # cannot retrieve after a reload is worse than one that was never offered:
                     # the pane renders empty and nothing distinguishes that from "no artifacts".
+                    if self._store is not None:
+                        await self._store.save_artifact(artifact)
+                    await stream.emit(
+                        "artifact.created",
+                        {
+                            "artifactId": artifact.id,
+                            "kind": artifact.kind,
+                            "title": artifact.title,
+                            "revision": artifact.revision,
+                            "content": artifact.content,
+                        },
+                    )
+                elif step["kind"] == "answer":
+                    if self._answerer is None:
+                        answer = EvidenceAnswer(
+                            answer="",
+                            failure_code=PLANNER_MODEL_UNAVAILABLE,
+                            failure_message=(
+                                "Answering a read-only objective requires a model, but no answer "
+                                "model is configured."
+                            ),
+                        )
+                    else:
+                        answer = await self._answerer(request.objective, step["answerGoal"], evidence)
+                    if answer.failed:
+                        await stream.emit(
+                            "run.error",
+                            {
+                                "code": answer.failure_code,
+                                "message": answer.failure_message,
+                                "recoverable": False,
+                            },
+                        )
+                        await stream.emit(
+                            "step.failed",
+                            {
+                                "stepId": step["id"],
+                                "error": answer.failure_code,
+                                "willRetry": False,
+                            },
+                        )
+                        outcome.aborted = True
+                        break
+                    artifact = new_artifact(
+                        run_id=request.run_id,
+                        session_id=request.session.id,
+                        kind="answer",
+                        title="Copilot answer",
+                        content={
+                            "answer": answer.answer,
+                            "keyPoints": list(answer.key_points),
+                            "citedEvidenceIds": list(answer.cited_evidence_ids),
+                            "unverified": list(answer.unverified),
+                        },
+                    )
+                    artifact_ids.append(artifact.id)
                     if self._store is not None:
                         await self._store.save_artifact(artifact)
                     await stream.emit(
@@ -577,6 +719,196 @@ class Planner:
                 return [tool_id for tool_id in required if tool_id in self._registry.tool_ids]
         return []
 
+    async def _run_intent_step(
+        self,
+        request: PlannerRequest,
+        stream: RunStream,
+        position: int,
+        steps: list[dict[str, Any]],
+        next_step_number: int,
+    ) -> tuple[list[str], int, list[str], bool]:
+        catalogue = await self._authority.policy_catalogue(request.bearer_token)
+        actions = _action_specs(catalogue)
+        if catalogue.get("available") is False or not actions:
+            decision = IntentDecision(
+                kind="failure",
+                reason_code="proposal_refused_by_authority",
+                message=(
+                    "The authority policy catalogue is unavailable, so the planner cannot know "
+                    "which actions are inside the Copilot leash."
+                ),
+            )
+            added, next_step_number = _insert_steps(
+                steps,
+                position,
+                [
+                    _step(
+                        next_step_number,
+                        "Refuse objective",
+                        "refusal",
+                        code=decision.reason_code,
+                        message=decision.message,
+                    )
+                ],
+            )
+            return added, next_step_number, [], False
+        proposable = [
+            a
+            for a in actions.values()
+            if _is_proposable_action(a, self._registry.tool_ids)
+        ]
+        forbidden = [
+            a
+            for a in actions.values()
+            if not _is_proposable_action(a, self._registry.tool_ids)
+        ]
+
+        selector = self._intent_selector
+        if selector is None:
+            decision = IntentDecision(
+                kind="failure",
+                reason_code=PLANNER_MODEL_UNAVAILABLE,
+                message=(
+                    "Free-text planning requires an intent model, but none is configured. "
+                    "No action was selected and no evidence was gathered."
+                ),
+            )
+        else:
+            decision = await selector(
+                request.objective,
+                actions=[_action_wire(a) for a in proposable],
+                forbidden_actions=[_action_wire(a) for a in forbidden],
+                read_tools=self._registry.describe() if hasattr(self._registry, "describe") else [],
+            )
+
+        if decision.failed:
+            added, next_step_number = _insert_steps(
+                steps,
+                position,
+                [
+                    _step(
+                        next_step_number,
+                        "Refuse objective",
+                        "refusal",
+                        code=decision.reason_code or INTENT_CONTRACT_INVALID,
+                        message=decision.message or "The objective could not be interpreted.",
+                    )
+                ],
+            )
+            return added, next_step_number, [], False
+
+        resolution = await self._reference_resolver.resolve(request, decision)
+        decision = resolution.decision
+
+        if decision.kind == "refuse":
+            added, next_step_number = _insert_steps(
+                steps,
+                position,
+                [
+                    _step(
+                        next_step_number,
+                        "Refuse objective",
+                        "refusal",
+                        code=decision.reason_code,
+                        message=decision.message,
+                    )
+                ],
+            )
+            return added, next_step_number, [], False
+
+        if decision.kind == "read":
+            validated = _validate_read_plan(decision, self._registry.tool_ids)
+            if validated is not None:
+                added, next_step_number = _insert_steps(
+                    steps,
+                    position,
+                    [_step(next_step_number, "Refuse objective", "refusal", **validated)],
+                )
+                return added, next_step_number, [], False
+            planned = [
+                _step(
+                    next_step_number + offset,
+                    f"Gather evidence: {item['toolId']}",
+                    "tool",
+                    toolId=item["toolId"],
+                    arguments=dict(item.get("arguments") or {}),
+                )
+                for offset, item in enumerate(decision.read_plan)
+            ]
+            planned.append(
+                _step(
+                    next_step_number + len(planned),
+                    "Answer from evidence",
+                    "answer",
+                    answerGoal=decision.answer_goal,
+                )
+            )
+            planned.append(
+                _step(next_step_number + len(planned), "Assemble evidence bundle", "artifact")
+            )
+            added, next_step_number = _insert_steps(steps, position, planned)
+            return added, next_step_number, [], False
+
+        if decision.kind == "propose":
+            action = actions.get(decision.action_id or "")
+            invalid = _validate_action_choice(decision, action, actions, self._registry.tool_ids)
+            if invalid is not None:
+                added, next_step_number = _insert_steps(
+                    steps,
+                    position,
+                    [_step(next_step_number, "Refuse objective", "refusal", **invalid)],
+                )
+                return added, next_step_number, [], False
+            assert action is not None
+            payload_or_error = _construct_payload(action, decision.payload_draft or {})
+            if isinstance(payload_or_error, dict) and "code" in payload_or_error:
+                added, next_step_number = _insert_steps(
+                    steps,
+                    position,
+                    [_step(next_step_number, "Refuse objective", "refusal", **payload_or_error)],
+                )
+                return added, next_step_number, [], False
+            request.action_id = action.action_id
+            request.payload = payload_or_error
+            required = [tool_id for tool_id in action.required_evidence if tool_id in self._registry.tool_ids]
+            request.facts = _facts_from_payload(request.facts, request.payload)
+            planned = [_step(next_step_number, "Validate proposed action and payload", "validate")]
+            planned.extend(
+                _step(
+                    next_step_number + index + 1,
+                    f"Gather evidence: {tool_id}",
+                    "tool",
+                    toolId=tool_id,
+                )
+                for index, tool_id in enumerate(required)
+            )
+            planned.append(_step(next_step_number + len(planned), "Assess the evidence", "assess"))
+            planned.append(_step(next_step_number + len(planned), "Assemble evidence bundle", "artifact"))
+            planned.append(
+                _step(
+                    next_step_number + len(planned),
+                    f"Propose {action.action_id} for human signature",
+                    "propose",
+                )
+            )
+            added, next_step_number = _insert_steps(steps, position, planned)
+            return added, next_step_number, required, True
+
+        added, next_step_number = _insert_steps(
+            steps,
+            position,
+            [
+                _step(
+                    next_step_number,
+                    "Refuse objective",
+                    "refusal",
+                    code=INTENT_CONTRACT_INVALID,
+                    message="The planner model returned an unsupported intent kind.",
+                )
+            ],
+        )
+        return added, next_step_number, [], False
+
     async def _run_tool_step(
         self,
         request: PlannerRequest,
@@ -589,7 +921,7 @@ class Planner:
         if tool is None:
             return False
 
-        arguments = _bind_arguments(tool.parameters, request)
+        arguments = dict(step.get("arguments") or _bind_arguments(tool.parameters, request))
         call_id = f"call_{stream.last_seq + 1}"
 
         await stream.emit(
@@ -856,6 +1188,200 @@ def _plan_steps(evidence_tools: list[str], action_id: str | None) -> list[dict[s
         )
 
     return steps
+
+
+def _free_text_initial_steps() -> list[dict[str, Any]]:
+    return [_step(1, "Interpret objective", "intent")]
+
+
+def _step(number: int, title: str, kind: str, **extra: Any) -> dict[str, Any]:
+    step = {
+        "id": f"step_{number}",
+        "index": number - 1,
+        "title": title,
+        "status": "pending",
+        "kind": kind,
+    }
+    step.update(extra)
+    return step
+
+
+def _insert_steps(
+    steps: list[dict[str, Any]], position: int, added_steps: Sequence[dict[str, Any]]
+) -> tuple[list[str], int]:
+    steps[position:position] = list(added_steps)
+    return [s["id"] for s in added_steps], max([_step_number(s["id"]) for s in steps], default=0) + 1
+
+
+def _step_number(step_id: str) -> int:
+    match = re.search(r"(\d+)$", step_id)
+    return int(match.group(1)) if match else 0
+
+
+def _action_specs(catalogue: dict[str, Any]) -> dict[str, _ActionSpec]:
+    specs: dict[str, _ActionSpec] = {}
+    for raw in catalogue.get("actions") or []:
+        action_id = str(raw.get("id", "")).strip()
+        if not action_id:
+            continue
+        specs[action_id] = _ActionSpec(
+            action_id=action_id,
+            display_name=str(raw.get("displayName") or action_id),
+            base_rung=str(raw.get("baseRung") or ""),
+            agent_may_propose=raw.get("agentMayPropose") is True,
+            required_evidence=tuple(str(item) for item in raw.get("requiredEvidence") or ()),
+            hash_fields=tuple(str(item) for item in raw.get("hashFields") or ()),
+            money_fields=tuple(str(item) for item in raw.get("moneyFields") or ()),
+        )
+    return specs
+
+
+def _action_wire(action: _ActionSpec) -> dict[str, Any]:
+    return {
+        "id": action.action_id,
+        "displayName": action.display_name,
+        "baseRung": action.base_rung,
+        "requiredEvidence": list(action.required_evidence),
+        "hashFields": list(action.hash_fields),
+        "moneyFields": list(action.money_fields),
+    }
+
+
+def _validate_read_plan(
+    decision: IntentDecision, known_tool_ids: frozenset[str]
+) -> dict[str, str] | None:
+    for item in decision.read_plan:
+        tool_id = str(item.get("toolId", "")).strip()
+        if tool_id not in known_tool_ids:
+            return {
+                "code": "objective_unmappable",
+                "message": f"The objective asked for evidence this harness cannot gather: {tool_id}.",
+            }
+        if not isinstance(item.get("arguments"), dict):
+            return {
+                "code": INTENT_CONTRACT_INVALID,
+                "message": "The planner model returned a read step without an arguments object.",
+            }
+    return None
+
+
+def _validate_action_choice(
+    decision: IntentDecision,
+    action: _ActionSpec | None,
+    actions: dict[str, _ActionSpec],
+    known_tool_ids: frozenset[str],
+) -> dict[str, str] | None:
+    action_id = decision.action_id or ""
+    if action is None:
+        if action_id in actions:
+            return {
+                "code": "forbidden_action",
+                "message": (
+                    f"{action_id} is outside the Copilot proposal leash and must be handled "
+                    "through the appropriate non-harness process."
+                ),
+            }
+        return {
+            "code": "objective_unmappable",
+            "message": f"The objective mapped to {action_id}, which is not a known authority action.",
+        }
+    if not action.agent_may_propose or action.base_rung == "L3":
+        return {
+            "code": "forbidden_action",
+            "message": (
+                f"{action.action_id} is outside the Copilot proposal leash and must be handled "
+                "through the appropriate non-harness process."
+            ),
+        }
+    unknown_evidence = sorted(set(action.required_evidence) - known_tool_ids)
+    if unknown_evidence:
+        return {
+            "code": "evidence_unavailable",
+            "message": (
+                f"{action.action_id} requires evidence this harness cannot gather: "
+                f"{', '.join(unknown_evidence)}."
+            ),
+        }
+    return None
+
+
+def _is_proposable_action(action: _ActionSpec, known_tool_ids: frozenset[str]) -> bool:
+    return (
+        action.agent_may_propose
+        and action.base_rung != "L3"
+        and set(action.required_evidence).issubset(known_tool_ids)
+    )
+
+
+def _construct_payload(action: _ActionSpec, draft: Mapping[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    fields = action.hash_fields or tuple(str(k) for k in draft.keys())
+    for field in fields:
+        value = _resolve_mapping_path(draft, field)
+        if value is None:
+            return {
+                "code": "payload_unfillable",
+                "message": f"The planner could not fill required payload field '{field}' for {action.action_id}.",
+            }
+        if field in action.money_fields:
+            money = _normalise_money(value, field)
+            if isinstance(money, dict):
+                return money
+            value = money
+        _set_mapping_path(payload, field, value)
+    return payload
+
+
+def _normalise_money(value: Any, field: str) -> str | dict[str, str]:
+    if isinstance(value, bool):
+        return {"code": "payload_invalid", "message": f"Money field '{field}' is not a decimal amount."}
+    if isinstance(value, int):
+        amount = Decimal(value)
+    elif isinstance(value, str):
+        try:
+            amount = Decimal(value.replace(",", ""))
+        except InvalidOperation:
+            return {"code": "payload_invalid", "message": f"Money field '{field}' is not a decimal amount."}
+    else:
+        return {
+            "code": "payload_invalid",
+            "message": f"Money field '{field}' must be an integer or decimal string, not {type(value).__name__}.",
+        }
+    if amount != amount.quantize(Decimal("0.01")):
+        return {
+            "code": "payload_invalid",
+            "message": f"Money field '{field}' has more than two decimal places.",
+        }
+    return f"{amount.quantize(Decimal('0.01')):.2f}"
+
+
+def _resolve_mapping_path(root: Mapping[str, Any], dotted: str) -> Any:
+    cursor: Any = root
+    for segment in dotted.split("."):
+        if not isinstance(cursor, Mapping) or segment not in cursor:
+            return None
+        cursor = cursor[segment]
+    return cursor
+
+
+def _set_mapping_path(root: dict[str, Any], dotted: str, value: Any) -> None:
+    cursor = root
+    parts = dotted.split(".")
+    for segment in parts[:-1]:
+        child = cursor.get(segment)
+        if not isinstance(child, dict):
+            child = {}
+            cursor[segment] = child
+        cursor = child
+    cursor[parts[-1]] = value
+
+
+def _facts_from_payload(existing: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    facts = dict(existing or {})
+    for key, value in payload.items():
+        if key not in facts:
+            facts[key] = value
+    return facts
 
 
 DISCRETIONARY_STEP_TITLE = "Additional check (agent's choice): {tool_id}"

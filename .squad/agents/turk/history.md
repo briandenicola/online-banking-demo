@@ -3150,3 +3150,19 @@ at that moment. Unchanged by my fix, present before it. Filed for Linus and Dann
 
 **Orchestration Log:** `.squad/orchestration-log/2026-09-10T20:47:00Z-turk.md`
 **Session Log:** `.squad/log/2026-09-10T20:47:00Z-copilot-ui-and-authority-fixes.md`
+
+### 2026-09-10 — Free-text intent phase (identifier-only first cut)
+
+**Issue:** UI free-text runs sent only `{ objective }`; the planner only consulted the model after `actionId` was already known, so free-text completed as one empty evidence-bundle step.
+
+**Fixes:**
+- Widened authority `/policy` action projection with `hashFields` and `moneyFields`, sourced from the live policy loader rather than copied into Python.
+- Added `intent_model.py` as a sibling to `primary_model.py`: schema-validated read/propose/refuse intents, Foundry attribution, and a read-only answer model.
+- Added a free-text planner branch gated on missing `actionId`; explicit `actionId` runs continue through the existing path.
+- Added server-side post-model allowlist checks: only live-policy `agentMayPropose` non-L3 actions whose required evidence tools are registered can be proposed; known forbidden/L3 actions fail as `forbidden_action` before authority proposal.
+- Added payload construction from policy `hashFields`, extra-key dropping, and money-field preflight to fixed two-decimal strings. Current authority enforcement confirms `hashFields` are the operative required payload fields: loader requires non-empty `hashFields`, money fields must be a subset, and the canonicalizer rejects missing hash fields.
+- Added a `ReferenceResolver` seam but no lookup-backed resolver, per Danny gate. This first cut only works for objectives/model drafts that already carry resolvable ids.
+
+**Verification:** 420 banker-copilot Python tests passed; 150 authority unit tests passed; 224 authority integration tests passed; demo dataset checks passed (10 groups).
+
+**Key Learning:** A free-text command path must fail before emitting success whenever intent selection, payload construction, or evidence binding is absent. "No action selected" is not a successful empty evidence bundle; it is a named planner outcome.

@@ -61,7 +61,9 @@ public class PolicyController : ControllerBase
                     DisplayName = a.Value.DisplayName,
                     BaseRung = a.Value.BaseRung,
                     AgentMayPropose = a.Value.AgentMayPropose,
-                    RequiredEvidence = a.Value.RequiredEvidence
+                    RequiredEvidence = a.Value.RequiredEvidence,
+                    HashFields = a.Value.HashFields,
+                    MoneyFields = a.Value.MoneyFields
                 }).ToList()
         });
     }

@@ -291,6 +291,8 @@ public class ActionView
     public string BaseRung { get; set; } = string.Empty;
     public bool AgentMayPropose { get; set; }
     public List<string> RequiredEvidence { get; set; } = [];
+    public List<string> HashFields { get; set; } = [];
+    public List<string> MoneyFields { get; set; } = [];
 }
 
 /// <summary>An operational failure the API surfaces verbatim. Never a raw exception message.</summary>

@@ -23,6 +23,12 @@ from app.config import (
 )
 from app.events.bus import CosmosTraceSink, InMemoryTraceSink, RunStreamRegistry
 from app.planner.fanout import FanOutEngine, deterministic_decider
+from app.planner.intent_model import (
+    FoundryEvidenceAnswerer,
+    FoundryIntentSelector,
+    unavailable_answerer,
+    unavailable_intent_selector,
+)
 from app.planner.limits import load_assessment_limits, load_fanout_limits
 from app.planner.primary_model import FoundryPrimaryAssessor, unavailable_assessor
 from app.planner.loop import Planner, adverse_proposal_mode, planner_mode
@@ -183,13 +189,21 @@ async def lifespan(app: FastAPI):
     # PROCEED" and nobody could tell.
     app.state.planner_mode = planner_mode()
     if app.state.planner_mode == "foundry":
+        endpoint = env_with_legacy("FOUNDRY_PROJECT_ENDPOINT", "AZURE_AI_PROJECT_ENDPOINT", "").strip()
+        model = env_with_legacy("FOUNDRY_MODEL", "AZURE_AI_MODEL_DEPLOYMENT", "").strip()
         assessor = FoundryPrimaryAssessor(
-            endpoint=env_with_legacy("FOUNDRY_PROJECT_ENDPOINT", "AZURE_AI_PROJECT_ENDPOINT", "").strip(),
-            model=env_with_legacy("FOUNDRY_MODEL", "AZURE_AI_MODEL_DEPLOYMENT", "").strip(),
+            endpoint=endpoint,
+            model=model,
         )
+        intent_selector = FoundryIntentSelector(endpoint=endpoint, model=model)
+        answerer = FoundryEvidenceAnswerer(endpoint=endpoint, model=model)
     else:
         assessor = unavailable_assessor
+        intent_selector = unavailable_intent_selector
+        answerer = unavailable_answerer
     app.state.primary_assessor = assessor
+    app.state.intent_selector = intent_selector
+    app.state.evidence_answerer = answerer
 
     app.state.planner = Planner(
         registry=registry,
@@ -198,6 +212,8 @@ async def lifespan(app: FastAPI):
         max_iterations=settings.planner_max_iterations,
         assessment_limits=assessment_limits,
         assessor=assessor,
+        intent_selector=intent_selector,
+        answerer=answerer,
         store=app.state.session_store,
         fanout=app.state.fanout,
     )
@@ -220,6 +236,10 @@ async def lifespan(app: FastAPI):
         await app.state.supervisor_decider.aclose()
     if isinstance(app.state.primary_assessor, FoundryPrimaryAssessor):
         await app.state.primary_assessor.aclose()
+    if isinstance(app.state.intent_selector, FoundryIntentSelector):
+        await app.state.intent_selector.aclose()
+    if isinstance(app.state.evidence_answerer, FoundryEvidenceAnswerer):
+        await app.state.evidence_answerer.aclose()
     await app.state.http.aclose()
 
 
