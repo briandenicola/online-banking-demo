@@ -2327,3 +2327,59 @@ every failure `planner_model_unavailable` ("The answer model could not be reache
 ("no proposable action supports posting or refunding a fee directly in this harness") and
 the debit inversion above. None of these are UI defects. All three are model or
 environment non-determinism sitting directly under Brian's demo script.
+
+## Phase 11 — a security assertion that could not tell a leak from a timeout
+
+**The defect.** `tests/e2e/cloud/banker-copilot-cloud.spec.ts` asserted subject
+non-disclosure with `expect(refusalText).not.toMatch(/\d/)`. A cloud run failed
+it on the `30` in "The planner model did not answer within 30s". Nothing leaked.
+
+**The lesson, which generalises past this file.** A proxy assertion fails in both
+directions at once. Red becomes uninformative — an infra timeout and a customer
+data leak render identically, so the red gets discounted. And green becomes luck:
+it passed only because Turk happened to word the other refusals without digits.
+Danny's phrasing is the one to remember: *non-disclosure held only because someone
+wrote careful strings; that is not a control.*
+
+**What replaced it.** Three assertions, scoped:
+1. no candidate identifier (derived from `config/demo-dataset.json`, not retyped);
+2. no COUNT, matched as *a number quantifying records*, which cannot fire on a
+   timeout, a currency amount or a date;
+3. for the two codes the ruling covers, the strong form — subtract every string
+   this repo authored from the rendered notice and require an empty residue.
+   `TracePane` drops the server message for those codes, so residue *is*
+   server-authored text on screen, and that is the only channel a candidate name
+   can travel on.
+
+**Import the enforcing module, do not mirror it.** The spec imports `refusalCopy`
+and `isNonDisclosing` from `src/ui-app/src/components/copilot/runOutcome`. A
+second copy of `NON_DISCLOSING` in the test would drift from the guard at
+`TracePane.tsx:68`, and a disclosure test that has drifted is worse than none.
+(Cross-package import depth from `tests/e2e/{specs,cloud}/` is `../../../`.)
+
+**Infrastructure is not a security finding.** `planner_model_unavailable` now
+bails out by name with a loud annotation. The run never reached subject
+resolution, so there is no subject outcome to assert on. Residual risk, stated
+rather than hidden: a permanently unreachable model would leave the property
+silently unverified. It is visible as a skip in the report, which is the trade.
+
+**How the proof nearly fooled me — the advisor caught it.** My first leak mode
+used `subject_not_found` with a leaking message. That code is non-disclosing, so
+`TracePane` suppresses the message, the residue is empty and the check *passes*.
+I would have shipped a "leak is caught" test that never saw a leak. Retargeted to
+`objective_unmappable` — a DISCLOSING code carrying the same candidate-naming
+message, which is exactly Danny's open gap that `reasonCode` has no enum. That
+renders verbatim, so the leak really is on screen.
+
+**Redact with the derived list, never a hand-typed one.** The residue test first
+failed with "the refusal must not name Rita" because my inline
+`/Mbeki|Kowalski|casey|.../` redaction missed a first name that `candidateNames()`
+knows about. Same class of bug as the assertion being fixed.
+
+**Both directions, against rendered `innerText`, never synthetic strings.** The
+residue subtraction is about the component's actual chrome — its headings,
+separators, punctuation. A version validated against hand-written text would have
+been the next false positive.
+
+New fake-stack modes: `leaky-refusal`, `suppressed-refusal`, `model-unavailable`.
+Commit `cdab02b`. jest 541/13 unchanged.
