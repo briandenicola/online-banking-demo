@@ -3186,3 +3186,358 @@ Written to `.squad/decisions/inbox/danny-two-xfail-prompts.md`.
 **Ruling 4 — Gap:** Payload domain constraints are new (separate from canonicalization). Define action `requiredFields` explicitly or treat action `hashFields` as required.
 
 **Defects found in Turk's design:** Refusal xfail structure, evidence key boundary, facts-map cross-subject merge (critical), answer model prompt isolation, payload validation sequence.
+
+### 2026-09-10 — Decisions ledger growth: threshold, archiving, and the spawn-time read
+
+**Question:** Scribe proposed a 14-day active window + 300KB trigger for `.squad/decisions.md`
+(385KB, read by every agent at spawn). Rule on threshold, split, findability, and mechanism.
+
+**Ruling:** Rejected as written. Cap the file (64KB), enforced unconditionally at every merge.
+Split by **kind** (constraint stays forever; narrative moves to `decisions/records/D-NNN-*.md`).
+Findability is the permanent stub — the body archives, the existence never does. Spawn reads a
+bounded constraint index, full records demand-loaded by ID.
+
+**Learnings:**
+
+- **Read the rule before ruling on the proposal to change it.** Scribe framed this as "the 30-day
+  rule is too slow." The rule at `squad.agent.md:865` is *"exceeds ~20KB **AND** older than 30
+  days."* The size trigger already existed and had been satisfied nineteen times over for weeks.
+  The proposal was `300KB AND 14 days` — the same structure with both numbers moved, inheriting
+  the same defect. The defect was never the number. It was the `AND`. I would have ruled on the
+  wrong axis if I had accepted the problem statement's framing and argued about whether 14 was
+  better than 30.
+
+- **A conjunctive trigger fails at its weakest conjunct, and nobody notices because the other one
+  is loudly true.** 385KB is nineteen times over budget and screams it every day. That visible,
+  satisfied condition masked the silent, never-satisfied one. When a rule "has a size limit" and
+  the file is huge, the size limit is not the part to inspect.
+
+- **Prefer triggers on monotone quantities over triggers on a clock.** A file that only grows
+  cannot fail to cross a fixed cap. An age gate can have a permanently empty eligible set if the
+  project supersedes entries faster than they age — which is exactly what happened here. The
+  right question about any threshold is not "is the number right" but "can the eligible set be
+  empty forever."
+
+- **Ruling well means relocating the risk, not eliminating it, and saying which.** The cap moves
+  the failure mode from "never fires" to "evicts the wrong thing." That is strictly better —
+  visible, scheduled, governed — but it is not gone, and the eviction policy (§2) is the thing
+  that now carries it. Claiming a fix removes risk when it moves risk is how the next defect gets
+  built on a false floor.
+
+- **"Not actively cited" is a filter that deletes the best rules first.** Scribe's eviction
+  criterion was age AND non-citation. A constraint so well-settled that nobody re-argues it stops
+  being cited *because it is working*. Applied literally, in fourteen days it evicts "never add a
+  field to `hashFields` merely to make it required" — a permanent constraint on the signing
+  preimage. Quietness is evidence a rule is load-bearing, not evidence it is dead.
+
+- **Separate the constraint from the narrative; they have opposite lifetimes.** The normative
+  sentence must survive forever and is ~3 lines. The reasoning, evidence and transcript that
+  justify it are ~6.5KB average (38.6KB at the top end) and are re-read approximately never. A
+  ledger that stores them together has to choose one lifetime for both, and will get it wrong for
+  whichever half it did not optimize for.
+
+- **Findability is solved by never archiving *existence*.** The whole hazard Brian named — a
+  ruling that exists but cannot be found, so agents re-litigate it — dissolves if the stub stays
+  in the spawn-read file permanently. Nothing to discover, nothing to grep, nothing for the
+  coordinator to remember. When asked "does this become my job," the answer being *no* is only
+  credible if you can point at the mechanism that carries it instead.
+
+- **Measure the thing you are about to promise.** I was about to write "59 stubs × ~12 lines,
+  manageable." Instead I generated the headings-only index: **12.3KB, 3.2% of the file.** That is
+  a floor, not the answer — real stubs carry normative text headings do not — so I published 64KB
+  as a *design target Scribe must hit and report back on*, explicitly labelled unverified. An
+  estimate presented as a measurement is the exact shape of a lie under Brian's rule, and it is
+  easy to do by accident when the number happens to be right.
+
+- **The premise worth questioning was the granularity, not the design.** "Every agent reads the
+  shared decisions at spawn" is correct and is why this team stays coherent. What is wrong is
+  reading 385KB of it. Worth saying out loud: we do not currently *have* full recall — a 385KB
+  blob at the bottom of a spawn prompt is skimmed, and a ruling at line 6,000 is already
+  invisible. We have the appearance of it. A 64KB index that is actually read is *more* team
+  memory, not less. Shrinking the read increased coverage.
+
+- **Check whether the mechanism you are proposing already exists.** Spawn tiering (`:279-311`)
+  was already in the template, with Lightweight already skipping the decisions read. Framing the
+  change as *finishing* an existing mechanism rather than inventing one makes it cheaper to
+  execute and much harder to argue with.
+
+- **The archive is evidence about the proposal.** `decisions-archive.md` is 728KB — nearly twice
+  the active ledger — with 59 exact-duplicate entry groups totalling 271.8KB (37%). "Archive to a
+  second flat file" is not a hypothesis here; it was already tried, and it produced a larger
+  unread file than the one it was draining. That is dispositive against any ruling whose answer is
+  another flat file, and I would not have known it if I had only looked at `decisions.md`.
+
+- **Heeded the truncation caution.** Every count in the ruling comes from a full-file parse, not a
+  head-limited grep. It also paid for itself: the full parse is what surfaced the archive
+  duplication and the orphaned 162KB `decisions/decisions.md`, neither of which I was looking for.
+
+- **Label the inference you did not chase.** `merge=union` is confirmed in `.gitattributes` and is
+  the obvious cause of the archive duplication, but I did not trace a specific merge to a specific
+  duplicate pair — so it is filed as inferred. And I explicitly declined to claim tonight's ~76KB
+  growth was duplication: the active file has **zero** duplicates, which cuts against it. A
+  convenient theory that the evidence contradicts is worth killing in writing, so nobody revives it.
+
+- **A ruling that changes a file's write pattern must be checked against that file's merge
+  driver.** I flagged `merge=union` in the *Also found* cleanup section and then failed to follow
+  it into my own design one section earlier: my stubs are *rewritten in place* on supersession,
+  and union merge keeps both sides' lines. I had aimed the exact duplication mechanism I was
+  complaining about at the one file my whole findability argument depends on. Flagging a config as
+  someone else's cleanup is not the same as asking what it does to the thing you just designed.
+
+- **Order the directives, because a correct rule enabled early does the damage it was written to
+  prevent.** "Enforce the budget unconditionally" and "convert entries to stubs" are both right,
+  but enforcement-first means the next merge hits a 385KB over-budget file with no stub format to
+  compact into — and the only tool on hand is the flat-file archive move that I had just proved
+  already failed. Sequencing is part of the ruling, not an implementation detail to leave to the
+  executor.
+
+## 2026-09-11 — Refusal code accuracy and reachability (#332)
+
+Ruled: `subject_not_found` is correct; both codes ARE reachable; the system changes, not the test.
+Found a blocking defect nobody reported. Written to
+`.squad/decisions/inbox/danny-refusal-code-reachability.md`.
+
+- **Test the hypothesis you were handed, in the pod, not in the design doc.** Chuck's hypothesis was
+  that two of ten refusal codes were decoration. It was wrong in a specific, checkable way: the
+  resolver is called at `loop.py:952` and the refuse dispatch is at `:968` — the resolver runs
+  *before* the branch that was supposed to pre-empt it. Sixteen lines of control flow settled a
+  question that could have been argued about for an hour. Read the order of operations before
+  theorising about which component "gets there first."
+
+- **Four kinds of reachability evidence, and they are not interchangeable.** Emission site exists;
+  emission site exists *in the serving image*; dependency registered *in the serving image*; proven
+  to the terminal wire frame by a test. I had all four for `subject_not_found` and only the first
+  three for `ambiguous_subject` — which has zero end-to-end Python coverage. Saying "reachable by
+  inspection" for one and "proven to the wire" for the other is the difference between a ruling and
+  a reassurance. The weaker claim is the one worth making precisely.
+
+- **`kubectl exec grep` into the running pod settled in one call what a week of design reading could
+  not.** Same lesson as the deployment assessment, now habit: for an interpreted service, read the
+  source *out of the container*. It returned identical line numbers to the repo **and** Turk's
+  resolved-id-wins comment at `:996`, so "is the fix deployed" and "is the code reachable" were
+  answered by the same command.
+
+- **A one-token differential is the cheapest causal experiment available, and it beat the model's own
+  explanation.** `casey` passed, `nonexistent-customer-zqx` refused, same verb, same clause, same
+  file, minutes apart. The model said "no proposed action matches summarization" — refuted by the
+  passing test sixteen seconds earlier. **The model's stated reason was confabulated, not
+  honest-but-imprecise**, and the passing sibling test is what proved it. When two tests differ by
+  one token, the diff *is* the cause; do not accept the subject's account of itself over it.
+
+- **Label n=1 against a non-deterministic model as n=1.** The differential is strong and I built the
+  ruling on it — and it is still one run per prompt. Writing "this is proof that *this* run
+  confabulated, not that every unknown-subject prompt does" costs one sentence and is the difference
+  between a finding and an overclaim.
+
+- **Go looking for the mechanism, and you find the defect nobody reported.** The reported symptom was
+  a wrong code. Chasing *why* took me to `_INTENT_SCHEMA`, where `reasonCode` is
+  `{"type":"string","minLength":1}` — **no enum** — while `runOutcome.ts` sets
+  `showServerMessage: true` for the two non-disclosing codes on the stated grounds that "Turk writes
+  them for a banker." True of the resolver's literals; false of a model-emitted one, and the file
+  cannot tell them apart. The model can forge `ambiguous_subject` with its own prose. That was more
+  serious than the thing I was asked about and would not have surfaced from ruling on the symptom.
+
+- **A fabricated disclosure is worse than a real one.** My instinct was to rank a hallucinated "two
+  customers match" below an actual leak. Backwards. A leak tells a banker something true they should
+  not know; this tells them something false, in the channel we hardened specifically so it could be
+  trusted. Severity of a disclosure defect is not proportional to how much real data escapes.
+
+- **Second "guarantee asserted in a comment with no mechanism holding it" tonight.** Turk's refusal
+  artifact was the first. Both read as settled because the prose was confident and well-written. A
+  comment explaining *why* an invariant holds is now a prompt to go find the code that enforces it —
+  good documentation is a correlate of care, not evidence of enforcement.
+
+- **When the failure is in the assertion order, say what the test never got to check.** The run died
+  on the code assertion, so non-disclosure went unchecked. The sharp part is *which* branch went
+  unchecked: `objective_unmappable` is emitted before any read and is **vacuously** non-disclosing.
+  The resolver refusal — the one holding the candidate set in memory — is the only one that can leak,
+  and it is exactly the one never reached. We had proof on the branch that cannot fail and none on
+  the branch that can. A blocked assertion is not "unproven" in general; name the specific case that
+  is now uncovered.
+
+- **Locate an instruction, not just its presence.** The prompt *does* say "do not refuse merely
+  because the objective names a person in words" — in the **propose** paragraph. The failing prompt
+  was a **read**, whose paragraph has no equivalent. A grep proving the sentence exists would have
+  closed the investigation wrongly. Where a rule sits in a prompt is part of the rule.
+
+- **Never give a model a code it cannot determine.** `subject_not_found` and `ambiguous_subject` are
+  findings about a directory the model cannot see, yet both sit in its refuse vocabulary at
+  `intent_model.py:206`. Offering them invites fabrication in one direction exactly as omitting the
+  resolver invites it in the other. A taxonomy is not a shared vocabulary: each code belongs to
+  whichever component can actually establish it.
+
+- **Prefer a pipeline fix to a prompt fix, and say so as a preference.** Prompt changes make the
+  model less likely to be wrong; carrying `subjectHints` through the refuse branch so the resolver
+  can *upgrade* the code makes correctness structural. I ruled prompt+enum as required and the
+  pipeline fix as recommended-with-written-dissent, rather than mandating my own design — and I
+  named its consequence (a read happens before that refusal) instead of letting it be discovered.
+
+### 2026-09-11 — Re-ruling after Chuck corrected me (#332)
+
+Chuck was right and I was wrong on §4. Revised in place. Merge verdict: §8 blocks, §4 does not.
+
+- **I confirmed a property at the declaration site and never visited the enforcement site.** I read
+  `showServerMessage: true` in the copy table and concluded the UI renders those messages.
+  `TracePane.tsx:68` suppresses them — `copy.showServerMessage && !isNonDisclosing(code)` — and
+  Linus's comment there anticipates my concern in almost my own words. This is the third costume of
+  the same error: case-sensitive grep, truncated grep, and now **a config table read without its
+  consumer**. The general rule that covers all three: *an assertion about behaviour must be verified
+  where behaviour happens, never where behaviour is configured.* A flag is an input to a decision,
+  not the decision.
+
+- **Being corrected made my finding stronger, not weaker, and I nearly missed that.** My instinct on
+  being shown the guard was "then there is no defect." Wrong: the guard fires on membership of a
+  two-element set, and the model chooses which code it returns. The model does not collide with the
+  guard — it walks around it by picking any of the other eight codes. **A guard keyed on an
+  attacker-chosen discriminator is not a guard.** Check what a control is *keyed on*, not whether it
+  exists and fires.
+
+- **Look for the mechanism instantiated before ruling on its severity.** I had §4 as structural and
+  speculative until I found `test_demo_prompt_live_model.py:447-461` — a live transcript of
+  `'The answer model cited evidence this run did not gather: [tx_casey_wire]'` rendered under
+  `intent_contract_invalid`. Model-authored text carrying a customer username, post-read, on a
+  banker's screen, observed, in our own repo. I found it while checking something else. An
+  architectural argument plus one real instance is a different document from the argument alone.
+
+- **Narrow your own finding out loud.** I checked every server-authored refusal message
+  (`_validate_read_plan`, `_validate_action_choice`, `_construct_payload`, `_normalise_money`,
+  `_argument_shape`) and they interpolate ids, field names and type names only — never values. And
+  the intent model has no customer data in context. Saying "today's exposure is fabrication plus one
+  echo channel, not the database" is what makes the structural half credible. Overstating is how a
+  real finding gets dismissed.
+
+- **Reject the sanitiser.** Offered three controls, I ruled scrub REJECTED and said why: it fails
+  open on anything off the list, cannot tell the banker's own words from a record, needs maintenance
+  in lockstep with demo data, and — worst — it would *license* rendering untrusted prose because it
+  had been "cleaned". **We do not sanitise untrusted text into a trusted channel; we decline to put
+  untrusted text in a trusted channel.**
+
+- **A recommendation made before a finding must be re-checked against it.** My §3.4 (resolver
+  upgrades a subject-bearing refusal) puts a directory read on the refusal path. Under §4, the
+  model's choice of code then becomes the only thing between a candidate set and the screen. I wrote
+  §3.4 before I understood §4 and had to gate it explicitly: §4 lands first or §3.4 does not land.
+  New findings invalidate earlier recommendations in the same document; re-read your own output as
+  if someone else wrote it.
+
+- **Read the failure artefact, never the summary line.** "The run refused instead of proposing"
+  sounded like flakiness. The artefact carried the model's actual sentence — *"no proposable action
+  supports posting or refunding a fee directly in this harness"* — which is the **same confabulation
+  shape** as the refusal test's *"no proposed action matches summarization."* Two tests I was
+  treating as unrelated are one defect. I would not have seen it from the summary.
+
+- **Pass rates are evidence about inputs, not just about models.** read 3/3, propose 1/3. Read tools
+  ship to the model with prose descriptions and a full JSON Schema; `_action_wire` ships
+  `displayName` (four words, written for an approval card) and bare `hashFields` names — no
+  description, no types, no allowed values. The asymmetry in outcomes mirrors the asymmetry in
+  inputs exactly. **The model was not being unreliable; it was being asked to guess, and it reported
+  its guess as a fact about the catalogue.** When something "works sometimes", diff what it is given
+  in the working and failing cases before reaching for temperature.
+
+- **The fix already exists in the repo, one file over.** `copilot-tools.yaml` solved model-facing
+  description for tools and nobody did it for actions. Ruling "copy the proven sibling pattern" is
+  cheaper to execute and far harder to argue with than ruling a new design.
+
+- **Separate merge-blocking from demo-blocking from safety-blocking, and answer the one Brian
+  asked.** He asked "does this block merge." The honest answer was: not the security finding —
+  nothing unsafe is proven and I downgraded my own "blocking" — but yes, the 1-in-3 propose rate,
+  **on honesty grounds**, because merging records the epic as done when its headline capability
+  works one time in three. A blocker whose fix is hours costs almost nothing to hold; a false record
+  on main costs indefinitely.
+
+- **Demand a before-number.** I required n≥10 measured *before and after* the fix. Without a
+  baseline we cannot distinguish a working fix from three lucky runs — and after a 3-run sample,
+  three lucky runs is exactly what a "fixed" report would look like.
+
+- **Retract in the document, not by editing it away.** The revision notice names the false claim at
+  the top and the proof/inference ledger records it as corrected. A silent edit would have left Turk
+  and Linus with no way to know which of my claims had ever been wrong — and I am asking them to
+  trust the rest of the document.
+
+- **I named a file and a data path without tracing it, in a document whose whole premise is "verify
+  in code."** §8.3 first said "add `description` to `authority-policy.yaml` and project it through."
+  Tracing it found **six** edit points across two services and two languages — `PolicyDocument`,
+  `ActionView`, an explicit six-field whitelist at `PolicyController.cs:57-67`, the frozen
+  `_ActionSpec`, the fixed-key read in `_action_specs`, and `_action_wire` — plus a YamlDotNet
+  deserializer built without `IgnoreUnmatchedProperties`, so the YAML edit I was casually
+  prescribing would likely have crashed policy load on startup. **Prescribing a change is making a
+  claim about the code, and it earns exactly the same burden of proof as a finding does.**
+- **Tracing the path changed the ruling, not just its cost.** Once I could see all six sites, the
+  right answer stopped being "thread it through authority" and became "it does not belong in
+  authority at all" — a model-facing description is presentation for the planner, not policy, and
+  routing it through the copilot service's own config keeps a cosmetic model-prompting change out of
+  the file that governs the signing preimage. **Enforce a constraint by distance where you can,
+  rather than by discipline.** I would not have reached that by reasoning about the design.
+
+## 2026-09-11 — Propose-branch identifier resolution and server-filled hash fields (#332, PR #362)
+
+Ruled: the boundary does not move — it already works. Both reported mechanisms were wrong, and the
+real defect signs money to the wrong customer. Written to
+`.squad/decisions/inbox/danny-propose-payload-resolution.md`.
+
+- **Two people independently handed me a mechanism and both were wrong, in opposite directions.**
+  Chuck: "the server's resolved identifiers never reach `_construct_payload`." Turk: "it builds from
+  the model's draft *before* the resolve step runs." The resolver writes `draft["accountId"] = ...`
+  and returns `replace(decision, payload_draft=draft)`; resolve is at `:1021` and propose at `:1104`.
+  Chuck had verified his own reading and told me so. **A careful reader's verified mechanism is still
+  a hypothesis** — he read `_with_resolved_ids` (which is read-plan only) and reasonably concluded
+  propose was unguarded, never noticing a second, older path that writes the same values earlier.
+  When two independent parties agree on a mechanism, that is a reason to check it, not to skip it.
+
+- **Running it beat reading it, and only running it could have.** "The resolver does not feed
+  propose" and "the prompt named no subject" predict the *identical* symptom — `payload_unfillable`
+  on `accountId` — and are indistinguishable by inspection. Two probes through the existing
+  `_drive` harness separated them in about five minutes. **When two hypotheses predict the same
+  observable, stop reading and execute.**
+
+- **Check the measurement's inputs before believing its output.** `ab_action_metadata.py:26` is
+  `REFUND = "Refund a $35 overdraft fee"`. The cloud prompt is *"...on retail's checking as
+  goodwill."* No customer, no account — so nothing to resolve and `accountId` genuinely unfillable.
+  The headline "0/12, never proposed" was **the system correctly refusing to invent an account**,
+  and the A/B's mapping arm is void for the same reason. A shortened paraphrase in a harness is a
+  different experiment wearing the same name. I nearly ruled on the number without reading the
+  constant that produced it.
+
+- **Disproving a reported defect is when to look hardest, not when to stop.** Having shown propose
+  was guarded, the obvious next question was *how well*. Probe C: banker says casey, model supplies
+  Dana's account id, `get_account` returns 200, and a $35 credit to **Dana** reaches two signers
+  signed. `if account is None` was the entire check — existence read as identity. Worse than
+  anything reported, found only because I kept going after the answer was "they were wrong."
+
+- **`hashFields` tells you what the signature cannot contradict.** `[accountId, amount, direction,
+  reason]` has no `userId`, so nothing in the preimage binds the money to the customer the banker
+  named. Reading a hash field list as a *positive* description of what is signed is half of it; the
+  other half is what its absence means a signer cannot detect.
+
+- **The correct pattern was twenty lines below the defect.** The `accountType` branch derives the
+  account from `list_customer_accounts(userId)` and is safe *by construction*. The two broken
+  branches fetch an arbitrary account and check existence. **Prefer derivation to post-hoc
+  validation: derivation cannot fail open.** And when a function contains both a safe and an unsafe
+  form of the same operation, the fix is to converge on the one already there, not to invent a third.
+
+- **Refuse the framing that smuggles in the premise.** "The banker signs a payload neither party
+  wholly authored" made the model a *party*. It is not — it is a drafting aid with no authority, no
+  accountability and no signature. Once that is said, the question dissolves: the preimage has no
+  authorship field and correctly so, provenance is an evidence property, and the server-filled value
+  is *more* faithful to the banker's sentence than a model-chosen one. Probe C is the proof that the
+  alternative is what actually hurts. **Answer the question, but name the bad premise first.**
+
+- **A conditional ruling obliges you to check its conditions.** I was ready to rule "signable,
+  provided the resolution is disclosed to the signer." Then I grepped: **zero** UI consumers of
+  `basis` / `resolved_account` / `resolved_subject`. The disclosure control my own ruling leaned on
+  does not exist, on the path that most needs it — and the card already admits it cannot name the
+  customer. That turned a proviso into a required fix. **If you find yourself writing "provided X",
+  go and confirm X before you publish.**
+
+- **Say which failure a fix does not fix.** §3.1 will make the refund prompt propose in Turk's
+  harness. That is *not* the cloud's `objective_unmappable`, which happened on a prompt that **did**
+  name a customer and an account. Two different failures on one sentence, one now tractable and one
+  still unexplained. Turk flagged the non-reproduction as unknown rather than explaining it away;
+  the right response was to raise its weight, not absorb it. Left open in writing so the tractable
+  fix cannot be mistaken for the other.
+
+- **Rule "void" rather than picking a side on bad data.** The wire dropped mapping 11/12 → 4/12 —
+  but the file says `accountId: "never supply it"` and the prompt supplies no subject, so the model
+  may have been refusing *correctly*. `_outcome()` records per-run labels and only totals were kept,
+  so the two readings are indistinguishable. Don't revert, don't enable, keep the flag at 0, re-run
+  with the real prompt. **"I cannot tell, and here is the one artefact that would tell us" is a
+  ruling.** Guessing to look decisive is not.
