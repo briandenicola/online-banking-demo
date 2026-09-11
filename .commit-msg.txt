@@ -1,0 +1,42 @@
+Merge 13 decision records from inbox; make team memory durable
+
+Epic #332 closed; PRs #362, #363 merged to main. During beta phase,
+13 decision records accumulated in .squad/decisions/inbox/ (gitignored and
+at risk of loss). Merged all into decisions.md following existing format:
+
+- danny-decisions-ledger-growth: 64KB budget, split by constraint/narrative
+- danny-propose-payload-resolution: account binding, hash fields
+- danny-refusal-code-reachability: refusal codes, model pre-emption
+- linus-assert-the-property-not-the-proxy: test assertion patterns
+- linus-cloud-e2e-gate-and-citation-contract: contract tests, gates
+- scribe-decisions-ledger-growth: archiving proposal (context)
+- turk-account-ownership-binding: derivation pattern implementation
+- turk-action-metadata-parity: A/B measurement, withdrawal
+- turk-catalogue-availability-and-model-budget: fetch defects
+- turk-evidence-keys-and-facts-boundary: per-invocation keys
+- turk-harness-tool-surface: fidelity gap (9 of 15 tools)
+- turk-live-model-acceptance-mode: defects 1-4, model calls fixed
+- turk-read-only-leash: structural enforcement, propose gated
+
+Verified all 13 records present in decisions.md via grep. Inbox cleared.
+Added session log entry. Ledger growth ruling deferred per Danny's directive 0.
+
+decisions.md grew from 388KB to ~524KB. No existing entries rewritten.
+Changes preserve all technical specifics: SHAs, paths, line numbers, test
+counts, refusal codes, measurements.
+
+Merge-blocking items identified (§8 of danny-refusal-code-reachability.md):
+L2 credit prompt works 1 in 3 times due to missing action descriptions.
+Demo-blocking items: reasonCode enum, card disclosure, citation validation.
+
+Non-disclosure property unproven in cloud (test reached refusal code
+assertion but not message assertion). Recorded as unproven.
+
+Read-only leash deployed and proven in cloud. Two coordinator errors
+encountered during beta: un-substituted kustomize manifests and leash
+status misreport. Both repaired.
+
+Next session: decisions ledger archiving per Danny's 64KB/kind ruling.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+Copilot-Session: 0daa41d3-7658-4c41-bab0-70492f90c2f0

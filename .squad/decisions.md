@@ -6753,3 +6753,2157 @@ Trace should make that latency legible: "Interpret objective" and "Answer/Assess
 5. Add read-only answer model/artifact path.
 6. Add path-parity tests using the exact UI request shape and every prompt in `docs/design/banker-copilot-demo-prompts.md`.
 7. Re-run banker-copilot tests, authority tests, and demo dataset checks.
+# Ruling: decisions ledger growth, archiving, and the spawn-time read
+
+**Author:** Danny (Lead/Architect)
+**Date:** 2026-09-10
+**Status:** Ruling — binding. Scribe executes.
+**Responds to:** `.squad/decisions/inbox/scribe-decisions-ledger-growth.md`
+**Component:** squad/team-memory
+
+---
+
+## Summary
+
+Scribe's problem statement is correct and the proposal is rejected as written, for one reason:
+**the size trigger already exists and it already fired.** `.squad/templates/squad.agent.md:865`
+reads:
+
+> "DECISIONS ARCHIVE: If decisions.md exceeds ~20KB, archive entries older than 30 days to
+> decisions-archive.md."
+
+The file is 385KB. The size condition has been satisfied nineteen times over, continuously, for
+weeks. Nothing was archived, because the size condition is **AND**-gated on age, and age is the
+conjunct the project outruns.
+
+Scribe's proposal is `300KB AND older-than-14-days`. That is the identical structure with both
+numbers moved. It inherits the identical blind spot and will fail the identical way — later, and
+at a larger file. The defect is not that 30 days was too long. **The defect is the `AND`.**
+
+---
+
+## 1. What the threshold keys on
+
+**Ruling: the active ledger is a fixed-capacity artifact. The cap is on the file, not on the age
+of its entries, and it is enforced unconditionally at every Scribe merge.**
+
+- **Trigger:** every decision-inbox merge. Not periodic, not conditional, not on a clock.
+- **Condition:** after merging, if `decisions.md` exceeds its budget, Scribe compacts until it
+  does not. No second conjunct. No exception clause.
+- **Budget:** **64KB** for the active ledger. Chosen because it is roughly one-sixth of today's
+  file and comfortably above the measured floor in §3, which leaves headroom for growth without
+  another ruling. Not sacred — but it is a single number with nothing ANDed to it.
+- **Age:** demoted to a tiebreaker *within a kind*, never a gate. Age may decide which of two
+  equally-narrative records is compacted first. Age may never decide whether compaction happens.
+
+**Why this cannot have the old blind spot.** A monotonically growing quantity crossing a fixed
+cap cannot fail to fire. File size only goes up between compactions; the moment it crosses, the
+condition is true and stays true. The 30-day rule failed because it gated on a clock the project
+outran — entries were being superseded faster than they aged, so the eligible set was permanently
+empty. A size cap has no empty-set failure mode.
+
+**The honest residual risk.** This does not eliminate risk; it *relocates* it. The failure mode
+moves from "never fires" to "fires and evicts the wrong thing." That is a strictly better failure
+mode — it is visible, it happens at a known moment, and it is governed by §2. But it is a real
+risk and §2 exists to carry it.
+
+---
+
+## 2. Active ledger vs archive — the split is by kind, not by age
+
+**Ruling: split by kind. Age is not a criterion for what leaves.**
+
+Every decision record contains two separable things:
+
+- **The constraint** — the normative statement. What the code must or must not do. Imperative,
+  short, testable against a diff.
+- **The narrative** — the reasoning, the evidence, the alternatives weighed, the transcript, the
+  design spike, the measurements. Long, valuable, and re-read approximately never.
+
+**The constraint never leaves `decisions.md`. Ever. Regardless of age.**
+**The narrative moves to a per-decision record file as soon as the budget requires it.**
+
+This is why Scribe's criterion must be rejected on its merits and not only on its structure.
+Scribe proposes archiving what is "older than 14 days **AND not actively cited**." Apply that
+literally to this session's output and in fourteen days it evicts:
+
+> *"Never add a field to `hashFields` merely to make it required."*
+
+That is a permanent constraint on the canonicalization preimage. In six months it will still be
+the thing standing between us and a signature-void bug, and by then it will be old and — because
+it is settled and nobody argues about it — uncited. **"Not actively cited" is unmeasurable, and
+it is biased against precisely the constraints that are so well-settled that citing them stopped
+being necessary.** A rule that quiet is a rule that works. It is not a rule that is dead.
+
+Same fate awaits *"subject resolution is lookup, not search"* and the non-disclosure constraint
+on the directory endpoint. All three are exactly what Brian named as must-stay-findable, and all
+three are what an age-and-citation filter deletes first.
+
+**Corollary — supersession, not expiry.** A constraint leaves the active ledger by exactly one
+route: a later ruling supersedes it, and the stub is rewritten to say so, in place, with a
+pointer to the superseding record. Records do not expire. They get overruled, and the overruling
+is visible at the point where someone would look for the old rule.
+
+---
+
+## 3. How an agent finds an archived ruling
+
+**This is the part Brian said he cared most about, so I am answering it flatly first:**
+
+**No. It is not the coordinator's job, and I am not making it his job.**
+
+The retrieval mechanism is that **the body is archived; the existence never is.**
+
+Each of the 59 decisions is reduced in `decisions.md` to a permanent **constraint stub**:
+
+```
+### D-041 — Subject resolution is lookup, not search
+date: 2026-09-10 · status: binding · component: banker-copilot/planner
+Exact/prefix match only, 3-char minimum, 5-candidate cap, identity projection only.
+Both terminal refusals must never list candidates.
+→ full record: .squad/decisions/records/D-041-subject-resolution.md
+```
+
+An agent reading `decisions.md` at spawn therefore still sees **every ruling that has ever bound
+this project**, one stub each, with the rule stated in enforceable form and a path to the
+reasoning. It cannot fail to know an archived ruling exists, because the ruling's existence never
+went anywhere. It only has to open the record when it needs to know *why*, and it will know the
+record is there because the stub names the file.
+
+This directly answers the failure mode Brian named — "a ruling that exists but cannot be found is
+worse than one that was never written." Under this design there is no state in which a ruling
+exists but is not visible at spawn. Grep is a convenience, not the mechanism. Coordinator recall
+is not the mechanism.
+
+**The one duty that does remain with the coordinator** — stated plainly, because Brian asked to
+be told: when a task turns on the *reasoning* behind a ruling rather than the ruling itself
+(re-opening a settled question, or extending a constraint into new territory), name the record ID
+in the spawn prompt. The index guarantees discovery of *what* was decided. It does not guarantee
+an agent will read *why* unprompted. That is a small, bounded job, and it is the only one.
+
+**Measured, not estimated.** I generated a headings-only index over all 59 current entries: it
+weighs **12.3KB — 3.2% of the 385KB file**. That is an empirical floor, and it is a floor, not
+the answer: a real stub carries a normative sentence or two that headings do not. The 64KB budget
+in §1 is therefore a **design target Scribe must hit and hold**, with roughly 5× headroom over
+the measured floor. I have not verified that 59 full stubs land under 64KB, and I am not going to
+claim I have. If Scribe finds the target unreachable, that is a report back to me, not a licence
+to widen it silently.
+
+---
+
+## 4. Is the spawn-time read even the right mechanism
+
+**Ruling: no, not at this size — and the replacement already exists in the template.**
+
+`squad.agent.md:588` says all agents read `decisions.md` at spawn. `:1008` makes it one of only
+three things an agent may read unprompted. That design is correct in intent — decisions are
+shared, history is personal — and it is what has kept this team coherent. The premise is not
+wrong. The *granularity* is.
+
+But the template at `:279-311` already defines spawn tiers, and Lightweight already skips the
+decisions read entirely. So tiering is not a new mechanism to invent; it is one to finish:
+
+- **Spawn reads the constraint index — always, and only.** Bounded by §1. This is the shared
+  brain. Every agent gets all of it.
+- **Full records are demand-loaded by ID.** An agent opens `records/D-041-*.md` when the stub is
+  insufficient. That is a deliberate, cheap, targeted read.
+- **Lightweight stays as-is.** Skipping a 64KB index is a much smaller gamble than skipping a
+  385KB one, so the existing tier gets safer for free.
+
+The net effect: the spawn tax falls by roughly an order of magnitude, and — this is the part that
+matters — **coverage goes up, not down.** Today an agent nominally reads 385KB; in practice a
+385KB read at the bottom of a spawn prompt is skimmed, and rulings buried at line 6,000 are
+functionally invisible already. We do not currently have full recall. We have the *appearance* of
+full recall. A 64KB index that is actually read is more team memory than a 385KB file that is
+not.
+
+---
+
+## Directions to Scribe
+
+**Execute in this order. The order is load-bearing — see directive 0.**
+
+0. **Sequencing — do not switch on the budget check first.** If the unconditional budget check
+   goes live before the records directory and the stub convention exist, the very next merge finds
+   a 385KB file over budget, with no stub format to compact *into* and only one tool available:
+   the existing "move whole entries to `decisions-archive.md`" behaviour. That is exactly the
+   flat-file outcome the *Also found* section proves has already failed once. Build the records
+   directory and convert the entries first; enable enforcement only once the file is already under
+   budget.
+1. **Remove the `AND`** in `squad.agent.md:865`. Rewrite as an unconditional post-merge budget
+   check against `decisions.md`. Delete the 30-day clause; do not replace it with 14 days.
+   **Land this last**, per directive 0.
+2. **Introduce `.squad/decisions/records/`** — one file per decision, `D-NNN-slug.md`, carrying
+   the full narrative. IDs are assigned once and never reused.
+3. **Convert the 59 current entries to stubs.** Constraint text stays in `decisions.md`; the body
+   moves to its record. Start with the eight largest — they are 41% of the file by themselves
+   (measured; largest single entry is 38.6KB).
+4. **Mark supersessions explicitly** while converting. Where a later ruling overrules an earlier
+   one, the earlier stub says so and points forward.
+5. **Report back** if 59 stubs will not fit 64KB. Do not widen the budget on your own authority.
+6. **Do not delete anything.** Narrative moves; it does not evaporate.
+7. **Resolve `merge=union` against the stub format before converting anything.** `.gitattributes`
+   sets `.squad/decisions.md merge=union` (verified). Union keeps all lines from both sides, which
+   is correct for an append-only log and **wrong for a file that is rewritten in place**. My §2
+   corollary has stubs rewritten on supersession, and §1 has the file compacted — so two branches
+   that both touch D-041's stub, or one that compacts while another appends, will union into
+   duplicated or interleaved stub lines. That is the same mechanism I inferred produced the 271.8KB
+   of archive duplication, now aimed at the one file the entire findability argument in §3 rests
+   on. Two acceptable resolutions; pick one and tell me which:
+   (a) drop `union` for the index and take real merge conflicts, or
+   (b) keep `union` and make supersession **append-only** — a new stub that marks the old one
+   superseded, never an in-place edit.
+   Do not discover this at the first branch merge.
+
+**On Scribe's open question 3** (backfilling ~4KB of pre-2026-09-04 decisions): moot under this
+ruling. Nothing is selected by date, so there is nothing to backfill.
+
+---
+
+## Also found — cleanup, not part of this ruling
+
+Handle separately, at lower priority than epic #332. Flagged because they are measured and real:
+
+- **`decisions-archive.md` is 728KB with 59 exact-duplicate entry groups — 271.8KB, 37% of the
+  file, is verbatim repetition.** Some entries appear twice at 38.6KB each. Deduplication is
+  mechanical and safe (byte-identical blocks).
+- **`.squad/decisions/decisions.md` (162KB, 90 entries, untouched since Jun 10)** is not
+  referenced by any template. Appears orphaned. Confirm before doing anything with it.
+- **`decisions-compaction-plan.md` (100KB, one 90KB "compaction manifest")** is a prior attempt at
+  this problem that is now itself a large unread file. Fold anything still live into the record
+  set; retire the rest.
+
+---
+
+## Verified vs inferred
+
+**Verified by direct inspection this session:**
+- `decisions.md`: 385KB, 59 top-level entries, mean 6.5KB, median 5.4KB, largest 38.6KB, top 8
+  entries = 41% of file.
+- The archive rule text and its `AND` structure at `squad.agent.md:865`.
+- Spawn-read instructions at `squad.agent.md:588` and `:1008`; existing spawn tiers at `:279-311`.
+- `.squad/decisions.md merge=union` in `.gitattributes`.
+- `decisions-archive.md`: 728KB, 142 entries, 59 exact-duplicate groups, 271.8KB duplicated.
+- `decisions.md` contains **zero** duplicate entries, and zero entries that also appear verbatim
+  in the archive.
+- Headings-only index over all 59 entries = 12.3KB.
+
+**Inferred, not verified:**
+- That `merge=union` is the *cause* of the archive's duplication. It is the obvious mechanism and
+  the config is confirmed present, but I did not trace a specific merge that produced a specific
+  duplicate pair.
+
+**Explicitly not claimed:** I did **not** verify that tonight's ~76KB growth was partly
+duplication. The evidence cuts the other way — the active file has zero duplicates — so that
+growth should be treated as genuinely new content until someone shows otherwise.
+
+**Method note:** all counts above come from full-file parses, not truncated searches. No absence
+claim in this document rests on a head-limited grep.
+# Ruling — identifier resolution on the propose branch, server-filled hash fields, and the action-metadata wire
+
+**Date:** 2026-09-11
+**Author:** Danny (Lead/Architect)
+**Branch:** `332-beta` · **HEAD:** `3cd5bc1` · **PR:** #362
+**Trigger:** Turk's matched-N A/B for action-metadata parity: descriptions degraded refund mapping
+11/12 → 4/12, and **neither arm ever proposed** (0/12, 0/12), every mapped run dying on
+`payload_unfillable` for `accountId`.
+**Status:** RULED. Turk implements. I did not implement — the two probes below are throwaway
+scripts run against the existing test harness and are deleted.
+
+---
+
+## Headline — the blocker is real, it is not the one I was handed, and it moves money
+
+**1. Where the resolved identifier enters the propose payload: it already does, and it already
+wins.** `ReferenceResolver.resolve()` writes `draft["userId"]` and `draft["accountId"]` by plain
+assignment (`loop.py:319, 336, 345, 371`) and returns `replace(decision, payload_draft=draft)`.
+`_construct_payload` at `:1108` then reads *that* draft. Assignment overwrites, so the resolved id
+already beats the model's, exactly as §3.1 requires. **No boundary needs to move.** I proved this by
+running it (probe B, §2.2): a propose run reaches authority with
+`accountId: acc_checking_casey` — a value the model never supplied.
+
+**2. Both reported mechanisms are wrong, and the 0/12 is an artefact of the measurement prompt.**
+Chuck: *"the server's resolved identifiers never reach it."* They do. Turk: *"`_construct_payload`
+builds from the model's draft before the resolve step runs."* It does not — resolve is at `:1021`,
+propose at `:1104`. The actual cause of 0/12 is that the A/B harness measures
+`REFUND = "Refund a $35 overdraft fee"` (`ab_action_metadata.py:26`) — **no customer, no account** —
+while the cloud prompt it stands in for is `"Refund a $35 overdraft fee on retail's checking as
+goodwill"` (`banker-copilot-cloud.spec.ts:157`). With no subject in the sentence there is nothing to
+resolve, so `accountId` is genuinely unfillable. **The harness refused to invent an account. That is
+the system working.**
+
+**3. 🔴 The real defect, which nobody reported and which I found while disproving the reported
+one.** The resolver verifies a model-supplied `accountId` for **existence only**. It never checks
+that the account belongs to the customer the banker named. Probe C (§2.3), run against the harness:
+
+> Banker says **casey**. Model supplies **Dana's** account id. `get_account` succeeds. Result:
+> `propose_calls=1`, terminal `completed`, signed payload
+> `{'accountId': 'acc_checking_DANA', 'amount': '35.00', 'direction': 'credit', ...}`.
+
+A $35 credit to the wrong customer's account, reaching two signers as a legitimate proposal. And
+`hashFields` for `account.balance.adjust` is `[accountId, amount, direction, reason]` — **no
+`userId`** — so nothing in the signed preimage binds the money to the customer the banker named, and
+nothing on the card contradicts it. This is §3.1 violated on the one branch that moves money: the
+model's identifier is not matched, it is **used**.
+
+Chuck was right that propose is the unguarded branch. He was right for a reason neither he nor Turk
+identified, and the consequence is worse than the one they described.
+
+**4. Merge verdict.** §3 blocks. §8 from my previous ruling — the 1-in-3 mapping rate — is
+**unresolved, not fixed**, because the experiment that was supposed to settle it is void (§4).
+
+---
+
+## 1. What I verified, and how
+
+I did not accept either reported mechanism. I read `ReferenceResolver.resolve` and the propose
+branch at HEAD, then **ran the planner** three ways through the existing `test_run_terminal_status`
+harness with an injected decision and a fake executor. Running it is what separated "the resolver
+does not feed propose" (false) from "the prompt has no subject" (true) — two hypotheses that predict
+the identical `payload_unfillable` symptom and cannot be told apart by reading.
+
+## 2. The probes
+
+### 2.1 Setup
+
+Injected `IntentDecision(kind="propose", action_id="account.balance.adjust")` through
+`_drive(...)` with `evidence_tools=("get_user", "get_account", "lookup_customer",
+"list_customer_accounts")`, fake executor returning Casey with a Checking and a Savings account.
+
+### 2.2 Probe A and B — the 0/12 is the prompt
+
+| Probe | `subject_hints` | Result |
+|---|---|---|
+| **A** — the A/B prompt's shape | `{}` | `propose_calls=0`, `failed`, **`payload_unfillable: ... field 'accountId'`** |
+| **B** — the cloud prompt's shape | `{customer: casey, account: Checking}` | **`propose_calls=1`**, `completed`, signed `accountId: acc_checking_casey` |
+
+A reproduces Turk's 0/12 exactly. B proposes. The only difference is whether the objective named a
+subject. **The propose path is not broken; it was never given anything to resolve.**
+
+B also settles the signing question empirically before I argue it: a server-resolved identifier is
+**already** landing in a hash-signed payload today, on `main`'s behaviour, shipped. This is not a
+prospective design question.
+
+### 2.3 Probe C — the ownership gap
+
+`subject_hints={customer: "casey"}`, `payload_draft={accountId: "acc_checking_DANA", ...}`, with
+`get_account` returning a real account owned by `usr_dana`. Result: **proposed, completed, signed
+with Dana's account id.**
+
+The mechanism is `loop.py:329-337`. The `account_id_hint` branch calls `get_account`, and
+`if account is None` is the entire check. A 200 means "this account exists", and the code treats it
+as "this is the right account". The `account_number_hint` branch at `:338-346` has the same shape.
+The third branch — `account_hint and draft.get("userId")` at `:347-371` — is **safe by
+construction**, because it derives the account from `list_customer_accounts(userId)` and can only
+return accounts the resolved customer owns. So we already have the correct pattern in the same
+function, twenty lines below the defect.
+
+## 3. Ruling on the three questions
+
+### 3.1 Where the resolved identifier enters, and whether it wins
+
+**It enters in the resolver, before `_construct_payload`, and it wins. That is correct and stays.**
+
+No new mechanism, no moved boundary. What must change is not *where* the id enters but *what the
+resolver is willing to accept as a source for it*:
+
+**REQUIRED — bind the account to the customer.** In the `account_id_hint` and `account_number_hint`
+branches, when a `userId` has been resolved, the account must be confirmed to belong to that
+customer. Prefer deriving it the way the third branch already does — resolve the customer, list
+their accounts, match within that set — rather than fetching an arbitrary account and asking whether
+it happens to be theirs. Derivation cannot fail open; a post-hoc check can.
+
+Two sub-cases, and they need different answers:
+
+- **Customer named and resolved, model also supplied an id.** The id must be inside the customer's
+  account set or the run refuses. The banker's words are the authority; the model's id is at best a
+  hint about *which* of that customer's accounts, and it must be matched against them, never used.
+- **No customer named, only an account id or number** (e.g. "refund $35 on account 4471"). There is
+  no customer to bind to, so ownership cannot be checked. The honest move is to resolve the account,
+  then resolve *its* owner, and put the owner on the card — so the signer is told whose account this
+  is even though the banker did not say. **Do not simply allow this case because it is harder.**
+
+**Also required, and cheap:** add `userId` to the *evidence and facts* for this action so authority
+and the card both carry the customer. **Do not add it to `hashFields`** — standing constraint, never
+add a field to the signing preimage merely to make it available. It is available through evidence.
+
+### 3.2 Is a server-filled hash field signable? — **Yes. It is the only safe option.**
+
+This is the question Chuck most wanted judgement on, so I will answer it directly rather than
+hedge.
+
+The premise to reject is *"the banker signs a payload neither party wholly authored."* **The model
+is not a party.** It is a drafting aid inside our harness, with no authority, no accountability and
+no signature. The parties to an approval are the banker who asks and the signers who agree; the
+proposing party is **the harness**. There is no authorship contract between the model and the signer
+that a server-substituted value could breach, because the model was never a principal. Framing the
+model as a co-author is precisely the category error the whole authority ladder exists to prevent.
+
+What the signature actually has to guarantee is unchanged by authorship:
+
+1. The bytes the signer sees are the bytes hashed into the preimage.
+2. The bytes hashed are the bytes that execute.
+3. The preimage is reproducible from the stored payload (`VerifyStoredHash`).
+
+A server-resolved `accountId` satisfies all three identically to a model-drafted one. The preimage
+is `"bcp.v2\n" + actionId + "\n" + policyVersion + "\n" + canonical(payload → hashFields)`;
+**it has no authorship field, and correctly so.** Provenance is an evidence property, not a preimage
+property. Putting it in the preimage would make every hash depend on who typed a value, which is
+both meaningless to verify and a canonicalisation hazard.
+
+And the alternative is strictly worse, which probe C demonstrates rather than argues: honouring the
+model's draft "because the model authored it" is how Dana's account got signed. **The server-filled
+value is more faithful to the banker's sentence, not less.** The banker said "casey's checking";
+`acc_checking_casey` *is* that sentence resolved. An id the model chose is the value that can
+silently diverge from what the banker said.
+
+So: server-filled hash fields are acceptable, already shipped, and required. **Three conditions,
+and the third is not currently met:**
+
+- **(a) Resolved from the banker's words, not the model's identifiers.** §3.1.
+- **(b) The resolution recorded in evidence with its basis.** Already done —
+  `resolved_subject` / `resolved_account` carry `query`, `matched` and `basis`, and
+  `_evidence_for_authority` (`loop.py:1902`) preserves them.
+- **(c) 🔴 Disclosed to the signer on the card. THIS DOES NOT EXIST.** I grepped every `.ts`/`.tsx`
+  for `resolved_account`, `resolved_subject` and `basis`: **zero UI consumers.** The data reaches
+  authority and stops. Worse, the card already cannot name the customer — `subjectAbsence` says so
+  out loud: *"This card cannot yet tell you which customer this is — only an internal id."*
+
+  So today a signer sees a raw account id, is told the card cannot say whose it is, and has no way
+  to discover that it came from the model rather than from the banker's words. **The disclosure
+  control my signing ruling depends on is missing on exactly the path that most needs it.** That
+  converts it from a note into a required fix: the card must show what the identifier resolved
+  **from** and **to** — "casey's Checking, resolved from the word *casey*" — beside the id it is
+  asking someone to sign. Turk's §6.1 subject enrichment is this, and it is now load-bearing.
+
+Condition (c) is required before the demo. A server-filled hash field that is signable *in
+principle* is not signable *in practice* by someone who cannot see what it means.
+
+### 3.3 Is `payload_unfillable` the honest code?
+
+**For the case actually measured: yes, and Chuck's framing of it is false.** *"The server knows this
+value and declined to supply it"* does not describe probe A. The objective named no customer and no
+account; the server did **not** know the value and could not have. `payload_unfillable` is exactly
+right, and a run that refuses rather than inventing an account is the behaviour we want.
+
+**Two things about it are wrong anyway:**
+
+1. **The message is engine vocabulary in front of a banker.** *"The planner could not fill required
+   payload field 'accountId' for account.balance.adjust."* That fails my own governing test — would
+   a banker say this to a colleague? It leaks an internal field name and an action id, and tells the
+   banker nothing they can act on. It should name the gap in their terms: *"Which account should
+   this refund go to? The objective did not name one."* The banker's next move is then obvious,
+   which is the entire purpose of a refusal code.
+2. **A distinct case is being collapsed into it.** Customer named and resolved, but no account
+   identifiable — the banker said "refund $35 to casey" and Casey has a Checking and a Savings.
+   Today `account_hint` is `None`, no `accountId` is set, and it lands in `payload_unfillable`. That
+   is not a payload problem; it is an ambiguous subject, and it is the case `ambiguous_subject`
+   exists for. It must refuse as `ambiguous_subject` and ask the banker which account — **without
+   listing them**, per the standing non-disclosure constraint. "Which account?" is a question; "Your
+   Checking or your Savings?" is the customer-search API we declined to build.
+
+So: keep `payload_unfillable` for "the sentence did not say"; route "resolved the customer, could not
+pick the account" to `ambiguous_subject`; rewrite both messages in banker language.
+
+## 4. Ruling on the action-metadata wire — **the experiment is void; do not revert, do not enable**
+
+Turk asked me to rule on the wire. I cannot rule for or against it on this data, and neither can
+anyone else, because **both arms measured a prompt that cannot propose.**
+
+The confound is specific and Turk's own file is the evidence. `config/copilot-actions.yaml:65-68`
+tells the model:
+
+> `accountId` — *"The account to adjust. Resolved server-side from subjectHints; never supply it."*
+
+That instruction is **correct** and is what §3.1 wants. But the A/B prompt is `"Refund a $35
+overdraft fee"` — no subject words to put in `subjectHints`. So in the descriptions arm the model is
+told to stop supplying the id *and* given nothing to resolve one from. A model that then declines to
+propose is **behaving correctly on a prompt that genuinely does not say whose account to credit.**
+
+That is a hypothesis, not a finding, and I want the distinction kept: the 8/12 "degradation" may be
+the model refusing correctly, may be genuine mapping loss, or may be both. **I cannot tell from the
+aggregate, because the table reports totals and I do not have the per-run outcome labels** — and
+`_outcome()` does record them, so they exist and were not kept. Either reading is consistent with
+11/12 → 4/12.
+
+**Disposition of the wire:**
+
+- **Do not revert.** The file, loader, drift check and boundary tests are good work and the
+  descriptions are well written for their audience. The confabulation result (`nobody-here` 9/12 →
+  12/12) is on a *subject* prompt that does not depend on the account gap, so that improvement
+  stands — and it is the result the wire was built for.
+- **Keep `COPILOT_ACTION_METADATA_ENABLED=0`.** Turk's instinct to ship off-by-default was right.
+  It stays at 0 not because descriptions are harmful — we do not know that — but because we have no
+  evidence either way and the default should be the arm we have flown in the cloud.
+- **Re-run with the real prompt:** `"Refund a $35 overdraft fee on retail's checking as goodwill"`,
+  both arms, same session, n ≥ 12, **after §3.1 lands**. Print the per-run outcome labels, not just
+  the totals.
+- A prompt in a measurement harness must be **the prompt the system is judged on**. A shortened
+  paraphrase is a different experiment wearing the same name.
+
+## 5. Turk's two honesty notes — both upheld, and the second is now more important
+
+**"8/12 is not comparable, different harness."** Correct, and the right call. Do not let that number
+appear in any comparison.
+
+**"This harness does not reproduce the cloud's `objective_unmappable` at all."** Recorded as unknown
+rather than explained away — exactly right, and I am raising its weight. §4 explains why the *A/B*
+never proposed, and that explanation is about `accountId`, which is **not** the cloud failure. The
+cloud refused with `objective_unmappable` on a prompt that *did* name a customer and an account. So
+the cloud's mapping failure remains **unexplained**, and nothing in this ruling explains it.
+
+Stated plainly so nobody reads the blocker below as closing it: **fixing §3.1 will make the refund
+prompt propose in this harness, and that is not evidence that it will propose in the cloud.** The
+1-in-3 cloud mapping rate from my previous §8 is still open, still demo-critical, and its cause is
+still unknown. Two different failures on one prompt; do not let the tractable one be mistaken for
+the other.
+
+## 6. Disposition
+
+| Item | Owner | Gate |
+|---|---|---|
+| **§3.1 bind account to resolved customer; derive, do not existence-check** | **Turk** | **🔴 BLOCKS MERGE** |
+| §3.1 carry `userId` in evidence/facts — **never** in `hashFields` | Turk | Blocks merge (same change) |
+| §3.2(c) card shows what the id resolved from and to | Turk | 🔴 Blocks demo. Signing ruling depends on it |
+| §3.3 rewrite both refusal messages in banker language | Turk | Blocks demo |
+| §3.3 route resolved-customer/no-account to `ambiguous_subject`, no candidate list | Turk | Blocks demo |
+| §4 keep flag at 0; re-run A/B with the cloud prompt after §3.1, per-run labels | Turk | Blocks the wire decision, not merge |
+| §4 do not revert `copilot-actions.yaml` | — | Standing |
+| §5 cloud `objective_unmappable` (prev. §8) | open | **Still unexplained. Still demo-critical** |
+| Regression test for probe C: model-supplied cross-customer id must refuse | Linus | Blocks merge |
+
+**Proof vs inference:**
+
+*Proven by me, this session, by running it:* §2.2 probes A and B; §2.3 probe C. These are executions
+of the planner, not readings of it.
+
+*Proven by reading, untruncated:* the resolver's three account branches (`loop.py:329-371`); the
+propose branch ordering (`:1021` vs `:1104`); the absence of any UI consumer of `basis` /
+`resolved_account` / `resolved_subject` (grep across all `.ts`/`.tsx`, zero hits); the A/B prompt
+versus the cloud prompt.
+
+*Inference, labelled:* §4's explanation of the 11/12 → 4/12 drop. It is consistent with the file and
+the prompt, and it is **not** established — the per-run labels would settle it and were not
+retained.
+
+*Corrected:* Chuck's mechanism and Turk's mechanism, both disproved above. Neither correction reduces
+the severity of what they found; probe C is worse than what either described.
+
+*Unexplained and left open, deliberately:* the cloud `objective_unmappable`. §5.
+# Ruling — refusal code accuracy and the reachability of `subject_not_found` / `ambiguous_subject`
+
+**Date:** 2026-09-11
+**Author:** Danny (Lead/Architect)
+**Branch:** `332-beta`
+**Trigger:** cloud e2e `an unknown subject refuses by name of code, and discloses nothing` failed with
+`objective_unmappable` where the test expected `subject_not_found` or `ambiguous_subject`.
+**Status:** RULED — **revised in place 2026-09-11 after Chuck corrected §4.** Turk and
+Linus execute. I did not implement.
+
+> **REVISION NOTICE.** §4 of the first version of this ruling was **wrong on its facts**. I claimed
+> the UI renders server messages for `ambiguous_subject` and `subject_not_found`. It does not —
+> `TracePane.tsx:68` suppresses them, deliberately, in Linus's `16ef005`. I read the copy table and
+> did not read the only place that consumes it. Chuck caught it. §4 is rewritten below, and the
+> corrected finding is **worse than the one I got wrong**, not better. §1, §2, §3, §5, §6 and §7
+> stand unchanged. §8 is new and is the most demo-critical item in this document.
+
+---
+
+## Headline
+
+**The test is right. The system is wrong.** `subject_not_found` is the correct code, and both
+`subject_not_found` and `ambiguous_subject` **are reachable** on the deployed path — Chuck's
+hypothesis that they are decoration is **not supported by the code**. What is broken is narrower and
+more fixable than "two codes are unreachable": the model is permitted to pre-empt the resolver, and
+when it does, the decision carries nothing the resolver can act on.
+
+**Merge verdict, since Brian is asking now:** **one item blocks merging to main, and it is not a
+safety item.** It is §8 — Brian's own L2 credit prompt proposes in **one run out of three**, and I
+have found the cause and it is not model variance. Nothing in this document says the system is
+unsafe. The §4 control defect is real, is **not** merge-blocking, and **is** required before the
+demo and before §3.4 lands. Detail in §9.
+
+The unvalidated `reasonCode` finding survives Chuck's correction, **inverted and stronger**: the
+non-disclosure guard is keyed on membership of a two-element set, and the model chooses which code it
+returns. The control is therefore keyed on a value the model controls. See §4 — and note that this
+is not hypothetical: the repository already records a live run in which model-authored text
+containing a customer's username was rendered to a banker under a disclosing code.
+
+---
+
+## 1. Which code is correct — `subject_not_found`
+
+For a well-formed sentence naming a customer who does not exist, the correct terminal code is
+**`subject_not_found`**. `objective_unmappable` is not merely less actionable; on the evidence it is
+**not honest either**.
+
+The two cloud prompts are one token apart:
+
+| test | prompt | outcome |
+|---|---|---|
+| `:56` (passed) | `Summarise casey's accounts and recent activity` | read plan → answer in prose |
+| `:186` (failed) | `Summarise nonexistent-customer-zqx's accounts and recent activity` | refuse / `objective_unmappable` |
+
+The model's own message on the failing run was:
+
+> "The objective asks to summarise accounts and recent activity, but no proposed action matches
+> summarization and I am not permitted to invent one."
+
+That sentence is **false about the harness and refuted by the passing test in the same file**. The
+identical verb and identical clause structure mapped cleanly to a read plan sixteen seconds earlier.
+Nothing about "summarise ... accounts and recent activity" is unmappable. The only input that
+changed is the subject token. So the model *did* react to the subject and then **rationalised the
+refusal against the proposable-action list** — it reported a defect in the objective when what it
+actually had was a doubt about the customer.
+
+This matters beyond phrasing. `objective_unmappable` sends the banker to rewrite a sentence that was
+already correct. Its own UI copy (`runOutcome.ts:78-84`) says *"Restate it naming the customer, the
+account and the change you want"* — advice that will fail every time, because the customer is the
+thing that does not exist. We would be instructing the banker to do the one thing that cannot work.
+
+**Caveat, stated because Brian's rule requires it:** this is a one-run-per-prompt differential
+against a non-deterministic model. It is strong — one varying token, one file, minutes apart — but
+it is **not** proof that every unknown-subject prompt takes this branch. It is proof that *this* one
+did, and that the stated reason for it was confabulated. Linus should run the corrected prompt more
+than once before we call the fix proven.
+
+## 2. Reachability — both codes are live, and I verified it in the running pod
+
+Chuck asked me to test his hypothesis rather than accept it. I tested it and it does not hold.
+
+**2.1 The resolver is not downstream of the refusal — it runs first.**
+`loop.py:952` calls `ReferenceResolver.resolve()` for **every non-failed decision**, and the
+`kind == "refuse"` dispatch is at `:968`, *sixteen lines later*. The resolver is therefore already on
+the deployed path ahead of the refusal branch. This is not a design-doc claim; it is the control
+flow.
+
+**2.2 The emission sites exist in the image that is serving traffic.** Verified by `kubectl exec`
+into `banker-copilot-service-59ccb7974f-7vm99`, not inferred from a restart or a `:latest` tag:
+
+```
+/app/app/planner/loop.py
+315: subject_not_found  (account id unresolvable)
+324: subject_not_found  (account number unresolvable)
+338: subject_not_found  (no account of requested type)
+343: ambiguous_subject  (>1 account of requested type)
+361: subject_not_found  (GUID hint fails get_user)
+370: subject_not_found  (0 directory matches)
+372: ambiguous_subject  (>1 directory match)
+996: "...the resolved id WINS over anything the model supplied"  ← Turk's fix, in the pod
+```
+
+**2.3 The tool the resolver needs is registered in the deployed manifest.**
+`/app/config/copilot-tools.yaml:271` declares `lookup_customer`, in the running pod. Had it been
+absent, `_invoke` would return `None` and *every* named customer would resolve to
+`subject_not_found` — which would itself have failed the passing read-only test. It passed, so the
+directory path is live and working.
+
+**2.4 `subject_not_found` is proven end-to-end to the wire.**
+`tests/test_run_terminal_status.py:485-527` drives the whole planner and asserts
+`run.error.payload.code == "subject_not_found"`, with the message free of `403`, `404` and the
+supplied GUID. The code reaches the terminal frame; it is not stranded mid-pipeline.
+
+**2.5 It has been observed rendering in the cloud.** `tests/e2e/cloud/cloudSession.ts:53` records
+that an earlier version of `candidateNames()` failed "on the live refusal for `subject_not_found`,
+whose copy reads *Nothing matched the reference for this banker*". That string exists in exactly one
+place in the repository — `runOutcome.ts:100`, the `subject_not_found` copy. Its author could only
+have read it off a live surface rendering that code. I am labelling this **second-hand but
+well-evidenced**, distinct from §2.2–2.4 which I verified myself.
+
+**Conclusion:** reachable — by control flow, in the deployed image, with its dependency registered,
+proven to the wire by test, and observed live. The gap is not reachability. It is that the model
+gets to answer the question first.
+
+**2.6 The one genuine coverage hole.** `ambiguous_subject` has **zero** end-to-end Python coverage.
+The only Python reference is a set-membership in the live-model test at
+`test_demo_prompt_live_model.py:615`; everything else is UI copy tests. It is reachable **by
+inspection** — the two sites at `:343` and `:372` sit on the same verified path — but no test has
+ever driven a >1-match lookup through to a terminal frame. That is the honest asymmetry with §2.4
+and it must not be papered over: *reachable by inspection* is a weaker claim than *proven to the
+wire*, and I am making the weaker claim.
+
+## 3. Why `objective_unmappable` wins — the actual seam
+
+`intent_model.py:169-173`. The refuse branch constructs `IntentDecision` **without
+`subject_hints`** — and it could not populate them if it wanted to, because the refuse shape in
+`_INTENT_SCHEMA` (`:128-136`) declares `additionalProperties: False` with only `kind`, `reasonCode`
+and `message`. A model refusal is therefore **structurally incapable of carrying the subject it
+refused over**.
+
+So when the model refuses, the resolver at `:952` does run — and receives an empty hint map, a
+`None` payload draft, and nothing to look up. It no-ops, and `:968` emits the model's own code
+verbatim.
+
+That is the whole mechanism. It is not model quality and it is not a missing code path. **The model
+is allowed to adjudicate a question it has no data to adjudicate, and the component that does have
+the data never gets asked.**
+
+Compounding it, the prompt at `intent_model.py:198-205` tells the model *"do NOT refuse merely
+because the objective names a person and an account in words rather than by id"* — correct, and
+exactly the instruction we need — but that sentence sits inside the **propose** paragraph. The
+**read** paragraph (`:200-202`) carries no equivalent. The failing prompt was a read.
+
+### What must change (Turk)
+
+1. **Remove `subject_not_found` and `ambiguous_subject` from the model's refuse vocabulary** at
+   `intent_model.py:206`. These are findings about the directory. The model has no directory. Offering
+   it two codes it cannot possibly determine invites exactly the confabulation §1 documents, in the
+   other direction.
+2. **Add the read-branch equivalent of the propose-branch instruction**: subject existence is not the
+   model's to judge; an unfamiliar, implausible or unrecognised name still goes into `subjectHints`
+   with a read plan, and the server decides whether it exists. State that refusing a resolvable
+   subject is as much a failure as inventing one — the prompt already says this for propose.
+3. **Enum-validate `reasonCode` server-side** — see §4; this is the blocking half.
+4. **Recommended, belt-and-braces:** admit `subjectHints` on the refuse shape and carry it into the
+   decision, so that a residual model refusal naming a subject is still adjudicated by the resolver
+   at `:952` and **upgraded** to the accurate code before `:968` emits. This makes correctness a
+   property of the pipeline rather than of the prompt, which is where I want it. Note the consequence
+   explicitly: such a run performs a directory read before refusing. That is already consistent with
+   `readsPerformed: 'some'` on both codes in `runOutcome.ts:97,103`, so no copy changes — but it must
+   be a deliberate decision, not a side effect noticed later.
+
+Items 1–3 are required. Item 4 is how I would build it; Turk may argue it down, in writing.
+
+## 4. The `reasonCode` hole — corrected, inverted, and confirmed live
+
+### 4.0 What I got wrong
+
+I wrote that `showServerMessage: true` on `ambiguous_subject` and `subject_not_found`
+(`runOutcome.ts:96,103`) means the UI renders their server messages. **It does not.** I verified
+Chuck's correction myself rather than accepting it:
+
+```ts
+// TracePane.tsx:68
+const showMessage = copy.showServerMessage && !isNonDisclosing(code);
+```
+
+`isNonDisclosing` (`runOutcome.ts:155-157`) tests membership of the two-element `NON_DISCLOSING` set
+at `:36`. `RunRefusalNotice` is the **only** consumer of `refusalCopy` in the codebase — I grepped
+every `.ts`/`.tsx` for `showServerMessage`, `isNonDisclosing` and `NON_DISCLOSING` untruncated, and
+the render sites are that one component plus its unit tests. The guard is real, it is the only path,
+and Linus's comment at `:62-67` anticipates my exact concern in my own words: *"Turk's current
+strings for these two codes are safe, but 'safe because the author was careful' is not a control."*
+
+I read a copy table and did not read its consumer. That is the same error class as the
+case-sensitive grep and the truncated grep, in a new costume: **I confirmed a property from the
+declaration site and never visited the enforcement site.** Chuck was right to demand I verify rather
+than accept, and right to distrust my single read.
+
+### 4.1 The corrected finding — the guard is keyed on a model-controlled value
+
+Chuck's inverted path is **real**. Verified in code, not accepted:
+
+1. `_INTENT_SCHEMA` types `reasonCode` as `{"type": "string", "minLength": 1}` —
+   **no enum** (`intent_model.py:132`).
+2. `parse_intent_decision` passes it through verbatim with a model-authored message
+   (`intent_model.py:169-173`).
+3. The guard fires **only** on membership of a two-element set (`TracePane.tsx:68`).
+4. Eight of the ten named codes carry `showServerMessage: true` and are **not** in that set.
+
+So a model that wants its prose rendered simply returns `objective_unmappable` instead of
+`ambiguous_subject`. It does not collide with the guard; it **walks around** it. Non-disclosure is
+currently enforced by *the model's choice of code* — which is precisely the thing we ruled last
+night must never be a control. Linus removed one dependency on authorial care and the residual
+dependency moved one level up, from *which words the author wrote* to *which code the model picked*.
+That is a better position than before `16ef005` and it is still not a control.
+
+### 4.2 It is not hypothetical — the repository records a live instance
+
+This is the part that decides the severity, and I found it while checking something else.
+`test_demo_prompt_live_model.py:447-461` documents a failure observed live against `gpt-5.4-mini`,
+"roughly 3 runs in 4":
+
+> `intent_contract_invalid: 'The answer model cited evidence this run did not gather: [tx_casey_wire]'`
+
+Trace it. `intent_model.py:261` builds that message as
+`f"The answer model cited evidence this run did not gather: {unknown}"`, where `unknown` is a set of
+**model-authored strings**. `intent_contract_invalid` has `showServerMessage: true` and is not in
+`NON_DISCLOSING`. So it renders.
+
+Three things make this the load-bearing example:
+
+- It is **post-read**. The answer model has seen the evidence bundle. Unlike the intent model, it
+  has customer data in context.
+- The echoed string **contains a customer username** — `tx_casey_wire`. Model-authored text
+  carrying a customer identifier reached a banker's screen under a disclosing code, live, and we
+  have the transcript.
+- It happened **by accident**, from a helpful model doing the obviously right thing. Nobody was
+  attacking anything.
+
+Harm in that instance is low: the banker named Casey, is authorised for Casey, and the string was
+the model's own invention. I am not calling it a breach. I am calling it **the mechanism, executed**
+— and the mechanism does not care whether the next string is as harmless.
+
+### 4.3 Blast radius, stated honestly in both directions
+
+I will not inflate this. At **intent** time the model's entire context is
+`build_intent_prompt` (`intent_model.py:176-211`): the objective, the action wire, the read-tool
+wire. **No customer data.** So a model-authored *intent* refusal cannot disclose a real record —
+it can only fabricate, or echo the banker's own typed words back at them. I checked every
+server-authored refusal message too: `_validate_read_plan`, `_validate_action_choice`,
+`_construct_payload`, `_normalise_money`, `_normalise_score` interpolate **tool ids, action ids,
+field names and type names only** — never values. `_argument_shape` (`loop.py:1514-1523`) is
+explicitly keys-and-types. Those are clean.
+
+So today's real exposure is exactly two things: **fabrication** under an authoritative-looking code,
+and the **`:261` post-read echo channel**. That is narrower than "the model can leak the database",
+and I want that on the record because overstating it is how a real finding gets dismissed.
+
+But the *structure* is what I am ruling on. A guard keyed on an attacker-chosen discriminator is not
+a guard, and it becomes acutely dangerous the moment anything attaches read data to a refusal
+message — which is **exactly what my own §3.4 recommendation does**. If Turk builds the resolver
+upgrade, the refusal path acquires a directory lookup, and from then on the only thing standing
+between a candidate set and a banker's screen is which string the model chose. I recommended §3.4
+before I understood §4. **§4 must land first, or §3.4 must not land.**
+
+### 4.4 Where the control belongs
+
+Chuck offered three candidates. My ruling, in order, and why each holds against an *adversarial*
+model rather than a careless one:
+
+1. **An enum on `reasonCode` at the server boundary — REQUIRED, and it is the primary control.**
+   Put the ten codes in the JSON Schema at `intent_model.py:132`. A model-invented or
+   model-repurposed code then fails schema validation and becomes `intent_contract_invalid` with a
+   **server-authored** message. This is the right control because it converts an open channel into a
+   closed set *before any consumer sees it*, and because it is enforced at the same boundary that
+   already rejects malformed intent objects — no new seam, no new thing to remember. Combined with
+   §3.1, the model's permitted set shrinks to the three codes it can actually determine:
+   `objective_unmappable`, `forbidden_action`, `payload_unfillable`.
+
+   Note precisely what it does and does not do: it stops the model **choosing** its render
+   treatment. It does not stop the model **writing** prose under the three codes it keeps. That
+   residue is why item 2 exists.
+
+2. **Never render a model-authored message — REQUIRED.** The enum alone leaves three codes whose
+   messages the model still writes. The clean rule: **`showServerMessage` means server-authored, and
+   the server must be able to prove it.** Carry the provenance rather than inferring it from the
+   code — the decision knows whether the message came from `_refusal(...)` or from
+   `parse_intent_decision`. Render server-authored messages; drop model-authored ones and show the
+   copy-table text, which is what the table is for. This holds under an adversarial model because it
+   does not consult any model-supplied value at all.
+
+   This subsumes `:261`: stop interpolating `{unknown}` into a banker-facing string. Log it, which
+   is where a diagnostic belongs.
+
+3. **A server-side scrub — REJECTED.** A denylist of customer names and a digit filter is the
+   control that *looks* strongest and is weakest. It fails open on anything not in the dataset, it
+   cannot distinguish the banker's own words from a record, it must be maintained in lockstep with
+   demo data, and it is defeated by trivial obfuscation. Worse, it would license rendering
+   model-authored prose *because* it is "scrubbed", which is the wrong direction entirely. **We do
+   not sanitise untrusted text into a trusted channel; we decline to put untrusted text in a trusted
+   channel.** Linus's `16ef005` had this instinct exactly right and items 1 and 2 are its
+   generalisation.
+
+Keep `TracePane.tsx:68` regardless. It is defence in depth, it is cheap, and after items 1 and 2 it
+should be unreachable — which is the correct end state for a guard, not a reason to delete it.
+
+## 5. Test or system — the system changes
+
+Plainly: **the test is correct and must not be relaxed.** `banker-copilot-cloud.spec.ts:204` asserts
+what the design specifies, what the code implements, and what the banker needs. Widening the
+expectation to include `objective_unmappable` would encode the confabulation of §1 as the contract
+and delete the only signal we have that the model is pre-empting the resolver.
+
+Linus changes nothing in that spec. Three additions, once Turk's fix lands:
+
+1. **Re-run the corrected prompt more than once.** §1 is n=1 against a non-deterministic model. Say
+   how many runs, and say it in the file.
+2. **Close the §2.6 hole:** an end-to-end Python test driving a >1-match `lookup_customer` through to
+   a terminal `ambiguous_subject` frame, asserting the wire code **and** that no candidate name,
+   id or count appears in the message. `subject_not_found` has this at
+   `test_run_terminal_status.py:519`; its sibling has nothing.
+3. **Two contract tests for §4**, replacing the single one the first version asked for:
+   (a) an injected model decision carrying `reasonCode: "ambiguous_subject"` must be rejected at the
+   schema, not passed through — the forged-code case; and (b) an injected model decision carrying
+   `reasonCode: "objective_unmappable"` with a customer name in its message must **not** render that
+   message. (b) is the case Chuck identified and the one the old guard does not cover.
+4. **And the fourth, added by this revision: §8.4's n ≥ 10 measurement, before and after.** It
+   supersedes item 1 rather than sitting beside it — "more than once" was the right instinct and the
+   wrong number, and after a three-run sample a lucky three is exactly what a "fixed" report would
+   look like.
+
+## 6. ⚠️ Flagged, as Chuck asked — non-disclosure is UNPROVEN in the cloud
+
+Chuck is right to raise it and right not to claim it. The test died on the code assertion at `:204`,
+**before** reaching the candidate-name loop at `:216-222` and the digit assertion at `:223`. So the
+non-disclosure guarantee — mine, the one the whole `candidateNames()` apparatus exists to enforce —
+**has never been exercised against the deployed surface.**
+
+It matters, for a reason specific to this failure. The refusal that *did* render was
+`objective_unmappable`, which is emitted before any read and cannot disclose anything: it is
+**vacuously non-disclosing**. The path that carries real disclosure risk is the resolver refusal —
+the one that has just performed a directory lookup and is holding the candidate set in memory. That
+is the exact path the test never reached. We have proof of non-disclosure on the branch that cannot
+leak, and none on the branch that can.
+
+Non-disclosure remains unproven in the cloud until the §5 re-run gets past line 204. **Do not record
+it as holding.** My §2.5 note — that a live `subject_not_found` was observed rendering at some point
+— is evidence the *path* runs, not evidence the guarantee holds on it.
+
+## 7. Structural note, not present-tense risk
+
+`ReferenceResolver._invoke` returns `None` both when a tool is unregistered and when it raises
+`ToolInvocationError`. At `:367-370` that collapses into `matches = []` → `subject_not_found`. So a
+missing or failing directory service is reported to the banker as a **fact about the customer**:
+"nothing matched the reference."
+
+Not live — §2.3 proves `lookup_customer` is registered and working. It fails closed, which is the
+right direction. But it is the same class of error as §1 one layer down: stating a confident finding
+about a customer when what actually happened was that we could not look. Worth an
+`evidence_unavailable` distinction when someone is next in this file. Non-blocking; do not let it
+delay the fix.
+
+---
+
+## 8. 🔴 THE DEMO-CRITICAL ONE — the L2 credit prompt is not flaky, it is under-specified
+
+**Ruling: this is a real defect with a named cause and a cheap fix. It is not model variance to
+design around, and it is not a test that is too strict about timing.** The test is innocent: it
+asserts structure, waits up to four minutes, and the runs did not time out — they **refused**.
+
+### 8.1 Both failing prompts fail the same way
+
+I read the failure context rather than the summary line. the credit-prompt `error-context.md:165`:
+
+> "The objective asks for a goodwill refund of an overdraft fee, but **no proposable action supports
+> posting or refunding a fee directly in this harness.** No action was proposed and nothing was
+> signed. Reason code: `objective_unmappable`"
+
+Set it beside §1's refusal-test failure:
+
+> "...but **no proposed action matches summarization** and I am not permitted to invent one."
+
+**These are the same failure.** Two different prompts, both refusing `objective_unmappable`, both
+claiming no proposable action exists, both wrong — `account.balance.adjust` with
+`direction: credit` is exactly the refund action, and it is in the catalogue the model was handed.
+I had been treating §1 as a subject-resolution problem. It is one, but it is also the *second
+instance* of a more general one, and I did not see that until I read this second trace.
+
+So the corrected shape of tonight's problem: **the intent model falls back to `objective_unmappable`
+under uncertainty and confabulates a catalogue-shaped justification for it.**
+
+### 8.2 The cause — reads are described, actions are not
+
+The pass rates are the clue and they are not noise: **read 3/3, propose 1/3.** That asymmetry is
+mirrored exactly by an asymmetry in what the model is given.
+
+A **read tool** (`config/copilot-tools.yaml:156-180`) reaches the model as:
+
+```yaml
+displayName: Get account
+description: Retrieve one account, including its current balance and owner.
+parameters: {type: object, properties: {accountId: {type: string, pattern: ...}}, required: [accountId]}
+```
+
+— prose stating purpose, plus a full JSON Schema. `list_customer_accounts` even says *"used by the
+planner to bind natural-language references such as 'checking' or 'savings'"*. Someone wrote these
+for a model to read, and it shows.
+
+An **action** reaches the model through `_action_wire` (`loop.py:1449-1460`) as:
+
+```json
+{"id": "account.balance.adjust", "displayName": "Post a balance adjustment", "baseRung": "L1",
+ "requiredEvidence": ["get_account", "list_account_transactions"],
+ "hashFields": ["accountId", "amount", "direction", "reason"], "moneyFields": ["amount"]}
+```
+
+**No description. No parameter schema. No allowed values.** `displayName` is four words, and it
+comes straight from `config/authority-policy.yaml:507`, where it was written as a label for a
+human reading an approval card — not as a mapping target for a model.
+
+That is the whole defect, and it is two defects:
+
+- **Selection.** The model must bridge *"Refund a $35 overdraft fee ... as goodwill"* to *"Post a
+  balance adjustment"* across a pure vocabulary gap, with no corroborating text, on every run. A
+  banker knows a fee refund is a credit adjustment. Nothing in the prompt says so. That is a
+  judgement call, and a judgement call made without evidence is made differently on different runs.
+  **We are not observing model unreliability; we are observing a model being asked to guess, and
+  reporting its guess as a fact about the catalogue.**
+- **Payload.** Even on the runs where selection succeeds, `hashFields` arrives as four **bare field
+  names**. The model is never told that `direction` takes `credit` or `debit`, that `reason` is
+  free text for a human signer, or that `accountId` is resolved server-side. `_construct_payload`
+  (`loop.py:1630-1651`) then refuses `payload_unfillable` if any field is missing. The
+  one-in-three that passes is passing on inference from field names.
+
+The read branch does not have this problem because somebody already solved it, in the sibling YAML
+file, for tools. **Nobody did it for actions.**
+
+### 8.3 What must change (Turk)
+
+Give the propose branch **parity with the read branch**. This is copying a proven in-repo pattern,
+not inventing one:
+
+1. **Add a model-facing `description` per action**, written for a model, naming the banker
+   vocabulary that maps to it — for `account.balance.adjust`, that a goodwill fee refund, a
+   reversal, or a credit back to a customer is this action with `direction: credit`.
+2. **Add a payload field schema per action** — per field: type, allowed values where closed
+   (`direction: [credit, debit]`), whether it is server-resolved (`accountId`, `userId`), and one
+   line of meaning.
+
+**Where this metadata must live — I changed my mind mid-ruling, and the first draft of this section
+was wrong about it.** I initially wrote "add it to `config/authority-policy.yaml` and project it
+through." I then traced the path instead of assuming it, and it is not a one-file change:
+
+| # | Site | Why it drops today |
+|---|---|---|
+| 1 | `PolicyDocument` action type (`PolicyLoader.cs`) | no such property |
+| 2 | `ActionView` DTO | no such property |
+| 3 | `PolicyController.cs:57-67` | **explicit whitelist** of six fields |
+| 4 | `_ActionSpec` (`loop.py:265-275`) | `@dataclass(frozen=True)`, fixed fields |
+| 5 | `_action_specs` (`loop.py:1436-1445`) | reads a fixed key list from each entry |
+| 6 | `_action_wire` (`loop.py:1449-1460`) | fixed dict |
+
+Six edit points, two services, two languages — and a hazard at the front of it: `PolicyLoader.cs:108`
+builds a YamlDotNet deserializer **without** `IgnoreUnmatchedProperties()`. On default settings an
+unmatched key throws, so adding `description:` to `authority-policy.yaml` before step 1 would fail
+policy load in the authority service. *(Labelled inference — I read the builder call, I did not run
+it. Turk must confirm before touching that YAML.)*
+
+**So: do NOT put it in `authority-policy.yaml`.** Put it in the copilot service's own config, a
+sibling of `config/copilot-tools.yaml` keyed by action id, merged onto the catalogue inside
+`_action_wire`. Three reasons, and the third is the one I care about:
+
+- It is **not policy.** It is presentation for the planner. Authority should not need a policy
+  version bump and a redeploy to reword a model hint.
+- It collapses six edit points to two, in one service, in one language.
+- **`authority-policy.yaml` is the file that governs the signing preimage.** The fewer reasons we
+  have to open it for cosmetic work, the better. This keeps a model-prompting change entirely out of
+  the service that owns hashing — which is the whole point of §8.3's standing constraint below, and
+  I would rather enforce it by distance than by discipline.
+
+If Turk prefers the authority route, that is arguable — but it must be argued in writing against
+those three points, and step 1's YAML hazard checked first.
+3. **Tell the model in the prompt that `objective_unmappable` is a last resort**, and that an
+   objective in plain banking language that plausibly matches an action's description should be
+   proposed, not refused. It already has the mirror instruction for subjects
+   (`intent_model.py:198-205`); this is the same instruction for verbs.
+
+**Standing constraint, restated because Turk will be editing an action definition and this is where
+it gets broken:** do **not** add anything to `hashFields` to achieve this. `hashFields` is the
+signing preimage. A description and a field schema are *metadata about* the action and must travel
+beside `hashFields`, never inside it. Adding a descriptive field to the preimage would change every
+payload hash and re-open canonicalisation for a documentation change.
+
+### 8.4 What I could not determine, and who should
+
+I cannot say from three runs whether 1-in-3 is the true rate, and I did not run the live model
+myself — I am ruling from two failure transcripts and the catalogue the deployed service serves.
+Two things would change my confidence and neither is expensive:
+
+- **Measure the baseline before the fix and after it**, same prompt, n ≥ 10. Without a before-number
+  we will not know whether the fix worked or whether we got a lucky three.
+- Note that **no existing test covers this prompt live against a real customer.**
+  `test_demo_prompt_acceptance.py:522` injects the decision (the model never runs);
+  `test_demo_prompt_live_model.py:614` runs it live but against `nobody-here's`, which is a *refusal*
+  case. The cloud suite is the first thing that ever asked the live model to map Brian's actual
+  sentence to an action. It found this on its third run. **That is the suite paying for itself, and
+  it is the argument for keeping it exactly as strict as it is.**
+
+## 9. Merge verdict — one blocker, and it is not the security finding
+
+Brian asked directly, so I will answer directly rather than hedge across three sections.
+
+**Blocks merge to main: §8, and only §8.** Not for safety — for honesty. The free-text planner is the
+headline capability of #332, and its propose path works on one run in three on the sentence from
+Brian's own demo script. Merging that to main records the epic as done, and it is not done. The
+distinguishing fact is that I now know **why**, and the fix is a description field and a field
+schema in a YAML file the repo already has the pattern for — hours, not another epic. When a blocker
+is that cheap, blocking costs almost nothing and merging costs a false record.
+
+**Does not block merge: §4.** I am downgrading my own "blocking" from the first version, and I want
+to be explicit that the downgrade follows Chuck's correction rather than resisting it. The guard at
+`TracePane.tsx:68` holds today; every server-authored refusal message is clean (§4.3); the intent
+model has no customer data; and the one live instance (§4.2) disclosed a username to a banker
+already authorised for that customer. Nothing unsafe is proven, and I will not manufacture a merge
+block out of a structural defect whose present-tense exposure I have just finished narrowing.
+
+**But §4 is required before two things, and both are near:**
+
+- **Before the demo.** Fabricated prose under an authoritative code, in front of an audience, on a
+  system whose entire pitch is that it does not make things up.
+- **Before §3.4 ships.** My own resolver-upgrade recommendation puts a directory read on the refusal
+  path. From that moment the model's choice of code is the only thing between a candidate set and
+  the screen. **§4 lands first, or §3.4 does not land.** If Turk takes §3.4 without §4, I reject it.
+
+**§6 stands unchanged and is not a merge blocker either:** non-disclosure remains unproven in the
+cloud, and it must be recorded as unproven — not as holding — until a cloud run gets past line 204.
+
+## Disposition
+
+| Item | Owner | Gate |
+|---|---|---|
+| **§8 action descriptions + payload field schema + last-resort prompt rule** | **Turk** | **🔴 BLOCKS MERGE TO MAIN** |
+| §8.4 measure propose pass rate, n ≥ 10, **before and after** | Linus | Blocks the claim that §8 is fixed |
+| §3.1–3.2 model vocabulary, read-branch prompt instruction | Turk | Blocks demo, not merge |
+| §4.4.1 enum on `reasonCode` at the schema | Turk | Blocks demo, not merge. **Blocks §3.4** |
+| §4.4.2 render server-authored messages only; stop echoing `{unknown}` at `:261` | Turk | Blocks demo, not merge. **Blocks §3.4** |
+| §4.4.3 server-side scrub | — | **Rejected.** Do not build |
+| §3.4 resolver upgrades a subject-bearing refusal | Turk | **Must not land before §4.4.1–2.** I reject it if it does |
+| §5.1 re-run corrected prompt, n>1 | Linus | Blocks the claim, not the merge |
+| §5.2 `ambiguous_subject` end-to-end test | Linus | Blocks demo, not merge |
+| §5.3 forged-code **and** disclosing-code contract tests | Linus | Blocks demo, not merge |
+| §6 non-disclosure unproven in cloud | — | Record as **unproven**. Not a merge blocker |
+| §7 `_invoke` conflates missing tool with missing customer | anyone next in the file | Non-blocking note |
+| `TracePane.tsx:68` guard | — | **Keep.** Defence in depth; should become unreachable, not deleted |
+
+**Proof vs inference, stated separately and updated for this revision:**
+
+*Proven by me, this session:* §2.2 and §2.3 are `kubectl exec` reads of the serving pod. §2.1, §3,
+§4.0, §4.1, §4.3, §8.2 are direct reads of source and config, including the full untruncated grep of
+every `showServerMessage` / `isNonDisclosing` / `NON_DISCLOSING` site that establishes
+`RunRefusalNotice` as the sole consumer. §8.1 is read from the Playwright failure artefacts.
+
+*Proven, by others, and I checked the artefact:* §2.4 (`test_run_terminal_status.py:519`). §4.2 (the
+`tx_casey_wire` transcript recorded at `test_demo_prompt_live_model.py:447-461`, whose mechanism I
+traced to `intent_model.py:261`).
+
+*Second-hand:* §2.5, corroborated by the string existing in exactly one place in the repository.
+
+*Inference, labelled:* §8.2's causal claim. The asymmetry between described read tools and
+undescribed actions matches the observed 3/3 versus 1/3 split exactly, and I regard it as the
+explanation — but it is an argument from correspondence, not a measurement, which is why §8.4
+requires a before-number.
+
+*n=1 or n=3, labelled:* §1's differential is one run per prompt. §8 rests on three runs.
+
+*Corrected:* the first version's §4(a) claim — that the UI renders server messages for the two
+non-disclosing codes — was **false**, and is retracted above rather than quietly edited away.
+# Security tests must assert the property, not a proxy for it
+
+**From:** Linus (Frontend)
+**Subject:** `tests/e2e/cloud/banker-copilot-cloud.spec.ts`, and the general rule
+**Status:** proposed
+**Commit:** `cdab02b`
+
+## What happened
+
+The subject non-disclosure assertion — the test that enforces Danny's ruling that
+a refusal must not turn the error channel into the customer-search API we
+declined to build — was written as:
+
+```ts
+expect(refusalText, 'a digit in a refusal is a count, and a count is a disclosure')
+  .not.toMatch(/\d/);
+```
+
+A cloud run failed it on the `30` in *"The planner model did not answer within
+30s"*. No candidate was disclosed. Nothing leaked. A model timeout was reported
+as a customer-data disclosure.
+
+## Why this is worse than having no test
+
+A proxy assertion degrades in both directions simultaneously.
+
+- **Its red is uninformative.** An unreachable model endpoint and a genuine data
+  leak render identically. Once a security assertion has cried wolf on infra, the
+  next red is discounted by whoever is on the run.
+- **Its green is luck.** It passed only because Turk happened to word the other
+  refusals without digits. Nothing enforced that. Danny named this precisely:
+  *non-disclosure held only because someone wrote careful strings; that is not a
+  control.*
+
+## The rule I propose we adopt
+
+**A test for a security property must be able to fail for that property and for
+nothing else, and must have been observed doing so.**
+
+Three corollaries, all of which this fix applies:
+
+1. **Assert the property, not a stand-in.** "Contains no digit" stands in for
+   "discloses no candidate identifier or count". Assert the real thing: the
+   actual usernames and names from `config/demo-dataset.json`, and a
+   count-*shaped* pattern (`\b\d+\s+(customer|user|account|record|match|...)s?\b`)
+   that cannot fire on a timeout, an amount or a date.
+2. **Import the enforcing module; never mirror its constants.** The spec now
+   imports `refusalCopy` and `isNonDisclosing` from the same `runOutcome.ts` that
+   `TracePane.tsx:68` enforces on. A second copy of `NON_DISCLOSING` in the test
+   would drift from the guard, and a disclosure test that has drifted from its
+   control is worse than none.
+3. **Infrastructure failures must be a distinct outcome.** `planner_model_unavailable`
+   now bails out by name and says so loudly. The run never reached subject
+   resolution, so there is no subject outcome to assert on. An infra failure and
+   a security failure must never render the same.
+
+Where it is available, prefer the **exact** form over the heuristic. For the two
+non-disclosing codes the UI drops the server message entirely, so the rendered
+notice must contain nothing but copy this repo authored. Subtracting our own
+strings and requiring an empty residue is not a heuristic at all — it is the
+property, stated exactly.
+
+## Proving it
+
+Both directions, against rendered `innerText` from a real browser, never
+synthetic strings (the residue rule is about the component's actual chrome; a
+version validated against hand-written text is just the next false positive):
+
+- **`leaky-refusal`** — the name rule, the count rule with every name redacted,
+  and the residue rule with both removed. 3 passed.
+- **`suppressed-refusal`** — the same leaking message under `subject_not_found`;
+  the guard drops it and the check passes *because nothing reached the screen*.
+  1 passed.
+- **`model-unavailable`** — the old `/\d/` is asserted to fail on this exact
+  text, and the new check is asserted not to. 2 passed.
+
+## A limitation of rule 2, stated plainly
+
+The count pattern matches `"3 customers matched"` but not `"matched 3"` or
+`"3 matching customers"`. For the two ruled codes this does not matter — the
+exact residue rule covers them completely, since no server text reaches the
+screen at all. For every *other* code the heuristic is the only layer there is.
+
+That asymmetry is itself an argument for the control living server-side: a
+pattern over prose will always be one phrasing behind a model.
+
+## The gap this surfaced, for Danny
+
+My first leak fixture used `subject_not_found` and proved nothing, because the
+guard suppressed it. I retargeted it to **`objective_unmappable`** — a code
+outside `NON_DISCLOSING` — carrying candidate names and a count in its message.
+It renders verbatim.
+
+That is not a contrivance for the test. It is exactly the gap Danny raised:
+**`reasonCode` has no enum**, so the model chooses the code, and a model that
+picks a disclosing code while writing candidate names into the message bypasses
+`NON_DISCLOSING` entirely. The UI guard cannot close it, because the guard is
+keyed on the very value the model controls.
+
+My view, offered not asserted: the control belongs **server-side**, where the
+planner's output is validated — an allow-list of codes, with anything unknown
+coerced to a non-disclosing default and its message dropped. A client-side
+backstop is cheap and I will build one if it is ruled to me, but it can only ever
+be defence in depth; by the time the message is in the browser it has already
+left the building.
+
+## Residual risk, stated rather than hidden
+
+A permanently unreachable planner model would leave the non-disclosure property
+**unverified** rather than failing. It shows in the report as a named skip, which
+is the trade I chose: a silent unverified is worse, but so is an untrustworthy
+red. If the team prefers, the alternative is a hard error on
+`planner_model_unavailable` in CI while keeping the skip locally.
+# Cloud e2e: gate by throwing, and the read-only refusal is citation validation
+
+**From:** Linus (frontend / e2e)
+**Date:** 2026-09-10
+**Status:** proposed
+
+## 1. A gate that skips is a gate that lies
+
+`tests/e2e/cloud.config.ts` drives the deployed system. It is gated on
+`BANKER_COPILOT_CLOUD_E2E=1` and, when unset, **throws before a browser starts**: exit 1,
+and the word "passed" appears nowhere in the output.
+
+I am proposing this as the team pattern for every gated suite. `test.skip` is right when a
+test genuinely cannot apply (`run-outcomes.spec.ts` selecting a stack mode). It is wrong
+for a gate on an *entire* suite, because a skipped collection exits 0 with "0 failed",
+which everyone — including us, repeatedly, tonight — reads as evidence that something was
+checked. The offline suite sat at 440 green while the first prompt of the demo script
+refused in the cloud.
+
+## 2. The read-only refusal is not a `userId` problem
+
+The working theory was that `Summarise casey's accounts and recent activity` refuses
+because we ask the model for a `userId` it cannot know. Measured against the deployed
+system, the prompt **succeeds about three runs in four**. The failures are two different
+things, on the same unchanged prompt:
+
+- `planner_model_unavailable` at step *Answer from evidence*.
+- `intent_contract_invalid`, message: *"The answer model cited evidence this run did not
+  gather: `['188470c5-…', '453a0541-…', 'bc4051ba-…', 'ef0e64f8-…']`"*.
+
+The second is **citation validation**. The run's evidence is keyed `lookup_customer`,
+`list_customer_accounts`, `list_login_audits`, `resolved_subject`; the answer model cited
+raw record GUIDs from inside those payloads. It is not hallucinating — it is naming the
+rows it actually used, in the wrong namespace, and the contract discards the whole reply.
+
+For Turk, not me. Two options I can see from the client side: accept ids that appear
+within gathered evidence, or state the legal citation keys in the answer prompt. A
+non-deterministic model against an exact-match id set will keep producing a one-in-four
+refusal on a demo's opening line.
+
+## 3. Two smaller things worth a ruling
+
+- **`/api/approvals?scope=all` answers 200 with the SPA's `index.html`.** Any client that
+  trusts the status code gets HTML where it expected a list. Authority is
+  `/api/authority/approvals`. A non-JSON 200 on an `/api/` path is a trap worth closing at
+  the edge.
+- **Nothing links a run to the approval it proposed, in the UI.** The harness auto-selects
+  the first pending signable approval on mount and never re-points the dock, so a banker
+  who watches a propose succeed must then find their own approval in a queue of 25
+  identically-labelled rows. My e2e works around it by matching the payload hash. Brian's
+  demo would hit this live. I can implement "select the approval this run created" behind
+  the existing `openApproval` — it needs Danny's ruling on whether re-pointing the dock
+  after *your own* run conflicts with the never-move-the-dock-under-a-reader rule.
+
+## 4. Addendum — refusal code drift after the identifier fix
+
+After `5b53da4` the unknown-customer prompt refused once as `objective_unmappable` rather
+than `subject_not_found`. It has since gone back to `subject_not_found`, so it is drift
+rather than a settled change, but it matters more than a naming preference:
+
+`TracePane` drops the server's message for `subject_not_found` and `ambiguous_subject`
+**and for nothing else**. That suppression is how Danny's non-disclosure ruling is
+enforced at the render rather than trusted to whoever wrote the string. An unresolvable
+customer that refuses as `objective_unmappable` puts the server's own sentence back on
+screen.
+
+Either subject-resolution failures should keep refusing with a subject code, or the
+suppression set needs to cover any code reachable from a subject lookup. Danny's call.
+Pinned by the last assertion in `tests/e2e/cloud/banker-copilot-cloud.spec.ts`.
+
+## 5. A goodwill REFUND was proposed as a DEBIT, and it came out L1
+
+2026-09-11, against the deployed system, from Brian's own L2 prompt verbatim:
+
+`Refund a $35 overdraft fee on retail's checking as goodwill` →
+`direction: "debit"`, reason *"Goodwill refund of overdraft fee"*, `baseRung L1 →
+requiredRung L1`, **one signer**, no escalators fired. Three runs of the identical prompt
+immediately before it produced `direction: "credit"` → raised to L2, two signers, by
+`credit-adjustment`.
+
+The authority record is internally consistent: a debit is not a credit, so
+`credit-adjustment` correctly did not fire. That is precisely why nothing downstream
+catches it. The dual-control guarantee on credits holds only as long as the model puts the
+right word in `direction`, and it does not always.
+
+The approval card does say "Take $35.00 off a customer's account" — Danny's headline work
+is what makes this readable at all. But it is reachable in one signature, from a sentence
+whose first word is "Refund".
+
+Not mine to fix. Flagging it as the single highest-value thing this suite has surfaced, and
+pinned by the first assertion in the L2 test.
+# Proposal: Decisions ledger size and archive threshold
+
+**Author:** Scribe  
+**Date:** 2026-09-10  
+**Status:** Proposal for Danny's ruling  
+**Context:** Current decisions.md is 388KB and growing; every agent spawn reads it. Need a calibrated size/age threshold that reflects spawn cost, not just historical completeness.
+
+---
+
+## Problem
+
+- **Spawn tax:** Every agent at spawn must read decisions.md to build context. A 388KB file is now a non-trivial cost.
+- **Age-alone threshold is uncalibrated:** The 30-day archiving rule has not fired yet. At current growth rate, it will not fire for another three weeks, by which time the ledger will exceed 500KB.
+- **This project moves fast:** A decision from three weeks ago is still actively referenced (e.g., Danny's §A3 on facts-map binding just landed in Turk's working tree). 30 days is not "old" here.
+
+## What belongs where
+
+**Active ledger (decisions.md):**
+- Decisions from the last 14 days (roughly two sprint cycles in this project)
+- Any decision actively blocking/unblocking current work (branch #332 is one example)
+- Authority rulings on architecture, security, or design that shape multiple future epics
+
+**Archive (decisions-archive.md):**
+- Decisions older than 14 days AND not actively cited
+- Completed one-off rulings (e.g., "approve this hotfix")
+- Decisions superseded by a newer ruling
+
+## Proposed threshold
+
+- **Trigger archival if:** decisions.md exceeds 300KB (avoiding 500KB+ bloat) **AND** the entry is older than 14 days
+- **Exception:** Keep entries younger than 14 days regardless of file size (do not prematurely archive active decisions)
+
+## How agents find archived decisions
+
+- Archive name is explicit: `decisions-archive.md`, not a date-stamped file
+- Agent context at spawn mentions both files: "Full team decisions → decisions.md; archived decisions (older than 14 days, size-pruned) → decisions-archive.md"
+- Grep/search remains available; archived content is still searchable by agent if referenced
+
+---
+
+## Open questions for Danny
+
+1. Is 14 days the right active window for this project's pace?
+2. Is 300KB the right size threshold, or should it be lower (faster archival, lower spawn cost)?
+3. Should we backfill the archive with the 4KB of pre-2026-09-04 decisions currently in decisions.md, or leave them?
+# Account ownership binding: derive, never existence-check
+
+**Author:** Turk (Backend Dev) · **Date:** 2026-09-11 · **Status:** implemented, `7fb7d05`
+**Implements:** Danny's `danny-propose-payload-resolution.md` §3.1, §3.2(c), §3.3
+
+## Lead answer
+
+**No. After this change a model-supplied account id cannot reach a different customer's
+money.** Not because it is checked and rejected, but because it is never a candidate.
+
+The negative control is `test_a_model_supplied_account_id_belonging_to_another_customer_is_refused`.
+I watched it fail first, and the failure is the exact payload Danny reported:
+
+```
+AssertionError: a $35 credit was proposed against an account the named customer does not own;
+payload={'accountId': 'acct_dana_checking', 'amount': '35.00', 'direction': 'credit',
+         'reason': 'Goodwill overdraft fee refund.'}
+```
+
+Fourteen tests now cover the boundary: the draft channel, the hint channel, the account-number
+channel, the legitimate case still proposing (a guard that refuses everything is an outage, not
+a fix, and would pass every other assertion), the ownership basis reaching evidence, `userId`
+staying out of `hashFields`, the no-customer disclosure case, and the lookup-unavailable case.
+
+## Why derivation and not a check
+
+Danny ruled it and I want the reason recorded, because the cheaper option is genuinely
+tempting: `get_account` already returns `userId`, so one `if` would have closed the reported
+defect in a line.
+
+A post-hoc check can fail open. It depends on the owner field being present in the response,
+surviving evidence projection, being named the same thing on both services, and being compared
+correctly. Any one of those going wrong silently restores the old behaviour, and the old
+behaviour is money reaching the wrong customer with a valid signature on it. Deriving from
+`list_customer_accounts(userId)` has no such failure mode: an account the customer does not own
+is not rejected, it is **never in the set**.
+
+The correct pattern already existed twenty lines below, in the `accountType` branch. All three
+branches now share it.
+
+## What I found while implementing it
+
+### 1. The sentinel collision, again — caught before shipping this time
+
+Derivation needs `list_customer_accounts`. `_invoke` returns `None` for **both** "tool not
+registered" and "the call failed", and neither means "this customer has no accounts."
+
+Collapsing them would tell a banker that an account they are looking at does not belong to
+their customer — a confident false statement manufactured by an outage. That is the identical
+shape as `_required_evidence` returning `[]` for "could not ask", and as the empty catalogue
+meaning "the bank cannot act". **Third time this session.** New refusal code
+`subject_lookup_unavailable`; the derivation still fails closed, which is right, but it now
+fails closed *honestly*.
+
+I am starting to think the general rule is: **any function that returns a collection must never
+use the empty collection to mean failure.** All three instances were that.
+
+### 2. Two different failures were wearing one refusal code
+
+"The sentence did not name an account" and "we resolved the customer and still could not pick
+an account" are different problems with different next moves for the banker. Both surfaced as
+`payload_unfillable`. The second is an ambiguous subject and now says so — **without listing
+the candidates**, because "Which account?" is a question and "Your Checking or your Savings?"
+is the customer-search API we declined to build. Pinned by a test that greps the frames for the
+account ids and numbers.
+
+### 3. The messages were engine vocabulary
+
+> *"The planner could not fill required payload field 'accountId' for account.balance.adjust."*
+
+An internal field name and an action id, in front of a banker, telling them nothing they can
+act on. Rewritten against Danny's governing test — would a banker say this to a colleague? The
+test asserts on the **messages**, not on `repr(frames)`: my first version swept up the
+transport's own `payload` envelope key and failed on the framing rather than on anything a
+banker reads. Assert the property, not a proxy for it.
+
+## §3.2(c) — the disclosure, server half
+
+The resolution now travels on the approval frame as `subjectResolution`, carrying what each
+identifier resolved **from**, what it resolved **to**, and the **basis**. Basis matters because
+"this account exists" and "this account belongs to the customer the banker named" are different
+claims, and an id alone cannot distinguish them.
+
+It is **display only** — beside `payload`, never inside it, the same treatment the assessment
+verdict already gets. `test_the_disclosure_never_enters_the_signed_payload` pins that the sent
+payload is still exactly `{accountId, amount, direction, reason}`. The preimage is
+byte-identical.
+
+Rendering is Linus's. I did not touch UI.
+
+## Two things for other people
+
+**For Linus — UI copy gap, same shape as last time.** `runOutcome.ts` has copy for
+`ambiguous_subject`, `subject_not_found` and `payload_unfillable`, all with
+`showServerMessage: true`, so the rewritten messages will render. There is **no entry for
+`subject_lookup_unavailable`**, so it falls back and the server message is suppressed — exactly
+what happened with `authority_catalogue_unavailable`. The reason still survives via the refusal
+artifact.
+
+**For Brian — `userId` in `hashFields`: my recommendation is do not.** Danny already ruled it,
+and I agree on the merits rather than by deference. The binding is now structural: the account
+is derived from the customer, so the payload cannot carry an account the named customer does
+not own. Adding `userId` to the preimage would make the signature cover a value that is now
+guaranteed by construction, while changing every hash for the action and putting a field in a
+risk-operations file to solve a copilot-service problem. The disclosure belongs on the card,
+which is where it now goes.
+
+## Corrections I accept
+
+My reported mechanism — "`_construct_payload` builds from the model's draft before the resolve
+step runs" — was **wrong**, and Danny disproved it by running the planner rather than reading
+it. Resolve is at `:1021`, propose at `:1104`, and the resolved ids already win by plain
+assignment. I read the ordering and got it backwards.
+
+The lesson I am taking is narrower than "read more carefully": **two hypotheses that predict the
+same symptom cannot be separated by reading.** `payload_unfillable` on `accountId` is equally
+consistent with "the resolver does not feed propose" and with "the prompt named no account".
+Running it separates them in one step. I had the harness to do that and reasoned instead.
+
+## Still open, and not closed by this
+
+- **The cloud `objective_unmappable` remains unexplained.** Danny raised its weight rather than
+  filing it, and he is right: fixing the ownership bind makes the refund prompt propose in this
+  harness and that is **not** evidence it will propose in the cloud. Two different failures on
+  one prompt. Do not let the tractable one stand in for the demo-critical one.
+- `reasonCode` has no enum; model-authored text carrying a customer username reached a banker
+  under a disclosing code.
+- The cloud ingress read timeout is still unverified — no Ingress manifest in `deploy/`.
+# Action metadata parity: built, measured, and shipped OFF
+
+**Author:** Turk (Backend Dev) · **Date:** 2026-09-11 · **Status:** ⚠️ **SUPERSEDED IN PART — the measurement below was void and its conclusion was
+wrong.** See the correction at the top. Danny caught it; the corrected numbers reverse it.
+
+---
+
+## CORRECTION, 2026-09-11 — the experiment was void and I reported the opposite of the truth
+
+The A/B below used `"Refund a $35 overdraft fee"`. The prompt the system is judged on is
+`"Refund a $35 overdraft fee on retail's checking as goodwill"`. The shortened one names **no
+customer and no account**, so neither arm could propose at all, and the model correctly
+declining to invent an account came out of my counter as a mapping regression.
+
+Re-run against the real prompt, 12 matched runs per arm, per-run labels retained:
+
+| prompt | expected | names only | with descriptions |
+| --- | --- | --- | --- |
+| refund — proposed at correct **L2** | L2, `direction: credit` | 10/12 | **11/12** |
+| refund — **wrong rung**, L1 via `direction: debit` | never | **2/12** | **0/12** |
+| `Reset casey's password` | `forbidden_action` | 12/12 | 12/12 |
+| `Summarise nobody-here's...` | `subject_not_found` | 11/12 | **12/12** |
+
+**Descriptions are better on every axis that matters.** The two wrong-rung runs both labelled a
+refund `direction: debit` — money going back to a customer described as money taken from one —
+which routes a customer refund below the dual-control rung that crediting money requires. That
+is the rung error Brian named, and naming the field's allowed values removed it. Cost: 1/12
+routed to a read instead of a propose. Refusals unregressed.
+
+**My recommendation is now ON.** The flag stays at `0` only because Danny reserved the wire
+decision; this is the input to it.
+
+**The lesson is the expensive part.** I wrote "shipped off on measured evidence, against
+expectation" and was pleased with the rigour. The rigour was real and the answer was still
+wrong, because I never checked that the prompt under the measurement was the prompt the system
+is judged on. A careful experiment on the wrong input is not a conservative error — it produced
+a confident recommendation in the opposite direction.
+
+---
+
+**Original status:** proposed, needs Danny's ruling
+
+## The finding, first
+
+Danny's diagnosis was right about the asymmetry and I confirmed it in code. It did not
+produce the effect it was expected to produce, and I would have shipped a regression if I
+had not A/B'd it.
+
+12 matched runs per arm, **one session, one process, one deployment**, only the metadata
+differing (`src/banker-copilot-service/tests/ab_action_metadata.py`):
+
+| prompt | expected | names only | with descriptions |
+| --- | --- | --- | --- |
+| `Refund a $35 overdraft fee` | maps to `account.balance.adjust` | **11/12** | **4/12** |
+| `Reset casey's password` | refuses `forbidden_action` | 12/12 | 12/12 |
+| `Summarise nobody-here's accounts and recent activity` | refuses `subject_not_found` | 9/12 | **12/12** |
+
+- Parity **fixed** the confabulation Danny predicted it would fix, on the subject path:
+  `nobody-here` stopped sometimes claiming `objective_unmappable` and refused correctly every
+  time.
+- Parity **did not regress refusals**, which was the risk I was warned about most loudly.
+- Parity **regressed action mapping on the headline demo prompt**, 11/12 → 4/12. The failures
+  scattered across `objective_unmappable`, `intent_contract_invalid`, `subject_not_found` and
+  `ambiguous_subject` — not one new failure mode, a general loss of confidence.
+
+So: `COPILOT_ACTION_METADATA_ENABLED` defaults to **0**. The file, the loader, the drift
+check and the boundary tests all ship and are all exercised offline; only the wire is off.
+Flipping one variable re-runs the experiment. **Danny rules on whether it goes on** — this is
+his design and my measurement, and they disagree.
+
+## The bigger finding, which supersedes the refund framing entirely
+
+**Neither arm ever proposed. 0/12 and 0/12.**
+
+Every correctly-mapped run then failed with:
+
+```
+payload_unfillable — The planner could not fill required payload field 'accountId'
+                     for account.balance.adjust.
+```
+
+`loop.py:1108` calls `_construct_payload(action, decision.payload_draft)` — the **model's**
+draft — and `_construct_payload` requires every `hashField`, including `accountId`. The
+resolve step is *planned* at that moment but has not *run*. So the model is asked for an
+account id that does not exist yet, and cannot exist yet.
+
+This is exactly the `casey` / `userId` defect Brian identified on the read branch, one layer
+down on the propose branch, and exactly Danny's §3.1 ruling: **hints are strings to match,
+never identifiers to use.** We are asking the model an impossible question and reading its
+inability to answer as a judgement about the bank.
+
+It is also why the refund prompt cannot be fixed by prompt or metadata work of any kind. No
+description of `accountId` helps a model that has never seen the account.
+
+**Recommendation:** this becomes queue item #1 — defer payload construction until after the
+resolve step, and have the planner inject resolved ids the way it already must for `userId`.
+I have not implemented it; it changes the ordering of the propose path and I would rather
+Danny sees the finding before I move his §3.1 boundary.
+
+## Two honesty notes
+
+1. **My earlier "8/12 propose, 4/12 objective_unmappable" is not comparable** to anything in
+   the table above. It came from a different harness on a different day with facts seeded.
+   Only the within-session BEFORE/AFTER comparison here is evidence.
+2. **This harness did not reproduce the cloud failure.** Brian saw `objective_unmappable` in
+   the cluster; offline, names-only gives `payload_unfillable` 11/12. I do not know why they
+   differ and I am not going to invent a reason. It could be seeded facts in the real
+   session, a different deployment, or a different model version. **Unknown, not explained.**
+
+## What the boundary is, and how it is held
+
+Danny ruled the descriptive metadata belongs to this service, not `authority-policy.yaml`.
+Agreed and implemented: `config/copilot-actions.yaml`, `apiVersion: copilot-actions/v1`.
+
+The risk of a new file in front of the model is that it becomes a second action set. It
+cannot:
+
+- `_action_wire` is only ever called with specs the **catalogue** produced. Proposability is
+  decided by `_is_proposable_action` from catalogue fields alone.
+- Rung, `hashFields`, `moneyFields` and `requiredEvidence` are read from the catalogue and
+  are not overridable from this file — a description file that could edit `hashFields` would
+  be editing what a banker's signature covers.
+- Field descriptions are filtered to the action's own `hashFields`, so we never describe a
+  value that cannot reach the payload.
+- `test_an_action_only_this_file_describes_never_reaches_the_model` puts an invented action
+  in the file, runs the planner, and reads back exactly what the intent model was handed.
+  Asserting the loader returns `{}` would not have caught the refactor that matters — one
+  that sources the action list from our file — because the loader would be happy.
+
+The 5 forbidden L3 actions are described **on purpose**. "No proposable action supports that"
+is only a true sentence if the model was shown enough to know it is true.
+
+## Startup behaviour, stated deliberately
+
+A missing or malformed file is a **startup error**, even with the wire off. Names-only is not
+a degraded mode anyone notices — it is a model telling a banker the bank cannot act, roughly
+one run in three, with nothing in the logs. Silent degradation is the exact defect shape this
+service removed from the catalogue fetch this morning; it must not be reintroduced by the fix
+for it. Loading even when disabled means the flag can be flipped without discovering the file
+rotted months earlier.
+
+Drift is checked at runtime against the **live catalogue**, not a static list, because the
+drift worth catching is risk-operations adding an action that this file does not follow. A
+static subset test also ships for the at-rest case.
+
+## Still queued, unchanged
+
+1. `accountId` payload construction ordering (above) — now ahead of everything else.
+2. `reasonCode` has no enum; model-authored text carrying a customer username reached a
+   banker under a disclosing code. Danny's control is to enum at the server boundary and
+   render only server-authored messages; he rejected scrubbing.
+3. The cloud ingress read timeout remains **unverified** — there is no Ingress manifest in
+   `deploy/`.
+# Turk — the catalogue fetch, the model budget, and what the credit prompt actually proves
+
+**Date:** 2026-09-11 · **Branch:** `332-beta` · **Status:** proposed
+
+## 0. Brian's first reading was wrong, and it matters which way
+
+> "`policy_catalogue` returns `{"actions": [], "available": False}` on **every** failure path …
+> A fetch failure therefore becomes 'the bank cannot do that' rather than a loud error."
+
+**An empty catalogue cannot surface as `objective_unmappable`.** `_run_intent_step` has always
+checked `catalogue.get("available") is False or not actions` *before* the model is consulted,
+and refuses on the spot. The free-text path fails **closed**.
+
+It was still saying the wrong thing — it reported `proposal_refused_by_authority`, whose
+banker-facing copy reads "Evidence was gathered and a proposal was constructed, but authority
+rejected it". Three statements, none true when a GET failed. A code that names the wrong actor
+sends whoever reads it to the wrong service.
+
+## 1. The defect was one floor down, and it failed OPEN
+
+`_required_evidence` returned `[]` when the catalogue could not be read. "This action requires
+no evidence" and "nobody could tell me what this action requires" are opposite statements, and
+they were the same value.
+
+Proven before it was fixed, by the test's own output:
+
+```
+propose_calls = [{'actionId': 'account.balance.adjust',
+                  'evidence': {},
+                  'agentAssessment': {'requiredEvidenceToolIds': [],
+                                      'recommendation': 'proceed',
+                                      'confidence': 0.88, ...}}]
+```
+
+A pinned-action run planned **no reads**, walked to the propose, and the primary agent
+recommended proceeding with confidence 0.88 on an empty evidence map. Authority would have
+rejected it, so this was never a hole in the money path — it was a hole in the truth path. The
+banker sees an evidence complaint for what is an outage.
+
+**Fix:** `_required_evidence` returns `None` (unavailable) as distinct from `[]` (nothing
+required), and the run refuses with a new code rather than planning.
+
+## 2. New refusal code — `authority_catalogue_unavailable`
+
+One code for both paths. It says what happened: the catalogue could not be read, so the Copilot
+cannot know which actions are inside its leash or what evidence they require.
+
+**This needs UI copy from Linus, and until it lands the banker loses a sentence.**
+`refusalCopy` falls back gracefully for an unknown code *but sets `showServerMessage: false`*,
+so the explanatory message is suppressed. The card will read "The run stopped without producing
+a result … unrecognised condition (authority_catalogue_unavailable)". Honest and diagnosable,
+but thinner than it should be. The full reason **is** still durable — the refusal artifact
+("Why this was declined") carries it, which is what that artifact was added for.
+
+`policy_catalogue` also now distinguishes and logs its three failure modes —
+`not_configured`, `http_status`, `transport_error`, `unparseable_response` — carrying the status
+code or the exception *type* only. Never the response body and never the bearer token.
+
+## 3. The model timeout: one number, per call, and a retry that is not a lie
+
+Four hardcoded `30.0` literals became `BANKER_COPILOT_MODEL_TIMEOUT_S`, default **60**.
+
+**60 is not a guess.** `test_demo_prompt_live_model.py` was already constructing its selector
+and answerer with `timeout_s=60.0` while the service shipped 30 — the one place we exercise a
+real model had been proving a budget the cloud never ran with. The suite now reads the deployed
+number instead of pinning its own.
+
+**Per call, not per phase or per run.** Each selector makes exactly one `wait_for`. A run makes
+several, so the run ceiling is their sum — which is how a read-only run reaches 59.8s against a
+"30s" message. The message is accurate about the call it describes; it simply never said so.
+
+**Measured, so the next argument has numbers:** laptop path, n=13, `gpt-5.4-mini` — `intent`
+3.5-8.6s, `answer` 4.9-12.7s. The cloud is slower and its per-call figure is **still
+unmeasured**; `elapsed_ms` logging per phase is now in place so it will not stay that way.
+
+**`ChatClientException` is retryable, and the evidence says why.** A live run logged it wrapping
+`APITimeoutError('Request timed out.')` at **18.6s elapsed inside a 60s budget**. That is the
+SDK's own request timeout — not our ceiling and not the endpoint being down — so raising our
+number would not have helped that run at all. One retry, **inside** the same `wait_for`, so
+"did not answer within Ns" stays literally true. Auth, invalid-request and content-filter
+exceptions are not retried: they are verdicts about the request and will fail identically.
+
+## 4. The credit prompt is the model, and I can now say so with a number
+
+`Refund a $35 overdraft fee` refused with `objective_unmappable` in the cloud. **Reproduced
+locally, 12 dedicated live runs, with the catalogue guaranteed present in the stub:**
+
+| outcome | runs |
+| --- | --- |
+| `propose account.balance.adjust`, L2, `credit-adjustment` fired | 8 |
+| refused `objective_unmappable` | 4 |
+
+Two further full-suite runs routed it to `read` instead. So roughly **one run in three is
+wrong**, which matches Brian's cloud observation of one pass in three exactly. The catalogue was
+in context every time. The capability is present, `agentMayPropose: true`, and
+`_is_proposable_action` admits it — both its required tools are registered. **The refusal
+sentence is false; this is confabulation.**
+
+Brian's question about `requiredEvidence: [get_account, list_account_transactions]` is answered:
+the plan **does** perform both reads before proposing. Asserted live (3/3) and pinned offline.
+
+### What I did NOT do, and why it is a decision rather than an omission
+
+`_action_wire` sends the model `id`, `displayName`, `baseRung`, `requiredEvidence`,
+`hashFields`, `moneyFields` — and **no description**. The model must infer that "refund a fee"
+is "Post a balance adjustment" with `direction: credit` from the display name alone. That is a
+plausible cause and an obvious-looking fix.
+
+I left it alone on two grounds:
+
+1. **It is Danny's call.** A description would have to come from `config/authority-policy.yaml`,
+   which this service does not own and must not copy. Brian's instruction stands: if the credit
+   path is missing something it needs, say so rather than add it.
+2. **It is a model-context change, and I have already paid for treating one of those as local.**
+   Last round I edited one paragraph of the intent prompt to fix one prompt; it went 6/6, and the
+   full corpus went **4/4 → 0/4** on two *unrelated* write prompts. A prompt is a shared global,
+   and so is the action catalogue. Any description change needs the full corpus A/B before and
+   after, not the one sentence it aims at.
+
+**Recommendation to Danny:** add a per-action `description` to the policy file and pass it
+through `_action_wire`, measured over the full corpus. Failing that, the demo should assume this
+prompt fails about one time in three.
+
+## 5. Counts
+
+- Offline: **453 → 470 passed**, 12 deselected, 0 xfailed. Hermetic, offline, no credentials.
+- New tests: 17. All 6 catalogue tests were watched failing against the old code first.
+- Live: 12 dedicated refund runs + 3 `dana_credit` runs + 2 full live passes.
+# Decision — per-invocation evidence keys, and the facts map stops merging across subjects
+
+**Author:** Turk (Backend Dev)
+**Date:** 2026-09-10
+**Status:** Implemented. Ruled by Danny (§A2/§A3/§A5/§A6, §B4); this records what shipped.
+**Epic:** #332, branch `332-beta`
+**Subject:** `src/banker-copilot-service/app/planner/loop.py`
+
+---
+
+## What changed
+
+1. **Evidence is keyed per invocation: bare tool id first, next ordinal on collision** — `X`,
+   `X#2`, `X#3`. Suffix-on-collision, never suffix-always, so every run that exists today keeps
+   byte-identical keys in its trace, its evidence bundle and any citation a model produced.
+2. **Bundle entries self-describe** — `toolId`, `arguments`, `subject`, `data`. The key
+   disambiguates; the entry explains. Two ledgers side by side with no labels is a worse artifact
+   than one ledger.
+3. **A multi-subject read plan populates no facts from tool results.** Detected two independent
+   ways: a repeated tool id, or one subject argument carrying two distinct values.
+4. **One projection at the boundary.** Everything leaving this service goes through
+   `_evidence_for_authority` — the `evidence` object on the authority proposal, and the
+   `gathered` set the ceiling matches `already_gathered` against.
+
+## Why #3 is the one that mattered
+
+`evidence[tool_id] = result.data` was last-writer-wins. `request.facts.setdefault(...)`, three
+lines later, was FIRST-writer-wins. Either rule alone is defensible; together they guarantee that
+on a two-subject run the two collections disagree about who the subject is, silently.
+
+`facts` binds the arguments of later tool calls and it travels to authority on the proposal body.
+So the failure mode was **an approval that names one customer and carries another's identifiers**,
+reached with no model involved. Observed, not theorised:
+
+```
+facts carried 'dana' out of a two-subject run:
+  {'query': 'dana', 'accountId': 'acct_dana_checking', 'matches': [{'id': 'usr_dana', ...}], ...}
+```
+
+## The boundary, and how I know it held
+
+A suffixed key on the authority proposal is `evidence_incomplete` on every propose run (fails
+closed, loudly). A suffixed key in `gathered` silently grants re-reads of tools already held
+(fails **open**, quietly). So the claim "the wire bytes are unchanged" needed evidence:
+`propose_calls[0]["evidence"]` was dumped for two propose prompts, `loop.py` checked out at HEAD,
+dumped again, diffed — identical. Then pinned with tests, because a diff run once protects nobody.
+
+**Not built, deliberately:** an integration test for `already_gathered` under duplicate keys.
+Duplicates are a read-plan-only phenomenon today — required evidence is one call per tool id, and
+the assess step does not run on read plans — so no reachable path produces one. The projection is
+defence in depth for a shape only a future propose plan could reach.
+
+## For the team
+
+- **`hashFields`, the canonicalizer and the preimage were not touched**, and did not need to be.
+  Danny traced the preimage: evidence is not an input to the approval hash.
+- **Both demo xfails are gone, both on Danny's rulings.** Prompt A built (one xfail → two passing
+  tests). Prompt B cut as an utterance and kept as a capability — its behaviour was already
+  correct and only the assertion was wrong, so it is now a passing test pinning `failed` /
+  `payload_unfillable` / no authority call, with the demo doc marking it as a refusal case.
+- **Counts:** default suite 438 passed / 2 xfailed → **449 passed / 0 xfailed**, 12 deselected,
+  hermetic and offline.
+
+## Open, for Danny
+
+The live comparison prompt is still non-strict xfail, and no longer for a harness reason. The
+model plans two customer lookups and then no history reads, because a read plan is chosen in
+**one shot** and it does not yet hold the account ids the history tool needs — it cannot read to
+resolve and then read again. That single-shot read-plan gap is now the only thing between this
+prompt and green.
+# Turk — The live harness models 9 of production's 15 tools, and it changes the answer
+
+**Status:** proposed
+**Supersedes the wire recommendation in:** `turk-action-metadata-parity.md` (already marked superseded), and the "turn it on" conclusion in commit `cbad379`.
+
+## The measurement
+
+Registering exactly one additional read tool in the live harness's fake registry —
+`get_account_by_number`, which `config/copilot-tools.yaml` has always carried and the harness
+simply never modelled — moved the refund prompt's propose rate from **7/12 to 2/12**.
+
+Controlled: same prompt, same n, same session, AFTER arm only. Present → 2/12. Removed → 7/12.
+Reproduced. This is not session noise.
+
+## What follows
+
+The model's action mapping is sensitive to the **read** tool surface, not only to the prompt and
+the action catalogue. The read-tool list is therefore a shared global with the same blast radius
+as the prompt — the third such global found this session, and the one I changed casually while
+fixing an unrelated test.
+
+The harness registers 9 of 15 tools. Unmodelled: `get_account_application`,
+`get_application_audit`, `get_flagged_transaction`, `get_transaction`, `get_transfer`,
+`list_account_applications`.
+
+**Every live-model number produced this session was measured against a bank 40% smaller than the
+one a banker uses.** Including both A/B results I reported with confidence.
+
+## Bearing on the unexplained local/cloud divergence
+
+This is the strongest candidate yet for why local results and cloud results disagree. I am **not**
+claiming it as the cause — that needs the gap closed and a re-measurement. I am claiming it is a
+confound large enough that no number from this harness is comparable with the cloud until then.
+
+## Decisions
+
+1. **Keep `get_account_by_number` registered.** It is in the real manifest; modelling it is more
+   faithful even though it costs propose rate. Fidelity beats a flattering number.
+2. **Pin the gap, do not close it in this change.** `tests/test_live_harness_fidelity.py` uses an
+   equality check, not a subset check, so the gap cannot widen silently, and names each missing
+   tool so it is legible in test output. Closing it needs executor fixtures for six tools and a
+   re-baseline of every live measurement — evidence work, and arguably Danny's call.
+3. **Withdraw the wire recommendation entirely.** `COPILOT_ACTION_METADATA_ENABLED` stays at `0`,
+   the arm actually flown in the cloud. Three runs have produced three answers; the third found a
+   confound larger than the effect. A third recommendation would be guessing with a clean
+   experiment wrapped around it.
+
+## For the team
+
+Before any future live measurement, answer all three with evidence: does the harness match
+production in **prompt**, in **tool surface**, and in **action catalogue**? Both of my wrong
+answers came from well-run experiments against an unchecked input.
+
+**Ask for Danny:** should the live registry be derived from `config/copilot-tools.yaml` rather
+than hand-maintained? That makes drift structurally impossible instead of merely pinned, but it
+changes every live number once, so the re-baseline is his call to time.
+# Live-model acceptance mode for the free-text planner — and three defects it found on day one
+
+**Author:** Turk (Backend Dev)
+**Date:** 2026-09-10
+**Branch:** 332-beta
+**Status:** proposed — items 3 and 4 need Danny; items 1 and 2 are fixed here
+
+## The gap Danny found, restated
+
+`src/banker-copilot-service/tests/test_demo_prompt_acceptance.py` (555 lines, 31 prompts)
+imports `IntentDecision` and constructs decisions directly. It proves routing, payload
+construction and allowlist enforcement. It cannot prove the model turns Brian's English into a
+sane decision, because no model runs. The free-text path — the headline feature of epic #332 —
+had never executed against a real model in CI, in the cloud, or on a laptop.
+
+## What I built
+
+`tests/test_demo_prompt_live_model.py`: the same corpus (imported, never copied, so the two
+suites cannot drift), run through the real `FoundryIntentSelector` and `FoundryEvidenceAnswerer`.
+
+- **Deselected by default**, not skipped: `addopts = -m "not live_model"` in `pyproject.toml`.
+  A default run reports "12 deselected", which cannot be misread as coverage. `pytest -q` is
+  still hermetic, offline and credential-free: **438 passed, 2 xfailed** before and after.
+- **Gated on `BANKER_COPILOT_LIVE_MODEL=1`.** Config resolution goes through the *shipped*
+  `planner_mode()`, so the suite proves the real configuration path rather than a test-local
+  copy that could agree with itself.
+- **A failed precondition aborts the run** (`pytest.exit`, non-zero exit code, missing piece
+  named). This matters more than it looks: my first implementation used `pytest.fail`, and with
+  no endpoint configured the run printed **"2 xfailed"** and nothing else — pytest treats *any*
+  exception inside an xfail test as an expected failure, so a totally unconfigured live run
+  looked fine. That is the exact failure shape this whole exercise exists to kill.
+- **Invariant assertions, not prose**: action id, resolved subject id, read/approval/refusal
+  routing, refusal code, and that no non-proposable action ever reached authority-service.
+  Direction and required rung are *printed, not asserted* — a live model may reasonably read
+  "refund a fee" as credit or debit, and the rung is derived from direction, so asserting it
+  would smuggle a prose judgement back in as an invariant.
+- **An anti-stub guard**: every live test asserts the selector was invoked exactly once and
+  that the decision carries Foundry attribution with a response hash. "No model ran" can never
+  be reported as a per-test verdict.
+
+## Defect 1 — every model call in this service was broken (FIXED)
+
+All four call sites passed the prompt **string** to `get_response`, whose signature is
+`Sequence[Message]`. A `str` satisfies that as a sequence *of single characters*, so the SDK
+walked the prompt letter by letter and raised `'str' object has no attribute 'role'` before a
+single request left the process. No test caught it because every test stubs the transport.
+
+This affected `intent_model.py` (x2), `primary_model.py` and `supervisor_model.py`. Fixed once
+in `model_call.as_chat_messages()`, using the framework's own public `normalize_messages`.
+
+**Blast radius, checked not assumed:** I downloaded the pinned wheels — `agent-framework-core`
+1.16.0 and `agent-framework-openai` 1.10.0, the versions the image installs — and confirmed
+`_prepare_message_for_openai` takes a `Message` and the client has no `isinstance(messages, str)`
+normalization. The defect was live in the deployed image, not just on my box. That means the
+primary assessor and the supervisor decider have been returning their unavailable/failsafe
+paths in the cloud too: **no model verdict in this service has ever been real.**
+
+**Evidence boundary, stated plainly:** I proved the fix live for the two `intent_model.py` call
+sites. The `primary_model.py` and `supervisor_model.py` fixes are the identical one-line change
+and are correct by inspection, but I did **not** execute them against a model. The regression
+guard I added to `tests/test_supervisor_model.py` refuses a bare string outright, so it cannot
+come back silently.
+
+## Defect 2 — the intent prompt hid the resolver from the model (FIXED)
+
+First live run: **6 passed, 4 failed, 2 xfailed**. All four write prompts failed, and the model
+said why in its own refusals:
+
+> "the available proposable balance-adjustment action requires an accountId and supporting
+> evidence, and no specific account is provided. I can't safely infer the target account."
+
+`ReferenceResolver` resolves `accountId`/`userId` server-side from `subjectHints` — but
+`build_intent_prompt` documented that only in the **read** paragraph. The propose paragraph told
+the model to draft the fields the action signs over, `hashFields` includes `accountId`, and so
+the model correctly concluded it must supply an id it could not know, and refused.
+
+I added the resolver's real contract to the propose paragraph: ids are resolved server-side from
+`subjectHints`, the accepted keys are `customer` and `accountType`, omit those id fields, never
+invent an id, and do not refuse merely because the objective names a person in words.
+
+This is not tuning-for-green. The evidence is the model's own stated reason, and the fix states
+a capability the planner already has. I changed the prompt **once** and did not iterate.
+
+After: **9 passed, 1 failed, 2 xfailed.** The four write prompts now resolve subjects correctly
+(`acct_retail_checking`, `acct_dana_checking`, `acct_casey_savings`, `acct_retail_savings`) with
+the amounts the sentences state.
+
+I did **not** touch the read-branch wording, `hashFields`, or canonicalization — Danny's call.
+
+## Defect 3 — the answer model cannot cite anything real (DANNY)
+
+`Why was casey's offshore wire flagged?` fails roughly 3 runs in 4:
+
+```
+intent_contract_invalid — The answer model cited evidence this run did not gather: ['tx_casey_wire']
+```
+
+The evidence bundle is keyed by **tool id**, so the only citable ids are
+`list_flagged_transactions` and friends. The model cites the transaction it actually reasoned
+about — which is the correct thing to cite and the one thing `parse_evidence_answer` rejects. A
+correct, well-cited answer fails the entire run.
+
+Second observed mode on the same prompt: `subject_not_found`, the model attaching `subjectHints`
+to a **read** plan and the resolver refusing them — Danny's §3.2, "the read branch is the
+unguarded one".
+
+This is the same root cause as the two-customer comparison xfail: **evidence keyed by tool id**.
+Danny owns that key, so I marked the prompt `xfail(strict=False)` with both failure modes and
+the exact error string in the reason, and changed nothing.
+
+## Defect 4 — the model sometimes reads to resolve, and there is no second turn (DANNY)
+
+`Adjust retail's savings by $26,000` proposes correctly about 2 runs in 3. In the third it
+returns a perfectly sensible `read` plan:
+
+> `answerGoal: "Resolve the customer named in the objective so the savings account can be
+> identified for a possible balance adjustment."`
+
+The planner is single-shot: a read terminates the run with an answer, so a read-to-resolve is a
+dead end and the banker gets no proposal. Making read-then-propose work is a loop-architecture
+change and therefore not mine. **I left this test asserting the demo requirement rather than
+xfailing it**, so the flake is visible on every live run instead of being absorbed. Brian should
+know the number: roughly 1 live run in 3, this prompt does not produce a proposal.
+
+Adding another sentence to the prompt might mask it. I declined: I had already used my one
+evidence-driven prompt change, and "there is no second turn" is a statement about the loop
+Danny owns, not about wording.
+
+## Numbers
+
+| Run | Result |
+| --- | --- |
+| Default suite, before any change | 438 passed, 2 xfailed |
+| Default suite, after all changes | 438 passed, 2 xfailed, 12 deselected |
+| Live, before the prompt fix | 6 passed, 4 failed, 2 xfailed |
+| Live, after the prompt fix | 8–9 passed, 0–1 failed, 2 xfailed, 0–1 xpassed |
+
+Live runs used the real Foundry project `serval-37447-project` with deployment `gpt-5.4-mini`,
+`az login` credentials, ~85s per full pass. The spread in the last row is model
+non-determinism, and it is exactly what defects 3 and 4 describe.
+
+## What I want from Danny
+
+1. Evidence keys that admit a real citation (defect 3) — same key as the compare xfail.
+2. A ruling on read-then-propose in a single turn (defect 4), or an explicit "the model must
+   never read to resolve a write subject" that we can enforce.
+
+Neither is urgent for 9/14 if the demo sticks to the prompts that now pass live, but Brian
+should be told that one write prompt in three needs a retry, rather than discovering it on
+stage.
+
+---
+
+## Addendum, 2026-09-10 — Brian's ruling on the $35 refund, and what it changed in the gate
+
+**Ruling:** the refund is a **credit**, so it fires `credit-adjustment` and is **L2**, not L1.
+The `L1 — one signer` heading in the demo-prompts doc was the error; `config/authority-policy.yaml`
+was right all along and is untouched.
+
+Corrected in the stubbed corpus, the live corpus and the demo doc. `tests/test_run_terminal_status.py`
+already used `direction: credit` for this refund, which is a quiet second vote that the doc
+heading was the outlier.
+
+**The part that matters for the gate.** My first live cut printed direction and rung rather than
+asserting them, on the reasoning that "refund a fee" could sensibly be read either way. That was
+wrong in an expensive direction: the English *does* fix the direction, the rung is derived from
+it, and so a model reading the refund as a debit would have produced an **L1** approval — a
+customer refund routed through less signature ceremony than crediting money deserves — and this
+suite would have printed it and gone green. The rule is now: **assert the rung always**, assert
+direction where the sentence fixes it, print it only where the sentence leaves it open.
+
+All four write prompts are L2 and all four now assert it — the two credits because crediting
+creates money, the two large adjustments because they are at or above the dual-control amount
+whichever way the money moves.
+
+**Live evidence:** 13 runs of the refund prompt against real `gpt-5.4-mini`; every proposal was
+`direction: credit` at rung L2 with `credit-adjustment` fired. The model never chose debit. It
+agreed with Brian and disagreed with the doc heading I had encoded.
+
+## Two things for Brian, not fixed here
+
+1. **The demo list now has no L1 example.** Both former L1 prompts are credits and therefore L2.
+   If the demo is meant to show a one-signer approval, it needs a prompt that is a debit under
+   the dual-control amount. Inventing one is a demo-script decision, not mine.
+2. **`## Escalation triggers` names the wrong escalator.** It says `large-flagged-amount`
+   (`config/authority-policy.yaml:424`, a different action) for `Adjust retail's savings by
+   $26,000`; `account.balance.adjust` actually fires `large-adjustment` (`:520`). Left alone —
+   correcting escalator names in the demo doc is Danny's lane.
+3. **`Adjust retail's savings by $26,000` is the least reliable prompt live** — roughly 2 runs in
+   5 produce a proposal; otherwise the model calls it "too vague to map safely", which is a fair
+   reading of a sentence naming no reason and no direction. I did not tune the prompt to fix it.
+# Turk — The read-only leash is structural, in two layers
+
+**Status:** proposed
+**Context:** Brian cut write actions from the demo scope. The propose path has never completed
+end-to-end in the cloud.
+
+## Why two layers
+
+There are two ways a propose step comes into being, and only one of them involves the model:
+
+1. the intent model choosing an action from the catalogue, and
+2. `_plan_steps` building a propose step from an `action_id`, with no model consulted — which
+   is what the scripted prompts do.
+
+A leash on the catalogue alone is a leash with a second door. Layer 1 moves every action into
+`forbidden`; layer 2 returns before `_run_propose_step`, the single place an approval record is
+created.
+
+**Both were verified to bite.** Disabling layer 2 failed the scripted test with a real approval
+reaching authority — the second door was open in practice, not in principle.
+
+## Where the switch lives
+
+`COPILOT_PROPOSE_ENABLED`, default **off**, in `app/config.py`, wired to `docker-compose.yml`
+and `deploy/kustomize/base/configmap.yaml` (the Deployment already has `envFrom` on it).
+
+Deliberately **not** `agentMayPropose` in `config/authority-policy.yaml`. That file is
+risk-operations' statement about what the agent is *permitted* to do; this flag is our statement
+about what this *build offers*. Two different claims, two different files, so neither is mistaken
+for the other when writes come back.
+
+Polarity is fail-closed: an unset variable in a new environment leaves the leash on. There is a
+test pinning that, because the safe state should not depend on someone remembering.
+
+## The refusal code is the deliverable
+
+A write objective reaches `forbidden_action`, not `objective_unmappable` and not the
+catalogue-unavailable refusal. Both refuse; they are not interchangeable. "I can't find anything
+that does that" is the model reporting a guess about the catalogue as a fact about the bank —
+the confabulation shape Danny traced. "I won't, and here is where that authority lives" is the
+agent knowing where its authority ends. The second is the demo.
+
+## A defect found while proving it
+
+Live, `Credit dana $120 for a duplicate charge` returned **kind=read, completed**. No approval,
+so the leash held on money — but the banker asked for a credit and got a summary with nothing
+saying anything had been declined. Shown an empty action list, the model reinterpreted a money
+movement as a question about money.
+
+Seventh instance of this session's shape: a failure rendered as a confident answer.
+
+Fixed by saying it in words rather than leaving the model to infer meaning from `[]`, including
+an explicit "do not turn an action request into a read". **Conditional on the action list being
+empty**, so the leash-off prompt is byte-identical to the one the corpus was baselined against,
+with a test pinning that — a prompt is a shared global and editing one has cost us twice.
+
+Measured after: **12/12 write prompts refused with `forbidden_action` across 3 live runs.**
+Read prompts: 8/8 across 4 runs, plus one `offshore` flake in a fifth.
+
+## What this parks
+
+The cross-customer account-binding fix (`7fb7d05`) is now behind an unreachable path. It is
+committed, not abandoned, and `turk-account-ownership-binding.md` still stands. **Setting
+`COPILOT_PROPOSE_ENABLED=1` re-arms money movement**, and should not be done to make a test pass.
