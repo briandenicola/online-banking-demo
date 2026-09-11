@@ -163,6 +163,18 @@ tasks:
   #
   # Health-probe access lines are filtered out. If a follow shows nothing, that is an idle
   # service, not a broken pipe — its recent output was all probes.
+  #
+  # JSON=1 emits one compact JSON object per line on stdout, with the header on stderr, so
+  # the output pipes straight into jq:
+  #
+  #     JSON=1 task cloud:logs | jq 'select(.level == "warning")'
+  #     JSON=1 task cloud:logs | jq -s 'group_by(.correlation_id) | map({id: .[0].correlation_id, n: length})'
+  #     JSON=1 task cloud:logs:follow | jq 'select(.event | test("Model call"))'
+  #
+  # Lines the services emit that are NOT structlog JSON — uvicorn access lines, the httpx
+  # "HTTP/1.1 429 Too Many Requests" line — are wrapped as {"event": ..., "logger":
+  # "unstructured"} rather than dropped. The 429 line is the clearest evidence the model
+  # call was real, and a JSON mode that quietly discarded it would be lying by omission.
 
   logs:
     desc: 'Show recent logs for a service, pretty-printed (default: banker-copilot-service; pass a deployment name to override)'
@@ -171,6 +183,16 @@ tasks:
       - |
         svc="{{.CLI_ARGS}}"; svc="${svc:-banker-copilot-service}"
         if kubectl get deployment "$svc" -n {{.NAMESPACE}} -o jsonpath='{.spec.template.spec.containers[*].name}' 2>/dev/null | tr ' ' '\n' | grep -qx "$svc"; then CSEL="-c $svc"; else CSEL="--all-containers"; fi
+        if [ -n "{{.JSON}}" ]; then
+          # Header to stderr so stdout stays pipeable. Non-JSON lines are wrapped rather
+          # than dropped: the raw "HTTP/1.1 429" line is evidence, and a filter that
+          # silently discards evidence is worse than no filter.
+          echo "━━━ $svc — last {{.SINCE}} (JSON) ━━━" >&2
+          kubectl logs -n {{.NAMESPACE}} "deployment/$svc" --since={{.SINCE}} $CSEL 2>&1 \
+            | grep -vE 'GET /(healthz|readyz)' \
+            | jq -R -c '. as $line | try fromjson catch {event: $line, logger: "unstructured"}'
+          exit 0
+        fi
         echo "━━━ $svc — last {{.SINCE}} ━━━"
         if command -v jq >/dev/null 2>&1; then
           kubectl logs -n {{.NAMESPACE}} "deployment/$svc" --since={{.SINCE}} $CSEL 2>&1 \
@@ -190,6 +212,13 @@ tasks:
       - |
         svc="{{.CLI_ARGS}}"; svc="${svc:-banker-copilot-service}"
         if kubectl get deployment "$svc" -n {{.NAMESPACE}} -o jsonpath='{.spec.template.spec.containers[*].name}' 2>/dev/null | tr ' ' '\n' | grep -qx "$svc"; then CSEL="-c $svc"; else CSEL="--all-containers"; fi
+        if [ -n "{{.JSON}}" ]; then
+          echo "━━━ following $svc (JSON) — Ctrl-C to stop ━━━" >&2
+          kubectl logs -n {{.NAMESPACE}} "deployment/$svc" -f --tail={{.TAIL}} $CSEL 2>&1 \
+            | grep --line-buffered -vE 'GET /(healthz|readyz)' \
+            | jq -R -c --unbuffered '. as $line | try fromjson catch {event: $line, logger: "unstructured"}'
+          exit 0
+        fi
         echo "━━━ following $svc — Ctrl-C to stop ━━━"
         if command -v jq >/dev/null 2>&1; then
           kubectl logs -n {{.NAMESPACE}} "deployment/$svc" -f --tail={{.TAIL}} $CSEL 2>&1 \
