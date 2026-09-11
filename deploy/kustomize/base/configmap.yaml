@@ -49,21 +49,32 @@ data:
   COPILOT_SESSION_TTL_SECONDS: "3600"
   COPILOT_PLANNER_MAX_ITERATIONS: "12"
 
-  # The read-only leash. "0" means the Copilot proposes no actions for approval.
+  # The propose leash. "1" means the Copilot can propose actions for approval, which is the
+  # normal operating state and what the demo requires.
   #
-  # Write actions were cut from the demo scope: the propose path never completed end-to-end in
-  # the cloud, so it ships disabled rather than half-proven. Set here rather than in the
-  # Deployment because a scope decision belongs in the one object every environment reads, and
-  # because a knob nobody can turn is not a knob.
+  # This was briefly set to "0" and should not be again without reading the rest of this
+  # comment. The scope cut it implemented was MIS-SCOPED: the intent was to make the harness
+  # FREE-TEXT OBJECTIVE ENTRY read-only, because that is the surface where the model loops and
+  # confabulates. What was built instead was a global kill switch that closes the propose path
+  # for every surface at once.
   #
-  # A write objective still reaches the model, and still gets the DESIGNED refusal —
-  # forbidden_action, in policy language — not "objective unmappable" and not a catalogue
-  # error. The agent saying where its authority ends is the demo, not a degraded path.
+  # The consequence is not subtle and is not confined to free text. Approvals can only be
+  # created by driving the real propose path — `demo:seed` drives it deliberately rather than
+  # writing rows into the store — so with this at "0" the banker and supervisor task queues are
+  # EMPTY and stay empty, `demo:seed` exits 3, and the dual-control story cannot be shown at
+  # all. The structured and measured task flows go with it.
   #
-  # Setting this to "1" re-arms money movement. Do not do it to make a test pass: the propose
-  # path has open cross-customer binding work behind it (see
-  # .squad/decisions/inbox/turk-account-ownership-binding.md).
-  COPILOT_PROPOSE_ENABLED: "0"
+  # The leash mechanism itself is sound and stays in the image: a write objective gets the
+  # DESIGNED refusal — forbidden_action, in policy language — not "objective unmappable" and
+  # not a catalogue error. It is the BREADTH that was wrong. A correctly scoped cut gates the
+  # free-text entry path only and leaves the queues alone. Until that exists, this stays "1".
+  #
+  # Standing caveat, unrelated to the above: the propose path carries cross-customer account
+  # binding work. The resolver now derives the account from the resolved customer's own
+  # accounts rather than trusting a model-supplied id, but `subjectResolution` is emitted to
+  # the client and has no UI consumer, so signers are still not shown whose account resolved.
+  # See "account ownership binding" in .squad/decisions.md.
+  COPILOT_PROPOSE_ENABLED: "1"
   COPILOT_UPSTREAM_TIMEOUT_MS: "8000"
   # Per-CALL ceiling on a model round trip, not a per-run one. This was four hardcoded
   # 30.0 literals in the service, and two of three cloud runs died on them. It is here
