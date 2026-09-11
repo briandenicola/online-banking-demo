@@ -3,6 +3,14 @@ version: '3'
 env:
   LOCAL_INFRA_DIR: infra/local
 
+includes:
+  demo:
+    taskfile: ./Taskfile.demo.yml
+    dir: '{{.ROOT_DIR}}'
+    internal: false
+    vars:
+      DEMO_TARGET: local
+
 tasks:
   default:
     desc: Show available tasks

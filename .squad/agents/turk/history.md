@@ -2169,3 +2169,1511 @@ attribute my `ToolRegistry` does not have, so it fails on `AttributeError` and c
 matter what I do. I fixed the defect anyway and proved it in my own suite. A strict-xfail marker is
 only as good as the assertion under it — a test that fails for the wrong reason looks identical to
 one that fails for the right reason, and the marker makes it look intentional.
+
+---
+
+## Phase 3 — supervisor fan-out, co-sign queue, batch L1-only (branch `squad/332-phase3-supervisor`)
+
+The headline was the blind construction, and the thing I'm proudest of is that the independence is
+in the **type signature**, not the prompt. `build_supervisor_input(intent)` takes one parameter —
+the banker's intent — and there is no channel for the proposer's reasoning to travel through.
+Passing the primary output is a `TypeError`, not a lint warning. When I tamper-widened it to accept
+`(intent, primary)`, the structural test failed on the signature before the token-scan even ran.
+Two guards, one break, both caught it. The structural one is the one that must never be deleted; the
+token-scan is insurance, and it's only honest over a corpus where the primary's tokens are
+distinctive (I seeded `QURKLE9`, `approve-immediately`) — an earlier fixture shared the word "wire"
+between primary and intent and reported a false leak. A token-scan is only as good as the
+distinctness of its corpus. That's in the blind-construction decision record.
+
+**Fan-out engine** (`app/planner/fanout.py`, ~23KB): the L2 second opinion is the one mandatory
+fan-out; everything else is opt-in per trigger, and every limit comes from `harness-limits.yaml`
+loaded fail-closed — depth ceiling, tool budget, wall-clock, concurrency. The supervisor sub-agent
+re-runs the evidence tools with args bound from the banker's RAW inputs, never the primary's
+evidence cache — a genuine second draw. Agreement is computed only after both opinions are in hand.
+The harness still boots `writeTools: 0`; the engine spawns a read-only reviewer and cannot propose
+or execute. 177 tests green in `banker-copilot-service`, 298 in QA's `banker-copilot-service.Tests`
+(ledger promoted — the `absent:*fan*out*` entry is gone and replaced by real coverage in my suite).
+
+**Co-sign queue seniority** — closed a magic `2`. Both repos filtered the AwaitingSupervisor queue
+on `awaitingSeniority >= 2`; that's a seniority integer in code AND a duplicate of `supervisor`'s
+seniority in the ratified hierarchy, reachable via `rungs.L2.cosignerRoles`.
+`ResolveAwaitingSeniority` now derives it: `policy.MinimumSeniorityAmong(policy.Rung(L2).CosignerRoles)`.
+Three fail-closed gates — loader refuses empty `cosignerRoles` at startup, `MinimumSeniorityAmong`
+throws rather than returning 0, and the repo throws if the bar arrives null. New suite
+`SupervisorQueueSeniorityTests` (5 tests) observes the RESOLVED query via a recording repo so the
+assertion is on the derived value, not downstream filtering. Tamper: hardcoded the bar back to `2`,
+`Bar_follows_the_policy_when_the_cosigner_role_changes` caught it (expected 1 for `[banker]`, got 2).
+Decision record written.
+
+**Batch L1-only — the interesting non-change.** I started to close Livingston's F3-1 (loader doesn't
+reject a `batchable` action that resolves to L2) by adding a loader guard folding base rung with
+escalating rules. Built fine. Then I reverted it, because his own oracle told me to: *"The dangerous
+reading of 'L1 only' is 'baseRung L1 only'. That is NOT the invariant... the batch must key on
+`RequiredRung`, never `BaseRung`."* An L1-base action that escalates to L2 by amount
+(`transaction.flag.review`) is legitimately batchable for its L1-resolved instances; the sign-time,
+per-item, all-or-nothing check in `BatchSigner.SignBatch` refuses the escalated ones. My loader guard
+would have forbidden the safe case to defend against one the runtime already catches — and it's a
+second guard that would drift from the first. Duplication is the bug; I declined to add a duplicate.
+F3-1 stays a config tripwire, which is the right level. Decision record explains it in full, including
+that I deliberately marked no action `batchable` and added no batch-sign endpoint (none is demanded).
+
+**Co-sign `mustDifferFrom` and payload-mutation void path** — confirmed present and green from
+Phases 1-2 (`SeparationOfDutiesTests`, `SupersedeSignatureVoidTests`), keyed on set-membership
+per Danny's ruling, not a distinct-count. I did not touch those production paths, so no tamper
+obligation; reporting them proven-present, not proven-by-me.
+
+**Shared-workspace scars this phase:** a concurrent agent renamed `fanout_limits.py`→`limits.py`
+mid-session (adapted imports); the `ApprovalService` ctor gained `INotificationSink`+`ILogger` from
+another agent and broke `authority-service.UnitTests` until I threaded `new NullNotificationSink()`
+into `TestHarness`. And the stale-build gotcha bit twice — once on Python `.pyc` after an `mv`
+revert, once on .NET after an `mv` revert kept a test red until I `touch`ed the source. **After any
+mv-based tamper revert, touch the file or the cached build lies to you.** Always re-read before edit,
+rebuild to verify.
+
+**Final state (PROVED):** authority-service builds clean; UnitTests 126, Tests 224,
+banker-copilot-service 177, banker-copilot-service.Tests 298 — all green. Every guard I added was
+tamper-tested and reverted. Did NOT commit; work left in tree for the coordinator.
+
+### Phase 3 follow-up — the coordinator's finding: execution-time re-verification was unpinned
+
+The coordinator upheld my F3-1 ruling and asked me to add the strongest form of the argument to the
+record: **there is no privileged batch path at all.** A UI "batch" is N independent
+`sign(item.id, item.payloadHash)` calls (`BatchApprovalCard.tsx:105`, verified — a loop, each item
+its own hash). An L2 item in a batch is refused by the *ordinary per-approval sign check*, the same
+one a single card hits. Batching is a UX affordance, not an authority path, so the loader guard I
+declined to add would harden a door onto the same room. Added to the batch decision record.
+
+Then the real finding, in code I didn't author: **both execution-time re-checks in `ExecuteAsync`
+were correct but unpinned.** `POST /{id}/execute` is its own endpoint, so the attack is propose L2 →
+sign once yourself → execute directly. Line 520 (`SignaturesCollected < RequiredSigners`) and line
+532 (`MustDifferFrom.Contains(SignedBy)`) are the only refusals — and the coordinator proved both
+could be deleted with all 350 tests green. Dead code by every existing test's reckoning, guarding
+the crown-jewel invariant, externally reachable.
+
+Wrote `ExecuteReVerificationTests.cs` (3 tests) driving `/execute` DIRECTLY with states the
+sign-time front door can never produce. The construction: build a genuine L2 approval to `signed`
+via the real harness (real hash, real signatures under the shipped key), then surgically mutate a
+copy served through a one-approval fake repo:
+- **insufficient signatures** — null slot 1, so `SignaturesCollected` drops to 1 while status stays
+  `signed`. Asserts `insufficient_signatures` AND `broker.Calls` empty AND execution never claimed.
+- **separation of duties** — set slot 1's `SignedBy` to the proposer (which its `mustDifferFrom`
+  names) and **mint a genuinely VALID signature** for that identity. This is the faithful attack:
+  the signature verifies, so ONLY line 532 refuses — not signature verification, which is a
+  different guard. Asserts `separation_of_duties` + broker empty.
+- **positive control** — same fixture un-mutated executes cleanly, so the refusals are the checks
+  talking, not an artifact of the hand-built document.
+
+Every assertion is on the **downstream side effect** (`broker.Calls`), not just the status code, so
+a future refactor that returns 409 *after* executing still fails — the coordinator's explicit ask.
+
+**The diagonal (tamper record):**
+- Break L520 alone (`SignaturesCollected < 0`) → insufficient-signatures test RED, SoD test GREEN.
+- Break L532 alone (`false && ...`) → SoD test RED, insufficient-signatures test GREEN.
+Each test pins exactly one guard. Under the L532 tamper the SoD execution proceeded all the way to
+the broker (the signature was valid), which is the proof that 532 — not signature verification — is
+the sole thing refusing it. Reverted both; UnitTests 129 green, authority-service.Tests 224 green.
+(Stale-build gotcha again: `touch` after every `mv` revert.)
+
+**On `fanout.py` being unwired:** I agree with the coordinator — no route reaches
+`build_supervisor_input` yet, and that is Phase 3 scope, not a defect. The engine is built, mirrors
+the oracle name-for-name, and is unit-proven; wiring a route into it is Phase 4. Flagging it plainly
+rather than dressing it up: today it is exercised only by its own tests.
+
+---
+
+## Phase 3 (wiring, pulled forward) — supervisor at a live route + §4.2 conformance
+
+Coordinator pulled the wiring forward for Brian's demo. Two corrections to the brief, reported
+plainly because honesty beats a tidy story:
+
+1. **The wiring was ALREADY committed (`6b0db49`), not absent.** `lifespan.py` builds the
+   `FanOutEngine` and injects it into `Planner`; `loop.py` calls `run_second_opinion` at
+   `requiredRung == "L2"`; that calls `build_supervisor_input`. The route reaches it. The premise
+   "nothing reaches it" was stale. I did not pretend to newly connect it.
+
+2. **The real gaps were downstream of "connected":**
+   - **Event payloads did not conform to §4.2.** The engine emitted the right *kinds* but
+     payloads the UI's typed reducer does not read: the `SecondOpinion` rode in
+     `subagent.completed.secondOpinion` and `approval.updated.agentAssessment`, neither of which
+     exists in the contract. The flagship opinion would have been invisible in the UI.
+   - **The caller boundary was unpinned.** Blind construction was proven only against
+     `build_supervisor_input` DIRECTLY. The caller (`run_second_opinion` building the intent) was
+     the unheld attack surface — "a guard protected only in aggregate erodes silently."
+
+**What I changed (`fanout.py`, `loop.py`, tests):**
+- `approval.updated` now emits `{request: ApprovalRequest}` with the supervisor appended to
+  `opinions[]` as an `AgentOpinion` (`role:'supervisor'`) — the §4.2 home ("supervisor present iff
+  requiredRung === 'L2'"). `SecondOpinion→AgentOpinion` is an adapter, not a fork: recommendation→
+  verdict enum (proceed→APPROVE, hold→DECLINE, else CONDITIONAL), counter-argument→rationale,
+  re-run tool ids→citedEvidenceIds. Agreement is NOT emitted — §4.2 derives disagreement
+  client-side from the two opinions[] (don't duplicate the derivation).
+- `subagent.spawned/progress/completed` reshaped to their EXACT §4.2 payloads. Dropped
+  entityIds/toolIds from the spawn frame (contract has no home; the §6.3 propose_action exclusion
+  is pinned directly on `subagent_tool_ids()` in the blind-construction suite, a better place).
+  Threaded `parent_step_id` from `loop.py` for `SubagentSpawnedPayload.parentStepId`.
+
+**New: `test_supervisor_boundary.py` (4 tests, pins the CALLER).** Drives the REAL Planner +
+FanOutEngine, seeds the primary's work product (evidence read + `agentAssessment.summary`) with a
+sentinel absent from the banker's request, captures the exact `SupervisorInput` via a decider spy,
+asserts the sentinel is nowhere in `spawn.serialize()` (and the banker's ids ARE — anti-vacuous).
+Subtlety recorded: `approval.updated.request` legitimately carries the PRIMARY's assessment (shared
+object), so the frame-scan is scoped to the supervisor's appended opinion, not the whole request.
+
+**Decider default = `deterministic_decider`** (no model, no Foundry). `lifespan.py` passes no
+decider arg. THIS is what fires in the demo. Real model injectable via ctor. Limits still fail-
+closed from `config/harness-limits.yaml`; no literals in the engine. Boot still `writeTools: 0`.
+
+**Tamper diagonal (each break → exactly one red, reverted):**
+- A: intent framing from `approval.agentAssessment.summary` → `..._spawn_input_carries_no_primary_token` RED.
+- B: `loop.py` gate widened to `requiredRung in ("L1","L2")` → `..._l1_does_not_spawn...` RED.
+- C: emit `approval.terminal state=executed` at confidence>=1.0 → `..._never_advances...` RED.
+- D: supervisor opinion rationale from primary summary → `..._no_supervisor_authored_frame_echoes...` RED.
+
+**Verified:** `banker-copilot-service` 188 passed (incl. 4 new + reshaped fanout tests);
+`test_zero_write_tools.py` 31 passed (boot contract intact). Only Python touched — no C# project.
+**Believed, not proved:** that Linus's actual TS reducer renders `opinions[]` unchanged — I matched
+§4.2 field-for-field but did not run the UI. Flagged in the decision record as a contract question
+for the coordinator if the UI disagrees; I did NOT fork the envelope on a guess.
+
+---
+
+## Phase 3 addendum — envelope arbitration (shipped TS wins) + role defect
+
+Coordinator arbitrated the `approval.updated` envelope after verifying `0392969`. My §4.2-shaped
+emit was right against the DOC and wrong against the CODE — the doc had drifted. Shipped
+`types.ts:445` is `{approval: Approval}` with `Approval.assessments: AgentAssessment[]`; the word
+`opinions` is nowhere in `types.ts`; the reducer reads `event.payload.approval`. My
+`{request:{opinions:[]}}` would have been dropped on the floor — the flagship opinion invisible,
+the exact failure relocated one layer out. **Lesson reinforced: "believed, not proved" against an
+unrun UI is where this bit me. Matching a prose doc field-for-field is not proof; the executable
+contract is.**
+
+Applied per ruling (delete a side, don't reconcile):
+- `approval.updated` → `{approval: updated_approval}`, supervisor appended to `assessments[]` as an
+  `AgentAssessment` (`_supervisor_assessment`, was `_supervisor_agent_opinion`).
+- **Role defect:** `AgentAssessment.role?` is optional and `ApprovalCard.tsx:382` renders a
+  role-less assessment AS THE PRIMARY. Set `role: "supervisor"` explicitly + unconditionally.
+- Corrected doc §4.2 to the shipped shape with a "code is authoritative" note.
+
+New guards, tamper diagonal: N (emit key `approval`→`request`) → field-name contract test red;
+Role (`del` the role key) → role-pin test red. Reverted → **190 passed**.
+
+**FLAG left for coordinator:** live SSE render still incomplete — `copilotStream.ts` applies no
+`toApproval` and `putApproval` replaces, so `event.payload.approval` must already be client-shaped;
+the backend holds the wire shape and `approval.required` (loop.py) shares the gap. Demo uses
+`demoFixture.ts` so not Monday-critical. Did NOT synthesise the primary assessment here (that is
+`approval.required`'s job — would fork responsibility).
+
+---
+
+## Phase 3 addendum 2 — the envelope fix is ONE MAPPER (Arch Y), and a disclosure-gate near-miss
+
+Coordinator pulled the live-render gap forward and proposed the backend emit a client-shaped
+`Approval` with `assessments[]` (Arch X). Both their premises were RIGHT (approval.required
+`{request}` throws in the reducer at `p.approval.id`; `putApproval` replaces wholesale so the
+supervisor update erased the primary). But I found the third fact that moves the FIX LOCATION and
+pushed back with code:
+
+**`ApprovalCard.tsx:625-639` derives the disclosure gate from `approval.payload.filter(f=>f.material)`.**
+Those material flags come from `authorityWire.flattenPayload` + FORMAT_HINTS. So a backend emitting
+client-shaped approvals must either emit `payload:[]` — which makes `disclosureSatisfied` silently
+`true`, DEFEATING "the single mechanism worth defending hardest" — or port flattenPayload's
+safety/currency logic into Python (dup sin). Both are the epic's documented failures.
+
+`toApproval` is the ONE mapper ("one mapping function, one place"); the REST path uses it 6×; the
+SSE path (`copilotStream.ts:toEnvelope`) is the ONLY consumer skipping it — THAT asymmetry is the
+root defect. Fix (Arch Y): backend emits the WIRE approval body; the supervisor (never persisted —
+zero write tools) rides as `agentAssessment.supervisor`, a shape `toApproval.toAssessments` already
+tolerates. Role becomes STRUCTURAL (from the key), eliminating the role defect by construction
+rather than pinning it. This reverses addendum 1's client-`assessments[]` emit; the instinct stood,
+the shape moved to keep one mapper.
+
+Companion (Linus): `copilotStream.ts` must run `toApproval` on approval.* events — the live path is
+NOT backend-only (without it the card crashes on `payload.filter`). Monday is fixture-safe.
+
+Golden artifact: `tests/fixtures/copilot-wire-envelopes.json` — real backend emit (primary APPROVE
+vs supervisor DECLINE), generated by the real planner+fanout, written/asserted by
+`test_golden_wire_envelopes.py` (missing→throws; regen `COPILOT_REGEN_GOLDEN=1`). New module
+`app/planner/approval_view.py` is the ONE place the service shapes `agentAssessment` (explicitly NOT
+a client-shaper; no payload flattening). Diagonal: required-key→key test+golden; drop-primary→
+survival+field-name+role+golden; agentName drift→golden only. 193 passed.
+
+LESSON banked: absent-field-as-benign nearly rode in on the demo's own service path (empty payload →
+disclosure gate silently satisfied). Same shape as the role defect, one layer deeper.
+
+---
+
+## Phase 3 check 4.3 — supervisor trace scope: the answer was "no defect", the value was three unheld guards
+
+Asked whether the blindness guarantee leaks on the AUDIT path (`approval.updated` combines both
+assessments into one persisted document). **It does not**, and I said so rather than inventing work:
+`fanout.py` awaits `supervisor.work(...)` and only THEN builds `updated_approval`. The combined
+record is assembled after both opinions exist. No read-back channel exists either — the supervisor
+holds a reader and a decider, is handed no approval/stream/sink, and `config/copilot-tools.yaml`
+declares **no tool that reads a trace**. Repeat invocations are safe for the same reason: the
+approval feeds only the post-hoc comparison, never the spawn. `/runs/{id}/trace` is owner-only via
+`_load_owned_session` (404, not 403).
+
+FAIL-vs-LIE: neither. An audit record that could NOT show both positions side by side would fail at
+its only job. **Zero production code changed** — `git diff app/` empty.
+
+**The real yield was the diagonal.** Answering the question surfaced three guards correct in logic
+and held by NO test:
+1. Ordering — guaranteed by statement order inside one function and nothing else.
+2. **The supervisor's own child trace `<run>::supervisor` was read by no test at all.** Every
+   existing sentinel scan reads `run_1`. Seeding the child's `run.started.intent` with the primary's
+   assessment — the most natural "make the trace readable for reviewers" edit there is — was
+   invisible to all 234 tests. Tamper B → exactly one red.
+3. **`get_run_trace`'s ownership check could be deleted with the full suite green**, letting any
+   authenticated banker read any other banker's plan, every read value, and both assessments. Tamper
+   C → exactly one red. THAT one would have made the demo lie, and it is Brian's stated
+   architecturally-visible class ("no user with god rights").
+
+`tests/test_supervisor_trace_scope.py` (3 tests, each anti-vacuous: the combined frame really
+exists, the child trace really has a `tool.completed`, the OWNER really gets 200). Epic §6.4.1 is
+the posture statement. 237 passed.
+
+Recorded one deliberate channel so it is not a later surprise: `reader_tool_ids` derives from
+`primary_evidence.keys()` — the read tool IDS the action required. Ids, not values; arguments bind
+from the banker's raw inputs. Bounded, and now written down.
+
+**LESSON banked (generalises past this service): where a document is assembled from two
+independently-formed inputs, the security property is the ORDERING, and ordering held only by
+statement order inside one function is not held.** Also: the honest answer to "is X a
+vulnerability?" is sometimes "no" — and the investigation still pays, because the question makes
+you read the paths nobody tests. The trace-auth gap was found while answering a different question.
+
+---
+
+## Supervisor read-only observability — per-endpoint grant, hierarchy untouched
+
+Supervisors needed background detail on L2 approvals without becoming admins. Granted 13 GET
+endpoints across ai-service, chatbot-service, user-service and prompt-eval-service. `supervisor`
+still implies only `banker`; `role-hierarchy.yaml`, `RoleHierarchy.cs` and the ratified-ladder
+tripwire were never opened.
+
+**The ASP.NET fact that shaped everything:** `[Authorize]` on a controller and on its actions is
+**ANDed, never ORed**. You cannot widen ONE action of an admin-gated controller — only loosen the
+class and narrow each action back. Which means after loosening, a NEW mutating action added without
+an attribute **inherits the permissive gate**. Absent-attribute-as-permission — the same shape as
+the role defect and the disclosure gate, third time this epic.
+
+So I split by stakes rather than applying one pattern:
+- **user-service**: MOVED `login-audits` to a new `AdminObservabilityController` (`[Route("api/admin")]`,
+  URL unchanged). `AdminController`'s blanket admin gate **never touched**. I was not willing to make
+  permissive the default on the class owning `promote` and `DELETE users/{id}`. The split is
+  structural — a mutator can't get the supervisor gate without being physically moved into a class
+  called `Observability`.
+- **prompt-eval-service**: mostly reads, lower stakes → class widened, mutators narrowed back, and
+  the fragility closed by an ENUMERATING test instead of trusting the next author.
+
+**Mechanism: one named symbol per language** (`BankingRoles.ObservabilityRead` in shared/Auth;
+`require_observability_read` in FastAPI). Not a policy (DI plumbing in every Program.cs, buys
+nothing — the role list IS the policy). Not inline strings (cheapest to write, defensible only in
+aggregate). A named symbol can be **enumerated by a test**; that is the whole reason to pay for it.
+
+**Test-shape lesson, sharp one:** `AdminSecurityTests` states in its own comments that "in unit
+tests, authorization attributes are not enforced." So calling `PromoteToAdmin` as a supervisor and
+watching it succeed proves NOTHING about the gate. **Reflection over `AuthorizeAttribute` metadata
+is the only thing in this .NET codebase that actually asserts who may call what.** Same instinct in
+Python: walk the router, assert a property of the whole surface, so a route added tomorrow is
+covered without anyone coming back here.
+
+**Diagonal — 6 tampers, 6 catches, all reverted.** The one that matters is #1: adding `supervisor`
+to `AdminController`'s class attribute is a SINGLE-WORD edit handing an L2 co-signer `promote` and
+`DELETE users/{id}` — and it left all 55 prior user-service tests green. Others: mutator added to
+the read-only controller; admin attribute dropped from `PromptsController.Delete`; the one-word
+`require_admin`→`require_observability_read` swap onto a PUT (3 reds, each for its own reason);
+`banker` widened into the Python tuple; `banker` widened into the shared C# constant.
+
+**Near-miss worth banking:** my first router scan used `app.routes`, which on this FastAPI version
+does NOT flatten included routers — it yields an opaque `_IncludedRouter` wrapper. The scan found
+ZERO routes and the read-only assertion passed **vacuously**. It was caught only because I had
+written the allow-list assertion as EQUALITY in both directions, which failed on "approved but not
+opened". A one-directional "nothing bad is present" assertion would have shipped green and defended
+nothing. Enumerate against the router, and always assert the haystack is non-empty.
+
+**Verified:** ai-service 143, chatbot 58, banker-copilot 237, user-service 56, prompt-eval 38,
+authority-service 224 + 129. All green. UI untouched (Linus owns it; his edits were in the tree and
+I left them alone).
+
+**Flagged, not mine:** `src/shared/Auth.Tests` fails 12/32 **at HEAD** — confirmed in a pristine
+`git worktree` at `9073b78`, identical before and after. `TokenScopingTests`/`RegistryGuardTests`,
+JWKS/key-material. That is the suite defending #334's "verify is not mint" property, and nobody owns
+it right now.
+
+### Capability scopes were declared, validated, and enforced nowhere (332-beta)
+
+The Banker Copilot could not complete either L2 action. Four read tools point at `/api/admin/...`
+and the harness calls upstream with the **requesting banker's own token**, so evidence gathering
+403'd, the planner never proposed, no approval existed, `requiredRung` was never `L2`, and the
+mandatory fan-out — the entire supervisor feature — never fired. A role gate on a *read* silently
+disabled a security control three layers away.
+
+**The seam already existed.** `config/authority-policy.yaml` declares `capabilityScopes`, and
+`PolicyLoader.ValidateCapabilityScopes` validates them — including rejecting any scope that names
+a seniority-0 role, which is how `admin` stays out. But nothing ever *enforced* a scope at a
+request path. Lesson worth generalising: **a config section with a validator and no consumer is
+not a half-built feature, it is a false assurance.** It reads like a control in review. Grep for
+the consumer before believing a declaration does anything.
+
+**Design that came out of it.** Gate a read on the scope it serves, not on the word in its URL.
+That unified two requests that would otherwise have grown two mechanisms — Brian's supervisor
+observability tabs and the banker's agent gathering evidence both reduce to "who may perform this
+read". `admin` is added *alongside* a scope as a platform grant, never *into* it.
+
+**Mirror, don't distribute — but test the mirror.** The services hold their own copy of the role
+tuples rather than loading policy at runtime (over-engineering for a demo). A mirror drifts in
+one dangerous direction: the ratified document says a role was removed while the running service
+keeps admitting it. Both languages now parse the YAML in a test and fail on disagreement. Cheap,
+and it keeps the document authoritative without runtime plumbing.
+
+**The path prefix was the actual defect.** `/api/admin/flagged-transactions` is a risk read. The
+URL encoded an *audience*, the audience changed, and the gate had been written from the folder
+name. Did not rename — four services, nginx, UI, e2e, no demo benefit — but noted it, because the
+next person will gate the next endpoint off its path too.
+
+**Found a worse bug while fixing this one, and did NOT fix it.** `GET
+/api/transactions/account/{accountId}` filters by the caller's own userId, so a banker reading a
+customer's account gets `200 []`. Two of the three actions will now clear the 403 and then gather
+no evidence *with a success status*. A 403 fails loudly; an empty 200 makes an agent reason
+confidently about evidence it never saw. Different seam (ownership, not role), architecture-level,
+escalated to Danny. Fixing it inside a role-gate change would have been the wrong shape.
+
+**Tamper diagonal (5, all reverted).** Widening `PUT .../override` to the read scope → 3 reds.
+`admin` into a scope tuple → 2 reds. Re-narrowing an endpoint back to admin (the outage
+regression) → 2 reds. `banker` onto `AdminController`'s class gate → 2 reds. Dropping `banker`
+from `IdentityRead` → 3 reds. The assembly-wide "every banker-reachable action is a GET" test
+earned its keep: it caught the god-rights edit that per-controller tests would have missed.
+
+**Postscript — the authorization fix was necessary and not sufficient.** Livingston proved a second
+gate downstream: `PolicyEvaluator.EvidenceComplete` (`PolicyEvaluator.cs:211`) opens with
+`if (evidence[key] is not JObject supplied) return false`, and three read tools return bare arrays.
+No field rename can satisfy an object-shaped requirement with an array, so Gate B blocks 6 of 6 L2
+actions while Gate A blocked 4. Two config files, each individually reviewed, mutually
+unsatisfiable, with no test spanning the seam between them.
+
+Two lessons I want to keep. First: **when a fix is proven necessary, check separately whether it is
+sufficient** — I had verified my endpoints returned 200 and inferred the flow would proceed, which
+is exactly the reasoning error of testing one gate and claiming the pipeline. Second, and more
+general: every defect found on this repo today has been *unheld across a file boundary* rather than
+wrong within a file. Guards here are strong locally and absent at seams. That is where to look
+first, not last.
+
+Declined to expand scope into Gate B — different problem, deserves sizing rather than bolting onto
+an authorization change. Recorded my read (adapter, declared projection, cross-document test) and
+escalated the project-vs-relax choice to Danny as a narrow architectural call.
+
+## 2026-09-08 — Gate B ruling: evidence contract architecture
+
+Gate B (evidence completeness validation) has been ruled on by Danny. Full ruling: `docs/design/gate-b-evidence-contract-ruling.md`. Turk owns implementation of the declared-projection adapter across `config/copilot-tools.yaml`, `executor.py`, and the C# seam test in `authority-service.UnitTests`. Livingston owns fixture validation and measurement of the two-tool subset (`get_account`, `list_account_transactions`). Both gates (A + B) must pass before the co-signature feature can execute in production.
+
+## Learnings — 2026-09-08, implementing the Gate B evidence projection
+
+Implemented Danny's ruling: the declared four-verb `evidenceProjection`, two tools only, plus the
+C# seam test over the real `PolicyEvaluator`. 288 Python / 135 C# tests green in a clean worktree.
+Four things worth keeping.
+
+**1. A boundary you can only document, you will eventually cross. Make it unspellable.**
+§R5 says a projection may only assert a subject the call was scoped by. I could have written that
+in a comment. Instead I made `bind` accept only parameters listed in the tool's own
+`parameters.required`. `list_login_audits` has `required: []`, so the fabricated `userId` now
+aborts startup with the reason in the error text. The rule that stops the lie and the rule the
+loader enforces are the same rule. Prefer that shape whenever the ruling gives you a principle
+rather than a case.
+
+**2. Tamper-testing found two holes in my own guards — both of the "absent by coincidence" kind.**
+Deleting a projection from the manifest left the C# suite green, because it was reading the
+committed fixture: the artifact had outlived the declaration that produced it, and was still
+happily attesting to it. And unwiring `project(...)` from `executor.py` left the *entire* Python
+suite green with the whole fix inert, because every test exercised the engine or the fixtures
+directly and nothing held the call site. **When you add a mechanism, test the wiring separately
+from the mechanism.** Generalising: a checked-in artifact must never be the only witness to the
+declaration that generated it, and a test suite that only ever calls a component directly proves
+nothing about whether production calls it.
+
+**3. When a ruling names a location, implement the intent and flag the deviation out loud.**
+§R7 said "apply the declared projection in the C# test". Done literally, that is a C# copy of the
+four-verb grammar — the third drifting document §R7 exists to prevent, just moved. I split it: the
+Python test proves the fixture's `projected` is what the shipped engine produces; the C# test feeds
+it to the real `EvidenceComplete`. Each runs one real component, joined by one artifact, neither
+re-implements the other. I wrote the deviation into the decision file rather than letting it read
+as compliance.
+
+**4. My own note from this morning came back around.** "Every defect found on this repo today was
+unheld across a file boundary." Both holes above were exactly that, in the code I wrote to fix
+boundary-unheldness. The habit is not "add a test", it is "name the boundary, then ask what would
+still pass if the thing on the other side vanished."
+
+Held the line on the success signal: I proved the projection satisfies both config documents
+against a **hand-built** recorded shape, and I did not claim Gate B is open. The fixtures are
+derived from the services' C# response types, not captured live — the only runs that could have
+captured them are the runs that refused. If `account-service` does not return `id`/`balance` at the
+top level, Gate B stays shut and my seam test would not know. Named that as the largest residual
+risk rather than reporting green.
+
+---
+
+## Learnings — run terminal status (`run_6f19b2eb4ec54a20`, 2026-09-08)
+
+**1. A default of "completed" is not a value, it is a promise every future path inherits.**
+`Planner.run` opened with `status = "completed"` and lowered it only where somebody remembered
+to. That is not a bug in the propose path — it is a bug in the *shape*. The tool path was
+correct by diligence, not by construction, so the two paths diverging was a matter of time.
+I replaced the default with `_RunOutcome`, which starts having achieved nothing and requires
+success to be *earned* (a proposal admitted, or none ever expected). A terminal path added
+next month now inherits failure. The fix is the inversion; the propose branch was a symptom.
+
+**2. "Recoverable" describes the error, not what was done about it.**
+The tempting one-liner was to fail the run when `recoverable` is false and keep it alive when
+true. That reads the *severity of the error* as if it were the *outcome of the run*, and it
+would have rebuilt the exact bug one field over: a 422 that nobody actually recovered from
+still leaves the banker with no proposal, and `completed` would still be a lie. So status
+turns on `proposal_admitted` alone, and the recoverable/unrecoverable distinction is kept
+where it is actionable — on the `run.error` frame and at the marked seam where a repair loop
+would go. Both kinds fail today, for visibly different, separately traceable reasons.
+
+**3. The lie had a second home, and grep found it, not reasoning.**
+`start_run`'s `finally` block hardcoded `run.status = "completed"` — in a `finally`, so even a
+planner that *raised* was recorded as completed, and that is the field `GET /runs/{id}`
+returns to any harness or dashboard. Two places independently deciding "did this succeed?" is
+how one of them comes to disagree. The route now reports what the trace said
+(`RunStream.terminal_status`), and a missing terminal frame reads as failed rather than as
+success-by-omission.
+
+**4. Tamper-testing caught a guard that was correct for the wrong reason.**
+Removing the abort flag from the tool-failure branch left all 300 tests green. Not because
+the test was weak in an obvious way — because a tool step only exists when the run has an
+`action_id`, so the *propose* clause was silently carrying my tool-failure assertion. The
+test passed without ever exercising the field it appeared to guard. Same species as the
+`project()` unwiring that left 285 tests green last week: **a passing test tells you an
+outcome held, never which code held it.** Only tampering distinguishes them. I traced the
+genuinely reachable path (an evidence-only run that raises mid-plan) and held that instead,
+and left the tool branch's flag in with a comment saying out loud that it is defence in depth
+rather than letting it read as load-bearing.
+
+**5. Two of my first three "second surface" tests would have survived a full revert.**
+They asserted on `RunStream.terminal_status`, which is upstream of the route I actually
+changed. Reinstating the hardcoded `"completed"` in `sessions.py` would not have failed them.
+I added an end-to-end test that starts a run through HTTP, has authority-service refuse it,
+and reads the run back the way Livingston's harness does. The rule I keep relearning: put the
+assertion downstream of the changed line, then prove it by breaking that line.
+
+---
+
+## Learnings — the primary assessment and the evidence ceiling (#332, Danny's §P ruling)
+
+**1. The defect was a default, and both defaults lived downstream of the missing thing.**
+`_run_propose_step` sent `{"summary": request.objective}` as the agent's assessment, and
+`primary_wire_assessment` then defaulted the absent verdict to `"proceed"` and promoted the
+banker's own objective into the `rationale`. Neither line is wrong on its face; together they
+render "Primary agent — PROCEED" with a justification, for an agent that never assessed
+anything. Nothing errored. Brian's test answers itself: it **LIES**. What I keep taking from
+this: a default is how an absence becomes invisible, and the place to look for a lie is not
+where the value is used but where a missing value is quietly replaced.
+
+**2. "Budget, not branch" is a real distinction and it changed how I wrote the code.**
+The ruling forbids `if ceiling_enabled:`. My instinct was to guard the additions call at
+budget 0 — it does nothing, why call it? Because then stage 1 would exercise a path stage 2
+does not, and the whole staged measurement would be attributing a delta to the wrong change.
+So the budget is a **number that bounds a loop**, everything runs at 0, and the refusals it
+produces are the measurement. I held it with an AST walk that fails if any planner module
+writes an `if` whose test mentions the budget, because the comment saying "do not branch here"
+is exactly the comment a future edit deletes.
+
+**3. A test that a fixture could satisfy proves nothing about the code I changed.**
+Third time. The trap here was obvious once named: hand the planner a ready-made
+`PrimaryAssessment` and every assertion passes with the assessor unwired. So the test double
+stubs **only the network** — `build_prompt` and `parse_primary_assessment` really run — and
+the anti-inertness test asserts a distinctive rationale in the body sent to
+authority-service, downstream of the wiring. I also made the golden-wire stub **echo what was
+proposed** instead of returning a canned assessment; the golden now moves if the assessor
+stops working, which a canned block would have hidden.
+
+**4. Danny found a leak in a module that does not mention the thing it leaks into.**
+`FanOutEngine` derived the supervisor's reads from `sorted(primary_evidence.keys())`. Correct
+only by coincidence — the required set and the gathered set were equal — and the coincidence
+ends the instant discretionary evidence lands in that dict. The lesson is about *how* it
+would have broken: no diff touching the supervisor, no test failing, blindness defeated by a
+**data-flow change elsewhere**. Filtering inside the engine would have been a promise; I
+deleted the parameter, so an edit that wants the primary's evidence back has to change a
+signature, and a test asserts that signature. Promises are not controls; signatures are.
+
+**5. Agreement had to become tri-state before the primary could fail.**
+`_primary_recommendation` ended in `or "proceed"`. Harmless while the primary had no verdict
+at all — and a manufactured position the moment it can fail, because the supervisor's honest
+`hold` then renders as dissent between two agents, one of which never spoke. `not_comparable`
+is the third arm, excluded from every denominator. Same species as #1: the boolean was fine
+until absence became possible, and nobody would have noticed because the wrong answer looks
+like a normal answer.
+
+**6. Two refusal reasons that would have been one, and the measurement needs both.**
+A request refused on the final permitted pass is `iterations_exhausted`, not
+`budget_exhausted`. Conflating them reports unspent budget as spent, and stage 1 exists to
+produce exactly that number. Cheap to get right up front, invisible to get wrong.
+
+**7. Ten tampers, ten named tests.** Every guard broken, confirmed a *named* test failed,
+reverted, confirmed green: the defaulted verdict, the summary→rationale promotion, a dropped
+citation, the manufactured primary position, branching on the budget, a budget in the prompt,
+the supervisor read list re-pointed at the primary's evidence, dropped refusals, the two id
+lists merged, model-supplied arguments, `converged` defaulted true, a mislabelled refusal, an
+emptied quarantine, and the model consulted before the required reads. The one that taught me
+something: interpolating the budget into the prompt was caught by the "prompt never mentions
+the budget" test but *not* by the byte-equality test, because the caller did not yet pass it.
+The weaker, earlier guard was the one that fired. Both are worth having.
+
+### Audit follow-up (Danny, `979bd37` — GO for stage 1)
+
+**Correction to what I wrote above.** Byte-equality did not "fail to catch" the budget
+interpolation. That tamper was an *incomplete edit* — the caller never passed the budget — so the
+prompt genuinely was identical at both budgets and the assertion was correct to pass. The
+mention-scan caught the *intent* one move before the wiring existed. That is layering working, not
+a hole, and I mislabelled it. A tamper that does not reach the code under test proves nothing about
+the guard that stayed green. **Check the tamper actually landed before drawing a conclusion from
+which test fired.**
+
+**`x.get(k) or fallback` cannot tell absent from empty.** `_is_bindable` read
+`schema.get("required") or list(properties)`, so `required: []` — every parameter optional, the
+tool binds with no arguments — fell through to the conservative branch. Three shipped tools have
+that shape. It errs closed, so no authority consequence; the damage is that the recorded *reason*
+was false and a real request dropped out of the only count stage 1 exists to produce, in the
+direction that makes the ceiling look less needed. **A defect with no failure and no lie to the
+banker can still corrupt a measurement, and the measurement is what sets the next limit.** My
+fakes all set `required` equal to their properties, so they could never have seen it — the guard
+now runs against the shipped manifest.
+
+**A guard nobody has seen fail is a guard nobody has tested.** Danny would not accept "assume it
+can fail" for the byte-equality assertion. The comparison is now named once and run twice: real
+builder, and a deliberately budget-dependent one where the same assertion must trip. His reasoning
+is worth keeping: cheap guards (a word scan, an AST walk) are early and *specific*, and specific
+means defeatable by paraphrase; the expensive guard fails on the **effect regardless of route**.
+Do not delete a backstop because a cheaper guard usually fires first.
+
+**Caught another "absent by coincidence" on myself** while refactoring that test: the equality
+helper became a coroutine and the caller did not `await` it, so for one run it asserted nothing and
+the suite was green. Third time this class has bitten me. The tell was a warning count that moved
+from 2 to 3 — **watch the warning count, not just the pass count.**
+
+**A written standard came out of the fan-out fix** (third time this move has paid): *when a control
+depends on a value never reaching a place, delete the parameter rather than filter it. A filtered
+channel is a promise; an absent parameter is a fact.*
+
+**All three departures from the ruling were accepted, and the reason is transferable:** each one
+*narrowed* something the text left wide, and each named the line it was departing from. Narrowing
+with the citation attached is auditable. Widening, or silence, is not.
+
+### Banker reads a customer's account (ruling §B, `3b23945`)
+
+**When the data has to be shaped so a defect does not show, the workaround has become the design.**
+The seeder gave the *banker* the accounts. That looked like demo data. It was a workaround for
+`GetAccountTransactions`, which read the CALLER's transactions and narrowed them by accountId — so
+for any non-owner it returned `200 []` by construction, for every account in the bank. The
+workaround stayed invisible precisely because it made everything pass. **Ask what a piece of test
+or seed data is compensating for.**
+
+**A success response can assert a fact nobody asked about.** `Ok(emptyList)` said *this account has
+no transaction history*, derived from a query that never asked the question, and then travelled
+through a correct projection and a correct completeness gate to a supervisor. Three correct
+components in series, each faithful to its input, carrying a falsehood the whole way because the
+first answered a question it had not been asked. **Faithful components do not make a truthful
+system; only the first one asking the right question does.**
+
+**Deriving authority from the result set has an empty case, and the empty case is the defect
+again.** After rewriting the query I still had `!rows.All(owned)` — which is TRUE for zero rows, so
+an unprivileged stranger asking about an empty ledger would have got `200 []` once more, one field
+over from the bug I had just deleted. **Whenever a permission is computed from data, write down
+what it decides when there is no data.**
+
+**Two existing tests asserted the defect as the requirement**, one of them named
+`..._OtherUsersAccount_ReturnsEmpty`. A test named after the wrong behaviour is the strongest
+evidence that the behaviour was never examined. Replaced them and recorded what they said where
+they stood, because deleting them would have deleted the only trace.
+
+**A startup guard's blast radius is the measure of whether it is real.** §B3.2 said the ledger may
+not be required without `get_account`. The SHIPPED policy violated it in three actions — with the
+guard in and the policy unamended, authority-service does not start. Tampering one policy line
+failed 60+ tests across the suite, which is exactly what a startup abort should look like.
+
+**My own harness produced a false green.** I mirrored the transaction-service tree to /tmp to work
+around a root-owned `obj/`, and restored files between tampers with `rsync -a` — which PRESERVES
+MTIMES, so MSBuild kept the tampered DLL and a clean checkout "failed". Four minutes chasing a
+phantom. **A revert is not verified until the thing that consumes it has actually rebuilt**, and
+this is the fourth flavour of absent-by-coincidence I have hit: deleted projection, unwired
+`project()`, un-awaited coroutine, and now an un-rebuilt binary.
+
+---
+
+**2026-09-09 (Scribe)** — Inbox merge and deploy verification complete. Your 11 queued decisions from `.squad/decisions/inbox/` are now merged into the canonical ledger at `.squad/decisions.md`. Authority-service has deployed cleanly to `banking-demo` namespace with the §B3.2 startup guard active (`banker-copilot-authority`, policyVersion `pv1:d7b3db9f5ada15b8`, 22 thresholds, 13 action types).
+
+**For Turk specifically:** Three policy actions now gather one more piece of evidence than before — `transaction.flag.review`, `transaction.score.override`, `transfer.reversal.execute` all require `get_account` alongside `list_account_transactions` per ruling §B3.2. Authority-service validates this at startup; the reseed moved the accounts under test.
+
+
+---
+
+## Learnings — 2026-09-09, the falsified cost claim on the §B2.2 narrowing
+
+**The narrowing was right. The claim I shipped it on was false, and the claim is what nearly sank
+the demo.** Danny upheld the `403` in full — zero rows genuinely cannot establish entitlement in a
+service that does not own accounts, and `200 []` would have rebuilt the §B2.2 defect one field over.
+No behaviour changed. What changed is a comment.
+
+**`src/` is not the repo.** I wrote "no other caller in the repo uses this endpoint" on the strength
+of a search that only ever covered `src/`. `scripts/demo/demo.sh` called the endpoint at four sites
+(~401, ~627, ~642, ~1271), all on customer tokens, and Brian's reseed died on exactly that `403`.
+`scripts/` ships with the demo. So do `tests/`, `config/`, `infra/`, `.github/` and `Taskfile.yml`.
+
+**Danny's standing rule, which I now owe on every narrowing:** a blast-radius claim must be stated
+as *the search that produced it* — the pattern and the roots — not as a conclusion. "Nothing else in
+the repo" is unfalsifiable and therefore worthless; `grep -rn "transactions/account" src/ scripts/
+tests/ config/ infra/ .github/ Taskfile.yml` → 4 hits, listed, is re-runnable by the next person.
+Minimum roots: `src/ scripts/ tests/ config/ infra/ .github/ Taskfile.yml`.
+
+**The claim being written down is the only reason this was catchable.** Danny made a point of this
+and I am recording it: the correct response to a falsified claim is to CORRECT it, never to delete
+it. A narrowing with no cost claim would have failed the same way with nothing to audit. The claim
+was wrong; having made it is what made the error findable in hours instead of in production.
+
+**What the claim got right, and it is why the code stands:** there is no `ui-app` caller and no
+other service caller. The copilot reads this with the invoking banker's token, which holds `banker`,
+so the model path is untouched. The *shape* of the authorization was correct; the *reach* was not.
+Those are two separate claims and I fused them.
+
+**A sha-stamped claim must not fuse the search with the fix.** Writing "no caller as of `be6ba88`"
+would itself have been false — at `be6ba88` demo.sh still called the old endpoint. The comment now
+states two separate facts: the search verified at `be6ba88`, and the disposition (those four sites
+move to `/api/transactions/my` under Rusty's change).
+
+**Root-owned `obj/` again.** `src/transaction-service.Tests/{obj,bin}` are root-owned from an old
+run. Previously I mirrored the tree to /tmp and got a false green off preserved mtimes. This time:
+`dotnet test -p:BaseIntermediateOutputPath=/tmp/... -p:BaseOutputPath=/tmp/...`, which forces a real
+build into a writable path and leaves the repo untouched. 19/19 passed. Use this, not the mirror.
+
+---
+
+**2026-09-09 (Scribe)** — §B2.2 cost claim correction merged. Comment-only fix in `src/transaction-service/Controllers/TransactionsController.cs`, `GetAccountTransactions` method. Zero logic changes verified. 19/19 tests passed. 
+
+False claim removed: "costs no shipping caller." Replaced with truth: no *product* caller, copilot executes with invoking banker's token, four demo.sh customer-token callers moved to `/my` (Rusty's change). Cost claim now carries the search that validated it (shell expression for reproducibility).
+
+---
+
+**2026-09-09 (Scribe)** — Canonicalizer guard added to test-demo-dataset.sh. Note for following work: the canonicalizer forbids floating-point numbers in non-money fields and requires strings for any fractional part on non-money values. Guard is applied to resolved payloads (after placeholder substitution), not literals. Resolves placeholders using jq arithmetic, exactly as the seeder does. Covers `approvals[*].payload`, `approvals[*].revisedPayload`, and `proposePathProbe.payload`. Rule parsed from `Canonicalizer.cs` and `moneyFields` from policy YAML — no hand-maintained list.
+
+
+## Learnings — 2026-09-09, recapturing the evidence fixtures live (403 and 404 for the first time)
+
+**The tool I was pointed at was not a capture tool, and reading it first saved me from misusing it.**
+`scripts/demo/evidence-contract.py` never touches the network. It derives the *contract* from
+`authority-policy.yaml` + `copilot-tools.yaml`, and under `--samples --write` it regenerates each
+fixture's `projected` block by importing the SHIPPED loader and projection engine. So the division is:
+I capture the `response` by hand (curl, live), and the tool computes `projected`. Hand-writing a
+`projected` block would defeat the entire point — the block exists to be un-hand-editable. Correct
+sequence: write `response` + `provenance` + `arguments`, run `--samples --write`, then re-run plain
+`--samples` and confirm `stale: false`.
+
+**The fixture directory has two consumers with incompatible appetites, and that dictated the layout.**
+`test_evidence_projection.py` globs `evidence-samples/*.json` and demands EVERY file project cleanly.
+`EvidenceContractSeamTests.Sample(toolId)` reads `{toolId}.json` at the top level only, and separately
+asserts quarantined keys have NO file. A 403/404 sample cannot satisfy the first — a 403 body has no
+`id` to rename and no array to collect, so `project()` raises, which is *correct behaviour* but a red
+test. Three bad options and one good one:
+- `get_account_forbidden.json` at top level → globbed by Python, fails.
+- `toolId` set to something invented → "has a sample but no manifest entry", fails.
+- loosen the Python test to skip error samples → weakens the guard for everyone.
+- **`evidence-samples/failed-reads/*.json`** → Python's glob is non-recursive and C#'s lookup is
+  top-level, so both consumers stay green **without being edited**. This is the one I took.
+
+**A fixture no test reads is §R9 again.** Parking the new samples in a subdirectory would have made
+them inert decoration. So I added assertions that `project()` **raises** on both — the inverse of the
+success-sample assertion, and load-bearing rather than ceremonial: it is the mechanism §B3.1 depends
+on. If someone later makes the projection tolerant of an error body so the demo "works", that test
+fails instead of the system silently minting a fabricated evidence row for a read that never
+succeeded. The 403/404 samples deliberately carry **no `projected` block**, and each says so in its
+own `warning`.
+
+**Danny's §B2.2 empty-ledger 403 is now observed, not asserted.** dana, the TRUE OWNER of her Savings
+account, is refused `403` on `GET /api/transactions/account/{her own account}` because the ledger has
+zero rows and `ownsEveryRow` requires `Count > 0`. I cross-checked in the same session that she really
+is the owner (`GET /api/accounts/{id}` as dana → 200, her userId) so the 403 could not be dismissed as
+a mis-scoped token. The upheld behaviour is now falsifiable.
+
+**Endpoint choice for the 404 was not free, and I nearly got it wrong.** A nonexistent id on the
+*transactions* endpoint returns zero rows and therefore `403`, not `404` (§B3.2: that endpoint cannot
+distinguish "no such account" from "clean history"). Capturing there and labelling it 404 would have
+committed a mislabelled fixture. The 404 belongs on `get_account`, driven as **banker** — who by §B1
+may read any account, so the 404 cannot be a disguised denial and absence is the only explanation left.
+
+**The two error bodies have different shapes and that is real, not noise.** `403` is the controller's
+own terse `{"error":"Forbidden"}`; `404` is ASP.NET Core's RFC 9110 ProblemDetails emitted for a bare
+`NotFound()`, carrying `type/title/status/traceId`. Anything consuming these must not assume one error
+contract. The live `traceId` was **redacted** (it is a real W3C traceparent) but the FIELD retained,
+because its presence is part of the observed shape.
+
+**Repo-wide grep, stated explicitly this time — the lesson from today's earlier false claim.** I
+searched the WHOLE repo (`grep -rn` from the root, excluding only `.git/`), not just `src/`, for both
+`evidence-samples` and the superseded account id `58ada63b…`. Consumers of the fixture directory:
+exactly two test files, plus `evidence-contract.py`, plus prose in `.squad/` and `docs/design/`.
+**But the same grep found something that is not mine:** `tests/verification/e2e_cases.py` (2 refs) and
+`supervisor_cases.py` (1 ref) still pin `A1 = 58ada63b-…` — a **pre-reseed account id that no longer
+exists**, described as "Checking, $32,897.40, 7 txns". After the reseed, casey's Checking is
+`149443f9-…`, $79,050, **2** transactions. Those files are the measurement harness, not my fixtures,
+and I did not touch them — silently re-pinning case definitions mid-measurement is precisely what the
+rulings warn against. Reported to Brian and written to the decisions inbox instead.
+
+**Seed counts moved, and the number in the fixture is smaller than the brief implied.** casey has 10
+transactions across THREE accounts; her Checking — the anomaly subject, carrying the $61,200 offshore
+wire — has only **2**. The old fixture's `count: 7` was one banker-owned account. I verified the
+banker's view equals casey's own view (2 == 2) before trusting it, which is also a live confirmation
+that the §B2.2 privileged branch returns the full ledger rather than a caller-narrowed one.
+
+**The control I nearly skipped.** My first 403 fixture asserted *why* the denial happened (`Count > 0`)
+without ever controlling for the competing explanation — that the endpoint simply denies
+non-privileged callers wholesale. I had applied exactly that rigour to the 404's endpoint choice and
+then failed to apply it one fixture over. The discriminator, same session and same token: dana →
+her own **non-empty** Checking = **200, 6 rows**; dana → her own **empty** Savings = **403**. Same
+caller, same role, same endpoint, one variable. That isolates the cause to the zero-row term and
+also confirms §E1.3 empirically — the narrowing costs the zero-row case and nothing wider. Rule for
+next time: **a captured error is a status code until you have varied the one thing you claim caused
+it.** Provenance prose that names a cause is a claim, and a claim needs its control in the same file.
+
+## Open items (recorded, not fixed by this work)
+
+### Verification harness pinned to pre-reseed account/transaction ids
+
+**Status:** OPEN — affects Livingston's verification run.
+
+**What:** `tests/verification/e2e_cases.py` and `tests/verification/supervisor_cases.py` each hard-code account and transaction IDs from a pre-reseed world:
+
+- `e2e_cases.py`: 2 refs to `58ada63b-…` (old Checking id: $32,897.40, 7 transactions)
+- `supervisor_cases.py`: 1 ref to the same id
+
+**Post-reseed reality:** casey's Checking is now `149443f9-…`, with $79,050 and **2** transactions. These case definitions are no longer valid.
+
+**Why it was discovered:** Full repo grep for the old account id to find all consumers of the live verification fixtures. Turned up the verification harness definition itself. The fixture regeneration did not cause this — the reseed did — but the test suite would now fail.
+
+**Why I did not fix it:** Silently re-pinning case definitions mid-measurement is the failure mode the rulings warn against. This is Livingston's call and the ownership boundary of the measurement harness, not my boundaries. Flagged instead of edited.
+
+**Next action:** Livingston should verify, update, and re-run.
+
+## Learnings — 2026-09-10, un-pinning the verification corpus from the seed
+
+Brian asked me to fix the defect I logged yesterday under "Open items": `e2e_cases.py` and
+`supervisor_cases.py` hard-coded account and user UUIDs that the reseed had deleted. It blocks
+Livingston's stage-1 measurement.
+
+**The defect was bigger than the one I reported, and my own report understated it.**
+
+Yesterday I wrote that six ids were dead. That was true and it was the *small* half. The ids
+fail loudly — an unresolvable account id produces an instrument failure you cannot miss. What
+does not fail loudly is that the corpus also hard-coded the *ledger*: `A1` was documented as
+"$32,897.40, 7 txns, 3 × +3,200.00 ACME payroll within ninety seconds", `A2` as "one −25.00
+maintenance fee", `A3` as "two −9,500.00 overseas wires". Half the cases carry a `grounded`
+flag asserting their prose is TRUE against that ledger.
+
+None of those transactions exist any more. The reseeded dataset moved the *roles*, not just the
+ids: the empty account is now `dana:Savings`, the structuring subject is `casey:Savings` (three
+near-identical cash credits), the offshore-wire subject is `casey:Checking`. Had I resolved the
+old A1/A2/A3 by account *type* — Checking→Checking, Savings→Savings — every id would have
+resolved, every run would have completed, and roughly half the `grounded` flags would have been
+silently inverted. **A fix that makes the loud failure quiet while leaving the quiet failure in
+place is worse than no fix**, because it converts a blocked measurement into a wrong one.
+
+**The generalisation of Danny's wait-predicate ruling.** His ruling was: the predicate that
+SELECTS a subject must be the predicate that TERMINATES the wait. The wider form, which is what
+bit here: *a predicate used to select a subject must survive whatever regenerates the subject.*
+`config/demo-dataset.json` is that predicate — it is the seeder's own input, so the seeder
+cannot diverge from it. Owner + account type is stable; the id is not; and, critically, neither
+is the *history*, so the facts a case quotes have to be derived from the same contract rather
+than transcribed from a live read.
+
+So `seed_subjects.py` now derives both halves from the dataset: the handle (`dana:Checking`)
+that resolves to today's id via the owner's own token — the convention `scripts/demo/demo.sh`
+already uses in `seeded_account_ids`/`resolve_account_refs`, reused rather than reinvented — and
+the contract-derived balance and transaction set. `e2e_cases.py` types no amount at all; every
+figure in every framing is computed from the dataset, so the prose follows a reseed instead of
+being falsified by one. `_amount()` raises at import if the dataset stops guaranteeing a
+transaction a case is built on, which is the loud failure I want in place of a quiet one.
+
+**Where dynamic resolution was the WRONG answer, and saying so.** `supervisor_cases.py` runs in
+component mode: `kubectl cp` into the pod, `FoundryDecider` called directly with a hand-built
+`evidence` dict. Nothing dereferences those ids — there is no fetch — and the probe has neither
+`config/demo-dataset.json` nor a route to log in as a seeded customer. Wiring live resolution in
+there would add a failure mode to buy nothing. The right fix was honesty: replace the real-looking
+UUIDs with `synthetic-account-clean` and friends, so no reader can mistake fabricated evidence
+for a read of the real environment, and correct the one case whose prose claimed "this is the
+REAL record live in the demo environment" — that record died with the seed. Recorded explicitly
+rather than left as a silent exception.
+
+**On my scoping failure from the day before.** I said "nothing else in the repo calls this
+endpoint" after searching only `src/`. This time I ran the UUID scan across the whole tree with
+no path filter and reported the exact command. Result: after the fix, zero UUIDs remain in any
+executable test code; the only ones left under `tests/` are in dated `.jsonl` result artifacts,
+`tests/e2e/test-results.log`, and `tests/fixtures/evidence-samples/`, all of which are *records
+of a past read* where a historical id is the correct content. Naming the exclusions is part of
+the finding, not a footnote to it.
+
+**What I did not run, and why.** The end-to-end probe leaves a pending approval per run — 32
+runs, 32 approvals — and Brian was about to walk the UI against this exact seed. Driving it to
+produce a headline number would have been the most impressive-looking thing I could do today and
+also the one thing I had been told not to do. I built `--resolve-only` instead: it resolves every
+subject, checks all 32 amounts against the LIVE dual-control threshold read from
+`/api/authority/policy`, and diffs each live ledger against the contract. All green, nothing
+written. The measurement itself is Brian's call to schedule.
+
+---
+
+## Learnings — 2026-09-10 — SSE headers withheld for one heartbeat (banker-copilot-service)
+
+**The defect and the fix.** `stream_session` awaited `runs.await_next_run(session_id,
+timeout=heartbeat_seconds)` *before* returning `StreamingResponse`. Anything awaited before the
+handler returns holds back `http.response.start`, so a client attaching to a session with no
+active run — the normal UI order, and the state every client lands in after a pod restart, since
+`RunStreamRegistry` is in-process — got no status line for a full 15s. The client read that as a
+connection that never opened and disabled approval signing. Removed the pre-flight await; the
+`while stream is None` loop inside `_events()` already does that waiting.
+
+**Rusty's diagnosis was right and his fix, taken literally, was incomplete.** The generator's
+loop awaited `await_next_run` *before* its first `yield`, so deleting the pre-flight await alone
+would have left the first *frame* 15s away: headers flush on `http.response.start`, which
+uvicorn writes as soon as the handler returns, but the generator then waited before yielding
+anything. I reordered the loop to yield `_heartbeat_frame()` first, then wait. One extra frame
+per stream; `waited +=` still increments only on a timeout, so the 3600s idle budget is
+unchanged. **Check what the surviving code does before its first yield, not just that the
+blocking call is gone.**
+
+**I nearly shipped a wrong reason for a right change, and only checking the client caught it.**
+I wrote — and Rusty and I both assumed — that the signing gate needs a frame. It does not:
+`canSignUnderStream` in `components/copilot/types.ts:623` accepts `live` or `resumed`, and
+`copilotStream.ts` sets those on `response.ok`, i.e. **on headers**. So removing the pre-flight
+await was on its own sufficient to unblock Brian; my reorder is defence-in-depth against the
+30s heartbeat watchdog (`heartbeatIntervalMs` 15000 x `missedHeartbeatsBeforeDegraded` 2), not
+the unblock. The same read retires a suspected second stall: a live-but-quiet run yields no
+frame until the heartbeat timeout, but its headers are out at 0s, so signing is enabled and the
+watchdog has 30s of room. **Two of us reasoned about a predicate neither of us had read; it took
+two greps.**
+
+**The 409 replay guarantee survives, and the argument is in the code, not in my confidence.**
+The `runId` lookup, the 404 and `latest_for_session` all still run before the check, so any
+request that HAS a stream still gets the check. The branch that no longer runs it is the one
+where a run appears mid-wait — and there the check was already vacuous:
+`replay_available_from` returns `True` when `not self._recent`, and a just-created run has an
+empty `_recent`. It could never have fired. I pinned this with a test rather than leaving it as
+reasoning.
+
+**The 409 I nearly added would have been worse than the bug.** My first instinct was
+`stream is None and lastSeq > 0 → 409 resync_required`, since a cursor for a run this process
+never knew is genuinely unresumable. Then I read the client: `copilotStream.ts:368` handles 409
+by clearing `pending`, calling `onResyncRequired`, setting `degraded` and scheduling a reconnect
+— with no visible reset of `lastSeq`. If the cursor survives the reconnect, that is a 409 loop:
+a 15s stall converted into a permanently dead stream. **Backend-only means I do not get to
+assume how the client recovers; if the recovery path is unread, the safe change is the one that
+does not depend on it.**
+
+**`TestClient` cannot measure time-to-first-byte and will lie to you convincingly.** Starlette's
+test transport runs the whole app inside a portal via `portal.call(self.app, ...)` and only then
+builds an httpx response, so every "streamed" chunk appears to arrive at completion time. My
+first attempt at a timing test measured 10.05s *with the fix applied* and looked like a failed
+fix. The honest measurement is at the ASGI boundary: drive `app(scope, receive, send)` yourself
+and timestamp the first `http.response.body`. Two further traps — a raw `asyncio.ensure_future`
+task blows up inside Starlette's `is_disconnected` because anyio does not own it, and so does a
+task group opened in a pytest-asyncio test task. Run the whole measurement inside
+`anyio.from_thread.start_blocking_portal("asyncio")`, exactly as `TestClient` does.
+
+**Evidence.** Against the unfixed code the new test fails with `assert None == 200` — no
+`http.response.start` at all within 4s of a 10s heartbeat, i.e. the withheld status line
+reproduced in the suite. With the fix: `200`, `text/event-stream`, first frame a heartbeat, under
+2s. Full suite `412 passed` before, `414 passed` after (two tests added). `docker compose config
+-q` clean; no env or ConfigMap value touched — `COPILOT_SSE_HEARTBEAT_SECONDS` stays at 15.
+
+**Pre-existing hole I did NOT fix, recorded so it is not lost.** `RunStream.subscribe` filters
+`backlog = [e for e in _recent if e.seq > last_seq]`. `seq` is run-scoped, so a client that
+reconnects with a cursor from a dead run and attaches to a *new* run silently drops that run's
+first `lastSeq` frames — and `replay_available_from` cannot catch it, because `_recent` is empty
+at that moment. Unchanged by my fix, present before it. Filed for Linus and Danny.
+
+### 2026-09-10 — Authority Reason Rendering and Seeded Assessment Diagnosis (#332)
+
+**Unblocking facts:** slot 0 is the requesting banker's legitimate first signature; slot 1 is the independent senior signer because only slot 1 carries `mustDifferFrom: [requesterId]`. `agentAssessment` is not null everywhere: live planner-created approval `apr_20ffbebe073343bd9f871b66` carried a full Foundry primary assessment; direct seeded approvals were the null class.
+
+**Fixes:**
+1. `PolicyEvaluator` now renders `{actual}` from the predicate's evaluated field and `{threshold}` as the resolved threshold value, then trims YAML trailing newlines.
+2. If any reason placeholder remains unresolved, the sentence containing it is omitted; if nothing remains, the signer gets a neutral non-templated fallback rather than a literal `{placeholder}`.
+3. `scripts/demo/demo.sh` now attaches an honest `seeded-demo` assessment to direct authority-service seeded approvals, stating that no primary planner assessment was formed instead of leaving `agentAssessment` null or inventing a model verdict.
+
+**Verification:** live probe run through `/api/copilot/sessions/{id}/runs` produced pending approval `apr_20ffbebe073343bd9f871b66` with non-null `agentAssessment`. Local validation passed: banker-copilot Python tests 414 passed; authority-service.UnitTests 142 passed; authority-service.Tests 224 passed; demo dataset test 10 check groups passed; targeted PolicyEvaluator subset 13 passed.
+
+**Learning:** Reason-template rendering must expose evaluator-observed values explicitly; generic dotted-path replacement is not enough for semantic tokens like `{actual}` or aliases like `{threshold}`. Direct demo seeders must not masquerade as agents: if they bypass the planner, persist a positive “no primary assessment was formed” record.
+
+### 2026-09-10 — Free-Text Command Path Is Inert (#332)
+
+**Unblocking diagnosis:** my earlier live success `apr_20ffbebe073343bd9f871b66` did **not** exercise Brian's free-text UI path. It was created by `scripts/demo/demo.sh show --probe`, whose `proposePathProbe` supplies `actionId: account.balance.adjust` and a bound payload directly to `POST /api/copilot/sessions/{sid}/runs`.
+
+**Live reproduction of Brian's path:** created a normal `/copilot` session, posted the free-text message, then started the run with the UI's actual body shape: `{ objective: <intent> }`. Run `run_80e2d2382152489c` produced exactly: `run.started`, `plan.proposed`, `step.started`, `artifact.created`, `step.completed`, `run.done`; the plan contained only `Assemble evidence bundle`, gathered `{}`, made zero tool calls, and emitted zero approval frames.
+
+**Root cause:** `src/ui-app/src/components/copilot/CopilotContext.tsx` sends only `{ objective: intent }` to `startRun`; `src/ui-app/src/api/copilot.ts` makes `actionId`, `payload`, and `facts` optional. `src/banker-copilot-service/app/routes/sessions.py` maps that body directly into `PlannerRequest.action_id`. In `src/banker-copilot-service/app/planner/loop.py`, `_required_evidence()` immediately returns `[]` when `request.action_id` is missing, `_plan_steps()` adds assess/propose steps only when `action_id` is present, and the primary Foundry assessor is only invoked by an assess step. Therefore a free-text run never asks a model to choose an action, bind entities, gather discretionary evidence, or propose.
+
+**Cluster mode:** deployed `banker-copilot-service` is not deterministic. Pod env shows `COPILOT_PLANNER_MODE=foundry`, `FOUNDRY_MODEL=gpt-5.4-mini`, and a Foundry project endpoint. The fail-loud planner-mode design held; the inert free-text path is not a mode fallback.
+
+**Regression answer:** this appears to have been true since Phase 2 introduced the harness (`bcfd8b9`). That initial implementation already returned no required evidence without `action_id` and only appended the propose step when `action_id` was present. Later work made the primary/supervisor reasoning real after an action is known, but did not add intent-to-action planning.
+
+### 2026-09-10 — Approval card backend fields and counter-proposal floor
+
+**Issue:** Danny's approval-card rewrite needed backend-owned display fields (`evidence.*.label`, `evidence.*.summary`, `subject`) and Brian chose counter-proposal option B (`supersedesApprovalId`) with a policy floor.
+
+**Fixes:**
+- Added display-only evidence enrichment in `ApprovalResponse.From()`: labels and situational summaries are derived server-side from stored evidence without mutating the stored evidence or payload.
+- Added display-only `subject` derivation for customer and account approvals from existing evidence/payload; no domain lookup yet, so it is safe and hash-neutral but limited to facts already gathered.
+- Added `context.supersedes` to policy evaluation and a `superseding-proposal` escalator with `minRung: L2` and no `raiseBy`, preserving Danny's warning that an L2 replacement must not become L3.
+- Added a repeated-supersede churn guard backed by repository counts of recent superseding proposals by requester.
+
+**Verification:** 414 banker-copilot Python tests passed; 150 authority unit tests passed; 224 authority integration tests passed; demo dataset checks passed (10 groups).
+
+**Key Learning:** Counter-proposal guardrails should be expressed as display/linkage and monotone policy predicates, not payload changes. Display-only context (`subject`, labels, summaries, assessment copy) must stay outside hash fields; structural authority changes (`context.supersedes`) enter evaluator facts only.
+
+
+### 2026-09-10 — UI and Authority Fixes Session (#332)
+
+**Session Type:** Multi-agent integrated session (Turk, Linus, Danny, Rusty)
+**Branch:** `332-beta`
+**Outcome:** Chain of UI defects fixed; approval-card architecture ruled; counter-proposal model approved
+
+**Turk's Contributions:**
+- Fixed SSE header stall by removing pre-flight await and reordering `_events()` loop
+- Implemented reason-template rendering with semantic token resolution
+- Added counter-proposal support via `context.supersedes` with L2 floor and churn guard
+- Re-authored 32-case verification corpus with dynamic subject resolution from demo dataset
+- Verified: 414 Python, 150 unit, 224 integration tests passed; 10/10 demo groups
+
+**Related Work Tracked:**
+- Linus: API prefix fix, pane layout, centre-pane architecture, SSE terminal frame
+- Danny: Approval-card IA ruling, counter-proposal model option A+B ruling
+- Rusty: Platform analysis (SSE layer, deploy coordination, unattributed restart root cause)
+
+**Orchestration Log:** `.squad/orchestration-log/2026-09-10T20:47:00Z-turk.md`
+**Session Log:** `.squad/log/2026-09-10T20:47:00Z-copilot-ui-and-authority-fixes.md`
+
+### 2026-09-10 — Free-text intent phase (identifier-only first cut)
+
+**Issue:** UI free-text runs sent only `{ objective }`; the planner only consulted the model after `actionId` was already known, so free-text completed as one empty evidence-bundle step.
+
+**Fixes:**
+- Widened authority `/policy` action projection with `hashFields` and `moneyFields`, sourced from the live policy loader rather than copied into Python.
+- Added `intent_model.py` as a sibling to `primary_model.py`: schema-validated read/propose/refuse intents, Foundry attribution, and a read-only answer model.
+- Added a free-text planner branch gated on missing `actionId`; explicit `actionId` runs continue through the existing path.
+- Added server-side post-model allowlist checks: only live-policy `agentMayPropose` non-L3 actions whose required evidence tools are registered can be proposed; known forbidden/L3 actions fail as `forbidden_action` before authority proposal.
+- Added payload construction from policy `hashFields`, extra-key dropping, and money-field preflight to fixed two-decimal strings. Current authority enforcement confirms `hashFields` are the operative required payload fields: loader requires non-empty `hashFields`, money fields must be a subset, and the canonicalizer rejects missing hash fields.
+- Added a `ReferenceResolver` seam but no lookup-backed resolver, per Danny gate. This first cut only works for objectives/model drafts that already carry resolvable ids.
+
+**Verification:** 420 banker-copilot Python tests passed; 150 authority unit tests passed; 224 authority integration tests passed; demo dataset checks passed (10 groups).
+
+**Key Learning:** A free-text command path must fail before emitting success whenever intent selection, payload construction, or evidence binding is absent. "No action selected" is not a successful empty evidence bundle; it is a named planner outcome.
+
+### 2026-09-10 — Subject resolver and score-override floor (#332)
+
+**Issue:** Danny ruled the free-text resolver must be a bounded lookup, not a model id pass-through, and that `transaction.score.override` needs a signable score band with too-deep reductions forced out of the harness.
+
+**Fixes:**
+- Added `CustomerDirectoryLookup` as a separate banker/supervisor authority and a bounded `GET /api/customer-directory/lookup` endpoint: min-3 literal username query, exact-match-first, cap 5, identity-only projection, and audit logging.
+- Added `GET /api/accounts/customer/{userId}` for banker/supervisor account resolution, plus read-tool manifest entries for customer lookup, customer account listing, and account-number lookup.
+- Implemented the real `ReferenceResolver`: all user/account hints, including GUID-shaped hints, are resolved through read tools before use; ambiguity/no-match are terminal refusals and resolution facts land in the evidence bundle.
+- Strengthened read-plan validation against the registry, session capabilities, and tool argument schemas before execution.
+- Added `score_override_floor` and the `deep-score-reduction` L3 rule, projected the signable band to the intent model, and preflighted `newScore` as a canonical bounded ratio.
+
+**Verification:** 423 banker-copilot Python tests passed; user-service tests 67 passed; account-service tests 43 passed; authority unit tests 151 passed; authority integration tests 224 passed; demo dataset checks passed (10 groups).
+
+**Key Learning:** The read branch is an authorization surface too. Model-selected read tools and model-supplied ids must be treated as untrusted claims and revalidated through the same registry/capability/read-authority path as proposals.
+
+### 2026-09-10 — Explicit GUID subject-hint bypass tests (#332)
+
+**Issue:** Danny explicitly asked for tests proving GUID-shaped subject hints are never trusted as identifiers by shape alone. My prior suite had a success-path id-shaped hint test, but it did not cover no-match, unauthorized reads, or non-disclosure.
+
+**Fix:** Added planner tests where the intent model returns a well-formed GUID in `subjectHints.userId`. The tests assert the resolver calls `get_user` before use, refuses terminally when the lookup cannot verify the identity, does not create an approval around an unverified id, and uses the same non-oracle message for 403 and 404 without echoing the GUID.
+
+**Verification:** Targeted planner tests passed: 20. Full banker-copilot Python passed: 426. Cloud `scripts/demo/demo.sh show --target cloud --probe` passed and created approval `apr_d0afd44c3e494762b2506411` from run `run_4b0d5f2b32bf4715`. Local probe could not run because `http://localhost:8080` was not listening, not because the planner path failed.
+
+**Key Learning:** A control can be functionally present and still be incomplete until the negative path is asserted. For resolver controls, 403 and 404 must collapse to the same banker-readable refusal or the error channel becomes an existence oracle.
+
+### 2026-09-10 — Invariant money formatting in approval display (#332)
+
+**Issue:** Evidence/subject summaries were server-formatted as `$16143.46` while the client money table already formatted `$2,500.00` correctly. The display string belongs server-side because the evidence summary is server-owned presentation text.
+
+**Fix:** Changed authority display money formatting from `0.00` to `N2`. `ApprovalDisplay.cs` already used `CultureInfo.InvariantCulture`, so the change keeps pod-location-independent separators (`$16,143.46`, not culture-localized punctuation).
+
+**Verification:** authority-service.UnitTests passed: 151.
+
+### 2026-09-10 — Demo prompt acceptance suite (#332)
+
+**Issue:** The planner was structurally correct, but not yet proven against Brian's exact `docs/design/banker-copilot-demo-prompts.md` sentences.
+
+**Fixes:**
+- Added `test_demo_prompt_acceptance.py`, a table-driven acceptance suite that stubs the intent model at the existing boundary and asserts outcomes for Brian's exact prompts: read-only answers produce evidence/no approval; balance adjustments resolve customer/account hints and propose expected payload/rung; `user.unlock` proposes base L2; score override accepts an in-band model draft and rejects a too-deep score before proposal; refusal cases emit named terminal errors rather than empty success.
+- Fixed two planner gaps exposed by the suite: hyphenated usernames such as `verify-target` are no longer mistaken for GUID-shaped ids, and evidence outputs now seed later tool argument binding so `get_scored_transaction` can supply the `accountId` needed by subsequent required reads.
+- Recorded two strict xfails instead of hiding fixtures: the two-customer comparison prompt loses one side because evidence is keyed by tool id, and the exact score-lowering sentence lacks both a transaction id and target score unless the model guesses them.
+
+**Verification:** Demo prompt acceptance + terminal-status tests passed: 32 passed, 2 xfailed. Full banker-copilot Python passed: 438 passed, 2 xfailed. Zero-write tests passed: 31. Cloud `scripts/demo/demo.sh show --target cloud --probe` passed after the `loop.py` changes and created approval `apr_2c99097201d44fb4b8d622b7` from run `run_b0879adfd3724f9d`.
+
+**Key Learning:** Brian's score prompt still needs a policy-safe descriptor-to-transaction resolution story, and the comparison prompt needs evidence instances keyed by call/alias rather than only by tool id. Those are real demo-script gaps, not reasons to smuggle fixture ids into tests.
+
+### 2026-09-10 — CRITICAL: Facts-map cross-subject bug discovered by Danny (#332)
+
+**Issue:** Danny's review of the two-customer-comparison xfail uncovered a **data-boundary breach** in the planner's multi-subject handling. The evidence dict uses last-writer-wins (later subject overwrites), while the facts map uses first-writer-wins merge across subjects. The two collections disagree about subject on the second lookup, and stale facts from the first subject travel to authority attached to the second subject's approval record.
+
+**Evidence:** Traced the approval hash preimage (`PayloadHasher.Compute` → `evidence` is not in it). Canonicalization risk is zero. The real bug is not canonicalization; it is facts binding.
+
+**Hazards:**
+1. Evidence dict overwrite: multi-subject runs lose one subject's evidence silently (last-writer-wins)
+2. **🔴 CRITICAL:** Facts map cross-subject merge: stale subject's accountId/userId flow to authority in wrong customer's proposal
+3. A model-selectable read path (policy-forbidden) could layer a second subject into facts and influence later tool arguments
+
+**Required fix:** One change affecting both collections:
+- Evidence dict: per-invocation keys within planner (bare tool id on first call, `#2` on second, etc.), projected to bare tool ids at authority seam only
+- Facts map: first-writer-wins merge is fine, but **no cross-subject merge**; carry only first-invocation results, or scope facts per resolved subject entirely
+
+**Test requirements:** Three tests covering bundle shape, `already_gathered` refusal still fires, and facts carry no cross-subject value after a two-subject run.
+
+**Wire constraint:** Authority `propose` call wire bytes must stay identical for all existing traces. Projection happens at the authority seam, never in citation layer or bundle content.
+
+**Status:** Blocked on Turk's implementation; facts-map fix is blocking Linus and merge.
+
+**Key Learning:** Last-writer-wins and first-writer-wins in the same accumulation flow create a binding race condition when subject identity is involved. The entire multi-subject planner must be deterministic about which subject "owns" a fact or evidence item.
+
+---
+
+## 2026-09-10 — Live-model acceptance mode: the free-text path finally ran against a real model
+
+**Task:** Add an env-gated live-model mode to the 31-prompt acceptance suite, so proving free-text works is a repeatable command rather than a human clicking a browser once.
+
+**What shipped:** `src/banker-copilot-service/tests/test_demo_prompt_live_model.py`. Same corpus, *imported* from the stubbed suite so they cannot drift. Deselected by default via `addopts = -m "not live_model"` — deselected, not skipped, because a skip line reads like a pass. Default suite: **438 passed / 2 xfailed before and after**, plus 12 deselected.
+
+**Key Learning 1 — `pytest.fail` is not loud enough in a file that contains xfails.** My first cut failed loudly on missing config. Running it unconfigured printed **"2 xfailed"** and nothing else: pytest treats *any* exception inside an xfail test as an expected failure, so a completely unconfigured live run looked clean. Preconditions (no gate, no config, no credential, no model, empty reply) now go through `pytest.exit` with a non-zero exit code. Rule for next time: **in any module containing xfail markers, a precondition failure must abort the session, not fail a test.**
+
+**Key Learning 2 — a `str` is a `Sequence`, and that is how the entire model layer shipped broken.** Every `get_response(prompt)` call in this service passed a bare string to a `Sequence[Message]` parameter. The SDK iterated it character by character and died on `'str' object has no attribute 'role'` before any request left the process. Four call sites: `intent_model` x2, `primary_model`, `supervisor_model`. Zero tests caught it because every test stubs the transport. Fixed once as `model_call.as_chat_messages()` (framework's own `normalize_messages`). **Proved live only for the two `intent_model` sites; the primary and supervisor fixes are identical and correct by inspection but were NOT executed against a model.** Blast radius checked rather than assumed: I downloaded the *pinned* wheels (`agent-framework-core` 1.16.0 and `agent-framework-openai` 1.10.0, the versions the image installs, not just the 1.3.0 on this box) and confirmed `_prepare_message_for_openai` takes a `Message` and the client contains no `isinstance(messages, str)` normalization anywhere. So this was broken in the deployed image too, which means the primary assessor and the supervisor decider have been returning their unavailable/failsafe paths in the cloud as well — every model verdict in this service, not just free-text. Added a guard in `test_supervisor_model.py` that refuses a bare string so the regression cannot return silently.
+
+**Key Learning 3 — the intent prompt hid the resolver from the model.** First live run: 6 passed / 4 failed / 2 xfailed, and *all four write prompts failed*, each refusing because "no specific account is provided". `ReferenceResolver` fills `accountId`/`userId` from `subjectHints`, but `build_intent_prompt` said so only in the *read* paragraph; the propose paragraph told the model to draft what the action signs over, and `hashFields` includes `accountId`. The model reasoned correctly from what it was told. One prompt change, evidence-driven (the model's own stated reason, not a red test): 9 passed / 1 failed / 2 xfailed. **A prompt that omits a capability the code has is a code defect, not a model-quality problem.**
+
+**Key Learning 4 — assert what the English determines; print what the model decided.** Live models are non-deterministic. I assert action id, resolved subject id, read/approval/refusal routing, refusal code, allowlist held, and amount where the sentence states one. I deliberately do NOT assert direction or rung: live gpt-5.4-mini reads "refund a fee as goodwill" as a **credit** where the stubbed fixture said debit, which changes the rung from L1 to L2. Both are printed. Asserting the rung would have smuggled a prose judgement back in as an invariant — and would have hidden a fact Brian's demo script needs.
+
+**Two new defects handed to Danny (not mine to fix, and I changed nothing):**
+- `Why was casey's offshore wire flagged?` fails ~3 runs in 4 with `The answer model cited evidence this run did not gather: ['tx_casey_wire']`. Evidence is keyed by tool id, so the only citable ids are tool ids; the model cites the transaction it reasoned about, which is the right thing to cite and the one thing `parse_evidence_answer` rejects. Same root cause as the compare xfail. Marked `xfail(strict=False)` with both observed failure modes in the reason.
+- `Adjust retail's savings by $26,000` proposes ~2 runs in 3; in the third the model returns a sensible `read` plan to resolve the customer first. The loop is single-shot, so read-to-resolve is a dead end. **I left this asserting the demo requirement rather than xfailing it**, so the flake is visible on every live run. Resisted adding another prompt sentence to mask it — "there is no second turn" is a statement about the loop Danny owns.
+
+**Config archaeology, so nobody repeats it:** a live run needs `BANKER_COPILOT_LIVE_MODEL=1`, `FOUNDRY_PROJECT_ENDPOINT` (the **project** endpoint, `https://<account>.services.ai.azure.com/api/projects/<project>` — not the `.cognitiveservices.azure.com` account endpoint), `FOUNDRY_MODEL` (the deployment name), and an Azure credential able to mint a token for `https://ai.azure.com/.default`. The endpoint in the repo `.env` (`probable-bluebird-8762`) is NXDOMAIN — that resource is gone. Working one at the time of writing: `serval-37447-project` with `gpt-5.4-mini`. Note `model-osprey-55220-foundry` has `publicNetworkAccess: Disabled` and is unreachable from a laptop. All documented in the service README.
+
+**Verification:** default `pytest -q` run before and after (identical), gate-set-without-config and gate-set-with-bad-credentials both proven to abort with exit code 2 rather than skip, and eight full or partial live runs against a real Foundry deployment.
+
+### 2026-09-10 (later) — Brian's ruling: the $35 refund is a CREDIT, and therefore L2
+
+**Ruling:** "Refund a $35 overdraft fee" is money going back to the customer. It is a credit, it fires `credit-adjustment`, and it is **L2**. I had encoded it as `direction: debit` / L1 to match a heading in `docs/design/banker-copilot-demo-prompts.md`; Brian confirmed the heading was his error, not my reading of it.
+
+**Where that prompt was encoded, and what changed:**
+- `tests/test_demo_prompt_acceptance.py` — `retail_refund` now drafts `direction: credit`, expects rung **L2** and escalator `{credit-adjustment}`. The `nobody-here` refusal case uses the same corrected draft.
+- `tests/test_demo_prompt_live_model.py` — the live parametrization now carries expected direction and a required escalator, and **asserts `requiredRung == "L2"` for all four write prompts**.
+- `docs/design/banker-copilot-demo-prompts.md` — the "L1 — one signer" heading is gone; both credits sit under L2 with the reason stated inline.
+- `tests/test_run_terminal_status.py` already used `direction: credit` for the same refund — it was right all along, which is a small piece of evidence that the doc heading was the outlier.
+- `config/authority-policy.yaml` untouched: `credit-adjustment` (`direction == credit` → `raiseTo: L2`, "Crediting an account creates money, which is always dual-control") already says exactly this.
+
+**Key Learning — "assert only what the English determines" is not the same as "never assert the rung".** My first live cut printed direction and rung instead of asserting them, reasoning that a model could read "refund a fee" either way. That reasoning was wrong in a specific and expensive way: the direction *is* determined by the English, and the rung is derived from it, so declining to assert either meant a model that read the refund as a debit would produce an **L1** approval — a customer refund routed through less signature ceremony than crediting money deserves — and the suite would have printed it and passed. The right rule is narrower: assert the rung always (it is the authority a human must muster), assert the direction where the sentence fixes it, and print it only where the sentence genuinely leaves it open ("post a $2,400 adjustment", "adjust by $26,000" — both L2 on amount whichever way the money moves, so the rung is asserted for those too).
+
+**Live verification of the ruling (real gpt-5.4-mini, `serval-37447-project`):** across 13 live runs of the refund prompt today, the model proposed `direction: credit` at rung **L2** with `credit-adjustment` fired in **every single proposal** — it never once chose debit. So the model agrees with Brian, and it disagreed with the doc heading I had encoded.
+
+**Measured per-prompt live reliability (today's runs, worth knowing before 9/14):**
+
+| Prompt | Proposed correctly |
+| --- | --- |
+| `Refund a $35 overdraft fee on retail's checking as goodwill` | 12 / 13 |
+| `Credit dana $120 for a duplicate charge on her checking account` | 6 / 7 |
+| `Post a $2,400 adjustment to casey's savings for the disputed deposit` | 7 / 7 |
+| `Adjust retail's savings by $26,000` | ~2 / 5 |
+
+The failures are refusals or read-to-resolve plans, never a wrong rung. `Adjust retail's savings by $26,000` is the weak one: the model calls it "too vague to map safely", which is a defensible reading of a sentence that names no reason and no direction. Reported to Brian rather than fixed by tuning the prompt again.
+
+**One thing I did not do:** the doc now has no L1 example at all, and `## Escalation triggers` still names `large-flagged-amount` where `account.balance.adjust` actually fires `large-adjustment` (`config/authority-policy.yaml:520` vs `:424`). Both are Brian's/Danny's calls, not mine — flagged, not changed.
+
+### 2026-09-10 (later still) — Linus's two findings: a refusal with no memory, and two developer-vocabulary step titles
+
+**Finding 1 — a refusal had no durable record, and my own design said it should.** `.squad/decisions.md:6604` (my words): "I prefer still emitting a refusal artifact/memo so the pane has a durable explanation after reload." The code never did it. A refusal existed only as a `run.error` frame plus `step.failed` and `run.done status=failed`. Linus proved a reload survives — the stream backlog replays — but the backlog is **in memory**, so after a pod roll the banker returns to a run that failed with no stated reason. A planner whose headline capability is *saying why it declined*, that then forgets why, is worse than one that never explained.
+
+Fixed in the `refusal` step handler: a `kind="refusal"` artifact titled **"Why this was declined"**, persisted **before** it is streamed — the same ordering rule the evidence bundle already follows, and for the same reason (an artifact announced but not stored renders an empty pane that is indistinguishable from "no artifacts").
+
+**Key Learning — the content SHAPE was the design decision, not the kind.** Linus's canvas renders artifacts by the shape of their content, not off a kind whitelist, precisely so a new kind never lands as a JSON blob in front of someone about to sign. So the refusal body is a **plain string** (renders as prose) and not a mapping (would render as `{"code": ..., "message": ...}` in a `<pre>` to the very person the refusal is meant to explain itself to). The reason code rides in the last line — the word support and audit will grep for — rather than in a structured field that only the JSON renderer would show. **Reading the consumer's renderer before choosing a payload shape is cheaper than shipping a shape and having the consumer remap it.**
+
+**Finding 2 — two step titles were developer vocabulary.** "Resolve references" → **"Identify the customer and account"**; "Validate proposed action and payload" → **"Check the action is permitted and complete"** (Linus's suggestions, taken as-is). Fixed at source, in `loop.py`, where they are written. Linus deliberately did *not* remap them client-side because Danny rejected exactly that for evidence labels: presentation knowledge of backend vocabulary in the client is how two vocabularies drift apart. Server-authored strings that reach a human unchanged are the server's problem.
+
+**Key Learning — a green run after a fix proves nothing until you check it goes red without it.** Both fixes passed the existing 438-test suite untouched, which is precisely the shape of problem this session keeps producing. I added five assertions (durable record exists and names the code; exactly one record; persisted before streamed; string body; the two titles present and the old ones absent), then **reverted `loop.py` to HEAD and confirmed all five fail**, before restoring. Suite: **438 → 440 passed**, 2 xfailed, 12 deselected. The live suite carries the same durability invariant and passes against real gpt-5.4-mini on all three refusal prompts.
+
+**For Linus, not changed by me:** `src/ui-app/src/components/copilot/types.ts:563` declares `ArtifactKind` as a closed union that does not include `'refusal'`. Nothing breaks at runtime — the canvas dispatches on shape, and a string body already renders as prose — but the type and the wire now disagree by one member. His file, his call, and I did not touch UI code.
+
+**Scope note:** I fixed refusals only. The `answer.failed` path (model unavailable, contract invalid) also ends a run with a `run.error` and no durable record. That is an operational failure rather than a stated decision, so it is arguably a different thing, but the banker's experience after a pod roll is identical. Flagged, not fixed.
+
+### 2026-09-10 (later again) — the wrong-customer carry in the facts map, and evidence keys that stop overwriting each other
+
+Danny found a correctness bug that outranked everything left in my queue, and Brian verified it before sending it to me. I verified it a third way: I wrote the test first and watched it fail with the bug's own output.
+
+```
+facts carried 'dana' out of a two-subject run:
+  {'query': 'dana', 'count': 1, 'matches': [{'id': 'usr_dana', ...}],
+   'accountId': 'acct_dana_checking', 'items': [...]}
+```
+
+That is a run that read *both* Dana and Casey, leaving a facts map that names only Dana. `facts` binds the arguments of later tool calls and it travels to authority on the proposal body, so the failure mode is an approval that names one customer and carries another's identifiers — with **no model involved**. `evidence_ceiling.py` opens by naming this hazard as something a *model* might do; here the harness did it to itself, with a `setdefault`.
+
+**Key Learning — two collections merging by opposite rules is a bug waiting for a second subject.** Three lines apart: `evidence[tool_id] = result.data` (last writer wins) and `request.facts.setdefault(...)` (FIRST writer wins). Either rule alone is defensible. Together they guarantee that on a two-subject run the two collections disagree about who the subject is, and they disagree silently. Neither line looks wrong on its own, which is why this sat unnoticed — the bug is in the *relationship*, and no test that reads one collection can see it.
+
+**What I did.**
+
+- **Evidence keys: bare-first, next ordinal on collision** — `X`, then `X#2`, `X#3`. Suffix-on-collision rather than suffix-always is the whole point: every run that exists today gathers each tool once and keeps byte-identical keys in its trace, its artifact and any citation a model produced against it. Only a genuinely two-subject run sees a new key, and it is one a human can read off the card.
+- **Entries self-describe.** The key disambiguates, the entry explains: `toolId`, the `arguments` it was called with, and the `subject` those arguments name. Two ledgers side by side with no labels is a worse artifact than one ledger.
+- **Facts: a multi-subject read plan populates no facts from tool results at all.** Danny ruled this rather than suggested it. It is safe because read-plan validation already requires every read step to carry explicit arguments. Multi-subject is detected two independent ways — a repeated tool id, or one subject argument holding two distinct values — because either alone leaves a hole.
+- **The projection at the boundary.** Everything leaving this service — the `evidence` object on the authority proposal, and the `gathered` set the ceiling matches `already_gathered` against — goes through one function that maps back to bare tool ids and raw results.
+
+**Key Learning — the boundary claim is the one that needed evidence, so I got some.** "The wire bytes are unchanged" is exactly the kind of claim that is comfortable to assert and expensive to be wrong about: a suffixed key on the authority proposal is `evidence_incomplete` on *every* propose run, and a suffixed key in `gathered` silently grants re-reads of tools already held — fails **open**, and quietly. So I dumped `propose_calls[0]["evidence"]` for two propose prompts, checked out HEAD's `loop.py`, dumped again, and diffed. Identical. Then I pinned it with tests, because a diff I ran once protects nobody.
+
+I deliberately did **not** chase an integration test for `already_gathered` under duplicate keys. Duplicates are a read-plan-only phenomenon today (required evidence is one call per tool id, and the assess step does not run on read plans), so no reachable path produces one. Saying that plainly is better than building a test that constructs an unreachable state and calling it coverage.
+
+**Key Learning — `_bind_arguments` layers facts OVER the payload, and that is only safe by accident of ordering.** A fact could in principle steer a later read at a different subject. On a propose path it cannot, because facts are seeded from the payload *before* any tool runs and the merge is first-wins, so a tool result can add keys but never displace the subject a human is signing for. That is load-bearing and was untested, so it is tested now. It is also why the guard is scoped to read plans rather than switched on everywhere: first-wins is the *protection* on the propose path and the *bug* on a multi-subject read path, and the difference is which one seeded the map.
+
+**Both xfails are gone, and both because Danny ruled — not because I papered over them.**
+- Prompt A (two-customer comparison): **built**. The canonicalization blocker we all assumed was there does not exist — evidence is not an input to the approval hash preimage. One xfail became two passing tests.
+- Prompt B ("lower its risk score"): **cut as an utterance, kept as a capability.** Danny ran it rather than predicting it: terminal `failed`, code `payload_unfillable`, zero authority calls. The behaviour was already correct and only the assertion was wrong. It is now a passing test pinning that triple, and the demo doc marks the prompt as a refusal case with the reason, so nobody re-opens it in three weeks. I confirmed the predicted code matches reality rather than trusting the write-up.
+
+**Counts.** Default suite **438 passed / 2 xfailed → 449 passed / 0 xfailed**, 12 deselected, still hermetic and offline.
+
+**Live, against real gpt-5.4-mini — the fix is proven, not asserted.** The bundle comes back:
+
+```
+'lookup_customer':   {toolId: lookup_customer, subject: {username: dana},  data: {...usr_dana...}}
+'lookup_customer#2': {toolId: lookup_customer, subject: {username: casey}, data: {...usr_casey...}}
+```
+
+The old code kept only Casey and left Dana in facts. Full live run: 9 passed, 1 failed (the known `retail_large` proposal flake), 1 xfailed, 1 xpassed — the xpass being the comparison itself, on a run where the model planned both history reads.
+
+**Still open, and honestly so.** The comparison prompt stays non-strict xfail because of a *model-planning* gap, not a harness one: the model plans the two customer lookups and then no history reads, because a read plan is chosen in **one shot** and it does not yet hold the account ids the history tool needs. It cannot read to resolve and then read again. That is the single-shot read-plan gap already handed to Danny, and it is now the only thing standing between this prompt and green.
+
+### 2026-09-10 (evening) — the live gate fired in the cloud on the very first demo prompt, and the model was not at fault
+
+Brian deployed and ran `Summarise casey's accounts and recent activity`. It refused: `intent_contract_invalid`, *"The planner model returned invalid arguments for `list_customer_accounts`."* He read it as a design bug rather than a bad model response and asked me to confirm before changing anything. He was right, and the reality was worse than his reading.
+
+**The diagnosis, reproduced rather than inferred.** `list_customer_accounts` declares `required: [userId]`, `additionalProperties: false`. The banker typed "casey". The model is asked for the tool's arguments **before** the directory lookup that turns "casey" into `usr_casey` exists. So the model had exactly two moves, and I ran both:
+
+```
+omits userId (the honest move)  -> terminal=failed  code=intent_contract_invalid
+puts the USERNAME in userId     -> terminal=completed, tool called with {'userId': 'casey'}
+```
+
+**Key Learning — the failure Brian saw was the SAFE one.** The second is the quieter and far worse outcome: the manifest's pattern happily accepts a username, so it validates, and the harness then calls the account service with the banker's word used verbatim as an internal identifier. The run reports `completed` and answers from an empty account list. Nothing anywhere says an identifier was taken from the model. That is Danny's §3.1 — *hints are strings to match, never identifiers to use* — broken silently on the read branch, which is exactly the branch his §3.2 names as the unguarded one. We had a 50/50 coin flip between a loud refusal and a silent wrong answer.
+
+**The fix is server-side and needs no model compliance.** The resolver already resolved `casey` → `usr_casey` on this very run; the resolution was simply thrown away, because `ReferenceResolver` writes into `payload_draft` and nothing ever put it into the read plan. Now the planner injects resolved ids into each read step before validation, and the resolved id **wins** over anything the model supplied for that field — a model-supplied id is not a value to fall back on, it is a value to discard.
+
+**Key Learning — a prompt edit has blast radius well outside its own paragraph, and I have the measurement now.** My first instinct was to fix the contract by telling the model to omit ids. It worked for the target prompt — 6/6 live — so I nearly shipped it. Then the full live suite went from 1 failure to 3. A controlled A/B, same two tests, same model, same session:
+
+| `intent_model.py` | `unlock` + `nobody-here` |
+|---|---|
+| HEAD (untouched) | **4 / 4 passed** |
+| my read-paragraph edit | **0 / 4 passed** |
+
+Adding read-planning guidance pulled the *unlock* prompt from `propose` to `read` — a routing change, in a paragraph that never mentions routing. I reverted the prompt to HEAD entirely and kept the server-side fix, which needed no prompt change to work: **the summary prompt then passed 6/6 anyway**, because the server no longer depends on which of the two impossible options the model picks. Nobody on this team had measured prompt blast radius before. The lesson is not "that wording was bad" — it is that a prompt is a shared global, and tuning it for one prompt is a change to all thirty-one.
+
+**Key Learning — a green test can hide the exact defect it names.** My own live suite passed `Summarise casey's accounts` while the identical prompt refused in the cloud. It asserted "completed, evidence gathered, answer produced" — all true of a run that called `list_customer_accounts(userId="casey")`, got nothing back, and answered from nothing. The assertion was about the *shape* of the run and not about *whose* data it read. Added `_assert_no_identifier_came_from_the_model`, checked against what was actually **called** rather than what was planned — the plan looked fine; the damage was in the argument handed to the tool.
+
+**The refusal is now diagnosable.** It named the tool and not the offending shape, so the cloud failure could not be diagnosed from logs at all. The rejected argument shape is now logged as **keys and JSON types only** — never values, because on a read tool a value is a customer identifier or the words a banker typed about a customer, and Danny's non-disclosure constraint binds here as it does on an ambiguity refusal. It reads:
+
+```
+Read step rejected: arguments failed the tool schema
+  tool_id=list_customer_accounts missing_required=['userId'] required=['userId']
+  supplied={'nope': 'number', 'extra': 'object'} unexpected=['nope', 'extra'] validator=required
+```
+
+**Counts.** Offline 449 → **453 passed**, 12 deselected, 0 xfailed, still hermetic. Live: the cloud-failing prompt now passes 6/6.
+
+**Two things I did not fix, and why.**
+
+1. **A model-supplied id with no hints still passes through.** Closing that means refusing every model-supplied identifier on the read branch — Danny's §3.2 — and it would cancel his ruling to *build* the two-customer comparison, whose account ids come from the model. His call, not mine. My live assertion catches the username-as-id case only; a *fabricated* id would pass it, and I have said so in the docstring rather than letting the assertion imply more than it checks.
+2. **Write-prompt routing is unstable today, and it is not mine.** The live suite showed 3 balance-adjustment failures where it had shown 1 earlier. I A/B'd it — 5 failures in 12 runs with my change, 6 in 12 at HEAD — so the instability is the model's, not the fix's. The model routes `Credit dana $120…` and `Adjust retail's savings by $26,000` to `read` some of the time. That is a demo risk for 9/14 and Brian should know before he stands in front of anyone: the *action* choice for write prompts is currently a coin flip weighted in our favour, not a certainty.
+
+## 2026-09-11 — The catalogue fetch, the model budget, and a number for the credit prompt
+
+**Brian's first reading was wrong and I said so first.** He thought an empty catalogue could
+surface to a banker as `objective_unmappable`. It cannot: `_run_intent_step` checks
+`available is False or not actions` before the model is ever consulted. The free-text path
+fails **closed**. Worth noticing which way the error went — he over-estimated the danger on the
+path he was looking at, and the real one was on a path he wasn't.
+
+**The fail-OPEN was one floor down.** `_required_evidence` returned `[]` when the catalogue
+could not be read, and `[]` already meant "this action requires no evidence". Two opposite
+statements, one value. A pinned-action run then planned no reads at all and walked to the
+propose. The test's own output before the fix:
+
+    propose_calls = [{'evidence': {}, 'agentAssessment': {'requiredEvidenceToolIds': [],
+                      'recommendation': 'proceed', 'confidence': 0.88}}]
+
+The primary agent recommended proceeding with confidence 0.88 on nothing. Authority would have
+rejected it, so it was never a hole in the money path — it was a hole in the truth path, and it
+is the same shape as the facts-map bug and the `list_customer_accounts` coin flip.
+
+**Lesson worth keeping: a sentinel that collides with a legitimate value is a bug waiting.**
+`[]` for "none required" and `[]` for "could not ask" is the whole defect. `None` vs `[]` is the
+entire fix. Look for this pattern elsewhere — `{}` for "no facts" vs "no facts *yet*" is the
+same trap.
+
+**A code that names the wrong actor sends you to the wrong service.** The catalogue refusal
+reported `proposal_refused_by_authority`, whose UI copy says evidence was gathered and a
+proposal constructed and authority rejected it. Three statements, none true. Now
+`authority_catalogue_unavailable`. **But** `refusalCopy` falls back for an unknown code with
+`showServerMessage: false`, so the message is suppressed until Linus adds copy — filed, not
+worked around. The reason still survives in the refusal artifact, which is what I added it for
+two rounds ago. Nice to have a durability feature pay for itself.
+
+**The live suite had been proving a budget the cloud never ran with.** Four hardcoded `30.0`
+literals in the service; `timeout_s=60.0` hardcoded in the live suite. So the one place we
+exercise a real model was running 60 while the pods ran 30, and two of three cloud runs then
+died on the smaller number. **Check whether a test pins a different constant than the thing it
+tests.** That divergence is invisible from either side alone. Now one env var, and the suite
+reads the deployed default.
+
+**`ChatClientException` is not the endpoint being down.** Logged it wrapping
+`APITimeoutError('Request timed out.')` at **18.6s elapsed inside a 60s budget** — the SDK's own
+request timeout, one layer below ours and not configurable through `FoundryChatClient`'s
+constructor. Raising our number would not have saved that run. I would have guessed "endpoint
+flaky, raise the timeout" and been wrong; the `elapsed_ms` logging I added an hour earlier is
+the only reason I know. **Measure the layer that failed, not the layer you own.**
+
+Retry is one attempt, **inside** the same `wait_for`, so "did not answer within Ns" stays
+literally true. Auth/invalid-request/content-filter are not retried — verdicts about the
+request fail identically, and a doubled content-filter call is a second copy of customer text
+sent to the model.
+
+**The credit prompt is confabulation, and now I have a rate.** 12 dedicated live runs with the
+catalogue guaranteed present: **8 correct propose (L2, `credit-adjustment` fired), 4
+`objective_unmappable`**; two more full-suite runs routed it to `read`. About one in three
+wrong, matching Brian's one-pass-in-three in the cloud. `_action_wire` sends no `description`,
+which is a plausible cause — and I left it alone, because the fix belongs in the policy file
+Danny owns AND because it is a model-context change. Last round I learned what those cost:
+one paragraph of the intent prompt took an unrelated pair of write prompts from 4/4 to 0/4.
+**The action catalogue is a shared global exactly like the prompt is.**
+
+**Also confirmed for Brian:** `requiredEvidence: [get_account, list_account_transactions]` is
+genuinely performed before the propose — live 3/3, and now pinned offline.
+
+**Test hygiene note that cost me three runs.** A structlog assertion passed alone and failed in
+the full suite, twice, with two different capture strategies — `caplog` and
+`structlog.testing.capture_logs` — because `configure_logging()` sets
+`cache_logger_on_first_use=True` process-wide and whether it has run depends on collection
+order. Swapping the module's `logger` attribute is the only order-independent way. **A test
+whose result depends on file collection order proves nothing in either direction.**
+
+Offline 453 → **470 passed**, 12 deselected, 0 xfailed. 17 new tests; all 6 catalogue tests
+watched failing against the old code first.
+
+**Follow-up the same day: a config knob nobody can turn is not a config knob.** I shipped
+`BANKER_COPILOT_MODEL_TIMEOUT_S` and nearly stopped there. Both deployment surfaces enumerate
+env explicitly — `docker-compose.yml` and `deploy/kustomize/base/configmap.yaml` (reaching the
+pod via `envFrom: configMapRef`) — so the variable existed only in code and the cloud still
+could not move the ceiling without a rebuild, which is the exact problem it was written to fix.
+Added to both. **When you replace a literal with an env var, follow it all the way to the
+manifest or you have only moved the literal.**
+
+Also checked the other half of doubling the budget: the run ceiling is now up to 4x60s, so a
+proxy read timeout below that would turn a slow propose into a broken stream rather than a
+refusal. `/api/copilot/` already carries `proxy_read_timeout 3600s` in the local gateway, so
+there is headroom. The cloud ingress is not in `deploy/`, so I have NOT verified it — stated
+rather than assumed.
+
+## 2026-09-11 — Action metadata parity: built it, measured it, shipped it off
+
+Danny's diagnosis was correct about the *asymmetry* — read tools reach the intent model with
+prose and a full JSON Schema, actions reached it as names only. I confirmed it in code:
+`ToolRegistry.describe()` sends `description` + full `parameters`; `_action_wire` sent six
+name-only keys. Building parity was the right call.
+
+**It did not do what it was built to do, and the A/B is the only reason I know.** 12 matched
+runs per arm, one session, one process, one deployment:
+
+| prompt | names only | with descriptions |
+| --- | --- | --- |
+| refund → `account.balance.adjust` | **11/12** | **4/12** |
+| password reset → `forbidden_action` | 12/12 | 12/12 |
+| `nobody-here` → `subject_not_found` | 9/12 | **12/12** |
+
+Parity fixed the confabulation on the subject path, did not regress refusals (the risk I was
+warned about hardest), and **regressed action mapping on the headline demo prompt**. So
+`COPILOT_ACTION_METADATA_ENABLED` defaults to 0; everything else ships and is tested.
+
+### Lessons
+
+- **The 4/4 → 0/4 lesson generalises past the prompt text.** I already knew editing
+  `build_intent_prompt` had unpredictable blast radius. I assumed changing only the *data* in
+  `actions` narrowed that. It did not. Anything that reaches the model is a shared global,
+  text or data, and nothing about it can be reasoned about — only measured.
+- **Run both arms in one session or the numbers are not numbers.** My earlier "8/12 propose"
+  figure turned out to be uncomparable — different harness, different day, facts seeded. I
+  nearly wrote a report around it. A baseline you cannot reproduce is not a baseline.
+- **Count the outcome CODE per run, not pass/fail.** The refund prompt is 0/12 in both arms,
+  so a pass/fail counter would have shown "no change" and hidden a 11/12 → 4/12 mapping
+  regression completely. The win and the regression were in different columns.
+- **Design correctness and measured effect are separate claims.** Danny's reasoning was
+  sound, the implementation matches it, and the result is worse. I would have shipped it on
+  the strength of the reasoning.
+
+### The bigger finding, which the A/B surfaced by accident
+
+**Neither arm ever proposed — 0/12 and 0/12.** Every correctly-mapped run then died on
+`payload_unfillable` for `accountId`. `loop.py:1108` builds the payload from the *model's*
+draft, before the resolve step runs. So we ask the model for an account id that does not
+exist yet — the same defect as `casey`/`userId` on the read branch, one layer down on the
+propose branch, and exactly Danny's §3.1 ruling.
+
+No amount of prose about `accountId` can help a model that has never seen the account. The
+refund prompt was never a mapping problem. Filed as queue item #1; not implemented, because
+it moves the ordering of the propose path and that is Danny's boundary.
+
+### Honesty note I want to keep
+
+Offline names-only gives `payload_unfillable` 11/12; Brian saw `objective_unmappable` in the
+cluster. I do not know why they differ and I wrote "unknown" rather than a plausible story.
+The temptation to supply a reason was strong and the reason would have been invented.
+
+### Mechanical
+
+- `config/copilot-actions.yaml` must be mounted in **four** places, and I found this by
+  breaking it: Dockerfile `COPY`, compose volume, k8s env path, and `tests/conftest.py`.
+  Twenty tests errored at once because `Settings` defaulted to the container path.
+- Tests point at the **real shipped file**, not a fixture. A fixture would let the file the
+  model actually reads rot untested — the same gap one level up that the live suite exists
+  to close.
+- Offline suite 470 → **485 passed**, hermetic.
+
+## 2026-09-11 (later) — Cross-customer money movement, and an A/B I got backwards
+
+### The defect
+
+Danny found it by disproving my own bug report. `loop.py:328-336` checked a model-supplied
+`accountId` for **existence only** — `if account is None` was the entire check. So the banker
+says casey, the model supplies Dana's account id, `get_account` returns 200, and a $35 credit
+reaches two signers against Dana. `hashFields` carries no `userId`, so nothing in the signed
+preimage contradicts the banker's own sentence.
+
+I reproduced it before touching anything:
+`payload={'accountId': 'acct_dana_checking', 'amount': '35.00', 'direction': 'credit', ...}`
+
+Sixth instance of our recurring shape, and the first that ends in money rather than in a wrong
+answer. Fixed by **derivation, not verification**: list the resolved customer's accounts and
+match inside that set, so an account they do not own is never a candidate. The safe pattern was
+already twenty lines below in the `accountType` branch.
+
+### Lessons
+
+- **Two hypotheses that predict the same symptom cannot be separated by reading.** I reported
+  "`_construct_payload` runs before resolve". It does not — resolve is `:1021`, propose `:1104`,
+  and the resolved ids already win by assignment. Danny separated it in one step by *running*
+  the planner. I had the same harness and reasoned instead. This is now twice in one session
+  that running beat reading.
+- **A collection must never use "empty" to mean "failed".** Deriving needs
+  `list_customer_accounts`, and `_invoke` returns `None` for both "not registered" and "call
+  failed" — neither of which means the customer has no accounts. Collapsing them would tell a
+  banker an account is not their customer's *because a service was down*. Third instance this
+  session after `_required_evidence` and the empty catalogue. I think that is the general rule.
+- **Assert the property, not a proxy.** My banker-language test scanned `repr(frames)` and
+  failed on the transport's own `payload` envelope key. Scanning the actual message strings is
+  both stricter and correct. Linus has a whole decision doc with this title; now I see why.
+- **Derivation beats a check even when the check is one line.** `get_account` already returns
+  `userId`, so an `if` would have closed the reported defect. But a check depends on the field
+  being present, surviving projection, being named the same on both services, and being
+  compared right — and every one of those failing silently restores money reaching the wrong
+  customer. Derivation has no such failure mode.
+
+### The A/B I got backwards
+
+I reported that action descriptions regressed refund mapping 11/12 → 4/12 and shipped the wire
+off "on measured evidence, against expectation". I was pleased with the rigour.
+
+**The experiment was void.** It measured `"Refund a $35 overdraft fee"` — no customer, no
+account — while the prompt the system is judged on is `"...on retail's checking as goodwill"`.
+With nothing to resolve, neither arm could propose, and the model correctly declining to invent
+an account came out of my counter as a mapping regression.
+
+Re-run against the real prompt, 12 matched runs per arm:
+
+| | names only | with descriptions |
+| --- | --- | --- |
+| refund at correct L2 | 10/12 | **11/12** |
+| refund at **wrong rung** (`direction: debit`, L1) | **2/12** | **0/12** |
+| `nobody-here` refused correctly | 11/12 | **12/12** |
+| forbidden action refused | 12/12 | 12/12 |
+
+Descriptions are better on every axis. Both wrong-rung runs labelled a refund `direction:
+debit` — money going back to a customer described as money taken from one — routing it below
+the dual-control rung crediting money requires. That is precisely the rung error Brian named.
+
+**The lesson is bigger than the number.** A careful experiment on the wrong input is not a
+conservative error. It produced a confident recommendation in the *opposite* direction, with a
+process rigorous enough that nobody including me questioned the result. Check that the input is
+the thing the system is judged on, before trusting any measurement made on it.
+
+### Mechanical
+
+- Offline 485 → **499 passed**, hermetic. 14 new tests in
+  `tests/test_account_ownership_binding.py`.
+- Filed for Linus: `runOutcome.ts` has no copy for the new `subject_lookup_unavailable`, so the
+  server message is suppressed — same gap as `authority_catalogue_unavailable`.
+- `subjectResolution` now rides the approval frame (display only, beside `payload` never inside
+  it) so the card can say what the id resolved from and to. Rendering is Linus's.
+
+## 2026-09-11 (later still) — The harness models 60% of the bank, and it changes the answer
+
+Two corrections to my own work in one day, and the second is worse than the first.
+
+### A vacuous test, inside the negative control for a money defect
+
+`test_an_account_number_belonging_to_another_customer_is_refused` passed **before** my fix and
+after it. `get_account_by_number` was not in the fake registry, so `_invoke` returned None and
+the run refused because the tool did not exist — not because ownership failed. It would have
+gone on passing with the account-number branch completely unguarded.
+
+I noticed it pass early ("interesting, I'll re-verify later") and did not re-verify. The whole
+session is about green suites proving nothing, and I produced one inside the negative control
+for cross-customer money movement. There is now a companion test proving a number the customer
+DOES own resolves, so a refusal can only be about ownership, and I proved the pair bites by
+reverting the branch and watching it fail.
+
+**Lesson: when a test passes before the fix, stop. That is not a small anomaly to revisit.**
+
+### Registering one read tool moved the live result 3.5x
+
+Fixing that meant adding `get_account_by_number` to the registry. The next live A/B then looked
+nothing like the previous one: refund propose 11/12 → 2/12.
+
+I did not assume session noise. Controlled it: same prompt, same n, same session, registry
+entry present → 2/12; removed → 7/12. **Reproduced.** One read tool.
+
+The registry is a shared global with the same blast radius as the prompt. I already knew the
+prompt was (4/4 → 0/4) and the action catalogue was; the *read tool list* is the third, and it
+is the one I changed casually while fixing a test.
+
+### The finding that matters
+
+The live harness registers **9 of the 15 tools** in `config/copilot-tools.yaml`. Six are
+unmodelled. So every live-model number I have produced this session — including both A/B
+results I reported with confidence — was measured against a tool surface 40% smaller than
+production.
+
+That is the likeliest candidate yet for the local/cloud divergence Danny has been carrying as
+unexplained. I am not claiming it as the cause; I am claiming it is a confound large enough
+that nothing measured through this harness can be compared with the cloud until it is closed.
+
+`tests/test_live_harness_fidelity.py` pins the gap with an equality check, not a subset check,
+so it cannot widen silently. Closing it needs executor fixtures for six tools and a re-baseline
+of every live number — evidence work, not a patch.
+
+### On flip-flopping
+
+I have now reported three different answers on the same wire question: off, on, and no
+recommendation. The first two were each delivered with a clean matched-N experiment behind
+them. Both were wrong, for different reasons, and neither error was carelessness in *running*
+the experiment — they were errors in what the experiment was run against. A shortened prompt
+the first time; a harness missing 40% of the tools the second.
+
+**The rigour I keep applying is downstream of an input I keep not checking.** Before the next
+measurement: does the harness match production in prompt, in tool surface, and in action
+catalogue? If I cannot answer all three with evidence, the number is not worth producing.
+
+I stopped making a wire recommendation rather than making a third one. That is the only honest
+position from this data.

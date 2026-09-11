@@ -1,0 +1,932 @@
+{
+  "_comment": [
+    "Demo dataset for `task local:demo:*` and `task cloud:demo:*` (issue #356).",
+    "",
+    "This file is the ONLY home for the demo's names, amounts and counts. scripts/demo/demo.sh",
+    "contains no literal endpoint, amount or count — everything it needs is either here or",
+    "resolved at runtime from the environment.",
+    "",
+    "Two resolver forms are understood inside `payload`, `evidence` and `facts`:",
+    "  {\"@threshold\": \"<name>\", \"@delta\": <number>}  -> the LIVE value of that authority-policy",
+    "      threshold (from GET /api/authority/policy) plus @delta. Nothing here restates a",
+    "      threshold; if the policy changes, the demo data follows it.",
+    "  {\"@ref\": \"<key>\"}  -> a value discovered during seeding (a real account id, a real",
+    "      scored-transaction id, and so on). Never a made-up identifier.",
+    "",
+    "The seed password is a KNOWN THROWAWAY for a demo environment and is overridable with the",
+    "environment variable named in credentials.passwordEnv. It grants nothing outside a demo",
+    "cluster that is rebuilt on demand."
+  ],
+  "version": 1,
+  "targets": {
+    "local": {
+      "description": "docker-compose gateway (infra/local/gateway.nginx.conf).",
+      "baseUrlEnv": "DEMO_BASE_URL",
+      "baseUrlDefault": "http://localhost:8080"
+    },
+    "cloud": {
+      "description": "AKS istio ingress. The host is READ from the cluster, never baked in.",
+      "baseUrlEnv": "DEMO_BASE_URL",
+      "baseUrlDefault": null,
+      "hostFromEnv": "CUSTOM_DOMAIN",
+      "hostFromKubectl": {
+        "resource": "gateway",
+        "name": "banking-demo-gateway",
+        "namespace": "aks-istio-ingress",
+        "jsonpath": "{.spec.servers[*].hosts[*]}"
+      },
+      "scheme": "https"
+    }
+  },
+  "credentials": {
+    "passwordEnv": "DEMO_SEED_PASSWORD",
+    "passwordDefault": "Copilot-Phase3-Verify!2026"
+  },
+  "emailDomain": "banking-demo.com",
+  "_identityComment": [
+    "ORDER IS LOAD-BEARING. user-service auto-promotes the FIRST account registered in an empty",
+    "environment to admin (UserService.CreateUserAsync). So the admin identity is registered",
+    "first and DELIBERATELY absorbs that rule; every other role is then granted explicitly via",
+    "POST /api/admin/promote with the admin token. Nothing here relies on bootstrap-at-startup",
+    "seeding, which never promotes accounts created after the service came up."
+  ],
+  "identities": [
+    {
+      "username": "admin",
+      "role": "admin",
+      "firstName": "Ada",
+      "lastName": "Root",
+      "registerFirst": true,
+      "retail": false
+    },
+    {
+      "username": "banker",
+      "role": "banker",
+      "firstName": "Ben",
+      "lastName": "Keeler",
+      "retail": false
+    },
+    {
+      "username": "banker2",
+      "role": "banker",
+      "firstName": "Bea",
+      "lastName": "Nunez",
+      "retail": false
+    },
+    {
+      "username": "supervisor",
+      "role": "supervisor",
+      "firstName": "Sam",
+      "lastName": "Ortiz",
+      "retail": false
+    },
+    {
+      "username": "retail",
+      "role": "user",
+      "firstName": "Rita",
+      "lastName": "Alvarez",
+      "retail": true,
+      "primary": true
+    },
+    {
+      "username": "verify-target",
+      "role": "user",
+      "firstName": "Vic",
+      "lastName": "Tran",
+      "retail": true,
+      "locked": true
+    },
+    {
+      "username": "casey",
+      "role": "user",
+      "firstName": "Casey",
+      "lastName": "Mbeki",
+      "retail": true
+    },
+    {
+      "username": "dana",
+      "role": "user",
+      "firstName": "Dana",
+      "lastName": "Kowalski",
+      "retail": true
+    }
+  ],
+  "_accountComment": [
+    "AccountType is case-sensitive server-side (^(Checking|Savings|MoneyMarket|CD|Loan|Credit)$).",
+    "",
+    "NO ACCOUNT IS OWNED BY A BANKER OR A SUPERVISOR, deliberately and permanently.",
+    "docs/design/banker-customer-read-ruling.md §B6: the banker-owned accounts existed only",
+    "because GetAccountTransactions filtered by the CALLER's userId, so a banker reading a",
+    "customer's account got 200 [] — a success asserting a falsehood. The data was shaped so a",
+    "defect would not show, which made the workaround the design. Now the customers own the",
+    "accounts and the histories, and the banker works their cases.",
+    "",
+    "Each owner's accountTypes are UNIQUE. seed_accounts claims the first unclaimed existing",
+    "account of a type, and demo:show re-derives the evidence subject by type, so two accounts",
+    "of one type under one owner would make 'which one' depend on server ordering.",
+    "",
+    "The histories are load-bearing, not decoration. Livingston measured the supervisor",
+    "reasoning about real ledger contents — it proceeded on an account that genuinely held",
+    "three near-identical credits and held on one that did not. Keep the empty account, the",
+    "near-threshold pattern and the duplicate-looking pattern; only the ownership moved."
+  ],
+  "accounts": [
+    {
+      "owner": "casey",
+      "accountType": "Checking",
+      "initialBalance": 15750,
+      "currency": "USD",
+      "label": "anomaly subject — offshore wire"
+    },
+    {
+      "owner": "casey",
+      "accountType": "Savings",
+      "initialBalance": 31250,
+      "currency": "USD",
+      "label": "near-threshold deposit pattern — three near-identical cash credits",
+      "evidenceSubjectAlt": true
+    },
+    {
+      "owner": "casey",
+      "accountType": "MoneyMarket",
+      "initialBalance": 4075,
+      "currency": "USD",
+      "label": "high volume, many small movements"
+    },
+    {
+      "owner": "dana",
+      "accountType": "Checking",
+      "initialBalance": 12480,
+      "currency": "USD",
+      "label": "routine operating history",
+      "evidenceSubject": true
+    },
+    {
+      "owner": "dana",
+      "accountType": "Savings",
+      "initialBalance": 0,
+      "currency": "USD",
+      "label": "opened, never used — deliberately empty"
+    },
+    {
+      "owner": "retail",
+      "accountType": "Checking",
+      "initialBalance": 8400,
+      "currency": "USD",
+      "label": "everyday spending"
+    },
+    {
+      "owner": "retail",
+      "accountType": "Savings",
+      "initialBalance": 26500,
+      "currency": "USD",
+      "label": "steady saver"
+    },
+    {
+      "owner": "verify-target",
+      "accountType": "Checking",
+      "initialBalance": 3120,
+      "currency": "USD",
+      "label": "locked customer — user.unlock subject"
+    }
+  ],
+  "_transactionComment": [
+    "Type is case-sensitive server-side (^(Debit|Credit|Transfer|Deposit|Withdrawal)$).",
+    "The `anomalous` entries exist so ai-service's stream consumer produces genuinely SCORED and",
+    "FLAGGED records. Their risk score is decided by the model, not by this file — the seeder",
+    "polls for the result and uses whatever actually came back."
+  ],
+  "transactions": [
+    {
+      "owner": "casey",
+      "accountIndex": 1,
+      "amount": 9400.0,
+      "type": "Deposit",
+      "description": "Cash deposit — branch counter",
+      "category": "deposit"
+    },
+    {
+      "owner": "casey",
+      "accountIndex": 1,
+      "amount": 9350.0,
+      "type": "Deposit",
+      "description": "Cash deposit — ATM, next day",
+      "category": "deposit"
+    },
+    {
+      "owner": "casey",
+      "accountIndex": 1,
+      "amount": 9480.0,
+      "type": "Deposit",
+      "description": "Cash deposit — branch counter, third visit",
+      "category": "deposit"
+    },
+    {
+      "owner": "casey",
+      "accountIndex": 2,
+      "amount": -35.0,
+      "type": "Withdrawal",
+      "description": "Transit fare",
+      "category": "transport"
+    },
+    {
+      "owner": "casey",
+      "accountIndex": 2,
+      "amount": -12.99,
+      "type": "Withdrawal",
+      "description": "Streaming subscription",
+      "category": "entertainment"
+    },
+    {
+      "owner": "casey",
+      "accountIndex": 2,
+      "amount": -88.2,
+      "type": "Withdrawal",
+      "description": "Pharmacy",
+      "category": "health"
+    },
+    {
+      "owner": "casey",
+      "accountIndex": 2,
+      "amount": -410.0,
+      "type": "Withdrawal",
+      "description": "Auto insurance",
+      "category": "insurance"
+    },
+    {
+      "owner": "casey",
+      "accountIndex": 2,
+      "amount": 1500.0,
+      "type": "Credit",
+      "description": "Transfer in from savings",
+      "category": "transfer"
+    },
+    {
+      "owner": "casey",
+      "accountIndex": 0,
+      "amount": 2100.0,
+      "type": "Deposit",
+      "description": "Consulting invoice",
+      "category": "income"
+    },
+    {
+      "owner": "casey",
+      "accountIndex": 0,
+      "amount": 61200.0,
+      "type": "Withdrawal",
+      "description": "Wire transfer to offshore account",
+      "category": "transfer",
+      "anomalous": true
+    },
+    {
+      "owner": "dana",
+      "accountIndex": 0,
+      "amount": 4250.0,
+      "type": "Deposit",
+      "description": "Payroll deposit",
+      "category": "income"
+    },
+    {
+      "owner": "dana",
+      "accountIndex": 0,
+      "amount": -182.44,
+      "type": "Withdrawal",
+      "description": "Utility autopay",
+      "category": "utilities"
+    },
+    {
+      "owner": "dana",
+      "accountIndex": 0,
+      "amount": -64.1,
+      "type": "Withdrawal",
+      "description": "Coffee shop",
+      "category": "dining"
+    },
+    {
+      "owner": "dana",
+      "accountIndex": 0,
+      "amount": -1340.0,
+      "type": "Withdrawal",
+      "description": "Rent payment",
+      "category": "housing"
+    },
+    {
+      "owner": "dana",
+      "accountIndex": 0,
+      "amount": 220.0,
+      "type": "Credit",
+      "description": "Expense reimbursement",
+      "category": "income"
+    },
+    {
+      "owner": "dana",
+      "accountIndex": 0,
+      "amount": 780.0,
+      "type": "Deposit",
+      "description": "Refund",
+      "category": "income"
+    },
+    {
+      "owner": "retail",
+      "accountIndex": 0,
+      "amount": 3200.0,
+      "type": "Deposit",
+      "description": "Payroll deposit",
+      "category": "income"
+    },
+    {
+      "owner": "retail",
+      "accountIndex": 0,
+      "amount": 142.18,
+      "type": "Withdrawal",
+      "description": "Grocery store purchase",
+      "category": "groceries"
+    },
+    {
+      "owner": "retail",
+      "accountIndex": 0,
+      "amount": 96.4,
+      "type": "Withdrawal",
+      "description": "Electric bill payment",
+      "category": "utilities"
+    },
+    {
+      "owner": "retail",
+      "accountIndex": 0,
+      "amount": 1150.0,
+      "type": "Withdrawal",
+      "description": "Rent payment",
+      "category": "housing"
+    },
+    {
+      "owner": "retail",
+      "accountIndex": 1,
+      "amount": 900.0,
+      "type": "Deposit",
+      "description": "Monthly savings transfer",
+      "category": "savings"
+    },
+    {
+      "owner": "retail",
+      "accountIndex": 0,
+      "amount": 48500.0,
+      "type": "Withdrawal",
+      "description": "International wire — new beneficiary",
+      "category": "transfer",
+      "anomalous": true
+    },
+    {
+      "owner": "verify-target",
+      "accountIndex": 0,
+      "amount": 410.0,
+      "type": "Withdrawal",
+      "description": "Card purchase — electronics",
+      "category": "shopping"
+    }
+  ],
+  "_scoringComment": "How long to wait for ai-service to score the anomalous transactions before giving up. Azure AI Foundry rate-limits scoring: every call takes an HTTP 429 and a ~3s retry before succeeding, so a full seed of ~23 transactions needs roughly 140s of scoring time. 90s could not finish and failed as though the consumer were dead.",
+  "scoring": {
+    "_comment": [
+      "pollSeconds must cover the FULL scoring drain, not the first result. The poll now waits",
+      "for a flagged transaction at or above flagged_transaction_dual_control_amount, and the",
+      "qualifying wires sit late in the seeded block. Under Foundry 429 throttling each scoring",
+      "call costs ~5-6s, so the drain is roughly linear in the seeded transaction count: 23",
+      "transactions take ~115-140s. 300 leaves ~2x margin. Revisit this value if the seeded",
+      "transaction count grows past ~40, where the drain alone approaches 240s."
+    ],
+    "pollSeconds": 300,
+    "pollIntervalSeconds": 5,
+    "minScoredRequired": 1
+  },
+  "_approvalComment": [
+    "Every approval below is proposed against a REAL subject discovered during seeding.",
+    "`after` drives the post-propose transition that puts the approval in the demanded state:",
+    "  leave-pending  -> stays pending; L1 so the banker sees it under NEEDS YOU",
+    "  sign-slot0     -> requester signs slot 0 only; L2 so it sits in the supervisor's co-sign",
+    "                    queue with one signature already collected (the co-signature story)",
+    "  sign-full      -> signed to quorum",
+    "  deny           -> denied by `denyBy`, terminalReason HUMAN_DENIED",
+    "  supersede      -> a revised proposal replaces it; the original goes terminal with",
+    "                    terminalReason PAYLOAD_SUPERSEDED (verification check 7.4)"
+  ],
+  "approvals": [
+    {
+      "key": "l1-pending-needs-you",
+      "proposer": "banker",
+      "actionId": "account.balance.adjust",
+      "after": "leave-pending",
+      "payload": {
+        "accountId": {
+          "@ref": "evidenceAccountId"
+        },
+        "amount": {
+          "@threshold": "balance_adjustment_dual_control_amount",
+          "@delta": -30
+        },
+        "direction": "debit",
+        "reason": "Duplicate ATM fee charged twice in the same statement cycle."
+      },
+      "evidence": {
+        "get_account": {
+          "accountId": {
+            "@ref": "evidenceAccountId"
+          },
+          "balance": {
+            "@ref": "evidenceAccountBalance"
+          }
+        },
+        "list_account_transactions": {
+          "accountId": {
+            "@ref": "evidenceAccountId"
+          },
+          "count": {
+            "@ref": "evidenceTransactionCount"
+          }
+        }
+      },
+      "facts": {}
+    },
+    {
+      "key": "l2-pending-awaiting-cosigner",
+      "proposer": "banker",
+      "actionId": "user.unlock",
+      "after": "sign-slot0",
+      "signComment": "Identity re-verified against the customer record; releasing the lock.",
+      "payload": {
+        "userId": {
+          "@ref": "lockedUserId"
+        },
+        "reason": "Lockout was caused by a stale saved password on the customer's phone."
+      },
+      "evidence": {
+        "get_user": {
+          "userId": {
+            "@ref": "lockedUserId"
+          },
+          "status": "locked"
+        },
+        "list_login_audits": {
+          "userId": {
+            "@ref": "lockedUserId"
+          },
+          "count": {
+            "@ref": "lockedUserLoginAuditCount"
+          }
+        }
+      },
+      "facts": {}
+    },
+    {
+      "key": "l1-signed",
+      "proposer": "banker",
+      "actionId": "account.balance.adjust",
+      "after": "sign-full",
+      "signComment": "Fee reversal agreed with the customer; posting the debit correction.",
+      "payload": {
+        "accountId": {
+          "@ref": "evidenceAccountId"
+        },
+        "amount": {
+          "@threshold": "balance_adjustment_dual_control_amount",
+          "@delta": -25
+        },
+        "direction": "debit",
+        "reason": "Duplicate maintenance fee charged twice in the same cycle."
+      },
+      "evidence": {
+        "get_account": {
+          "accountId": {
+            "@ref": "evidenceAccountId"
+          },
+          "balance": {
+            "@ref": "evidenceAccountBalance"
+          }
+        },
+        "list_account_transactions": {
+          "accountId": {
+            "@ref": "evidenceAccountId"
+          },
+          "count": {
+            "@ref": "evidenceTransactionCount"
+          }
+        }
+      },
+      "facts": {}
+    },
+    {
+      "key": "flag-review-denied",
+      "escalator": "large-flagged-amount",
+      "proposer": "banker2",
+      "actionId": "transaction.flag.review",
+      "after": "deny",
+      "denyBy": "supervisor",
+      "denyReason": "The beneficiary account was opened four days ago and the customer could not describe the counterparty. Keeping the flag in place pending a callback.",
+      "payload": {
+        "transactionId": {
+          "@ref": "secondFlaggedTransactionId"
+        },
+        "amount": {
+          "@ref": "secondFlaggedAmount"
+        },
+        "decision": "cleared",
+        "note": "Customer states the wire is a property deposit."
+      },
+      "evidence": {
+        "get_flagged_transaction": {
+          "transactionId": {
+            "@ref": "secondFlaggedTransactionId"
+          },
+          "amount": {
+            "@ref": "secondFlaggedAmount"
+          }
+        },
+        "get_account": {
+          "accountId": {
+            "@ref": "evidenceAltAccountId"
+          },
+          "balance": {
+            "@ref": "evidenceAltAccountBalance"
+          }
+        },
+        "list_account_transactions": {
+          "accountId": {
+            "@ref": "evidenceAltAccountId"
+          },
+          "count": {
+            "@ref": "evidenceAltTransactionCount"
+          }
+        }
+      },
+      "facts": {}
+    },
+    {
+      "key": "l1-superseded",
+      "proposer": "banker",
+      "actionId": "account.balance.adjust",
+      "after": "supersede",
+      "supersedeNote": "Agent re-planned after reading the fee schedule; the corrected amount is smaller.",
+      "payload": {
+        "accountId": {
+          "@ref": "evidenceAccountId"
+        },
+        "amount": {
+          "@threshold": "balance_adjustment_dual_control_amount",
+          "@delta": -25
+        },
+        "direction": "debit",
+        "reason": "Provisional fee correction — figure taken from the customer's statement."
+      },
+      "revisedPayload": {
+        "accountId": {
+          "@ref": "evidenceAccountId"
+        },
+        "amount": {
+          "@threshold": "balance_adjustment_dual_control_amount",
+          "@delta": -100
+        },
+        "direction": "debit",
+        "reason": "Corrected fee reversal — figure taken from the published fee schedule."
+      },
+      "evidence": {
+        "get_account": {
+          "accountId": {
+            "@ref": "evidenceAccountId"
+          },
+          "balance": {
+            "@ref": "evidenceAccountBalance"
+          }
+        },
+        "list_account_transactions": {
+          "accountId": {
+            "@ref": "evidenceAccountId"
+          },
+          "count": {
+            "@ref": "evidenceTransactionCount"
+          }
+        }
+      },
+      "facts": {}
+    },
+    {
+      "key": "esc-bulk-fan-out",
+      "escalator": "bulk-fan-out",
+      "proposer": "banker2",
+      "actionId": "account.balance.adjust",
+      "after": "leave-pending",
+      "payload": {
+        "accountId": {
+          "@ref": "evidenceAccountId"
+        },
+        "amount": {
+          "@threshold": "balance_adjustment_dual_control_amount",
+          "@delta": -40
+        },
+        "direction": "debit",
+        "reason": "Batch statement correction raised during a bulk pass."
+      },
+      "evidence": {
+        "get_account": {
+          "accountId": {
+            "@ref": "evidenceAccountId"
+          },
+          "balance": {
+            "@ref": "evidenceAccountBalance"
+          }
+        },
+        "list_account_transactions": {
+          "accountId": {
+            "@ref": "evidenceAccountId"
+          },
+          "count": {
+            "@ref": "evidenceTransactionCount"
+          }
+        }
+      },
+      "facts": {
+        "session": {
+          "proposalCountForActionType": {
+            "@threshold": "session_fan_out_limit",
+            "@delta": 1
+          }
+        }
+      }
+    },
+    {
+      "key": "esc-low-agent-confidence",
+      "escalator": "low-agent-confidence",
+      "proposer": "banker",
+      "actionId": "account.balance.adjust",
+      "after": "leave-pending",
+      "payload": {
+        "accountId": {
+          "@ref": "evidenceAccountId"
+        },
+        "amount": {
+          "@threshold": "balance_adjustment_dual_control_amount",
+          "@delta": -60
+        },
+        "direction": "debit",
+        "reason": "Possible duplicate card fee; the pattern is not conclusive."
+      },
+      "evidence": {
+        "get_account": {
+          "accountId": {
+            "@ref": "evidenceAccountId"
+          },
+          "balance": {
+            "@ref": "evidenceAccountBalance"
+          }
+        },
+        "list_account_transactions": {
+          "accountId": {
+            "@ref": "evidenceAccountId"
+          },
+          "count": {
+            "@ref": "evidenceTransactionCount"
+          }
+        }
+      },
+      "facts": {
+        "agent": {
+          "confidence": {
+            "@threshold": "agent_confidence_floor",
+            "@delta": -0.12
+          }
+        }
+      }
+    },
+    {
+      "key": "esc-policy-exception",
+      "escalator": "policy-exception",
+      "proposer": "banker",
+      "actionId": "account.balance.adjust",
+      "after": "leave-pending",
+      "payload": {
+        "accountId": {
+          "@ref": "evidenceAltAccountId"
+        },
+        "amount": {
+          "@threshold": "balance_adjustment_dual_control_amount",
+          "@delta": -120
+        },
+        "direction": "debit",
+        "reason": "Goodwill correction requested by the branch."
+      },
+      "evidence": {
+        "get_account": {
+          "accountId": {
+            "@ref": "evidenceAltAccountId"
+          },
+          "balance": {
+            "@ref": "evidenceAltAccountBalance"
+          }
+        },
+        "list_account_transactions": {
+          "accountId": {
+            "@ref": "evidenceAltAccountId"
+          },
+          "count": {
+            "@ref": "evidenceAltTransactionCount"
+          }
+        }
+      },
+      "facts": {
+        "$comment": "POL-004 deliberately, NOT POL-001/002/007 — those are hard stops that escalate to L3, where the agent may not even propose and no approval record would exist to demo.",
+        "underwriting": {
+          "policyExceptions": [
+            "POL-004"
+          ]
+        }
+      }
+    },
+    {
+      "key": "esc-high-risk-customer",
+      "escalator": "high-risk-customer",
+      "proposer": "banker",
+      "actionId": "account.balance.adjust",
+      "after": "leave-pending",
+      "payload": {
+        "accountId": {
+          "@ref": "evidenceAltAccountId"
+        },
+        "amount": {
+          "@threshold": "balance_adjustment_dual_control_amount",
+          "@delta": -80
+        },
+        "direction": "debit",
+        "reason": "Goodwill fee refund requested for this customer."
+      },
+      "evidence": {
+        "get_account": {
+          "accountId": {
+            "@ref": "evidenceAltAccountId"
+          },
+          "balance": {
+            "@ref": "evidenceAltAccountBalance"
+          }
+        },
+        "list_account_transactions": {
+          "accountId": {
+            "@ref": "evidenceAltAccountId"
+          },
+          "count": {
+            "@ref": "evidenceAltTransactionCount"
+          }
+        }
+      },
+      "facts": {
+        "customer": {
+          "riskTier": "high"
+        }
+      }
+    },
+    {
+      "key": "esc-anomalous-session",
+      "escalator": "anomalous-session",
+      "proposer": "banker2",
+      "actionId": "account.balance.adjust",
+      "after": "leave-pending",
+      "payload": {
+        "accountId": {
+          "@ref": "evidenceAccountId"
+        },
+        "amount": {
+          "@threshold": "balance_adjustment_dual_control_amount",
+          "@delta": -150
+        },
+        "direction": "debit",
+        "reason": "Statement correction raised from an unrecognised device."
+      },
+      "evidence": {
+        "get_account": {
+          "accountId": {
+            "@ref": "evidenceAccountId"
+          },
+          "balance": {
+            "@ref": "evidenceAccountBalance"
+          }
+        },
+        "list_account_transactions": {
+          "accountId": {
+            "@ref": "evidenceAccountId"
+          },
+          "count": {
+            "@ref": "evidenceTransactionCount"
+          }
+        }
+      },
+      "facts": {
+        "session": {
+          "anomalyScore": {
+            "@threshold": "session_anomaly_score_floor",
+            "@delta": 0.05
+          }
+        }
+      }
+    },
+    {
+      "key": "l2-score-override-pending",
+      "proposer": "banker",
+      "actionId": "transaction.score.override",
+      "after": "leave-pending",
+      "payload": {
+        "transactionId": {
+          "@ref": "scoredTransactionId"
+        },
+        "newScore": "0.25",
+        "rationale": "The beneficiary is the customer's own account at another institution, verified against the payment instruction on file."
+      },
+      "evidence": {
+        "get_scored_transaction": {
+          "transactionId": {
+            "@ref": "scoredTransactionId"
+          },
+          "riskScore": {
+            "@ref": "scoredRiskScore"
+          }
+        },
+        "get_account": {
+          "accountId": {
+            "@ref": "evidenceAccountId"
+          },
+          "balance": {
+            "@ref": "evidenceAccountBalance"
+          }
+        },
+        "list_account_transactions": {
+          "accountId": {
+            "@ref": "evidenceAccountId"
+          },
+          "count": {
+            "@ref": "evidenceTransactionCount"
+          }
+        }
+      },
+      "facts": {}
+    }
+  ],
+  "_unreachableEscalators": {
+    "$comment": [
+      "Escalators the issue's table asks for that CANNOT be produced through the public propose",
+      "API as authority-service is currently wired. Recorded here rather than faked, because a",
+      "seeded approval that claims a self-dealing escalation which the engine did not actually",
+      "fire would be a demo of a lie.",
+      "",
+      "Both are server-derived in EvaluationContext.BuildDocument(), which OVERWRITES whatever",
+      "the caller supplies:",
+      "  document[\"actor\"]   <- ActorContext  (so actor.signaturesInWindow is always 0)",
+      "  context.selfDealing <- ActorContext.SelfDealing (ApprovalsController always passes false)"
+    ],
+    "self-dealing": "ActorContextFactory.Create is called without selfDealing:true from ApprovalsController, so context.selfDealing is always false.",
+    "velocity": "ActorContext.SignaturesInWindow is never populated from storage, so actor.signaturesInWindow is always 0."
+  },
+  "proposePathProbe": {
+    "actionId": "account.balance.adjust",
+    "why": [
+      "The probe DRIVES this action end to end through the copilot — login, session, run,",
+      "trace — because the only honest probe of 'can an approval be created' is to create one.",
+      "",
+      "It used to inspect the RAW upstream response shape and predict a refusal. That",
+      "prediction outlived the defect: Turk's declared evidenceProjection (0e19c15) gives",
+      "get_account an accountId and turns the bare transaction array into {accountId, count,",
+      "items} INSIDE the executor, so the raw shape no longer has to satisfy EvidenceComplete.",
+      "The probe went on failing a gate that was open, refused to seed, and left a real",
+      "operator staring at a false blocker. A guard that shouts about the wrong thing is the",
+      "same defect class as the fake success it was built to prevent."
+    ],
+    "readAs": "banker",
+    "objective": "Review the customer's account and its recent activity, then post the corrective balance adjustment the case file calls for.",
+    "amount": {
+      "@threshold": "balance_adjustment_dual_control_amount",
+      "@delta": 1500
+    },
+    "amountNote": [
+      "Resolved live from the policy, then rendered as a fixed-scale decimal STRING at the",
+      "scale the policy itself publishes. A JSON number in a money position is refused",
+      "payload_not_canonicalizable before the request ever leaves banker-copilot-service.",
+      "@delta keeps it ABOVE the dual-control line so the run reaches L2 and the supervisor",
+      "fan-out actually runs; below the line it is L1 and proves strictly less."
+    ],
+    "payload": {
+      "accountId": {
+        "@ref": "evidenceAccountId"
+      },
+      "amount": {
+        "@ref": "probeAmount"
+      },
+      "direction": "debit",
+      "reason": "Duplicate posting identified during case review; reversing the second copy."
+    },
+    "successFrame": "approval.required",
+    "successFrameNote": "Success is this POSITIVE frame, never the absence of an error and never the terminal status field. A run that dies before emitting anything has no errors either.",
+    "runTimeoutSeconds": 240,
+    "pollIntervalSeconds": 5
+  },
+  "_proposePathDeferral": {
+    "summary": "Seeded approvals are DEFERRED whenever the probe run does not reach its success frame. They are produced only by driving the real propose path, never by writing to the approval store.",
+    "whyNotSimulated": "Writing approval rows straight into the store would put cards on screen in every state while the pipeline stayed dead. That is failure that looks exactly like success: it would demo cleanly, survive review, and be false. An empty queue and a loud error is the truth.",
+    "whatTheProbeReports": "The refusal the environment actually produced — the run.error code and message, or the upstream status of the read that failed. Those are facts from this run, not a prediction from a config file that may already have been fixed.",
+    "unblockWhen": "The probe run reaches approval.required. demo:seed re-probes on every run and seeds the approvals the moment it does — no edit to this repo is needed.",
+    "reference": "tests/verification/README.md"
+  }
+}

@@ -21,8 +21,15 @@ import {
   validateReason,
 } from '../approvalPolicy';
 import { demoApproval } from '../demoFixture';
+import { SUPERVISOR_UNAVAILABLE_FACTOR } from '../supervisorFactors';
 import { getCopilotConfig, resetCopilotConfig } from '../../../config/copilotConfig';
-import { Approval, PayloadField, TERMINAL_REASONS } from '../types';
+import {
+  AgentAssessment,
+  AgreementState,
+  Approval,
+  PayloadField,
+  TERMINAL_REASONS,
+} from '../types';
 
 const l1: Approval = {
   ...demoApproval,
@@ -68,17 +75,17 @@ describe('dwellRequirementMs', () => {
 
     const l1Irreversible = dwellRequirementMs({
       approval: l1,
-      disagreement: 'none',
+      disagreement: 'agree',
       supersedes: false,
     });
     const l2Agree = dwellRequirementMs({
       approval: demoApproval,
-      disagreement: 'none',
+      disagreement: 'agree',
       supersedes: false,
     });
     const l2Disagree = dwellRequirementMs({
       approval: demoApproval,
-      disagreement: 'verdict',
+      disagreement: 'diverge',
       supersedes: false,
     });
 
@@ -87,15 +94,30 @@ describe('dwellRequirementMs', () => {
     expect(l2Disagree).toBeGreaterThan(l2Agree);
   });
 
+  it('gives the SHORTER dwell only to a stated agreement, never to an absence', () => {
+    // An absence buying a banker less reading time is the same defect as an
+    // absence rendering as consensus — one level down, on the gate rather than
+    // the banner. `not_comparable` and `not_reviewed` must both cost full time.
+    const config = getCopilotConfig();
+    for (const kind of ['diverge', 'not_comparable', 'not_reviewed'] as const) {
+      expect(
+        dwellRequirementMs({ approval: demoApproval, disagreement: kind, supersedes: false })
+      ).toBe(config.dwellMs.l2Disagree);
+    }
+    expect(
+      dwellRequirementMs({ approval: demoApproval, disagreement: 'agree', supersedes: false })
+    ).toBe(config.dwellMs.l2Agree);
+  });
+
   it('gives no credit for having read a superseded payload', () => {
     const fresh = dwellRequirementMs({
       approval: demoApproval,
-      disagreement: 'verdict',
+      disagreement: 'diverge',
       supersedes: false,
     });
     const resuperseded = dwellRequirementMs({
       approval: demoApproval,
-      disagreement: 'verdict',
+      disagreement: 'diverge',
       supersedes: true,
     });
     expect(resuperseded).toBeGreaterThanOrEqual(fresh);
@@ -109,10 +131,10 @@ describe('dwellRequirementMs', () => {
     resetCopilotConfig();
 
     expect(
-      dwellRequirementMs({ approval: demoApproval, disagreement: 'none', supersedes: false })
+      dwellRequirementMs({ approval: demoApproval, disagreement: 'agree', supersedes: false })
     ).toBeGreaterThan(0);
     expect(
-      dwellRequirementMs({ approval: l1, disagreement: 'none', supersedes: false })
+      dwellRequirementMs({ approval: l1, disagreement: 'agree', supersedes: false })
     ).toBeGreaterThan(0);
 
     delete (window as unknown as { __RUNTIME_CONFIG__?: unknown }).__RUNTIME_CONFIG__;
@@ -139,15 +161,234 @@ describe('isReversible', () => {
   });
 });
 
-describe('disagreementOf', () => {
-  it('detects opposite verdicts', () => {
-    const result = disagreementOf(demoApproval.assessments);
-    expect(result.kind).not.toBe('none');
+describe('disagreementOf — tri-state agreement', () => {
+  const [demoPrimary, demoSupervisor] = demoApproval.assessments;
+
+  /**
+   * Build the pair the way the SERVICE builds it: two assessments plus the
+   * server's own `agreement` token. There is no arrangement in which the wire
+   * carries {primary, supervisor} and no agreement — `fanout.py` writes all three
+   * in one dict literal — so a helper that let a test omit it would be teaching
+   * this suite a shape that does not exist.
+   */
+  const pair = (
+    primary: Partial<AgentAssessment>,
+    supervisor: Partial<AgentAssessment>,
+    agreement: AgreementState | undefined
+  ) =>
+    disagreementOf({
+      assessments: [
+        { ...demoPrimary, ...primary },
+        { ...demoSupervisor, ...supervisor },
+      ],
+      assessmentAgreement: agreement,
+    });
+
+  it('reads the shipped demo approval as a genuine divergence', () => {
+    const result = disagreementOf(demoApproval);
+    expect(result.kind).toBe('diverge');
+    expect(result.concurs).toBe(false);
     expect(result.summary).toContain('Supervisor');
   });
 
-  it('reports none when there is no supervisor opinion', () => {
-    expect(disagreementOf([demoApproval.assessments[0]]).kind).toBe('none');
+  it('names both verdicts using the server vocabulary, not the raw wire string', () => {
+    // The summary once interpolated `primary.verdict` directly, which printed the
+    // mistranslated wire label into prose — the same lie in a different medium.
+    const result = disagreementOf(demoApproval);
+    expect(result.summary).toBe('Primary recommends PROCEED. Supervisor recommends DECLINE.');
+    expect(result.summary).not.toMatch(/APPROVE|CONDITIONAL/);
+  });
+
+  it('reports agreement ONLY when the server states it', () => {
+    // Anti-vacuous counterpart to every "never says consensus" case below: the
+    // guards must not have made agreement unreachable, or the banner would be
+    // permanently lit and carry no information.
+    const agreed = pair({ verdict: 'hold' }, { verdict: 'HOLD' }, 'agree');
+    expect(agreed.kind).toBe('agree');
+    expect(agreed.concurs).toBe(true);
+    expect(agreed.title).toMatch(/same verdict/i);
+  });
+
+  describe('the third state — no primary position at all', () => {
+    it('is not_comparable, and is NEITHER agreement nor dissent, when the primary failed', () => {
+      // The bug class one level up from the original defect: a supervisor `hold`
+      // against a primary that has NO position used to render as genuine dissent
+      // (because `_primary_recommendation` defaulted to "proceed"), and two
+      // absent verdicts used to render as consensus.
+      const result = pair(
+        {
+          verdict: undefined,
+          failure: 'primary_unavailable',
+          failureReason: 'primary_mode_deterministic',
+        },
+        { verdict: 'hold' },
+        'not_comparable'
+      );
+      expect(result.kind).toBe('not_comparable');
+      expect(result.concurs).toBe(false);
+      expect(result.kind).not.toBe('diverge');
+    });
+
+    it('names the failure BY NAME rather than describing a mild or neutral verdict', () => {
+      const result = pair(
+        {
+          verdict: undefined,
+          failure: 'primary_assessment_invalid',
+          failureReason: 'primary_rationale_echoes_objective',
+        },
+        { verdict: 'hold' },
+        'not_comparable'
+      );
+      expect(result.summary).toContain('primary_assessment_invalid');
+      expect(result.summary).toContain('primary_rationale_echoes_objective');
+      expect(result.title).toMatch(/NOT INDEPENDENTLY REVIEWED/);
+      // It must not read as a mild verdict, which is the exact shape of the
+      // original defect (`decline` landing on "CONDITIONAL").
+      expect(result.summary).not.toMatch(/same verdict|conditional|proceed/i);
+    });
+
+    it('is visually distinct from BOTH agreement and disagreement', () => {
+      const agreed = pair({ verdict: 'hold' }, { verdict: 'hold' }, 'agree');
+      const diverged = pair({ verdict: 'proceed' }, { verdict: 'hold' }, 'diverge');
+      const absent = pair({ verdict: undefined, failure: 'primary_unavailable' }, { verdict: 'hold' }, 'not_comparable');
+      expect(new Set([agreed.kind, diverged.kind, absent.kind]).size).toBe(3);
+      expect(new Set([agreed.title, diverged.title, absent.title]).size).toBe(3);
+    });
+
+    it('never reports agreement when both verdicts are junk', () => {
+      const bothJunk = pair({ verdict: 'CONDITIONAL' }, { verdict: 'CONDITIONAL' }, 'not_comparable');
+      expect(bothJunk.concurs).toBe(false);
+      expect(bothJunk.summary).not.toMatch(/same verdict/i);
+      expect(bothJunk.summary).toContain('UNRECOGNISED VERDICT');
+    });
+
+    it('never reports agreement when the server stated NOTHING', () => {
+      // The seam that fails silently: a UI shipped ahead of the service, or a
+      // service that stopped sending `agreement`. It must fail towards
+      // "unreviewed", never towards consensus.
+      const silent = pair({ verdict: 'hold' }, { verdict: 'hold' }, undefined);
+      expect(silent.kind).toBe('not_comparable');
+      expect(silent.concurs).toBe(false);
+      expect(silent.summary).not.toMatch(/same verdict/i);
+    });
+
+    it('reports not_reviewed — its own state — when no supervisor opinion exists', () => {
+      const result = disagreementOf({ assessments: [demoPrimary], assessmentAgreement: undefined });
+      expect(result.kind).toBe('not_reviewed');
+      expect(result.concurs).toBe(false);
+      expect(result.summary).not.toMatch(/same verdict/i);
+    });
+  });
+
+  describe('self-reported confidence ranks, sorts and gates NOTHING (§P7.2)', () => {
+    it('does not change the outcome when the two confidences are far apart', () => {
+      // This is the regression the regenerated golden fixture exposed. The primary
+      // now sends a real confidence (0.88) against the supervisor's 0.62, and the
+      // old `Math.abs(pc - sc) >= 0.2` branch turned a clean verdict divergence
+      // into 'both' — a kind that then bought a different dwell time.
+      const near = pair({ selfReportedConfidence: 0.61 }, { selfReportedConfidence: 0.62 }, 'diverge');
+      const far = pair({ selfReportedConfidence: 0.98 }, { selfReportedConfidence: 0.1 }, 'diverge');
+      expect(far.kind).toBe(near.kind);
+      expect(far.summary).toBe(near.summary);
+    });
+
+    it('cannot manufacture a disagreement out of confidence alone', () => {
+      const result = pair(
+        { verdict: 'hold', selfReportedConfidence: 0.98 },
+        { verdict: 'hold', selfReportedConfidence: 0.1 },
+        'agree'
+      );
+      expect(result.kind).toBe('agree');
+      expect(result.concurs).toBe(true);
+    });
+
+    it('never mentions the number in the rendered prose', () => {
+      const result = pair({ selfReportedConfidence: 0.88 }, { selfReportedConfidence: 0.62 }, 'diverge');
+      expect(`${result.title} ${result.summary}`).not.toMatch(/0\.88|0\.62|confiden/i);
+    });
+  });
+
+  describe('divergentFactors', () => {
+    it('is empty when the primary stated no factors — a failed primary flags nothing', () => {
+      // The defect: `primaryFactors` was ALWAYS empty on the real wire, so `match`
+      // was always undefined and every supervisor factor was pushed here — bold
+      // red "← DIVERGENT" on 100% of runs, loudest on the runs that said least.
+      // The primary now DOES state factors, but a failed one still states none.
+      const result = pair(
+        { keyFactors: undefined },
+        { keyFactors: [{ label: 'a' }, { label: 'b' }] },
+        'not_comparable'
+      );
+      expect(result.divergentFactors).toEqual([]);
+    });
+
+    it('is empty when the supervisor has no factors either', () => {
+      expect(
+        pair({ keyFactors: [{ label: 'a', concern: true }] }, { keyFactors: [] }, 'diverge')
+          .divergentFactors
+      ).toEqual([]);
+    });
+
+    it('STILL detects a genuine divergence when both agents stated factors', () => {
+      // Anti-vacuous: without this, simply deleting the comparison would pass
+      // every assertion above. The feature is guarded, not removed.
+      const result = pair(
+        { keyFactors: [{ label: 'aggregate', concern: true }] },
+        { keyFactors: [{ label: 'aggregate', concern: false }] },
+        'diverge'
+      );
+      expect(result.divergentFactors).toEqual(['aggregate']);
+    });
+
+    it('does NOT flag a factor the primary simply worded differently', () => {
+      // The regression the regenerated fixture exposed. Two independent models
+      // writing free-text labels never choose the same words, so `!match` fired
+      // on ~100% of supervisor factors the moment the primary started sending
+      // factors of its own — bold red DIVERGENT on the whole column. A different
+      // choice of words is not a disagreement, and asserting one is fabrication.
+      const result = pair(
+        { keyFactors: [{ label: 'aggregate crosses the AML-14 trigger', concern: true }] },
+        { keyFactors: [{ label: 'customer sector explains the pattern' }] },
+        'diverge'
+      );
+      expect(result.divergentFactors).toEqual([]);
+    });
+
+    it('does NOT flag on the shipped demo approval, whose two agents word everything differently', () => {
+      expect(disagreementOf(demoApproval).divergentFactors).toEqual([]);
+    });
+
+    it('does NOT infer a classification from an unstated one', () => {
+      // `Boolean(undefined) !== Boolean(true)` was the old test, and it read an
+      // absent judgement as an explicit "not a concern" — the same defect as the
+      // green tick this card used to print beside factors nobody classified.
+      const result = pair(
+        { keyFactors: [{ label: 'aggregate' }] },
+        { keyFactors: [{ label: 'aggregate', concern: true }] },
+        'diverge'
+      );
+      expect(result.divergentFactors).toEqual([]);
+    });
+
+    it('reports nothing when both agents raised the same factors and agree', () => {
+      const result = pair(
+        { keyFactors: [{ label: 'aggregate', concern: true }] },
+        { keyFactors: [{ label: 'aggregate', concern: true }] },
+        'agree'
+      );
+      expect(result.divergentFactors).toEqual([]);
+    });
+
+    it('never flags the failed-supervisor sentinel as a divergence', () => {
+      // A supervisor that never answered has not disagreed about anything. This
+      // is the case where the old code shouted loudest and meant least.
+      const result = pair(
+        { keyFactors: [{ label: 'aggregate', concern: true }] },
+        { keyFactors: [{ label: SUPERVISOR_UNAVAILABLE_FACTOR }] },
+        'not_comparable'
+      );
+      expect(result.divergentFactors).toEqual([]);
+    });
   });
 });
 
@@ -204,5 +445,167 @@ describe('diffPayloads', () => {
   it('reports no changes for an identical payload', () => {
     const rows = diffPayloads(demoApproval.payload, demoApproval.payload);
     expect(countMaterialChanges(rows)).toBe(0);
+  });
+});
+
+describe('batch eligibility — L2 is structurally impossible', () => {
+  const { batchableGroups, isBatchEligible } = require('../approvalPolicy');
+
+  const mkL1 = (id: string, actionId = 'act_fee_reversal'): Approval => ({
+    ...l1,
+    id,
+    actionId,
+    actionLabel: 'Reverse a $12 fee',
+    status: 'pending',
+    requiredRung: 'L1',
+    requiredSigners: 1,
+    callerMaySign: true,
+  });
+
+  it('admits an L1 single-signer item the caller may sign', () => {
+    expect(isBatchEligible(mkL1('a'))).toBe(true);
+  });
+
+  it('never admits an L2 item, however else it qualifies', () => {
+    const l2: Approval = { ...mkL1('b'), requiredRung: 'L2', requiredSigners: 2 };
+    expect(isBatchEligible(l2)).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Condition-isolating tests. The two guards (`requiredRung === 'L1'` and
+  // `requiredSigners === 1`) protect L2 batching TOGETHER, and an aggregate
+  // fixture that breaks both at once (the test above) stays green if either
+  // guard is deleted — a false pass, and the exact erosion path this epic keeps
+  // getting bitten by. The fixtures below are DELIBERATELY self-inconsistent:
+  // an L2/one-signer approval and an L1/two-signer approval do not occur in the
+  // wild. That inconsistency is the point — each makes ONE guard useless so the
+  // OTHER guard is the only thing that can produce the expected `false`, which
+  // is what pins it. DO NOT "fix" these fixtures into internal consistency: that
+  // silently merges them back into the aggregate case and restores the hole.
+  it('rejects an L2 rung on its own, even with a single required signer (pins the rung check)', () => {
+    const rungOnly: Approval = { ...mkL1('rung'), requiredRung: 'L2', requiredSigners: 1 };
+    // If the rung guard were deleted, `requiredSigners === 1` would pass this and
+    // return true. Only the rung check can make it false.
+    expect(isBatchEligible(rungOnly)).toBe(false);
+  });
+
+  it('rejects a two-signer requirement on its own, even at rung L1 (pins the signers check)', () => {
+    const signersOnly: Approval = { ...mkL1('signers'), requiredRung: 'L1', requiredSigners: 2 };
+    // If the signers guard were deleted, `requiredRung === 'L1'` would pass this
+    // and return true. Only the signers check can make it false.
+    expect(isBatchEligible(signersOnly)).toBe(false);
+  });
+
+  it('excludes a lone-guard L2 item from grouping too (batchableGroups re-filters, never trusts input)', () => {
+    // Two clean L1 items plus one self-inconsistent L2/one-signer item. If
+    // batchableGroups trusted its input, or if the rung guard were gone, the
+    // tampered item would join the group. It must not.
+    const approvals: Approval[] = [
+      mkL1('a'),
+      mkL1('b'),
+      { ...mkL1('rung'), requiredRung: 'L2', requiredSigners: 1 },
+    ];
+    const groups = batchableGroups(approvals, 10, Date.now());
+    expect(groups).toHaveLength(1);
+    expect(groups[0].items.map((i: Approval) => i.id)).toEqual(['a', 'b']);
+  });
+
+  it('never admits an item the service says the caller may not sign', () => {
+    expect(isBatchEligible({ ...mkL1('c'), callerMaySign: false })).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // The `callerMaySign` guard is the single most security-critical condition
+  // here: it is the SERVER-supplied authorization gate, the one thing the client
+  // is not allowed to decide for itself. The real code is `callerMaySign ===
+  // true`, which differs from the tempting `!== false` on exactly one input:
+  // undefined. A refactor to `!== false` fails OPEN — an approval whose
+  // `callerMaySign` never arrived (older API, renamed field, partial DTO, a
+  // serializer that omits nulls, a mapping layer that drops unknown keys) would
+  // become batch-eligible and the banker would be shown a bulk-sign button for
+  // approvals they may have no entitlement to sign. A missing field must NEVER
+  // read as permission. The `delete` below removes the key entirely (not
+  // `undefined`) so this survives a fixture-builder refactor that stops setting
+  // it. The `Approval` type marks the field required; the WIRE is not bound by
+  // our TypeScript, so we cast at this boundary to model what the DTO can
+  // actually carry.
+  it('never admits an item whose callerMaySign is absent — a missing gate is not consent', () => {
+    const noGate = { ...mkL1('nogate') } as Partial<Approval>;
+    delete noGate.callerMaySign;
+    expect(isBatchEligible(noGate as Approval)).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Status guard. The real code is a positive allow-list of the two OPEN,
+  // awaiting-signature states (`pending`, `proposed`) — not a `!== 'denied'`
+  // deny-list. That shape matters: a status added to the lifecycle later, or a
+  // terminal one, falls OUTSIDE the allow-list and is rejected (fails closed)
+  // rather than sliding into a batch. These pin that a terminal approval —
+  // already signed, or already executed — can never enter a bulk-sign group.
+  it('never admits an already-signed approval (terminal status fails closed)', () => {
+    expect(isBatchEligible({ ...mkL1('signed'), status: 'signed' })).toBe(false);
+  });
+
+  it('never admits an already-executed approval (terminal status fails closed)', () => {
+    expect(isBatchEligible({ ...mkL1('executed'), status: 'executed' })).toBe(false);
+  });
+
+  it('groups only same-action L1 items and yields no L2 group', () => {
+    const approvals: Approval[] = [
+      mkL1('a', 'act_fee_reversal'),
+      mkL1('b', 'act_fee_reversal'),
+      mkL1('c', 'act_fee_reversal'),
+      { ...mkL1('d', 'act_fee_reversal'), requiredRung: 'L2', requiredSigners: 2 },
+      mkL1('e', 'act_other'), // only one of this action → not a batch
+    ];
+    const groups = batchableGroups(approvals, 10, Date.now());
+    expect(groups).toHaveLength(1);
+    expect(groups[0].actionId).toBe('act_fee_reversal');
+    expect(groups[0].items).toHaveLength(3);
+    // The L2 item never appears in any group.
+    const allIds = groups.flatMap((g: { items: Approval[] }) => g.items.map((i) => i.id));
+    expect(allIds).not.toContain('d');
+  });
+
+  it('enforces the cap as a hard slice', () => {
+    const many = Array.from({ length: 15 }, (_, i) => mkL1(`x${i}`));
+    const groups = batchableGroups(many, 10, Date.now());
+    expect(groups[0].items).toHaveLength(10);
+  });
+
+  it('does not offer a batch of one', () => {
+    expect(batchableGroups([mkL1('solo')], 10, Date.now())).toHaveLength(0);
+  });
+});
+
+describe('denialCountsByReason — never one undifferentiated total', () => {
+  const { denialCountsByReason } = require('../approvalPolicy');
+
+  const denied = (id: string, reason: string): Approval => ({
+    ...l1,
+    id,
+    status: 'denied',
+    terminalReason: reason as Approval['terminalReason'],
+  });
+
+  it('keeps a policy void separate from a human denial', () => {
+    const breakdown = denialCountsByReason([
+      denied('a', 'HUMAN_DENIED'),
+      denied('b', 'POLICY_RUNG_ESCALATED'),
+      denied('c', 'PAYLOAD_SUPERSEDED'),
+      denied('d', 'TTL_EXPIRED'),
+      denied('e', 'HUMAN_DENIED'),
+    ]);
+    expect(breakdown.byReason.HUMAN_DENIED).toBe(2);
+    expect(breakdown.byReason.POLICY_RUNG_ESCALATED).toBe(1);
+    // Only human denials are evidence about the agent.
+    expect(breakdown.humanDenied).toBe(2);
+    // The other three are the ground moving, grouped away from human denial.
+    expect(breakdown.systemVoided).toBe(3);
+  });
+
+  it('ignores non-terminal approvals', () => {
+    const breakdown = denialCountsByReason([{ ...l1, status: 'pending' }]);
+    expect(breakdown.total).toBe(0);
   });
 });

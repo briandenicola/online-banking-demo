@@ -1,0 +1,66 @@
+version: '3'
+
+# Demo dataset tasks (issue #356).
+#
+# Included TWICE — once under `local:` and once under `cloud:` — so the target is selected
+# exactly the way the repo already distinguishes environments:
+#
+#     task local:demo:seed        task cloud:demo:seed
+#     task local:demo:show        task cloud:demo:show
+#     task local:demo:reset       task cloud:demo:reset
+#
+# A single top-level `demo:` namespace was the alternative. It was rejected because it would
+# need its own flag to say which environment it meant, giving this repo two different ways to
+# express "local or cloud" — and the one thing worse than a long task name is two spellings of
+# the same distinction, only one of which is checked.
+#
+# DEMO_TARGET is supplied by the including Taskfile; nothing here knows a hostname or a port.
+#
+# EXIT CODES — `seed` exits 3 when the propose path is closed, and so does `show --probe`.
+#
+# An approval can only be created by driving the real path, so `seed` DRIVES it: it opens a
+# copilot session, starts a run against a real action on a real seeded account, and reads the
+# trace back. Success is the positive frame `approval.required`. If the run does not reach it,
+# the tasks print the refusal THE SERVICE GAVE — the run.error code and message, or the upstream
+# status of the read that failed — and exit non-zero, because an environment whose queue cannot
+# be populated is NOT ready to demo and must not look as if it is.
+#
+# The probe used to inspect raw response shapes and predict a refusal instead. The prediction
+# outlived the defect and blocked a real operator on a gate that was already open. Driving the
+# path cannot go stale that way: it reports what happened, not what should happen.
+#
+# `show` does NOT probe unless you pass `-- --probe`, because a successful probe WRITES: it
+# creates a real approval. Without it, `show` says plainly that it did not check, rather than
+# letting a clean report imply a working pipeline.
+#
+# The approvals are never simulated. Writing them into the store would put cards on screen while
+# the pipeline stayed dead — failure that looks exactly like success.
+
+tasks:
+  seed:
+    desc: 'Seed the demo dataset: identities, customer accounts, transactions, approvals (idempotent; exits 3 if the propose path is closed)'
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - chmod +x scripts/demo/demo.sh scripts/demo/demo-lib.sh
+      - ./scripts/demo/demo.sh seed --target {{.DEMO_TARGET}} {{.CLI_ARGS}}
+
+  show:
+    desc: 'Report what the demo environment contains. Add -- --probe to also drive a real copilot run and prove an approval can be created (writes; exits 3 if not)'
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - chmod +x scripts/demo/demo.sh scripts/demo/demo-lib.sh
+      - ./scripts/demo/demo.sh show --target {{.DEMO_TARGET}} {{.CLI_ARGS}}
+
+  reset:
+    desc: Close open approvals and remove the demo identities (add -- --reseed to seed again)
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - chmod +x scripts/demo/demo.sh scripts/demo/demo-lib.sh
+      - ./scripts/demo/demo.sh reset --target {{.DEMO_TARGET}} {{.CLI_ARGS}}
+
+  verify:
+    desc: Static checks on the demo dataset and scripts — no environment required
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - chmod +x tests/demo/test-demo-dataset.sh
+      - ./tests/demo/test-demo-dataset.sh

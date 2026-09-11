@@ -10,6 +10,33 @@ spec:
   gateways:
   - aks-istio-ingress/banking-demo-gateway
   http:
+  # Authority endpoints → authority-service (epic #332).
+  # This is the ONLY component permitted to perform an agent-originated write.
+  # Kept on its own /api/authority/ prefix, not folded under /api/copilot/, so
+  # the enforcement boundary is legible in the URL and cannot be silently
+  # re-routed to the harness by route ordering. Mirrors the nginx location in
+  # infra/local/gateway.nginx.conf — the two gateways must agree, because a
+  # prefix that exists in only one of them is a feature that works locally and
+  # 404s in the cluster.
+  #
+  # MUST STAY ABOVE /api/auth. `/api/auth` is a string prefix of
+  # `/api/authority/`, and Istio evaluates http rules in order with first match
+  # winning — so with the natural ordering every authority call is swallowed by
+  # the user-service route and the ladder silently disappears behind login
+  # endpoints. This does NOT reproduce locally: nginx picks the LONGEST matching
+  # prefix, so /api/authority/ wins there no matter where it sits in the file.
+  # Same rule, two gateways, opposite semantics — caught only by
+  # `kubectl apply --dry-run=server`, which reports it as
+  # "match ... is not used (duplicate/overlapping match)". A client-side dry run
+  # does not consult the CRD and says nothing.
+  - match:
+    - uri:
+        prefix: /api/authority/
+    route:
+    - destination:
+        host: authority-service
+        port:
+          number: 80
   # UI app (default catch-all at bottom)
   - match:
     - uri:
@@ -133,6 +160,38 @@ spec:
         host: account-opening-service
         port:
           number: 80
+  # Copilot harness endpoints → banker-copilot-service (epic #332).
+  #
+  # The timeout is load-bearing, not tidying. This prefix carries the session
+  # SSE trace stream (GET /api/copilot/sessions/{id}/stream), and Istio's
+  # DEFAULT route timeout is 15s — an SSE connection is idle between frames by
+  # design, so with the default every run's trace is severed mid-stream. Envoy
+  # terminates it as a normal response end, which is byte-for-byte
+  # indistinguishable from a clean end-of-stream: the browser sees a short but
+  # successful trace, the client's reconnect logic never fires, and a dead
+  # stream looks exactly like a working one. That is the failure
+  # docs/design/banker-copilot-ui.md §4.6 exists to prevent.
+  #
+  # 3600s, NOT `0s`. Istio's docs describe `0s` as "disable timeout", but the
+  # VirtualService CRD rejects it outright — `spec.http[].timeout: Invalid
+  # value: "0s": must be a valid duration greater than 1ms` — so a manifest
+  # carrying it fails to apply and takes the whole gateway apply down with it.
+  # A bounded hour is the better answer regardless: it matches
+  # proxy_read_timeout in infra/local/gateway.nginx.conf exactly, so both
+  # gateways expire a stream at the same point rather than the cluster holding
+  # connections the local stack would have dropped.
+  #
+  # No buffering knob is needed here (nginx has proxy_buffering off): Envoy
+  # streams responses and does not accumulate an unbounded body.
+  - match:
+    - uri:
+        prefix: /api/copilot/
+    route:
+    - destination:
+        host: banker-copilot-service
+        port:
+          number: 80
+    timeout: 3600s
   # Default: serve UI
   - route:
     - destination:

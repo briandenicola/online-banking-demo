@@ -1,3 +1,4 @@
+using Banking.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PromptEvalService.Models;
@@ -8,7 +9,13 @@ namespace PromptEvalService.Controllers;
 
 [ApiController]
 [Route("api/evaluations")]
-[Authorize(Roles = "admin,Admin")]
+// Class gate: read-only observability (admins AND banking supervisors). Attributes on a
+// controller and its actions are ANDed, never ORed, so every MUTATING action below narrows this
+// back to admin-only with its own attribute. That narrowing is not left to memory:
+// SupervisorObservabilityScopeTests enumerates every action here and fails on any non-GET verb
+// that is supervisor-reachable. Supervisors gain visibility, never the ability to run or
+// adjudicate an evaluation.
+[Authorize(Roles = BankingRoles.ObservabilityRead)]
 public class EvaluationsController : ControllerBase
 {
     private readonly IEvaluationService _evalService;
@@ -20,6 +27,8 @@ public class EvaluationsController : ControllerBase
         _logger = logger;
     }
 
+    // Mutating: starts a run. Admin-only.
+    [Authorize(Roles = BankingRoles.Admin)]
     [HttpPost("run")]
     public async Task<ActionResult<EvaluationRun>> RunEvaluation([FromBody] RunEvaluationRequest request)
     {
@@ -69,6 +78,8 @@ public class EvaluationsController : ControllerBase
         return Ok(run);
     }
 
+    // Mutating: records a human adjudication on a run. Admin-only.
+    [Authorize(Roles = BankingRoles.Admin)]
     [HttpPut("{id}/items/{itemIndex}/review")]
     public async Task<ActionResult<EvaluationRun>> ReviewOutputItem(
         string id,

@@ -94,6 +94,7 @@ public static class TestHarness
             new DenialReasonValidator(configuration),
             audit,
             broker,
+            new NullNotificationSink(),
             NullLogger<ApprovalService>.Instance);
 
         return new Harness(service, repository, provider, audit, broker, configuration);
@@ -165,6 +166,14 @@ public static class TestHarness
             {
                 ["transactionId"] = "txn-100",
                 ["amount"] = amount
+            },
+            // §B3.2: the ledger may not be required without the account, so every proposal
+            // carrying the ledger now carries the account too. Without it the count below is a
+            // number about an account whose existence nothing has established.
+            ["get_account"] = new JObject
+            {
+                ["accountId"] = "acct-1",
+                ["balance"] = "1000.00"
             },
             ["list_account_transactions"] = new JObject
             {

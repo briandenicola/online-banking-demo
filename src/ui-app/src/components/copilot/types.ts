@@ -200,7 +200,20 @@ export interface SignatureSlot {
 
 export interface AgentKeyFactor {
   label: string;
-  value: string;
+  /**
+   * OPTIONAL, and absent is the normal case. A supervisor factor is a STATEMENT the
+   * agent made — "counterparty is an established freight vendor" — not a
+   * dimension-and-measurement pair. The service used to fill this with the constant
+   * "independently corroborated" to satisfy the type; nothing was corroborated. If a
+   * producer genuinely has a measured value it may send one, but nothing may invent
+   * one to fill the field.
+   */
+  value?: string;
+  /**
+   * Tri-state ON PURPOSE. `true` = the agent flagged this against the action, `false` =
+   * it explicitly did not, `undefined` = the agent did not say. The card must render
+   * nothing for `undefined`: a ✓ on an unstated judgement is an assertion nobody made.
+   */
   concern?: boolean;
 }
 
@@ -209,11 +222,69 @@ export interface AgentAssessment {
   agentName?: string;
   role?: 'primary' | 'supervisor';
   verdict?: string;
-  confidence?: number;
+  /**
+   * The model's OWN stated confidence. Named for what it is (ruling §P7.2(3)):
+   * measured 0.83–0.98 across 42 runs, with identical inputs producing opposite
+   * verdicts at overlapping values. It never goes low and it does not separate a
+   * stable case from a coin flip.
+   *
+   * **Nothing may rank, sort, colour-scale, gate, hide or reveal on this number.**
+   * It is prose, and it earns its place only beside `unverified`. The wire still
+   * spells it `confidence` — that rename is deferred to §P9 and is pinned by
+   * `selfReportedConfidence.contract.test.ts`, which fails loudly on the day the
+   * server renames it rather than letting the field quietly go blank.
+   */
+  selfReportedConfidence?: number;
   rationale?: string;
   keyFactors?: AgentKeyFactor[];
   citedEvidenceIds?: string[];
+  /**
+   * What this agent could NOT establish from the evidence. Optional, because
+   * absent is honest and an empty-string filler is not.
+   */
+  unverified?: string[];
+  /**
+   * A POSITIVE statement that no assessment was formed, and which kind of failure
+   * it was: `primary_unavailable` (not reached / did not answer) or
+   * `primary_assessment_invalid` (a reply arrived and violated the contract).
+   *
+   * Read from the wire rather than inferred from a missing `verdict`. Every field
+   * here is optional, so an absence renders as blank — and a blank is what a
+   * renderer is left to *interpret*. The failure has to be a value.
+   */
+  failure?: string;
+  /** The specific named reason, e.g. `primary_mode_deterministic`. */
+  failureReason?: string;
+  /**
+   * Attribution (§P7.1). The record cannot be reproducible — identical bytes
+   * produce split verdicts — so its job is to be *attributable*: which decider,
+   * which model, which exact bytes. Carried on BOTH assessments so a reader can
+   * see for themselves whether the "independent" second opinion came from the
+   * same base model as the primary.
+   */
+  mode?: string;
+  modelDeployment?: string;
+  promptSha256?: string;
+  responseSha256?: string;
 }
+
+/**
+ * Tri-state, and SERVER-STATED (ruling §P4.3).
+ *
+ * Not a boolean. A boolean has two arms and this comparison has three cases, so
+ * the third has to land on one of the other two — and whichever it lands on is a
+ * claim the system is not entitled to make. `false` reports a dead pipeline as
+ * dissent; `true` reports it as consensus, which is the sentence this card has
+ * already rendered over two absent verdicts.
+ *
+ * The tokens are the server's, verbatim: `banker-copilot-service/app/planner/
+ * verdicts.py::AGREEMENT_STATES`. A second definition of this rule in a second
+ * language is what "the verdict was renamed in transit" was, so the client does
+ * not re-derive the comparison — it reads what the server computed.
+ */
+export type AgreementState = 'agree' | 'diverge' | 'not_comparable';
+
+export const AGREEMENT_STATES: AgreementState[] = ['agree', 'diverge', 'not_comparable'];
 
 export interface EvidenceRef {
   id: string;
@@ -222,6 +293,20 @@ export interface EvidenceRef {
   sourceToolCallId?: string;
   excerpt?: string;
   href?: string;
+  /**
+   * What the tool actually RETURNED, flattened into the same rows the payload
+   * uses.
+   *
+   * The wire sends `evidence` as an object keyed by tool name, e.g.
+   * `{ "get_account": { "accountId": "…", "balance": 59480 } }`. The mapper used
+   * to take the KEY for a label and discard the value entirely, so a banker was
+   * told the agent called a function and never what it found. These are those
+   * findings.
+   *
+   * Empty when the record carried no structured payload — never undefined, so
+   * callers do not each invent a different guard.
+   */
+  findings: PayloadField[];
 }
 
 export interface Approval {
@@ -238,6 +323,12 @@ export interface Approval {
   evidence: EvidenceRef[];
   /** Primary always; supervisor present only at L2 once it has formed an opinion. */
   assessments: AgentAssessment[];
+  /**
+   * The server's own tri-state comparison of the two verdicts, sent beside them
+   * under `agentAssessment.agreement`. Absent until the supervisor has run — and
+   * absent is NOT agreement.
+   */
+  assessmentAgreement?: AgreementState;
   /** The signature binds to THIS hash — not to the intent. Always rendered. */
   payloadHash: string;
   /** Server-computed truncation. Never truncate the hash client-side. */
@@ -469,7 +560,7 @@ export interface ApprovalTerminalPayload {
   policyVersion?: string;
 }
 
-export type ArtifactKind = 'decision_memo' | 'payload' | 'comparison' | 'evidence_bundle';
+export type ArtifactKind = 'decision_memo' | 'payload' | 'comparison' | 'evidence_bundle' | 'answer';
 
 export interface ArtifactPayload {
   artifactId: string;
@@ -545,6 +636,53 @@ export type StreamStatus =
  */
 export function canSignUnderStream(status: StreamStatus): boolean {
   return status === 'live' || status === 'resumed';
+}
+
+/**
+ * Why signing is gated, said honestly.
+ *
+ * The gate itself is unchanged — `canSignUnderStream` above is the only thing
+ * that decides. This only decides the WORDS.
+ *
+ * `idle` is not `reconnecting`. Every card used to say "Reconnecting — cannot
+ * verify this is still the current payload" whenever the gate was shut, which on
+ * a cold page load was simply false: nothing was reconnecting, because nothing
+ * had ever connected. That one wrong word sent this team after a healthy server,
+ * a suspected stale token, and a suspected ingress fault before anyone looked at
+ * the client's own lifecycle. A status message that states a cause must state
+ * the cause it actually observed.
+ */
+/**
+ * The terse form, shown beside the disabled Sign button where the button itself
+ * already supplies the context. Kept separate from the full explanation so the
+ * two never render the same sentence twice on one card.
+ */
+export function streamGateReasonBrief(status: StreamStatus): string {
+  switch (status) {
+    case 'idle':
+    case 'connecting':
+      return 'Connecting to live updates.';
+    case 'failed':
+      return 'Live updates could not be established.';
+    case 'closed':
+      return 'Live updates are closed.';
+    default:
+      return 'Reconnecting — payload freshness unverified.';
+  }
+}
+
+export function streamGateReason(status: StreamStatus): string {
+  switch (status) {
+    case 'idle':
+    case 'connecting':
+      return 'Connecting to live updates — signing unlocks once this payload can be confirmed current.';
+    case 'failed':
+      return 'Live updates could not be established — signing is disabled until this payload can be confirmed current.';
+    case 'closed':
+      return 'Live updates are closed — signing is disabled until they resume and this payload can be confirmed current.';
+    default:
+      return 'Reconnecting — cannot verify this is still the current payload.';
+  }
 }
 
 // ---------------------------------------------------------------------------

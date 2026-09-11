@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import os
 
 import structlog
@@ -18,6 +19,13 @@ def _allow_inmemory_on_cosmos_failure() -> bool:
     return os.getenv("ALLOW_INMEMORY_ON_COSMOS_FAILURE", "").strip().lower() in {"1", "true", "yes"}
 
 
+# Consumed as `async with lifespan(app)` by _guarded_lifespan in app/main.py, which
+# requires an async CONTEXT MANAGER. Without this decorator the bare async generator
+# raises at startup — "'async_generator' object does not support the asynchronous
+# context manager protocol" — and the service exits before serving anything. It is not
+# an edge case: it failed on every boot, and was invisible only because the suite
+# exercises the app without ever running its lifespan.
+@contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     cosmos_endpoint = os.getenv("COSMOS_DB_ENDPOINT")
     allow_inmemory_fallback = _allow_inmemory_on_cosmos_failure()

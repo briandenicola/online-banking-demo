@@ -44,6 +44,40 @@ public class CosmosUserRepository : IUserRepository
         return null;
     }
 
+    public async Task<List<Models.User>> LookupByUsernamePrefixAsync(string query, int limit)
+    {
+        var normalized = query.ToLowerInvariant();
+        var capped = Math.Clamp(limit, 1, 5);
+        var exact = await QueryUsersAsync(
+            new QueryDefinition(
+                    $"SELECT TOP {capped} * FROM c WHERE " +
+                    "(LOWER(c.Username) = @query OR LOWER(c.username) = @query) " +
+                    "AND NOT STARTSWITH(c.id, 'email-lookup:')")
+                .WithParameter("@query", normalized));
+        if (exact.Count == 1)
+        {
+            return exact;
+        }
+
+        return await QueryUsersAsync(
+            new QueryDefinition(
+                    $"SELECT TOP {capped} * FROM c WHERE " +
+                    "(STARTSWITH(LOWER(c.Username), @query) OR STARTSWITH(LOWER(c.username), @query)) " +
+                    "AND NOT STARTSWITH(c.id, 'email-lookup:')")
+                .WithParameter("@query", normalized));
+    }
+
+    private async Task<List<Models.User>> QueryUsersAsync(QueryDefinition query)
+    {
+        var iterator = _container.GetItemQueryIterator<UserModel>(query);
+        var users = new List<Models.User>();
+        while (iterator.HasMoreResults)
+        {
+            users.AddRange(await iterator.ReadNextAsync());
+        }
+        return users;
+    }
+
     public async Task<Models.User?> GetByEmailAsync(string email)
     {
         var normalizedEmail = email.ToLowerInvariant();

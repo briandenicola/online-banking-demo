@@ -1,0 +1,86 @@
+{
+  "toolId": "list_account_transactions",
+  "provenance": {
+    "capturedFrom": "LIVE CAPTURE from the deployed cluster.",
+    "capturedAt": "2026-09-09T21:41:00+00:00",
+    "capturedFrom_detail": "https://onlinebankingdemo.bjdazure.tech via the `banker` identity, read-only GET, explicitly approved by Brian (@briandenicola) for this recapture. No write of any kind was issued.",
+    "accountId": "149443f9-448b-48d9-b7b4-131e75650dec",
+    "accountOwner": "casey (c4f15021-dc1f-4aba-b662-84d1f2cbb20b), a CUSTOMER \u2014 not the acting banker. This is the point of the recapture: it is the path the product actually takes.",
+    "supersedes": "the 2026-09-09T08:12 fixture, itself a 2026-09-08T21:06:50Z live capture taken as banker against a BANKER-OWNED account (58ada63b-6022-40d3-9896-795f8a5cc57b). That path no longer runs; per banker-customer-read-ruling.md \u00a7B4.1 a fixture captured on a path nobody runs is a measurement of a configuration nobody runs. Re-CAPTURED live, not edited.",
+    "seedGeneration": "Captured after the 2026-09-09 reseed (repo at ed44486), which is the first seed to complete end to end. The previous fixtures predate it.",
+    "derivedFrom": [
+      "LIVE: GET https://onlinebankingdemo.bjdazure.tech/api/transactions/account/149443f9-448b-48d9-b7b4-131e75650dec as `banker`, HTTP 200.",
+      "src/transaction-service/Controllers/TransactionsController.cs GetAccountTransactions -> Ok(accountTransactions), a BARE ARRAY. Reached on the privileged branch (banker), which is why it is 200 and not the 403 the \u00a7B2.2 narrowing returns to a non-privileged caller.",
+      "src/transaction-service/Models/Transaction.cs (the serialized element type)"
+    ],
+    "warning": "WHAT THIS DOES NOT PROVE. This is a live capture of the SHIPPING path \u2014 banker reading a CUSTOMER-owned account (casey) \u2014 and it supersedes the 2026-09-08 capture, which was taken as banker against a BANKER-OWNED account, a configuration the product no longer runs after docs/design/banker-customer-read-ruling.md. Three limits remain. (1) It is still the HAPPY PATH: 200 with rows. The failed-read path is captured separately and deliberately is NOT here \u2014 see tests/fixtures/evidence-samples/failed-reads/. (2) It proves the shape was true at capture time against one deployment; it does not prove the shape is stable, and no test in this repo re-reads the live service. (3) The 2026-09-08 warning described an asymmetry \u2014 get_account 404 vs list_account_transactions 200-with-empty-array \u2014 where an empty array could satisfy EvidenceComplete while asserting something false. That specific defect is FIXED: a banker now reads a customer's account successfully, and per docs/design/empty-ledger-narrowing-ruling.md a non-privileged caller who cannot prove entitlement is refused 403 rather than handed an empty array. An empty array from this tool now means the ledger is empty and nothing else. That is a stronger position, not a safe one: a captured payload invites more trust than it has earned.",
+    "relatedFailedReadSamples": [
+      "tests/fixtures/evidence-samples/failed-reads/list_account_transactions.403.json",
+      "tests/fixtures/evidence-samples/failed-reads/get_account.404.json"
+    ],
+    "redaction": "No bearer token, password or live correlation id appears in this file. The account, user and transaction ids are DEMO SEED ids, already committed in this repo's fixtures and regenerated on every reseed; they identify nothing outside the demo and the projection depends on them, so they are retained."
+  },
+  "arguments": {
+    "accountId": "149443f9-448b-48d9-b7b4-131e75650dec"
+  },
+  "response": [
+    {
+      "id": "f8c73629-3e15-438e-b1f8-e47a7205f192",
+      "accountId": "149443f9-448b-48d9-b7b4-131e75650dec",
+      "userId": "c4f15021-dc1f-4aba-b662-84d1f2cbb20b",
+      "amount": 61200,
+      "currency": "USD",
+      "type": "Withdrawal",
+      "status": "Completed",
+      "description": "Wire transfer to offshore account",
+      "timestamp": "2026-09-09T21:33:31.7321294Z",
+      "relatedTransactionId": null,
+      "category": "transfer"
+    },
+    {
+      "id": "c2e24acd-ddb7-45e4-b1af-00a870bc43bf",
+      "accountId": "149443f9-448b-48d9-b7b4-131e75650dec",
+      "userId": "c4f15021-dc1f-4aba-b662-84d1f2cbb20b",
+      "amount": 2100,
+      "currency": "USD",
+      "type": "Deposit",
+      "status": "Completed",
+      "description": "Consulting invoice",
+      "timestamp": "2026-09-09T21:33:31.0231912Z",
+      "relatedTransactionId": null,
+      "category": "income"
+    }
+  ],
+  "projected": {
+    "accountId": "149443f9-448b-48d9-b7b4-131e75650dec",
+    "count": 2,
+    "items": [
+      {
+        "id": "f8c73629-3e15-438e-b1f8-e47a7205f192",
+        "accountId": "149443f9-448b-48d9-b7b4-131e75650dec",
+        "userId": "c4f15021-dc1f-4aba-b662-84d1f2cbb20b",
+        "amount": 61200,
+        "currency": "USD",
+        "type": "Withdrawal",
+        "status": "Completed",
+        "description": "Wire transfer to offshore account",
+        "timestamp": "2026-09-09T21:33:31.7321294Z",
+        "relatedTransactionId": null,
+        "category": "transfer"
+      },
+      {
+        "id": "c2e24acd-ddb7-45e4-b1af-00a870bc43bf",
+        "accountId": "149443f9-448b-48d9-b7b4-131e75650dec",
+        "userId": "c4f15021-dc1f-4aba-b662-84d1f2cbb20b",
+        "amount": 2100,
+        "currency": "USD",
+        "type": "Deposit",
+        "status": "Completed",
+        "description": "Consulting invoice",
+        "timestamp": "2026-09-09T21:33:31.0231912Z",
+        "relatedTransactionId": null,
+        "category": "income"
+      }
+    ]
+  }
+}

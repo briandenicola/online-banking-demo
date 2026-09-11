@@ -40,7 +40,62 @@ import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { NodeStatusGlyph, visuallyHidden } from './CopilotPrimitives';
 import { useCopilot, useNow } from './CopilotContext';
 import { PlanStep, RunState, SubagentRun, ToolCall, TraceDensity } from './types';
+import { isNonDisclosing, refusalCopy } from './runOutcome';
 import { getCopilotConfig } from '../../config/copilotConfig';
+
+/**
+ * A refused run, stated as a refusal.
+ *
+ * Before the free-text planner this could not happen: every run either produced
+ * an approval or errored at the transport. Now a run can end because the Copilot
+ * declined to form a plan, and the structural invariant Turk implemented — no
+ * case completes as a successful empty evidence bundle — has to hold VISUALLY
+ * too. Without this the trace showed a `failed` chip and a short step list, and
+ * a banker reads that as "it did nothing" rather than "it refused, for a reason".
+ *
+ * The server message is rendered only for the named codes. The planner's
+ * catch-all emits `str(exc)`, and a Python exception string is neither
+ * banker-readable nor vetted for disclosure.
+ */
+const RunRefusalNotice: React.FC<{ code?: string; message?: string }> = ({ code, message }) => {
+  const copy = refusalCopy(code);
+  // Danny's non-disclosure ruling enforced HERE, not merely honoured in the copy
+  // above. Turk's current strings for these two codes are safe, but "safe because
+  // the author was careful" is not a control: the message is server-authored and
+  // can change without this file being touched. For the two subject codes the
+  // server message is dropped entirely — the copy above already says the same
+  // thing, and dropping it cannot leak a name, an id or a count.
+  const showMessage = copy.showServerMessage && !isNonDisclosing(code);
+  return (
+    <Box
+      role="note"
+      aria-label="This run was refused"
+      sx={{ p: 1.5, borderBottom: 1, borderColor: 'error.main', bgcolor: 'error.main', color: 'error.contrastText' }}
+    >
+      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+        Refused — {copy.title}
+      </Typography>
+      <Typography variant="body2" sx={{ mt: 0.5 }}>
+        {copy.what}
+      </Typography>
+      {showMessage && message && (
+        <Typography variant="body2" sx={{ mt: 0.5, fontStyle: 'italic' }}>
+          {message}
+        </Typography>
+      )}
+      {copy.next && (
+        <Typography variant="body2" sx={{ mt: 0.5 }}>
+          {copy.next}
+        </Typography>
+      )}
+      <Typography variant="caption" sx={{ display: 'block', mt: 0.75, opacity: 0.85 }}>
+        Nothing was signed and nothing was executed
+        {copy.readsPerformed === 'none' ? '. No tools were called.' : '.'}
+        {code ? ` · ${code}` : ''}
+      </Typography>
+    </Box>
+  );
+};
 
 // ---------------------------------------------------------------------------
 
@@ -49,10 +104,11 @@ function durationChip(durationMs?: number): string {
   return durationMs >= 1000 ? `${(durationMs / 1000).toFixed(2)}s` : `${durationMs}ms`;
 }
 
-const ToolCallNode: React.FC<{ tool: ToolCall; density: TraceDensity; highlighted: boolean }> = ({
+const ToolCallNode: React.FC<{ tool: ToolCall; density: TraceDensity; highlighted: boolean; ownerLabel?: string }> = ({
   tool,
   density,
   highlighted,
+  ownerLabel,
 }) => (
   <Stack
     direction="row"
@@ -71,6 +127,12 @@ const ToolCallNode: React.FC<{ tool: ToolCall; density: TraceDensity; highlighte
     <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
       🔧 {tool.name}
     </Typography>
+    {ownerLabel && (
+      // Attribution for a tool call that belongs to a subagent but is listed at
+      // the plan-step level. Without it, a fan-out's calls would read as the root
+      // plan's own, which is the interleaving-noise failure this pane must avoid.
+      <Chip size="small" variant="outlined" color="secondary" label={`⑂ ${ownerLabel}`} />
+    )}
     {tool.attempt > 1 && <Chip size="small" color="warning" variant="outlined" label={`↻ ${tool.attempt}`} />}
     {tool.resultSummary && density !== 'summary' && (
       <Typography variant="caption" sx={{ color: 'text.secondary' }}>
@@ -260,8 +322,20 @@ const PlanStepNode: React.FC<{ step: PlanStep; run: RunState; density: TraceDens
               tool={tool}
               density={density}
               highlighted={highlightedNodeId === tool.id}
+              ownerLabel={tool.subagentId ? run.subagents[tool.subagentId]?.name : undefined}
             />
           ))}
+        {subagents.length >= 2 && (
+          // A fan-out. The header names it as parallel work and states the
+          // reading rule, because the risk of concurrency is interleaved noise
+          // where you cannot tell which agent produced which step. Each child
+          // renders as its own bordered sub-tree below, so tool calls stay
+          // grouped UNDER their owning agent and never intermix.
+          <Typography variant="caption" sx={{ pl: 5, color: 'secondary.main', fontWeight: 600, display: 'block' }}>
+            ⑂ {subagents.length} agents in parallel — each agent&apos;s steps are grouped under it,
+            not interleaved
+          </Typography>
+        )}
         {subagents.map((subagent) => (
           <SubagentNode key={subagent.id} subagent={subagent} run={run} density={density} depth={1} />
         ))}
@@ -365,14 +439,41 @@ const TracePane: React.FC<TracePaneProps> = ({ run }) => {
     }
   }, [steps.length, followTail]);
 
-  const elapsed = run?.startedAt ? Math.max(0, now - new Date(run.startedAt).getTime()) : 0;
+  /**
+   * A finished run's elapsed time is a FACT the server already told us, not something to keep
+   * counting. `run.done` carries `durationMs` (166ms for the trace Brian pulled) and the
+   * reducer stores it — but this pane recomputed `now - startedAt` on every tick regardless,
+   * so a run that finished in 241ms displayed "181s and counting" beside the words "the agent
+   * is still running on the server". Prefer the server's number the moment it exists.
+   */
+  const elapsed =
+    run?.durationMs !== undefined
+      ? run.durationMs
+      : run?.startedAt
+        ? Math.max(0, now - new Date(run.startedAt).getTime())
+        : 0;
+  // Sub-second runs are the norm on the free-text path; flooring them to "0s" reads as a
+  // missing value rather than a fast run.
+  const elapsedLabel =
+    elapsed < 1000 ? `${(elapsed / 1000).toFixed(1)}s` : `${Math.floor(elapsed / 1000)}s`;
 
   return (
     <Paper
       variant="outlined"
       component="section"
       aria-label="Plan and trace"
-      sx={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        minWidth: 0,
+        // Each pane is the only child of a `display: flex` Region, so without
+        // `flexGrow` its width is CONTENT-based: it fills the column only while
+        // the text inside happens to be wide. The trace pane looked correct for
+        // months because its empty-state paragraph is long, then collapsed to 426px
+        // inside a 750px region the moment a real run put short step labels in it.
+        flexGrow: 1,
+      }}
     >
       <Box sx={{ p: 1, borderBottom: 1, borderColor: 'divider' }}>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
@@ -402,11 +503,15 @@ const TracePane: React.FC<TracePaneProps> = ({ run }) => {
         </Stack>
         {run && (
           <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-            {steps.length} steps · {Math.floor(elapsed / 1000)}s
+            {steps.length} steps · {elapsedLabel}
             {run.revisions.length > 0 ? ` · plan v${run.planVersion}` : ''}
           </Typography>
         )}
       </Box>
+
+      {run?.error && !run.error.recoverable && (
+        <RunRefusalNotice code={run.error.code} message={run.error.message} />
+      )}
 
       {incomplete && (
         <Box sx={{ p: 1, bgcolor: 'warning.main', color: 'warning.contrastText' }}>
@@ -420,9 +525,16 @@ const TracePane: React.FC<TracePaneProps> = ({ run }) => {
       {streamStatus !== 'live' && streamStatus !== 'resumed' && streamStatus !== 'idle' && (
         <Box sx={{ p: 1, bgcolor: 'action.hover' }}>
           <Typography variant="caption">
+            {/* The old line said "This run is completed. Reconnecting for live updates —
+                nothing further is expected for this run." It stated a contradiction: if
+                nothing further is expected there is nothing to reconnect for. It was written
+                to describe the storm instead of stopping it. The client now opens zero further
+                connections once a run ends, so the sentence is simply the outcome. */}
             {streamStatus === 'failed'
               ? 'Live updates unavailable. The run continues on the server.'
-              : 'Reconnecting — the agent is still running on the server.'}
+              : run && run.status !== 'running'
+                ? `This run is ${run.status}. Live updates have stopped because there is nothing left to send.`
+                : 'Reconnecting — the agent is still running on the server.'}
           </Typography>
         </Box>
       )}
@@ -439,7 +551,11 @@ const TracePane: React.FC<TracePaneProps> = ({ run }) => {
           setFollowTail(atBottom);
           if (atBottom) setMissedCount(0);
         }}
-        sx={{ flexGrow: 1, overflowY: 'auto', p: 1, minHeight: 200 }}
+        // `minHeight: 0`, never a pixel floor. A floor here cannot be honoured
+        // on a short viewport: the column would overflow the shell, and since
+        // the shell clips, the row it pushes out is the command bar. Scrolling
+        // a short trace is better than losing the only way to type into it.
+        sx={{ flexGrow: 1, overflowY: 'auto', p: 1, minHeight: 0 }}
       >
         {!run && (
           <Typography variant="body2" sx={{ color: 'text.secondary' }}>

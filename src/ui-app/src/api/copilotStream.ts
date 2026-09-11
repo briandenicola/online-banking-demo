@@ -28,6 +28,7 @@
 
 import { getCopilotConfig, copilotUrl } from '../config/copilotConfig';
 import { logger } from '../utils/logger';
+import { toApproval, WireApproval } from './authorityWire';
 import {
   COPILOT_EVENT_KINDS,
   CopilotEvent,
@@ -114,6 +115,59 @@ function isKnownKind(kind: string): kind is CopilotEventKind {
 }
 
 /**
+ * Runs an `approval.*` frame's payload through `toApproval` — the codebase's one
+ * wire→client mapper (`authorityWire.ts`).
+ *
+ * WHY THIS LIVES HERE
+ * -------------------
+ * The REST path (`api/approvals.ts`) already maps every approval it returns. The
+ * SSE path used to skip the mapper entirely, so a live `approval.required` /
+ * `approval.updated` reached the reducer in raw WIRE shape while every other
+ * consumer got CLIENT shape. That asymmetry is the defect this function closes:
+ * the backend deliberately emits wire shape (commit c523311) precisely so that
+ * `flattenPayload`'s `material` flags — the disclosure gate ApprovalCard relies
+ * on — are produced in ONE place, in TypeScript, rather than reimplemented in
+ * Python or defeated by an empty `payload: []`.
+ *
+ * WHY IT DROPS LOUDLY RATHER THAN PASSING A MALFORMED PAYLOAD THROUGH
+ * ------------------------------------------------------------------
+ * The reducer reads `payload.approval.id` unguarded (`copilotStore.ts`). A frame
+ * without a usable approval would throw a TypeError there and kill the run — and,
+ * because the stream replays on reconnect, do so in a loop. We instead reject the
+ * frame at the boundary and log at ERROR. Absence is treated as an error, never
+ * coerced to a benign empty approval: a missing approval and a satisfied approval
+ * must never look alike. A dropped approval renders no card, so nothing becomes
+ * signable — the fail-safe direction — and the error log makes the drop audible.
+ */
+function shapeApprovalEnvelope(envelope: CopilotEvent): CopilotEvent | null {
+  if (envelope.kind !== 'approval.required' && envelope.kind !== 'approval.updated') {
+    return envelope;
+  }
+
+  const payload = (envelope as { payload?: unknown }).payload;
+  const wire =
+    payload && typeof payload === 'object'
+      ? (payload as Record<string, unknown>).approval
+      : undefined;
+
+  if (!wire || typeof wire !== 'object' || typeof (wire as { id?: unknown }).id !== 'string') {
+    logger.error(
+      `copilotStream: ${envelope.kind} frame (seq ${envelope.seq}) carries no usable approval; ` +
+        'dropped. The reducer reads payload.approval.id unguarded, so a malformed approval must be ' +
+        'rejected loudly here rather than crash the run — a missing approval must never be mistaken ' +
+        'for a satisfied one.'
+    );
+    return null;
+  }
+
+  const approval = toApproval(wire as WireApproval);
+  return {
+    ...(envelope as object),
+    payload: { ...(payload as Record<string, unknown>), approval },
+  } as CopilotEvent;
+}
+
+/**
  * Turns a raw frame into an envelope, or null.
  *
  * Unknown kinds are logged and dropped rather than thrown (§7.4): a server that
@@ -146,7 +200,7 @@ export function toEnvelope(frame: RawFrame): CopilotEvent | null {
     return null;
   }
 
-  return { ...(candidate as object), kind } as CopilotEvent;
+  return shapeApprovalEnvelope({ ...(candidate as object), kind } as CopilotEvent);
 }
 
 function defaultToken(): string | null {
@@ -170,6 +224,16 @@ export function openCopilotStream(opts: CopilotStreamOptions): CopilotStreamHand
   let currentRunId = opts.runId;
   let closed = false;
   let attempt = 0;
+  /**
+   * Runs we have seen a terminal `run.done` for, and the highest seq each ended on.
+   *
+   * The server's session-scoped attach (`runs.latest_for_session`) returns the latest run
+   * even when it is CLOSED, replays its backlog and then ends the response immediately
+   * (`sessions.py`: `if stream.closed and queue.empty(): return`). Without this ledger the
+   * client re-consumes a finished run's frames on every reattach, counts that as progress,
+   * resets its backoff and reconnects forever — the 24-request storm.
+   */
+  const completedRuns = new Map<string, number>();
   let controller: AbortController | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
@@ -205,9 +269,44 @@ export function openCopilotStream(opts: CopilotStreamOptions): CopilotStreamHand
     );
   }
 
+  /**
+   * A frame arrived. ANY frame — including a heartbeat — proves the connection is alive,
+   * so it pets the watchdog and is what promotes the stream to a signable status.
+   *
+   * Status is claimed on the first FRAME, not on `response.ok`. A 200 only proves the
+   * server accepted the request; the session-scoped attach to a finished run also returns
+   * 200 and then ends without saying anything. Claiming `live` there would light up the
+   * Sign button on a connection that verifies nothing.
+   */
+  function noteFrame(): void {
+    armHeartbeatWatchdog();
+    if (status !== 'live' && status !== 'resumed') {
+      setStatus(lastSeq > 0 ? 'resumed' : 'live');
+    }
+  }
+
+  /** New data, not replay. Only real forward progress may clear the backoff. */
+  function noteAdvance(): void {
+    attempt = 0;
+  }
+
   function emit(event: CopilotEvent): void {
     lastSeq = event.seq;
+    noteAdvance();
     opts.onEvent(event);
+
+    if (event.kind === 'run.done') {
+      // The run is over and the server has nothing further to say about it. Record where it
+      // ended, then drop the run cursor so the next attach is session-scoped again.
+      //
+      // `seq` is scoped to the RUN (`bus.py`: `RunStream._seq`), so carrying this cursor into
+      // the next run would silently swallow that run's first frames as "duplicates". Reset it.
+      if (currentRunId) completedRuns.set(currentRunId, event.seq);
+      currentRunId = undefined;
+      lastSeq = 0;
+      pending.clear();
+      clearGapTimer();
+    }
   }
 
   function drainPending(): void {
@@ -225,12 +324,17 @@ export function openCopilotStream(opts: CopilotStreamOptions): CopilotStreamHand
   }
 
   function handleEvent(event: CopilotEvent): void {
-    armHeartbeatWatchdog();
-    if (event.runId) currentRunId = event.runId;
-
-    if (status !== 'live' && status !== 'resumed') {
-      setStatus(lastSeq > 0 ? 'resumed' : 'live');
+    // A finished run being replayed to us again. Arm the watchdog — the bytes are real — but
+    // do NOT let it look like progress, promote the status, or reach the reducer a second
+    // time. This is the frame pattern the reconnect storm was built out of.
+    const endedAt = event.runId ? completedRuns.get(event.runId) : undefined;
+    if (endedAt !== undefined && event.seq <= endedAt) {
+      armHeartbeatWatchdog();
+      return;
     }
+
+    noteFrame();
+    if (event.runId) currentRunId = event.runId;
 
     if (event.seq <= lastSeq) return; // duplicate replay after a reconnect
 
@@ -334,8 +438,10 @@ export function openCopilotStream(opts: CopilotStreamOptions): CopilotStreamHand
         throw new Error(`stream open failed: ${response.status}`);
       }
 
-      attempt = 0;
-      setStatus(lastSeq > 0 ? 'resumed' : 'live');
+      // NOTE: `attempt` is deliberately NOT reset here. A 200 is not success — the server
+      // answers 200 in 29ms and then ends the response immediately when the run it found is
+      // already finished. Resetting the backoff on `response.ok` is what turned that into an
+      // unbounded tight reconnect loop. Only a real frame (`noteAdvance`) clears it.
       armHeartbeatWatchdog();
 
       const reader = response.body.getReader();
@@ -350,15 +456,60 @@ export function openCopilotStream(opts: CopilotStreamOptions): CopilotStreamHand
         const { frames, rest } = parseSseChunk(buffer);
         buffer = rest;
         for (const frame of frames) {
+          // The server's heartbeat carries NO `seq` and NO `id:` — it is
+          // `event: heartbeat\ndata: {"serverTs": ...}` (`sessions.py::_heartbeat_frame`).
+          // `toEnvelope` therefore rejects it ("no numeric seq") and it never reached the
+          // watchdog, so a perfectly healthy idle stream — exactly what a banker working the
+          // queue without dispatching a run has — was declared degraded after
+          // heartbeatIntervalMs * missedHeartbeatsBeforeDegraded and signing went dead on a
+          // connection that was never broken. A heartbeat is liveness, not trace data:
+          // handle it here, before envelope parsing, and never require a seq of it.
+          if (frame.event === 'heartbeat') {
+            noteFrame();
+            noteAdvance();
+            continue;
+          }
           const envelope = toEnvelope(frame);
           if (envelope) handleEvent(envelope);
         }
       }
 
-      if (!closed) {
-        setStatus('reconnecting');
-        scheduleReconnect();
+      if (closed) return;
+
+      /**
+       * THE STORM'S REAL CAUSE — an EOF that can never carry new information.
+       *
+       * Backoff was never the issue. Once a run reaches `run.done`, the server's attach path
+       * finds the closed run via `latest_for_session`, replays its backlog and returns
+       * immediately (`sessions.py`: `if stream.closed and queue.empty(): return`). It never
+       * reaches the heartbeat loop, so every reattach is 200-then-EOF carrying only frames we
+       * have already consumed. My earlier fix made that loop back off to 15s instead of 500ms
+       * — which converted a fast storm into a slow one. Brian still paid 213 requests and
+       * 8.5 MB for it.
+       *
+       * Reconnecting cannot help, and this is the part that decides it: `approval.updated`
+       * and `approval.terminal` are emitted on the RUN stream (`planner/fanout.py:649`).
+       * With the run closed there is no channel on which an approval event could arrive, so
+       * a reattach buys exactly nothing — not freshness, not liveness, not a signable status
+       * (replayed frames are filtered and never promote it). It is pure cost.
+       *
+       * So: stop. Not a retry cap, not a slower backoff — zero further connections. A new
+       * run reopens the stream explicitly through `startRun`, and a session that has not yet
+       * run anything takes the heartbeat path above and is untouched by this.
+       */
+      if (currentRunId === undefined && completedRuns.size > 0) {
+        // Disarm first. The watchdog outlives the connection that armed it, and on firing it
+        // sets `degraded` and aborts — which re-enters the loop this branch just left. A stop
+        // that leaves a timer running is not a stop.
+        if (heartbeatTimer) clearTimeout(heartbeatTimer);
+        heartbeatTimer = null;
+        clearGapTimer();
+        setStatus('closed');
+        return;
       }
+
+      setStatus('reconnecting');
+      scheduleReconnect();
     } catch (error) {
       if (closed || (error as Error)?.name === 'AbortError') return;
       logger.warn('copilotStream: connection lost', error);

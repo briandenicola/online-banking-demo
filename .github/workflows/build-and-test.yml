@@ -42,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
@@ -73,7 +73,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
@@ -95,7 +95,15 @@ jobs:
               if [ -f requirements.txt ]; then
                 pip install -q -r requirements.txt || true
               fi
-              pip install -q pytest pytest-asyncio
+              # Test-harness dependencies, installed explicitly because they cannot be
+              # obtained from the service. `pip install -e '.[dev]'` fails on every
+              # poetry-style pyproject here — poetry dev GROUPS are not PEP 621 extras —
+              # so the fallback silently installs runtime dependencies only, and anything
+              # declared for tests alone never arrives. PyYAML is here for the same reason
+              # pytest is: suites that check code against a ratified YAML document parse
+              # that document, and a service whose own runtime never reads YAML has no
+              # honest reason to depend on it.
+              pip install -q pytest pytest-asyncio PyYAML
               pytest -q
             ) || failed=1
             echo "::endgroup::"
@@ -108,7 +116,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: src/event-processor/go.mod
 
@@ -128,7 +136,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
@@ -182,7 +190,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm

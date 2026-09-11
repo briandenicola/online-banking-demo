@@ -21,6 +21,12 @@ silently. So this schema takes the stronger shape: **there is no way to spell a 
 `config/authority-policy.yaml` under each action's ``requiredEvidence``, and `authority-service`
 re-validates it server-side at propose time. Restating it here would create a second copy of an
 authorization-relevant fact, which is the defect class that cost Phase 1 a privilege escalation.
+
+``evidenceProjection`` **is** allowed here, and the distinction is not a loophole. The policy says
+what an *action needs*; the manifest says what a *tool emits*. They are different statements by
+different owners that happen to meet, and only the caller holds a tool's bound arguments — so the
+projection is expressible nowhere else. What holds the two documents together is not this comment
+but a test that runs the real evaluator: `authority-service.UnitTests/EvidenceContractSeamTests`.
 """
 
 from __future__ import annotations
@@ -32,6 +38,7 @@ from typing import Any
 import yaml
 
 from app.config import ConfigurationError
+from app.tools.projection import ProjectionError, ProjectionRule, parse_projection
 from app.tools.redaction import RedactionPathError, validate_paths
 
 #: HTTP methods a registered tool may use. Membership in this set *is* the read/write boundary.
@@ -41,7 +48,16 @@ SUPPORTED_API_VERSION = "copilot-tools/v1"
 
 _ALLOWED_TOP_LEVEL = frozenset({"apiVersion", "metadata", "tools"})
 _ALLOWED_TOOL_KEYS = frozenset(
-    {"toolId", "displayName", "description", "target", "parameters", "capabilityScope", "redaction"}
+    {
+        "toolId",
+        "displayName",
+        "description",
+        "target",
+        "parameters",
+        "capabilityScope",
+        "redaction",
+        "evidenceProjection",
+    }
 )
 _ALLOWED_TARGET_KEYS = frozenset({"service", "method", "path", "timeoutMs"})
 
@@ -105,6 +121,7 @@ class ReadTool:
     parameters: dict[str, Any]
     capability_scope: str
     redaction: tuple[str, ...] = ()
+    evidence_projection: tuple[ProjectionRule, ...] = ()
 
     @property
     def is_read(self) -> bool:
@@ -328,6 +345,15 @@ def _parse_tool(raw: Any, index: int) -> ReadTool:
             "matches nothing looks exactly like one that worked."
         ) from exc
 
+    projection: tuple[ProjectionRule, ...] = ()
+    if "evidenceProjection" in entry:
+        try:
+            projection = parse_projection(
+                entry["evidenceProjection"], tool_id, frozenset(required_params)
+            )
+        except ProjectionError as exc:
+            raise ManifestError(str(exc)) from exc
+
     return ReadTool(
         tool_id=tool_id,
         display_name=str(entry["displayName"]).strip(),
@@ -336,6 +362,7 @@ def _parse_tool(raw: Any, index: int) -> ReadTool:
         parameters=parameters,
         capability_scope=capability_scope,
         redaction=tuple(redaction),
+        evidence_projection=projection,
     )
 
 

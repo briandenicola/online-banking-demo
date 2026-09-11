@@ -288,6 +288,14 @@ services:
       - POLICY_FILE_PATH=/app/config/authority-policy.yaml
       - ROLE_HIERARCHY_PATH=/app/config/role-hierarchy.yaml
       - Redis__ConnectionString=redis:6379
+      # Out-of-band supervisor notification sinks (epic §5.6). Config-driven; redis-stream is
+      # the default local sink and publishes to a DEDICATED stream (NOT banking-events). Add
+      # `webhook` to the list and set Notifications__WebhookUrl to POST to Teams/Slack.
+      - Notifications__Sinks=${AUTHORITY_NOTIFICATION_SINKS:-redis-stream}
+      - Notifications__RedisStreamKey=${AUTHORITY_NOTIFICATION_STREAM_KEY:-copilot-notifications}
+      - Notifications__WebhookUrl=${AUTHORITY_NOTIFICATION_WEBHOOK_URL:-}
+      - Notifications__WebhookTimeoutSeconds=${AUTHORITY_NOTIFICATION_WEBHOOK_TIMEOUT_SECONDS:-5}
+      - Notifications__EmailTo=${AUTHORITY_NOTIFICATION_EMAIL_TO:-}
       - Downstream__transaction-service=http://transaction-service:8080
       - Downstream__transfer-service=http://transfer-service:8080
       - Downstream__account-service=http://account-service:8080
@@ -333,6 +341,11 @@ services:
       - JWT_JWKS_URI=${JWT_JWKS_URI:-http://user-service:8080/.well-known/jwks.json}
       - JWT_AUDIENCE=banking-demo/copilot
       - TOOL_MANIFEST_PATH=/app/config/copilot-tools.yaml
+      # Whether config/copilot-actions.yaml is SENT to the intent model. Off pending Danny's
+      # ruling, not because the evidence is against it: measured against the real demo prompt,
+      # descriptions took wrong-rung proposes from 2/12 to 0/12 and unknown-customer refusals
+      # from 11/12 to 12/12. Set to 1 to re-run the experiment.
+      - COPILOT_ACTION_METADATA_ENABLED=0
       - ROLE_HIERARCHY_PATH=/app/config/role-hierarchy.yaml
       # The sole write path. Everything below it is read-only.
       - AUTHORITY_SERVICE_URL=http://authority-service:8080
@@ -352,6 +365,10 @@ services:
       - COPILOT_SESSION_TTL_SECONDS=${COPILOT_SESSION_TTL_SECONDS:-3600}
       - COPILOT_PLANNER_MAX_ITERATIONS=${COPILOT_PLANNER_MAX_ITERATIONS:-12}
       - COPILOT_UPSTREAM_TIMEOUT_MS=${COPILOT_UPSTREAM_TIMEOUT_MS:-8000}
+      # Per-CALL model budget. Four hardcoded 30.0 literals until now, which is why it
+      # could not be moved in the cloud without a rebuild. A run makes several calls, so
+      # the ceiling for a RUN is a multiple of this.
+      - BANKER_COPILOT_MODEL_TIMEOUT_S=${BANKER_COPILOT_MODEL_TIMEOUT_S:-60}
       # Unset locally: the service falls back to in-memory session/trace stores.
       # Container names are still supplied so the same env contract holds in both
       # modes and a name change is made in one place.
@@ -360,12 +377,17 @@ services:
       - COPILOT_SESSIONS_CONTAINER=copilot-sessions
       - COPILOT_ARTIFACTS_CONTAINER=copilot-artifacts
       - COPILOT_TRACES_CONTAINER=copilot-traces
-      # Model access for the planner loop. banker-copilot-service reads
-      # AZURE_AI_* where the rest of the repo uses FOUNDRY_*; supplying the names
-      # the code actually reads, and defaulting from the existing repo variables
-      # so an operator's existing .env keeps working.
-      - AZURE_AI_PROJECT_ENDPOINT=${AZURE_AI_PROJECT_ENDPOINT:-${FOUNDRY_PROJECT_ENDPOINT:-${AZURE_OPENAI_ENDPOINT:-}}}
-      - AZURE_AI_MODEL_DEPLOYMENT=${AZURE_AI_MODEL_DEPLOYMENT:-${FOUNDRY_MODEL:-gpt-5.4-mini}}
+      # Model access for the planner loop, on the repo-wide FOUNDRY_* names, still
+      # defaulting from an operator's existing variables so a working .env keeps working.
+      - FOUNDRY_PROJECT_ENDPOINT=${FOUNDRY_PROJECT_ENDPOINT:-${AZURE_AI_PROJECT_ENDPOINT:-${AZURE_OPENAI_ENDPOINT:-}}}
+      - FOUNDRY_MODEL=${FOUNDRY_MODEL:-${AZURE_AI_MODEL_DEPLOYMENT:-gpt-5.4-mini}}
+      # Local runs have no Foundry endpoint by default, so they run the planner without a
+      # model. That is now said out loud. Previously it was inferred from the endpoint above
+      # resolving to empty, which meant local and a broken cloud deployment were
+      # indistinguishable from inside the service — both reported ready, both answered with
+      # no model. Set COPILOT_PLANNER_MODE=foundry (with an endpoint) to exercise the real
+      # planner locally; it will refuse to start rather than silently degrade.
+      - COPILOT_PLANNER_MODE=${COPILOT_PLANNER_MODE:-deterministic}
       - APPLICATIONINSIGHTS_CONNECTION_STRING=
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - OTEL_SERVICE_NAME=banker-copilot-service
@@ -374,6 +396,14 @@ services:
       # surface. Read-only: a harness that could rewrite its own manifest could
       # grant itself a write tool.
       - ./config/copilot-tools.yaml:/app/config/copilot-tools.yaml:ro
+      # Fan-out concurrency limits (epic §6.3). Edit config/harness-limits.yaml locally and
+      # restart to re-tune. Read-only: a harness that could rewrite its own limits could grant
+      # itself unbounded fan-out.
+      - ./config/harness-limits.yaml:/app/config/harness-limits.yaml:ro
+      # Prose and field descriptions for the actions the model may propose. DESCRIPTION
+      # only — authority-service's catalogue remains the sole authority on which actions
+      # exist and which may be proposed. Read-only for the same reason as the manifest.
+      - ./config/copilot-actions.yaml:/app/config/copilot-actions.yaml:ro
       # user-service owns this file; the harness reads it and may not diverge
       # from it. Same mount authority-service takes, from the same source path —
       # three services, one role model, no copies.

@@ -220,6 +220,85 @@ CASES: list[Tamper] = [
         note="An unknown apiVersion must refuse the whole manifest rather than "
              "guessing at a schema.",
     ),
+    # ------------------------------------------------------------------ Phase 3.
+    # These target the SPEC ORACLE (spec/supervisor.py), not production, because
+    # the shipping harness has no fan-out yet (ledger: phase3-supervisor-blind-
+    # construction). The oracle is where §6.4's structural independence lives, so
+    # it is where a broken guard must be shown to fail a named test. When Turk's
+    # fan-out lands, these move to the production builder alongside the promoted
+    # ledger entry.
+    Tamper(
+        id="blind-builder-signature",
+        guard="spec/supervisor.py — build_supervisor_input takes ONLY the banker "
+              "intent; the primary's output has no argument to travel through (§6.4.1)",
+        path="src/banker-copilot-service.Tests/spec/supervisor.py",
+        find="def build_supervisor_input(intent: BankerIntent) -> SupervisorInput:",
+        replace="def build_supervisor_input(intent: BankerIntent, primary=None) -> SupervisorInput:",
+        tests=[
+            "tests/test_blind_construction.py::test_the_builder_takes_only_the_intent",
+            "tests/test_blind_construction.py::test_passing_the_primary_result_to_the_builder_is_a_type_error",
+        ],
+        note="The headline structural guard. Adding a `primary` parameter is exactly "
+             "the regression §6.4 forbids — independence by promise. Both the "
+             "signature assertion and the TypeError attack must go red.",
+    ),
+    Tamper(
+        id="blind-token-scan",
+        guard="spec/supervisor.py — independence_report actually intersects the "
+              "primary's tokens with the supervisor's spawn bytes (§6.4 cross-check)",
+        path="src/banker-copilot-service.Tests/spec/supervisor.py",
+        find="leaked = sorted(primary.all_tokens() & haystack)",
+        replace="leaked = []",
+        tests=[
+            "tests/test_blind_construction.py::test_a_leaky_builder_is_caught_by_the_scan_positive_control",
+            "tests/test_blind_construction.py::test_a_primary_artifact_cannot_be_smuggled_through_the_intent",
+        ],
+        note="A scan that always returns 'nothing leaked' passes every clean case "
+             "vacuously — the Phase 1 empty-corpus false pass. The positive control "
+             "and the poisoned-intent case are what make a green scan mean something.",
+    ),
+    Tamper(
+        id="blind-subagent-propose-floor",
+        guard="spec/supervisor.py — a subagent never inherits propose_action (§6.3)",
+        path="src/banker-copilot-service.Tests/spec/supervisor.py",
+        find='SUBAGENT_FORBIDDEN_TOOLS = frozenset({"propose_action"})',
+        replace="SUBAGENT_FORBIDDEN_TOOLS = frozenset()",
+        tests=[
+            "tests/test_blind_construction.py::test_a_subagent_is_never_offered_propose_action",
+            "tests/test_blind_construction.py::test_subagent_read_tools_are_a_subset_of_the_parents",
+        ],
+        note="Only the root harness proposes. If a subagent could propose it could "
+             "both review and act — the separation the whole ladder rests on.",
+    ),
+    Tamper(
+        id="prod-blind-builder-signature",
+        guard="app/planner/fanout.py — the SHIPPING build_supervisor_input takes ONLY "
+              "the banker intent (§6.4.1). Proven against production, not the oracle.",
+        path="src/banker-copilot-service/app/planner/fanout.py",
+        find="def build_supervisor_input(intent: BankerIntent) -> SupervisorInput:",
+        replace="def build_supervisor_input(intent: BankerIntent, primary=None) -> SupervisorInput:",
+        tests=[
+            "tests/production/test_supervisor_blind_construction.py::test_the_builder_signature_admits_only_the_banker_intent",
+            "tests/production/test_supervisor_blind_construction.py::test_the_builder_rejects_a_primary_result_positionally",
+        ],
+        note="Turk's real builder. A second parameter is independence-by-promise, the "
+             "regression §6.4 forbids. Both the signature attack and the TypeError "
+             "attack must go red against the shipping module.",
+    ),
+    Tamper(
+        id="prod-blind-input-leak-field",
+        guard="app/planner/fanout.py — the shipping SupervisorInput carries no field a "
+              "primary output could ride on (§6.4.1); the field set IS the knowable set.",
+        path="src/banker-copilot-service/app/planner/fanout.py",
+        find="    task_framing: str\n    entity_ids: tuple[str, ...]\n    posture: str = SUPERVISOR_POSTURE",
+        replace="    task_framing: str\n    entity_ids: tuple[str, ...]\n    recommendation: str = \"\"\n    posture: str = SUPERVISOR_POSTURE",
+        tests=[
+            "tests/production/test_supervisor_blind_construction.py::test_the_supervisor_input_type_has_no_primary_bearing_field",
+        ],
+        note="Adds a primary-bearing field (`recommendation`) to the shipping input "
+             "type. The structural field-set attack must catch it even before any "
+             "value is populated — the channel's existence is the defect.",
+    ),
 ]
 
 

@@ -2,6 +2,12 @@
 
 A microservices-based online banking application demonstrating agentic AI capabilities with .NET 9, Python, Go, React, and cloud-native Azure services deployed on AKS with Istio service mesh.
 
+> [!IMPORTANT]
+> **This is a demonstration application. It is not production ready, and is not a reference implementation.**
+> It is built to show architecture and agent behaviour to an audience, not to run a bank. Several
+> deliberate shortcuts are documented in [Production readiness](#production-readiness) below —
+> read that section before using any part of this repository as a starting point for real work.
+
 ## Quick Start
 
 ### Prerequisites
@@ -226,6 +232,49 @@ cd src/ui-app && npm start
 - **Azure 401s**: Verify Workload Identity annotation on service account, check Entra RBAC roles
 
 See [docs/deployment-local.md](docs/deployment-local.md) for more troubleshooting.
+
+## Production readiness
+
+This repository optimises for **demonstrability**, not operability. The shortcuts below are
+deliberate and known. They are listed so that nobody has to discover them the hard way, and so
+that anyone adapting this code knows what a real deployment would still have to build.
+
+### Deliberate shortcuts in this repository
+
+| Area | What this demo does | What production would need |
+|---|---|---|
+| **Workload identity** | All 11 services share one Kubernetes ServiceAccount federated to one managed identity holding Cosmos Data Contributor at **account scope**, plus Redis, Key Vault, Storage and AI roles. Any pod can read and write every container. | A managed identity per service, with role assignments scoped to the specific containers and secrets that service owns. |
+| **Service-to-service auth** | The authority-service action broker forwards the **caller's** token downstream. A mediator client credential is provisioned end to end but never used. | A service credential with an authorization policy scoped to the specific actions it may perform — never blanket admin. |
+| **Action execution** | The approval chain is complete and verified through co-signature. Execution is **not wired** — the target routes in `config/authority-policy.yaml` do not resolve and no UI control calls `execute`. | Real routes, a contract test binding config targets to actual controllers, and idempotent downstream handlers. |
+| **Secrets** | Bootstrapped into Key Vault by a script on a jump box, mounted via the CSI driver. | Managed rotation, no human-run bootstrap, no long-lived client secrets. |
+| **Data** | Synthetic. Containers are recreated freely. | Migration testing against production-shaped data, backup/restore drills, retention and residency controls. |
+| **Tenancy** | Single tenant, single environment, no rate limiting or quota enforcement on AI calls. | Per-tenant isolation and cost controls on model invocation. |
+
+### What to look out for when building the real thing
+
+These are the failure patterns this codebase actually produced. Every one passed its test suite,
+and every one surfaced only when something genuinely ran. They generalise well beyond this repo.
+
+- **Fail-open on an absent field.** This family appeared roughly six times here: `x === true` versus
+  `x !== false` differing only on `undefined`; `[].every()` returning true for an empty list; a null
+  publisher logging nothing; a query returning zero rows rather than an error. When you introduce a
+  field, decide explicitly what an **absent** one means — and prefer a default that makes absence
+  *raise* rather than pass.
+- **A silent fallback turns a metric into theatre.** An AI planner that quietly degrades to a
+  deterministic script still emits confident-looking numbers. A demo that fails is embarrassing for
+  five minutes; a demo that *lies* costs credibility. Make the mode an explicit declaration and fail
+  closed when it cannot be honoured.
+- **Configuration that names things is never type-checked.** Routes, queue names and topic names
+  written in YAML drift from the code they point at, and mocks at that boundary hide it forever.
+  Add a test that resolves every configured target against the real thing.
+- **Duplication is the bug.** Nearly every serious defect here lived in a seam between two
+  independently-stated facts, each internally coherent — two statements of an envelope shape, a
+  fixture asserting one contract while the service implemented another. The fix is rarely to
+  reconcile the copies; it is to delete one side.
+- **Environment parity hides port and hostname bugs.** Values correct in `docker-compose` were wrong
+  in Kubernetes, and authentication was broken cluster-wide while every local test passed.
+- **Test the guard by breaking it.** If deliberately disabling a control does not turn a test red,
+  that control is unverified regardless of how much coverage surrounds it.
 
 ## License
 

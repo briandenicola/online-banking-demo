@@ -24,6 +24,33 @@ SERVICE_NAME = "banker-copilot-service"
 
 DEFAULT_MANIFEST_PATH = "/app/config/copilot-tools.yaml"
 DEFAULT_ROLE_HIERARCHY_PATH = "/app/config/role-hierarchy.yaml"
+DEFAULT_HARNESS_LIMITS_PATH = "/app/config/harness-limits.yaml"
+#: Model-facing action descriptions. Ours, not the policy file's — see
+#: `app/planner/action_metadata.py` and Danny's ruling of 2026-09-11.
+DEFAULT_ACTION_METADATA_PATH = "/app/config/copilot-actions.yaml"
+#: Whether the descriptions in that file are actually SENT to the intent model.
+#:
+#: Default OFF pending Danny's ruling, NOT because the evidence is against it.
+#:
+#: The first A/B said descriptions regressed action mapping 11/12 -> 4/12. That experiment was
+#: void: it used a shortened prompt naming no customer and no account, so neither arm could
+#: propose and the model correctly declining to invent an account read as a regression.
+#:
+#: Re-measured against the prompt the system is actually judged on ("...on retail's checking as
+#: goodwill"), 12 matched runs per arm: correct-L2 proposes 10/12 -> 11/12, wrong-rung L1
+#: proposes 2/12 -> 0/12, unknown-customer refusals 11/12 -> 12/12, forbidden-action refusals
+#: unchanged at 12/12. Both wrong-rung runs labelled a refund `direction: debit`, which routes a
+#: customer refund below the dual-control rung that crediting money requires.
+#:
+#: A third run then overturned THAT too: registering one more read tool in the live harness
+#: (`get_account_by_number`, which production has always had) moved the refund prompt from 7/12
+#: to 2/12 propose, reproduced. The harness models 9 of production's 15 tools, so every live
+#: number was measured against a smaller bank than a banker uses.
+#:
+#: Three runs, three answers, and the third found a confound larger than the effect. The flag
+#: stays at 0 — the arm actually flown in the cloud — and no recommendation is available until
+#: the harness models the full tool surface. See tests/test_live_harness_fidelity.py.
+ACTION_METADATA_ENABLED_ENV = "COPILOT_ACTION_METADATA_ENABLED"
 
 #: Env prefixes searched, in order, when resolving a logical upstream service name to a base URL.
 _DOWNSTREAM_ENV_PATTERNS = (
@@ -49,6 +76,57 @@ def _env_int(name: str, default: int) -> int:
 
 def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes"}
+
+
+#: Per-CALL ceiling on a model round trip, not a per-run one.
+#:
+#: This number was four hardcoded `30.0` literals in three files — the intent selector, the
+#: evidence answerer, the supervisor and the primary assessor — which is three chances to
+#: diverge and no way to change it in the cloud without a rebuild. It is ours, not the
+#: platform's: when it fires the banker is told the model "did not answer", which reads like
+#: an endpoint fault for what is actually our own budget expiring.
+#:
+#: Read it as PER CALL. A free-text run makes several (intent, then answer, and on a propose
+#: the primary and the supervisor), so the wall-clock ceiling for a run is a MULTIPLE of
+#: this, which is why an end-to-end read-only run has been observed at 59.8s against a "30s"
+#: message. The message is accurate about the call it describes and says nothing about the
+#: run; nothing in the code claims otherwise, but nothing said so out loud either.
+#:
+#: 60s is not a guess and it is not new. The live-model suite was ALREADY constructing its
+#: selector and answerer with `timeout_s=60.0` while the service shipped 30 — so the one
+#: place we exercise a real model had quietly been proving a budget the cloud never ran
+#: with. Measured latency on the laptop path (n=13, gpt-5.4-mini) is 3.5-8.6s for `intent`
+#: and 4.9-12.7s for `answer`; the cloud is slower than that and its per-call figure is
+#: still UNMEASURED, which is exactly what the new `elapsed_ms` logging exists to settle.
+#: Treat 60 as the interim number that matches the suite, to be revisited against cloud
+#: numbers rather than against this comment.
+MODEL_TIMEOUT_DEFAULT_S = 60.0
+
+#: Canonical env var. One name, one read, four call sites.
+MODEL_TIMEOUT_ENV = "BANKER_COPILOT_MODEL_TIMEOUT_S"
+
+
+def model_timeout_s() -> float:
+    """The per-call model timeout, overridable per environment.
+
+    A bad value is a startup error rather than a silent fallback to the default: a
+    deployment that meant to raise the ceiling and typo'd it would otherwise keep timing
+    out at the old number while its config file says it does not.
+    """
+    raw = os.getenv(MODEL_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return MODEL_TIMEOUT_DEFAULT_S
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ConfigurationError(
+            f"{MODEL_TIMEOUT_ENV} must be a number of seconds, got {raw!r}"
+        ) from exc
+    if value <= 0:
+        raise ConfigurationError(
+            f"{MODEL_TIMEOUT_ENV} must be greater than zero, got {raw!r}"
+        )
+    return value
 
 
 def env_with_legacy(canonical: str, legacy: str, default: str) -> str:
@@ -90,6 +168,8 @@ def legacy_config_names_in_use() -> dict[str, str]:
 class Settings:
     manifest_path: str
     role_hierarchy_path: str
+    harness_limits_path: str
+    action_metadata_path: str
     authority_service_url: str | None
     cosmos_endpoint: str | None
     cosmos_database: str
@@ -159,6 +239,15 @@ def load_settings() -> Settings:
             "COPILOT_TOOL_MANIFEST_PATH", "TOOL_MANIFEST_PATH", DEFAULT_MANIFEST_PATH
         ),
         role_hierarchy_path=os.getenv("ROLE_HIERARCHY_PATH", DEFAULT_ROLE_HIERARCHY_PATH),
+        # The fan-out limits file (epic §6.3). Path only — the numbers live in the file, never
+        # here, so there is one home for a concurrency bound. The engine loads it via
+        # app.planner.limits.load_fanout_limits().
+        harness_limits_path=env_with_legacy(
+            "COPILOT_HARNESS_LIMITS_PATH", "HARNESS_LIMITS_PATH", DEFAULT_HARNESS_LIMITS_PATH
+        ),
+        action_metadata_path=os.getenv(
+            "COPILOT_ACTION_METADATA_PATH", ""
+        ).strip() or DEFAULT_ACTION_METADATA_PATH,
         authority_service_url=(os.getenv("AUTHORITY_SERVICE_URL", "").strip().rstrip("/") or None),
         cosmos_endpoint=os.getenv("COSMOS_DB_ENDPOINT", "").strip() or None,
         cosmos_database=env_with_legacy("COPILOT_DATABASE", "COSMOS_DB_DATABASE", "BankingDemo"),

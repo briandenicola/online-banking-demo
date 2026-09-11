@@ -34,7 +34,8 @@ import {
 import { CopilotState, createCopilotStore, CopilotStore } from '../../state/copilotStore';
 import { openCopilotStream, CopilotStreamHandle } from '../../api/copilotStream';
 import { createSession, sendMessage, startRun, fetchRunTrace } from '../../api/copilot';
-import { listApprovals, signApproval, denyApproval } from '../../api/approvals';
+import { listApprovals, signApproval, denyApproval, getApproval } from '../../api/approvals';
+import { describeHttpFailure } from '../../api/errors';
 import { logger } from '../../utils/logger';
 
 export interface CopilotContextValue {
@@ -49,6 +50,13 @@ export interface CopilotContextValue {
   setShowTimings: (value: boolean) => void;
   selectedApprovalId?: string;
   selectApproval: (id?: string) => void;
+  /**
+   * Load (if needed) and select an approval by id — the "Review the new
+   * approval" path from a superseded/voided card. Fetches from authority-service
+   * when the replacement is not already in the store, so a supersede void is a
+   * door forward, never a dead-end chip.
+   */
+  openApproval: (id: string) => Promise<void>;
   highlightedNodeId?: string;
   highlightNode: (id?: string) => void;
   /** Submit an intent. Opens a session if one is not already open. */
@@ -61,6 +69,13 @@ export interface CopilotContextValue {
   replay: (events: CopilotEvent[]) => void;
   lastError?: string;
 }
+
+/**
+ * The objective recorded for the container session the queue opens on mount.
+ * It is descriptive only — no run is started from it, so no planner work occurs.
+ * The server requires a non-empty objective, so it must say something true.
+ */
+const SESSION_BOOTSTRAP_OBJECTIVE = 'Review the approval queue';
 
 const CopilotContext = createContext<CopilotContextValue | undefined>(undefined);
 
@@ -216,8 +231,73 @@ export const CopilotProvider: React.FC<CopilotProviderProps> = ({
     [offline, resync, store]
   );
 
-  const submitIntent = useCallback(
-    async (intent: string) => {
+  /**
+   * Establish the live stream on MOUNT, not on first dispatch.
+   *
+   * The signing gate asks a real question — "can this client still verify that
+   * what I am about to sign is the current payload?" — and answers it from the
+   * live stream, because that stream is how `approval.updated` and
+   * `approval.terminal` arrive. That gate is correct and is left untouched.
+   *
+   * What was wrong is that the stream was only ever opened inside
+   * `submitIntent`. A banker who loaded `/copilot` to work the queue and never
+   * dispatched an agent run therefore sat at `idle` forever, and EVERY card
+   * rendered Deny-only — signing was impossible by construction. The queue is
+   * the primary work surface; it has to be usable on its own.
+   *
+   * Creating a session executes nothing: `POST /sessions` persists a container
+   * and the planner only moves when a RUN is started inside it.
+   *
+   * If this fails, `streamStatus` stays unsignable and the gate stays shut.
+   * That is the correct direction to fail — we do not sign what we cannot
+   * verify — so the error is logged and surfaced, never swallowed into a
+   * signable state.
+   */
+  const bootstrappedRef = useRef(false);
+  useEffect(() => {
+    if (offline || bootstrappedRef.current) return;
+    bootstrappedRef.current = true;
+    let cancelled = false;
+    let settled = false;
+
+    (async () => {
+      try {
+        const session = await createSession({ objective: SESSION_BOOTSTRAP_OBJECTIVE });
+        if (cancelled) return;
+        // Guard the id rather than trusting it. A 200 with an unexpected body
+        // would otherwise open `/sessions/undefined/stream` and retry it on a
+        // backoff forever, which looks exactly like a server fault and is not
+        // one. Fail loudly and leave the gate shut.
+        if (typeof session?.sessionId !== 'string' || session.sessionId.length === 0) {
+          throw new Error('session response carried no sessionId');
+        }
+        settled = true;
+        setSessionId(session.sessionId);
+        openStream(session.sessionId);
+      } catch (error) {
+        settled = true;
+        if (cancelled) return;
+        const status = (error as { response?: { status?: number } })?.response?.status;
+        logger.error(
+          `copilot: could not open a live session for the queue (status=${status ?? 'none'}) — signing stays disabled`,
+          error
+        );
+        setLastError(describeHttpFailure(error, 'Live updates'));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      // StrictMode mounts, unmounts and remounts in development. The unmount
+      // lands while `createSession` is still in flight, so that attempt aborts —
+      // and without this reset the remount would see the ref already set, skip
+      // the bootstrap entirely, and leave the stream unopened. That is the very
+      // bug this effect exists to fix, reintroduced by its own guard.
+      if (!settled) bootstrappedRef.current = false;
+    };
+  }, [offline, openStream]);
+
+  const submitIntent = useCallback(    async (intent: string) => {
       setLastError(undefined);
       try {
         // Open a session if there isn't one, then always start a RUN. Creating
@@ -234,8 +314,12 @@ export const CopilotProvider: React.FC<CopilotProviderProps> = ({
         }
         await startRun(id, { objective: intent });
       } catch (error) {
-        logger.error('copilot: intent submission failed', error);
-        setLastError('The harness did not accept that request. It is not running on the server.');
+        // Log the status and the URL, not just the object — the 405 that started
+        // all this was invisible in the log line that replaced it.
+        const status = (error as { response?: { status?: number } })?.response?.status;
+        const url = (error as { config?: { url?: string } })?.config?.url;
+        logger.error(`copilot: intent submission failed (status=${status ?? 'none'} url=${url ?? 'unknown'})`, error);
+        setLastError(describeHttpFailure(error, 'The harness request'));
       }
     },
     [openStream, sessionId]
@@ -275,6 +359,26 @@ export const CopilotProvider: React.FC<CopilotProviderProps> = ({
     [store]
   );
 
+  const openApproval = useCallback(
+    async (id: string) => {
+      // Select immediately if we already hold it — the replacement usually
+      // arrived on the same stream that voided the old one. Otherwise fetch it,
+      // because the whole point of the supersede pointer is that the path
+      // forward is reachable, not merely named.
+      const present = store.getSnapshot().approvals[id];
+      if (!present && !offline) {
+        try {
+          const fetched = await getApproval(id);
+          store.putApproval(fetched);
+        } catch (error) {
+          logger.error('copilot: could not load replacement approval', error);
+        }
+      }
+      setSelectedApprovalId(id);
+    },
+    [offline, store]
+  );
+
   const replay = useCallback(
     (events: CopilotEvent[]) => {
       // Animations are suppressed during a drain: replaying 200 frames with the
@@ -300,6 +404,7 @@ export const CopilotProvider: React.FC<CopilotProviderProps> = ({
       setShowTimings,
       selectedApprovalId,
       selectApproval: setSelectedApprovalId,
+      openApproval,
       highlightedNodeId,
       highlightNode: setHighlightedNodeId,
       submitIntent,
@@ -323,6 +428,7 @@ export const CopilotProvider: React.FC<CopilotProviderProps> = ({
       refreshApprovals,
       sign,
       deny,
+      openApproval,
       replay,
       lastError,
     ]

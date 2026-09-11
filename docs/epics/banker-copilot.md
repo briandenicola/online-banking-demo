@@ -1673,6 +1673,43 @@ independence structurally, not by prompting:
 prompt contains none of the primary's output tokens. If the code ever passes the primary's
 conclusion downstream, the test fails.
 
+#### 6.4.1 Trace scope — the combined record is post-hoc, and that is the whole defence
+
+`approval.updated` carries both assessments in ONE persisted document
+(`agentAssessment.primary` and `agentAssessment.supervisor`), and `CopilotEventEnvelope.to_document`
+persists the payload whole. Read cold, that looks like the primary's reasoning and the supervisor's
+opinion sharing a page — which is exactly what §6.4 forbids at spawn time. It is not a leak, for
+one reason, and the reason is an ordering fact rather than an intention:
+
+**The combined document is assembled strictly AFTER both opinions already exist.** In
+`FanOutEngine.run_second_opinion` the supervisor's opinion is awaited first; only then is
+`updated_approval` built and emitted. The supervisor is a `SupervisorInput` — a frozen allow-list of
+`task_framing`, `entity_ids`, `posture` — plus the results of reads it performed itself. It is
+handed no approval, no stream, no sink and no trace reader; the harness registers **no tool that can
+read a trace**, so there is no path, present or future-by-accident, by which a supervisor could
+consume this document before forming its view. Blindness is a property of the moment the opinion is
+formed. The filing cabinet it is later stored in is an audit artifact, and an audit artifact that
+could not show both positions side by side would fail at its only job.
+
+Three consequences are therefore **held by tests**
+(`tests/test_supervisor_trace_scope.py`), not merely asserted here:
+
+1. **Ordering.** Any frame holding both opinions is persisted at a strictly higher `seq` than the
+   supervisor's own verdict frame. A "pending" combined frame emitted at spawn time is a defect.
+2. **The supervisor's own trace stays clean.** `<runId>::supervisor` is a separate document with
+   its own partition key. It carries the supervisor's spawn framing and its own reads — never the
+   primary's assessment, and never an `approval.*` frame at all. This is the document a future
+   "give the supervisor some context" edit would most naturally poison.
+3. **Scope of readership.** A run trace is readable only by the banker who owns the session
+   (`_load_owned_session`, 404 not 403). There is no operator or supervisor-role bypass: the fullest
+   record of a run — plan, every read value, both assessments — is not a shared surface.
+
+Note the one channel that does exist and is deliberate: the supervisor re-runs the same read
+**tool ids** the action required, derived from `primary_evidence.keys()`. That is the set of reads
+the *action* demands, not the primary's reasoning; no read **value** crosses, and arguments are
+bound from the banker's raw inputs. Recorded here so it is a known, bounded channel rather than a
+later surprise.
+
 ---
 
 ## 7. #140 integration seams

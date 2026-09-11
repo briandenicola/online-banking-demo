@@ -14,7 +14,7 @@
  * and getting that wrong would mean resyncing one run from another's frames.
  */
 
-import apiClient from './client';
+import apiClient, { apiPath } from './client';
 import { copilotUrl, getCopilotConfig } from '../config/copilotConfig';
 import { CopilotEvent } from '../components/copilot/types';
 
@@ -34,7 +34,7 @@ export interface CreateSessionArgs {
 
 export async function createSession(args: CreateSessionArgs): Promise<CopilotSession> {
   const { endpoints } = getCopilotConfig();
-  const response = await apiClient.post<CopilotSession>(copilotUrl(endpoints.sessions), {
+  const response = await apiClient.post<CopilotSession>(apiPath(copilotUrl(endpoints.sessions)), {
     objective: args.objective,
     context: args.context || {},
   });
@@ -62,7 +62,7 @@ export async function startRun(
 ): Promise<StartRunResult> {
   const { endpoints } = getCopilotConfig();
   const response = await apiClient.post<StartRunResult>(
-    copilotUrl(endpoints.sessionRuns, { sessionId }),
+    apiPath(copilotUrl(endpoints.sessionRuns, { sessionId })),
     args
   );
   return response.data;
@@ -76,7 +76,7 @@ export interface SendMessageResult {
 export async function sendMessage(sessionId: string, content: string): Promise<SendMessageResult> {
   const { endpoints } = getCopilotConfig();
   const response = await apiClient.post<SendMessageResult>(
-    copilotUrl(endpoints.sessionMessages, { sessionId }),
+    apiPath(copilotUrl(endpoints.sessionMessages, { sessionId })),
     { content }
   );
   return response.data;
@@ -108,7 +108,7 @@ export interface RunTrace {
 export async function fetchRunTrace(runId: string): Promise<RunTrace> {
   const { endpoints } = getCopilotConfig();
   const response = await apiClient.get<{ frames?: CopilotEvent[]; traceDegraded?: boolean }>(
-    copilotUrl(endpoints.runTrace, { runId })
+    apiPath(copilotUrl(endpoints.runTrace, { runId }))
   );
   return {
     events: Array.isArray(response.data?.frames) ? response.data.frames : [],

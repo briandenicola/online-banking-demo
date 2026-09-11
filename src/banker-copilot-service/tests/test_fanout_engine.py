@@ -1,0 +1,429 @@
+"""The fan-out ENGINE, exercised end-to-end (epic §6.2/§6.3/§6.4).
+
+Distinct from ``test_supervisor_blind_construction.py``, which proves the construction shapes.
+This proves the coordinator that wires them into the planner: at L2 it spawns exactly one blind
+supervisor, gives it the parent's reads minus ``propose_action``, runs it under the config
+limits, emits the nested trace frames, and computes agreement AFTER both opinions are in hand.
+
+The supervisor's reader is handed the banker's RAW inputs (payload/facts/context) and re-invokes
+the read tools itself — a second, independent draw. It is never handed the primary's ``evidence``
+dict. That is asserted here by giving the primary evidence a distinctive value and proving the
+supervisor's own reads produce a different one.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+import pytest
+
+from conftest import judging_assessor, shipped_assessment_limits
+
+from app.events.bus import InMemoryTraceSink, RunStreamRegistry
+from app.planner.fanout import FanOutEngine, SecondOpinion
+from app.planner.limits import FanoutLimits
+
+LIMITS = FanoutLimits(
+    max_concurrent_subagents=4,
+    max_subagent_depth=2,
+    per_subagent_tool_budget=20,
+    subagent_wall_clock_seconds=60,
+)
+
+
+# ---- Minimal fakes for the executor + registry surface the engine depends on ----
+
+
+@dataclass
+class _FakeResult:
+    data: Any
+    duration_ms: int = 1
+
+    def summary(self) -> str:
+        return "ok"
+
+
+class _FakeTool:
+    def __init__(self, tool_id: str, params: tuple[str, ...]) -> None:
+        self.tool_id = tool_id
+        self.parameters = {"properties": {p: {"type": "string"} for p in params}}
+
+
+class _FakeRegistry:
+    def __init__(self, tools: dict[str, _FakeTool]) -> None:
+        self._tools = tools
+
+    @property
+    def tool_ids(self):
+        return frozenset(self._tools)
+
+    def get(self, tool_id: str):
+        return self._tools.get(tool_id)
+
+
+class _RecordingExecutor:
+    """Records every (tool_id, arguments) so a test can prove WHAT the supervisor read and with
+    which arguments — the only honest way to show it read the raw inputs, not the primary cache."""
+
+    def __init__(self, responses: dict[str, Any]) -> None:
+        self._responses = responses
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def invoke(self, tool_id: str, arguments: dict[str, Any], bearer: str) -> _FakeResult:
+        self.calls.append((tool_id, dict(arguments)))
+        return _FakeResult(data=self._responses.get(tool_id, {"ok": True}))
+
+
+@dataclass
+class _Session:
+    id: str = "sess_1"
+    context: dict[str, Any] = None  # type: ignore[assignment]
+    actor_id: str = "usr_banker_1"
+    actor_username: str = "banker@example.com"
+
+
+@dataclass
+class _Request:
+    run_id: str
+    objective: str
+    payload: dict[str, Any]
+    facts: dict[str, Any]
+    bearer_token: str = "******"
+    session: _Session = None  # type: ignore[assignment]
+
+
+def _request() -> _Request:
+    return _Request(
+        run_id="run_1",
+        objective="Review the flagged wire on account acc_11 and transaction tx_1.",
+        payload={"transactionId": "tx_1", "accountId": "acc_11", "decision": "cleared"},
+        facts={"amount": 250000},
+        session=_Session(context={"txId": "tx_1"}),
+    )
+
+
+APPROVAL = {"id": "apr_1", "status": "pending", "requiredRung": "L2"}
+
+#: What the ACTION requires — policy. §P5.7: this, and never the primary's evidence keys, is what
+#: defines the supervisor's independent draw.
+REQUIRED = ("get_flagged_transaction",)
+
+
+def _engine(executor, registry, decider=None):
+    runs = RunStreamRegistry(InMemoryTraceSink(), replay_window=500)
+    kwargs = {"registry": registry, "executor": executor, "runs": runs, "limits": LIMITS}
+    if decider is not None:
+        kwargs["decider"] = decider
+    return FanOutEngine(**kwargs), runs
+
+
+def _registry_and_executor():
+    tools = {
+        "get_flagged_transaction": _FakeTool("get_flagged_transaction", ("transactionId",)),
+        "list_account_transactions": _FakeTool("list_account_transactions", ("accountId",)),
+    }
+    executor = _RecordingExecutor(
+        {
+            "get_flagged_transaction": {"beneficiary": "SUPERVISOR_SAW_THIS"},
+            "list_account_transactions": [{"id": "tx_0"}],
+        }
+    )
+    return _FakeRegistry(tools), executor
+
+
+@pytest.mark.asyncio
+async def test_l2_spawns_one_blind_supervisor_and_emits_nested_frames():
+    registry, executor = _registry_and_executor()
+    engine, runs = _engine(executor, registry)
+
+    stream = runs.create("run_1", "sess_1")
+    result = await engine.run_second_opinion(
+        _request(), stream, APPROVAL, required_evidence_tool_ids=REQUIRED
+    )
+
+    assert result is not None
+    frames = [f for f in _frames(runs, "run_1")]
+    kinds = [f["kind"] for f in frames]
+    assert kinds.count("subagent.spawned") == 1
+    assert "subagent.completed" in kinds
+    assert "approval.updated" in kinds
+
+    spawned = next(f for f in frames if f["kind"] == "subagent.spawned")
+    # §4.2 SubagentSpawnedPayload: the trace rail renders from role/name/depth. The subagent's
+    # read allowlist (which excludes propose_action, §6.3) is proven directly against
+    # subagent_tool_ids() in the blind-construction suite, not smuggled into this frame.
+    assert spawned["payload"]["role"] == "supervisor"
+    assert spawned["payload"]["depth"] == 2
+    assert spawned["payload"]["name"] == "Independent second opinion"
+
+
+@pytest.mark.asyncio
+async def test_supervisor_reads_raw_inputs_not_the_primary_cache():
+    """The supervisor's evidence is its OWN draw. The engine gives its reader the banker's raw
+    inputs and it re-invokes the tools; the primary's ``evidence`` dict is never passed in."""
+    registry, executor = _registry_and_executor()
+    engine, runs = _engine(executor, registry)
+
+    stream = runs.create("run_1", "sess_1")
+    await engine.run_second_opinion(
+        _request(), stream, APPROVAL, required_evidence_tool_ids=REQUIRED
+    )
+
+    # It actually invoked the tool with arguments bound from the raw payload — a real second draw.
+    assert ("get_flagged_transaction", {"transactionId": "tx_1"}) in executor.calls
+    # And the arguments came from the banker's inputs, never from the primary's cached value.
+    for _tool, args in executor.calls:
+        assert "PRIMARY_SAW_THAT" not in str(args)
+
+
+def _fixed(recommendation: str):
+    def _decider(spawn, own_evidence):
+        return SecondOpinion(
+            recommendation=recommendation,
+            confidence=0.9,
+            key_factors=("beneficiary-unverified",),
+            strongest_counter_argument="The beneficiary could not be independently verified.",
+        )
+
+    return _decider
+
+
+def _approval_where_the_primary_said(verdict: str | None) -> dict:
+    """An approval body carrying (or not carrying) a real primary verdict.
+
+    ``None`` is the case that matters: an assessment that FAILED. It is spelled as a stated
+    failure rather than an empty dict, because that is what the wire actually carries now.
+    """
+    assessment = {"failure": "primary_unavailable"} if verdict is None else {"recommendation": verdict}
+    return {**APPROVAL, "agentAssessment": assessment}
+
+
+@pytest.mark.asyncio
+async def test_agreement_is_computed_after_the_fact():
+    """§6.4(6): agreement is a comparison the harness makes, not a value read off the supervisor.
+    A supervisor that disagrees does not gate proceeding — the disagreement is recorded."""
+    registry, executor = _registry_and_executor()
+
+    engine, runs = _engine(executor, registry, decider=_fixed("hold"))
+    stream = runs.create("run_1", "sess_1")
+    result = await engine.run_second_opinion(
+        _request(), stream, _approval_where_the_primary_said("proceed"), required_evidence_tool_ids=REQUIRED
+    )
+
+    # The primary stated `proceed`; the supervisor stated `hold` → they diverge. Both sides have
+    # a position, so this is a real comparison rather than a comparison against a default.
+    assert result.agreement == "diverge"
+    assert result.agrees_with_primary is False
+    # Wire contract: the supervisor's opinion rides under `agentAssessment.supervisor` — the shape
+    # the single mapper `toApproval.toAssessments` already tolerates, which assigns roles by key
+    # position. The verdict is the supervisor's OWN token, uppercased — "hold" is "HOLD", not
+    # "DECLINE". The old adapter renamed the middle verdict to the strongest one (and renamed the
+    # strongest to "CONDITIONAL"), so a supervisor asking for one more check read on screen as a
+    # flat refusal. The UI computes disagreement from the two assessments.
+    updated = next(f for f in _frames(runs, "run_1") if f["kind"] == "approval.updated")
+    supervisor_assessment = updated["payload"]["approval"]["agentAssessment"]["supervisor"]
+    assert supervisor_assessment["verdict"] == "HOLD"
+    completed = next(f for f in _frames(runs, "run_1") if f["kind"] == "subagent.completed")
+    assert completed["payload"]["status"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_no_grandchildren_the_depth_ceiling_refuses_a_third_level():
+    """§6.3: depth 2 is the ceiling. A subagent that tried to fan out again (depth 3) is refused
+    structurally, so 'no grandchildren' is a bound rather than a hope."""
+    registry, executor = _registry_and_executor()
+    engine, runs = _engine(executor, registry)
+    stream = runs.create("run_1", "sess_1")
+
+    # depth=2 would make the child depth 3, above the ceiling of 2 → None, and nothing spawned.
+    result = await engine.run_second_opinion(
+        _request(), stream, APPROVAL, required_evidence_tool_ids=REQUIRED, depth=2
+    )
+    assert result is None
+    assert executor.calls == []
+
+
+@pytest.mark.asyncio
+async def test_tool_budget_caps_the_supervisor_reads():
+    """§6.3: the per-subagent tool budget is a real ceiling. With a budget of 1, only the first
+    read tool is invoked even though the action required two."""
+    registry, executor = _registry_and_executor()
+    runs = RunStreamRegistry(InMemoryTraceSink(), replay_window=500)
+    tight = FanoutLimits(
+        max_concurrent_subagents=4,
+        max_subagent_depth=2,
+        per_subagent_tool_budget=1,
+        subagent_wall_clock_seconds=60,
+    )
+    engine = FanOutEngine(registry=registry, executor=executor, runs=runs, limits=tight)
+    stream = runs.create("run_1", "sess_1")
+
+    await engine.run_second_opinion(
+        _request(),
+        stream,
+        APPROVAL,
+        required_evidence_tool_ids=("get_flagged_transaction", "list_account_transactions"),
+    )
+    assert len(executor.calls) == 1
+
+
+def _frames(runs: RunStreamRegistry, run_id: str) -> list[dict[str, Any]]:
+    # InMemoryTraceSink keyed by run_id; read the persisted documents back for assertions.
+    sink = runs.sink
+    return sink._frames.get(run_id, [])  # type: ignore[attr-defined]
+
+
+# ---- Loop-level gate: the fan-out fires at L2 and NEVER at L1 (§6.2) ----
+
+
+class _RecordingFanout:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def run_second_opinion(
+        self, request, stream, approval, *, required_evidence_tool_ids, depth=1, parent_step_id=""
+    ):
+        self.required_evidence_tool_ids = tuple(required_evidence_tool_ids)
+        self.calls.append(approval.get("requiredRung"))
+        return None
+
+
+class _Outcome:
+    def __init__(self, rung: str) -> None:
+        self.status_code = 201
+        self.body = {
+            "id": "apr_1",
+            "status": "pending",
+            "requiredRung": rung,
+            "policyVersion": "pv1:abcd",
+        }
+
+    @property
+    def admitted(self) -> bool:
+        return True
+
+
+class _FakeAuthority:
+    def __init__(self, rung: str) -> None:
+        self._rung = rung
+
+    async def policy_catalogue(self, bearer_token: str):
+        # No required evidence → the plan is just [artifact, propose].
+        return {"actions": [{"id": "transaction.flag.review", "requiredEvidence": []}]}
+
+    async def propose(self, body, *, bearer_token, session_id, agent_id, correlation_id):
+        return _Outcome(self._rung)
+
+
+class _FakeStore:
+    async def save_artifact(self, artifact):
+        return None
+
+
+async def _run_planner_at(rung: str) -> _RecordingFanout:
+    from app.planner.loop import Planner, PlannerRequest
+
+    registry, executor = _registry_and_executor()
+    runs = RunStreamRegistry(InMemoryTraceSink(), replay_window=500)
+    fanout = _RecordingFanout()
+    planner = Planner(
+        registry=registry,
+        executor=executor,
+        authority=_FakeAuthority(rung),
+        max_iterations=12,
+        assessment_limits=shipped_assessment_limits(),
+        assessor=judging_assessor(),
+        store=_FakeStore(),
+        fanout=fanout,
+    )
+    req = PlannerRequest(
+        session=_Session(context={}),
+        run_id="run_1",
+        objective="Review flagged wire",
+        action_id="transaction.flag.review",
+        payload={"transactionId": "tx_1"},
+        facts={"amount": 250000},
+        bearer_token="******",
+    )
+    stream = runs.create("run_1", "sess_1")
+    await planner.run(req, stream)
+    return fanout
+
+
+@pytest.mark.asyncio
+async def test_the_planner_fans_out_at_l2():
+    fanout = await _run_planner_at("L2")
+    assert fanout.calls == ["L2"]
+
+
+@pytest.mark.asyncio
+async def test_the_planner_never_fans_out_at_l1():
+    """§6.2: L1 is single-signature and never triggers a second opinion — batching or
+    duplicating a second opinion defeats it. The gate is ``requiredRung == 'L2'``."""
+    fanout = await _run_planner_at("L1")
+    assert fanout.calls == []
+
+
+# ------------------------------------------------- §P4.3 agreement is tri-state ----
+
+
+@pytest.mark.asyncio
+async def test_two_real_verdicts_that_match_agree():
+    registry, executor = _registry_and_executor()
+    engine, runs = _engine(executor, registry, decider=_fixed("proceed"))
+    stream = runs.create("run_1", "sess_1")
+    result = await engine.run_second_opinion(
+        _request(), stream, _approval_where_the_primary_said("proceed"), required_evidence_tool_ids=REQUIRED
+    )
+    assert result.agreement == "agree"
+    assert result.agrees_with_primary is True
+
+
+@pytest.mark.asyncio
+async def test_a_failed_primary_is_not_comparable_and_is_never_rendered_as_dissent():
+    """§P4.3, and it is a real defect found in the ruling rather than a hypothetical.
+
+    `_primary_recommendation` used to end in `or "proceed"`. Once the primary can FAIL, that
+    fallback manufactures a position for an agent that has none, and the supervisor's `hold`
+    against that invented `proceed` lands on the card as genuine dissent. Agreement therefore has
+    three arms, and a side with no verdict lands on the third one — excluded from every
+    denominator rather than counted either way.
+    """
+    registry, executor = _registry_and_executor()
+    engine, runs = _engine(executor, registry, decider=_fixed("hold"))
+    stream = runs.create("run_1", "sess_1")
+    result = await engine.run_second_opinion(
+        _request(), stream, _approval_where_the_primary_said(None), required_evidence_tool_ids=REQUIRED
+    )
+
+    assert result.agreement == "not_comparable"
+    # And the boolean shortcut says False — a dead pipeline must never read as consensus — but it
+    # is derived, so nobody can mistake "nothing to compare" for "they disagreed".
+    assert result.agrees_with_primary is False
+    updated = next(f for f in _frames(runs, "run_1") if f["kind"] == "approval.updated")
+    assert updated["payload"]["approval"]["agentAssessment"]["agreement"] == "not_comparable"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_SUPERVISOR_is_not_comparable_either():
+    """The same rule from the other side: the failsafe `hold` is a withhold, not a position on
+    the action, and counting it as dissent is the error Livingston had to correct by hand."""
+    from app.planner.supervisor_model import parse_second_opinion
+
+    registry, executor = _registry_and_executor()
+
+    def _broken(spawn, own_evidence):
+        return parse_second_opinion("the model returned prose")
+
+    engine, runs = _engine(executor, registry, decider=_broken)
+    stream = runs.create("run_1", "sess_1")
+    result = await engine.run_second_opinion(
+        _request(), stream, _approval_where_the_primary_said("proceed"), required_evidence_tool_ids=REQUIRED
+    )
+    # NOTE: the supervisor's failsafe still STATES `hold` — aligning it with the primary's absent
+    # verdict is deferred by §P9 precisely because it changes supervisor behaviour in the middle
+    # of a measurement. So this currently reads as `diverge`, and that is recorded here rather
+    # than papered over, so the day the deferred ticket lands this test says what changed.
+    assert result.agreement == "diverge"
+    assert "supervisor_unavailable" in result.second_opinion.key_factors

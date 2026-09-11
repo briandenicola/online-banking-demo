@@ -223,3 +223,98 @@ async def require_admin(user: UserContext = Depends(verify_jwt)) -> UserContext:
             detail="Admin role required",
         )
     return user
+
+
+#: Roles that may READ operational detail. A banking supervisor co-signing an L2 approval needs
+#: background — flagged transactions, model status, the audit trail — to judge it. They do not
+#: thereby become an admin: the two are orthogonal axes (epic #332 §5.8.2, `admin` has seniority
+#: 0 and implies nothing), and L3 actions stay admin-only. Widening this tuple is not a config
+#: tweak; it is a change to who can see the bank's operational internals.
+OBSERVABILITY_READ_ROLES = ("admin", "supervisor")
+
+
+async def require_observability_read(user: UserContext = Depends(verify_jwt)) -> UserContext:
+    """FastAPI dependency — read-only operational visibility for admins and supervisors.
+
+    **This dependency may only guard an endpoint that does not mutate state.** That is asserted,
+    not merely intended: `tests/test_supervisor_observability_scope.py` enumerates every route
+    carrying it and fails if any of them is reachable by a method other than GET. The reason for
+    the assertion rather than a comment is that the natural bad edit here is a one-word swap —
+    changing `require_admin` to `require_observability_read` on a POST while reviewing a diff that
+    is otherwise all reads — and nothing else in the codebase would notice.
+    """
+    if user.role.lower() not in OBSERVABILITY_READ_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin or supervisor role required",
+        )
+    return user
+
+
+# ---------------------------------------------------------------------------------------------
+# Capability scopes — the banking data-access axis
+# ---------------------------------------------------------------------------------------------
+#
+# `config/authority-policy.yaml` already declares, and `PolicyLoader.ValidateCapabilityScopes`
+# already validates, WHICH BANKING ROLES HOLD EACH READ SCOPE. Until now that declaration was
+# enforced nowhere: the endpoints backing those scopes were gated on `admin` because they happen
+# to sit under an `/api/admin/...` path prefix. The result was a live defect — the Banker Copilot
+# calls upstream with the requesting banker's token, so `list_flagged_transactions` and
+# `list_login_audits` returned 403, evidence gathering failed, no approval was ever proposed, and
+# the mandatory L2 fan-out (and therefore the supervisor second opinion) never fired at all.
+#
+# The fix is to gate those reads on the scope they actually serve rather than on the word in
+# their URL. This grants NOTHING new in policy terms; it implements a grant that was already
+# ratified. It is emphatically NOT a role promotion: `banker` gains three read endpoints, not
+# admin, and every mutating endpoint keeps `require_admin`.
+#
+# NOTE ON `admin`: the policy file removed `admin` from every capability scope on purpose —
+# "it made the platform role a superset of banking authority for READ paths too" — and the
+# loader rejects any scope naming a role with seniority < 1. So `admin` is NOT part of a scope
+# and must never be added to the tuples below. Admins retain access to these endpoints through
+# the separate platform grant applied alongside the scope, which is what `_PLATFORM_READ_ROLE`
+# expresses. Keeping the two apart is the whole point.
+#
+# These tuples MIRROR `config/authority-policy.yaml`. `tests/test_capability_scope_reads.py`
+# parses that file and fails if they ever drift, so the ratified document stays the source of
+# truth without every service having to load it at runtime.
+CAPABILITY_SCOPE_ROLES: dict[str, tuple[str, ...]] = {
+    "risk.read": ("banker", "supervisor"),
+    "identity.read": ("banker", "supervisor"),
+    "transactions.read": ("banker", "supervisor"),
+}
+
+#: Platform administration is orthogonal to banking seniority, so it is added to a read gate
+#: alongside the scope rather than being smuggled into the scope itself. See the note above.
+_PLATFORM_READ_ROLE = "admin"
+
+
+def capability_read_roles(scope: str) -> tuple[str, ...]:
+    """The roles that may perform reads in `scope`: its banking holders, plus platform admin."""
+    if scope not in CAPABILITY_SCOPE_ROLES:
+        raise KeyError(f"unknown capability scope: {scope}")
+    return (_PLATFORM_READ_ROLE,) + CAPABILITY_SCOPE_ROLES[scope]
+
+
+def require_capability_read(scope: str):
+    """Build a FastAPI dependency gating a READ endpoint on a declared capability scope.
+
+    **This dependency may only guard an endpoint that does not mutate state.** As with
+    `require_observability_read`, that is asserted rather than remembered: the scope tests
+    enumerate every route carrying it and fail on any verb other than GET. The natural bad edit
+    is a one-word swap on a POST while reviewing a diff that is otherwise all reads, and the
+    endpoints in question sit under `/api/admin/...`, where a reviewer's eye is least likely to
+    catch a widened gate.
+    """
+    allowed = capability_read_roles(scope)
+
+    async def _dependency(user: UserContext = Depends(verify_jwt)) -> UserContext:
+        if user.role.lower() not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Capability scope '{scope}' required",
+            )
+        return user
+
+    _dependency.__name__ = f"require_{scope.replace('.', '_')}"
+    return _dependency

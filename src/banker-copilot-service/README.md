@@ -160,6 +160,98 @@ and only falls back to a cross-partition query when the caller genuinely does no
 `FOUNDRY_PROJECT_ENDPOINT` / `FOUNDRY_MODEL` are the canonical model-access names, matching
 ai-service. `AZURE_AI_PROJECT_ENDPOINT` / `AZURE_AI_MODEL_DEPLOYMENT` are honoured and reported.
 
+### The model timeout is ours, it is per call, and it is one number
+
+`BANKER_COPILOT_MODEL_TIMEOUT_S` (default **60**) is the ceiling on a single model round
+trip. It was four hardcoded `30.0` literals — intent selector, evidence answerer, primary
+assessor, supervisor — which is three chances to diverge and no way to change it in a running
+cluster. A bad value is a startup error rather than a silent fall back to the default, because
+a deployment that meant to raise the ceiling and typo'd it would otherwise go on expiring at
+the old number while its config says it does not.
+
+Read it as **per call**. A free-text run makes several — `intent`, then `answer`, and on a
+propose the `primary` and the `supervisor` — so the wall-clock ceiling for a *run* is a
+multiple of this. That is why an end-to-end read-only run has been observed at 59.8s against a
+"30s" message: the message is accurate about the call it describes and says nothing about the
+run.
+
+Every call now logs `Model call completed` with `phase`, `model`, `timeout_s` and
+`elapsed_ms`, so the next argument about the right value can be settled with cloud numbers.
+Measured on the laptop path (n=13, `gpt-5.4-mini`): `intent` 3.5-8.6s, `answer` 4.9-12.7s. The
+cloud is slower and its per-call figure is still unmeasured.
+
+A **transient** model failure is retried once, inside the same budget, so "did not answer
+within Ns" stays literally true. Only transient failures: an invalid-auth, invalid-request or
+content-filter exception is a verdict about the request and will fail identically the second
+time. This exists because a live run failed with `ChatClientException` wrapping
+`APITimeoutError('Request timed out.')` at **18.6s elapsed inside a 60s budget** — the SDK's
+own request timeout, not ours and not the endpoint being down, so raising our number would not
+have saved that run.
+
+### Action descriptions: built, measured, and off
+
+Read tools reach the intent model with prose and a full JSON Schema. Actions reach it as
+names only — an id, a display name, a rung, and three lists of field *names*. So the model
+has to bridge "Refund a $35 overdraft fee" to the four words "Post a balance adjustment"
+unaided, and guess that `direction` takes `credit` or `debit` — the field Brian's ruling
+turns on, since crediting an account is always L2. When it cannot bridge it, it does not say
+it is unsure; it reports its guess as a fact: *"no proposable action supports posting or
+refunding a fee directly in this harness."*
+
+`config/copilot-actions.yaml` closes that gap: prose and field descriptions for all 13
+actions, including the 5 forbidden ones, so the model can decline them **by name** rather
+than claim they do not exist. It is **description, never permission** — authority-service's
+catalogue remains the only source of which actions exist and which may be proposed, and
+`tests/test_action_metadata_boundary.py` drives a real run with an invented action in the
+file to prove it never reaches the model.
+
+`COPILOT_ACTION_METADATA_PATH` points at the file. The loader refuses to start without it.
+
+`COPILOT_ACTION_METADATA_ENABLED` (default **0**) controls whether the descriptions are sent.
+
+The first measurement of this was **void and its conclusion was wrong**, and the correction is
+worth more than the result. It used a shortened prompt — `"Refund a $35 overdraft fee"` — that
+names no customer and no account, so neither arm could propose at all, and the model declining
+to invent an account read as a mapping regression. A prompt in a measurement harness must be
+**the prompt the system is judged on**; a paraphrase is a different experiment wearing the same
+name.
+
+Re-run with the real prompt, `"Refund a $35 overdraft fee on retail's checking as goodwill"`,
+12 matched runs per arm, one session, one deployment (`tests/ab_action_metadata.py`, which
+prints per-run labels as well as totals):
+
+| prompt | expected | names only | with descriptions |
+| --- | --- | --- | --- |
+| refund — proposed at the correct **L2** | L2, `direction: credit` | 10/12 | **11/12** |
+| refund — **wrong rung**, `direction: debit` at L1 | never | **2/12** | **0/12** |
+| `Reset casey's password` | refuses `forbidden_action` | 12/12 | 12/12 |
+| `Summarise nobody-here's...` | refuses `subject_not_found` | 11/12 | **12/12** |
+
+The rung errors are the result. Both were `direction: debit` on a refund — money going back to
+a customer, described as money being taken from one. `credit-adjustment` raises a credit to L2
+because crediting an account creates money, so a `debit` label routes a customer refund through
+**less signature ceremony than it deserves**. Naming the field's allowed values is exactly what
+removed them.
+
+The cost is one run in twelve routed to a read instead of a propose — a miss, not a wrong
+action and not a wrong rung. Refusals were unchanged in both arms.
+
+**Then a third run overturned that too, and this time the cause is structural.** Registering
+one more read tool in the live harness — `get_account_by_number`, which the real manifest has
+always carried and the harness simply never modelled — moved the refund prompt from **7/12 to
+2/12** propose, reproduced across matched n=12 runs in one session.
+
+So the model's action mapping is sensitive to the **read** surface, not only to the prompt and
+the action catalogue. And the live harness registers **9 of the 15 tools** the deployed service
+does, which means every live number in this file was measured against a smaller bank than a
+banker uses. `tests/test_live_harness_fidelity.py` pins the gap so it cannot widen silently.
+
+**No wire recommendation is available from this data.** Three runs gave three answers and the
+third identified a confound large enough to swamp the effect being measured. The flag stays at
+`0` — the arm we have actually flown in the cloud — until the harness models the full tool
+surface and the measurement is re-baselined. That is a decision about evidence, not a patch.
+
+
 ## Endpoints
 
 ```
@@ -181,6 +273,46 @@ GET  /api/copilot/runs/{id}/trace            # replay
 docker compose up banker-copilot-service        # port 8005, gateway /api/copilot/
 cd src/banker-copilot-service && python -m pytest tests/ -q
 ```
+
+## Proving the free-text path against a REAL model
+
+`tests/test_demo_prompt_acceptance.py` stubs the intent boundary: it proves the planner
+executes a structured intent correctly, and it deliberately proves nothing about whether a
+model turns a banker's English into a sane intent. `tests/test_demo_prompt_live_model.py`
+runs the SAME prompt corpus through the real `intent_model.py` call path.
+
+It is **deselected by default** (`addopts = -m "not live_model"` in `pyproject.toml`), so the
+normal run stays hermetic, offline and credential-free and reports the live tests as
+`deselected` — never as passed and never as skipped.
+
+```bash
+BANKER_COPILOT_LIVE_MODEL=1 \
+FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>" \
+FOUNDRY_MODEL="gpt-5.4-mini" \
+python -m pytest -m live_model -q -s
+```
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `BANKER_COPILOT_LIVE_MODEL` | yes | `1`/`true`/`yes`. Without it the tests are deselected. |
+| `FOUNDRY_PROJECT_ENDPOINT` | yes | The **project** endpoint, not the account endpoint. `az rest --method get --url ".../accounts/<account>/projects?api-version=2025-06-01"` prints it under `properties.endpoints["AI Foundry API"]`. The legacy `AZURE_AI_PROJECT_ENDPOINT` is still accepted. |
+| `FOUNDRY_MODEL` | yes | The **deployment** name, e.g. `gpt-5.4-mini`. Legacy `AZURE_AI_MODEL_DEPLOYMENT` accepted. |
+| an Azure credential | yes | `az login`, or `AZURE_TENANT_ID`/`AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET`, or a projected workload identity. The identity needs a role granting data-plane inference on the Foundry project, and the resource must be reachable — several Foundry accounts in this subscription have `publicNetworkAccess: Disabled` and are unreachable from a laptop. |
+
+`COPILOT_PLANNER_MODE` is forced to `foundry` by the suite. Missing configuration or a
+credential that cannot mint a token for `https://ai.azure.com/.default` **aborts the whole run**
+with `pytest.exit` and a non-zero exit code, naming the missing piece. It never skips: a skipped
+live test reads like a passing one, and a run that proved nothing must never look green.
+
+Real: the intent model, the evidence answerer, the intent prompt, the JSON contract, the
+planner loop, subject resolution, the action allowlist and payload revalidation. Fixtures: the
+banking upstreams and authority-service (so a failure is attributable to the model, not to an
+outage) and the primary assessor (this suite is about intent, not assessment).
+
+Assertions are about invariants — chosen action, resolved subject, read vs approval vs refusal,
+refusal code, and that the allowlist held. Direction and required rung are printed, not
+asserted, because a live model may reasonably read "refund a fee" as a credit or a debit and
+the rung is derived from the direction.
 
 ## Known gaps in the upstreams (found by reading the real controllers)
 

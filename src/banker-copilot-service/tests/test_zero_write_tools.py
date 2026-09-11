@@ -268,8 +268,11 @@ EXPECTED_TOOL_IDS = frozenset(
         "get_transaction",
         "list_account_transactions",
         "get_account",
+        "list_customer_accounts",
+        "get_account_by_number",
         "get_transfer",
         "get_user",
+        "lookup_customer",
         "list_login_audits",
         "list_account_applications",
         "get_account_application",
@@ -295,11 +298,9 @@ def test_evidence_tools_named_by_the_authority_policy_all_exist(registry: ToolRe
     and each file would be internally coherent while the system is broken, which is exactly
     how Phase 1's privilege escalation survived review.
     """
-    import pathlib
+    from conftest import REPO_ROOT
 
-    policy_path = (
-        pathlib.Path(__file__).resolve().parents[3] / "config" / "authority-policy.yaml"
-    )
+    policy_path = REPO_ROOT / "config" / "authority-policy.yaml"
     policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
 
     referenced: set[str] = set()

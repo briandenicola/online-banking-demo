@@ -25,6 +25,7 @@ public abstract class ApprovalRepositoryBase : IApprovalRepository
     public abstract Task<Approval?> GetAsync(string id, string requesterId, CancellationToken ct = default);
     public abstract Task<Approval?> FindAsync(string id, CancellationToken ct = default);
     public abstract Task<IReadOnlyList<Approval>> QueryAsync(ApprovalQuery query, CancellationToken ct = default);
+    public abstract Task<int> CountSupersedesAsync(string requesterId, DateTime sinceUtc, CancellationToken ct = default);
     public abstract Task<IReadOnlyList<Approval>> FindExpiredAsync(long nowEpochSeconds, int batchSize, CancellationToken ct = default);
     public abstract Task<IReadOnlyList<Approval>> FindNonTerminalAsync(int batchSize, CancellationToken ct = default);
 

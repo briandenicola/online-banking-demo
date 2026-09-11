@@ -69,3 +69,49 @@ export const resolveApiError = (
 
   return fallback;
 };
+
+/**
+ * Describes a failed request WITHOUT asserting a cause nobody observed.
+ *
+ * Written after a 405 was reported to a banker as "It is not running on the
+ * server." The service was healthy and returned 201 to the same call a minute
+ * later; the request had simply gone to a misbuilt URL. A single hardcoded
+ * sentence that names a specific server state is a diagnosis, and a diagnosis
+ * the client is not entitled to make: from here we can see a status code and a
+ * response body, and nothing else.
+ *
+ * So the rules are: state the status, quote the server when it said something,
+ * and describe *what happened* rather than *why*. A wrong-but-confident error
+ * message is worse than a vague one, because people act on it.
+ */
+export const describeHttpFailure = (error: unknown, subject = 'The request'): string => {
+  const response = (error as { response?: { status?: number; data?: unknown } })?.response;
+
+  // No response at all: DNS, CORS, offline, or a connection that never landed.
+  if (!response || typeof response.status !== 'number') {
+    const message = (error as { message?: unknown })?.message;
+    return `${subject} could not be completed — no response was received${
+      typeof message === 'string' && message.length > 0 ? ` (${message})` : ''
+    }. The service may be unreachable, or the request may never have left the browser.`;
+  }
+
+  const { status } = response;
+  const serverSaid = resolveApiError(error, '');
+  const quoted = serverSaid ? ` The server said: ${serverSaid}` : '';
+
+  if (status === 401 || status === 403) {
+    return `${subject} was rejected as unauthorised (${status}). Your session may have expired — sign in again.${quoted}`;
+  }
+
+  // The signature of a misrouted call. A REST service does not answer 404/405 on
+  // an endpoint it implements, so this points at the URL, not at the service.
+  if (status === 404 || status === 405) {
+    return `${subject} did not reach the service (HTTP ${status}). The endpoint URL looks wrong rather than the service being down.${quoted}`;
+  }
+
+  if (status >= 500) {
+    return `${subject} failed: the service returned an error (HTTP ${status}).${quoted}`;
+  }
+
+  return `${subject} was refused (HTTP ${status}).${quoted}`;
+};

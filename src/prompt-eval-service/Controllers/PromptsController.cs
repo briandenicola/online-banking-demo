@@ -1,3 +1,4 @@
+using Banking.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PromptEvalService.Models;
@@ -7,7 +8,10 @@ namespace PromptEvalService.Controllers;
 
 [ApiController]
 [Route("api/evaluations/prompts")]
-[Authorize(Roles = "admin,Admin")]
+// Class gate: read-only observability. Reading which prompt templates exist is background a
+// supervisor needs to interpret an evaluation. Authoring them is configuration, so every write
+// below narrows back to admin-only. See the note on EvaluationsController.
+[Authorize(Roles = BankingRoles.ObservabilityRead)]
 public class PromptsController : ControllerBase
 {
     private readonly IPromptTemplateService _templateService;
@@ -34,6 +38,8 @@ public class PromptsController : ControllerBase
         return Ok(template);
     }
 
+    // Mutating: creates a prompt template (write config). Admin-only.
+    [Authorize(Roles = BankingRoles.Admin)]
     [HttpPost]
     public async Task<ActionResult<PromptTemplate>> Create([FromBody] CreatePromptTemplateRequest request)
     {
@@ -56,6 +62,8 @@ public class PromptsController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
     }
 
+    // Mutating: edits a prompt template (write config). Admin-only.
+    [Authorize(Roles = BankingRoles.Admin)]
     [HttpPut("{id}")]
     public async Task<ActionResult<PromptTemplate>> Update(string id, [FromBody] UpdatePromptTemplateRequest request)
     {
@@ -70,6 +78,8 @@ public class PromptsController : ControllerBase
         }
     }
 
+    // Mutating: deletes a prompt template (write config). Admin-only.
+    [Authorize(Roles = BankingRoles.Admin)]
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(string id)
     {

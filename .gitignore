@@ -47,6 +47,12 @@ __pycache__/
 venv/
 *.egg-info/
 
+# mutmut 3.x copies the service into a sandbox to mutate it, and caches results
+# alongside. Both are build artifacts of a test run, not source.
+mutants/
+.mutmut-cache
+mutmut-results.xml
+
 # Go
 /dist/
 

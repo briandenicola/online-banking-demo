@@ -20,6 +20,9 @@ import {
   Approval,
   ApprovalState,
   AgentAssessment,
+  AgentKeyFactor,
+  AgreementState,
+  AGREEMENT_STATES,
   AuthorityRung,
   Escalator,
   EvidenceRef,
@@ -204,11 +207,29 @@ export function flattenPayload(
  * `sourceToolCallId` is lifted when present so the card can scroll the trace to
  * the tool call that produced the claim — the loop that makes the trace pane a
  * citation index rather than decoration.
+ *
+ * The VALUES are carried through as `findings`. This mapper previously took the
+ * key for a label and dropped the payload on the floor, so
+ * `{ "get_account": { "accountId": "…", "balance": 59480 } }` rendered as
+ * "Get account" and nothing else — the agent's tool call, never its finding.
+ * They are flattened with `flattenPayload` so evidence and payload rows share
+ * one set of display primitives instead of inventing a second vocabulary.
  */
+const EVIDENCE_META_KEYS = new Set(['kind', 'label', 'toolCallId', 'summary', 'href']);
+
 function toEvidence(evidence: Record<string, unknown> | undefined): EvidenceRef[] {
   if (!evidence || typeof evidence !== 'object') return [];
   return Object.entries(evidence).map(([key, value]) => {
     const detail = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
+
+    // Everything that is not lifted into the ref itself is a finding. Arrays are
+    // wrapped so `flattenPayload` sees an object either way.
+    const payload: Record<string, unknown> = Array.isArray(value)
+      ? { [key]: value }
+      : Object.fromEntries(
+          Object.entries(detail).filter(([field]) => !EVIDENCE_META_KEYS.has(field))
+        );
+
     return {
       id: key,
       kind: (typeof detail.kind === 'string' ? detail.kind : 'record') as EvidenceRef['kind'],
@@ -222,8 +243,65 @@ function toEvidence(evidence: Record<string, unknown> | undefined): EvidenceRef[
             ? value
             : undefined,
       href: typeof detail.href === 'string' ? (detail.href as string) : undefined,
+      findings: flattenPayload(payload),
     };
   });
+}
+
+/**
+ * Normalises `keyFactors` instead of casting it.
+ *
+ * This was `Array.isArray(x) ? x as AgentKeyFactor[] : undefined` — a cast, which
+ * asserts a shape rather than checking one. It is part of how the fixture taught
+ * the UI a `{label, value}` measurement pair the service never produced: nothing
+ * on this path would have objected to any array at all.
+ *
+ * A factor is accepted as a bare string (the shape the deciders actually hold it
+ * in) or as an object with a label. `value` and `concern` are forwarded ONLY when
+ * genuinely present — never defaulted, because the card distinguishes "not a
+ * concern" from "the agent did not say", and a default would erase that.
+ */
+function toKeyFactors(raw: unknown): AgentKeyFactor[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+
+  const factors: AgentKeyFactor[] = [];
+  for (const entry of raw) {
+    if (typeof entry === 'string') {
+      if (entry.trim() !== '') factors.push({ label: entry });
+      continue;
+    }
+    if (!entry || typeof entry !== 'object') continue;
+    const detail = entry as Record<string, unknown>;
+    if (typeof detail.label !== 'string' || detail.label.trim() === '') continue;
+    factors.push({
+      label: detail.label,
+      ...(typeof detail.value === 'string' && detail.value.trim() !== ''
+        ? { value: detail.value }
+        : {}),
+      ...(typeof detail.concern === 'boolean' ? { concern: detail.concern } : {}),
+    });
+  }
+  return factors;
+}
+
+function toStringList(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out = raw.filter((v): v is string => typeof v === 'string' && v.trim() !== '');
+  return out.length > 0 ? out : undefined;
+}
+
+/**
+ * The server's tri-state comparison, read rather than re-derived.
+ *
+ * An unknown token is NOT coerced to a state. `undefined` here means "the server
+ * did not state whether these two agree", and the card renders that as its own
+ * thing — never as agreement.
+ */
+function toAgreement(raw: Record<string, unknown> | null | undefined): AgreementState | undefined {
+  const token = raw && typeof raw === 'object' ? raw.agreement : undefined;
+  return typeof token === 'string' && (AGREEMENT_STATES as string[]).includes(token)
+    ? (token as AgreementState)
+    : undefined;
 }
 
 function toAssessments(raw: Record<string, unknown> | null | undefined): AgentAssessment[] {
@@ -237,19 +315,35 @@ function toAssessments(raw: Record<string, unknown> | null | undefined): AgentAs
     agentName: typeof value.agentName === 'string' ? value.agentName : undefined,
     role,
     verdict: typeof value.verdict === 'string' ? value.verdict : undefined,
-    confidence:
+    // The wire still spells this `confidence`; the client calls it what it is.
+    // The rename crosses the language boundary and the golden wire, so the ruling
+    // defers it (§P7.2(3), §P9) — but the caveat belongs on the name a reader
+    // sees, so the client-side rename happens now and ONE key is read, not two.
+    // Tolerating both spellings would be the `policyVersion` seam again; instead
+    // `selfReportedConfidence.contract.test.ts` fails loudly the day the server
+    // renames, rather than letting the number silently vanish from the card.
+    selfReportedConfidence:
       typeof value.confidence === 'number'
         ? value.confidence
         : typeof value.confidence === 'string'
           ? Number(value.confidence)
           : undefined,
     rationale: typeof value.rationale === 'string' ? value.rationale : undefined,
-    keyFactors: Array.isArray(value.keyFactors)
-      ? (value.keyFactors as AgentAssessment['keyFactors'])
-      : undefined,
+    keyFactors: toKeyFactors(value.keyFactors),
     citedEvidenceIds: Array.isArray(value.citedEvidenceIds)
       ? (value.citedEvidenceIds as string[])
       : undefined,
+    unverified: toStringList(value.unverified),
+    // A stated failure, not an absence a renderer is left to interpret.
+    failure: typeof value.failure === 'string' && value.failure.trim() !== '' ? value.failure : undefined,
+    failureReason:
+      typeof value.failureReason === 'string' && value.failureReason.trim() !== ''
+        ? value.failureReason
+        : undefined,
+    mode: typeof value.mode === 'string' ? value.mode : undefined,
+    modelDeployment: typeof value.modelDeployment === 'string' ? value.modelDeployment : undefined,
+    promptSha256: typeof value.promptSha256 === 'string' ? value.promptSha256 : undefined,
+    responseSha256: typeof value.responseSha256 === 'string' ? value.responseSha256 : undefined,
   });
 
   const out: AgentAssessment[] = [];
@@ -315,6 +409,7 @@ export function toApproval(wire: WireApproval): Approval {
     rawPayload: wire.payload || {},
     evidence: toEvidence(wire.evidence),
     assessments: toAssessments(wire.agentAssessment),
+    assessmentAgreement: toAgreement(wire.agentAssessment),
     payloadHash: wire.payloadHash,
     payloadHashShort: wire.payloadHashShort,
     policyVersion: wire.policyVersion,

@@ -64,3 +64,26 @@ Agent Scribe initialized and ready for work.
 
 Initial setup complete. Scribe hygiene discipline established 2026-05-14.
 Turk orchestration processed 2026-06-05.
+
+### 2026-09-10 — Session 332: Orchestration merge + verification process lesson
+
+**Work Completed:**
+- ✅ Created 3 orchestration logs (Linus, Danny, Turk; ISO 8601 UTC timestamps)
+- ✅ Created session log (free-text outcomes and xfail rulings)
+- ✅ Merged 5 inbox files → decisions.md; deleted inbox files; inbox now empty
+- ✅ Updated agent histories with cross-team findings (Turk facts-map bug, Linus stream lifecycle, Danny rulings)
+- ✅ Created ledger-growth proposal for Danny's ruling (size + age thresholds)
+- ✅ Commit `a6ddeba` staged `.squad/` only; Turk's service code left untouched
+- ✅ Commit `9c7bf20` fixed duplicate section in Turk's history; proposal added
+
+**Process Lesson — Verification: Never truncate search results when checking for presence**
+
+**Error:** Initial report claimed facts-map bug was missing from Turk's history. Verification used `grep -in "facts" .squad/agents/turk/history.md | head -5`. File contains 22 matches; the critical one (line 3216) was beyond the 5-line truncation. False absence reported as a finding.
+
+**Root cause:** Same class of error Danny caught in herself earlier today (case-sensitive grep across C#/JSON boundaries producing false absence). Here: truncation instead of case mismatch. Same failure mode: "I did not see it" → "it is not there".
+
+**Rule:** When verifying presence, use `grep -c` for count first, or drop limiting tools. Cost here was low (original commit was correct). Applied to security/disclosure checks, the same mistake could carry high cost.
+
+**Commits:**
+- `a6ddeba`: Orchestration logs, inbox merge, agent history updates
+- `9c7bf20`: Ledger-growth proposal added to inbox (decisions.md growth is now spawn tax)

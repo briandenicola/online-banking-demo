@@ -130,63 +130,80 @@ public class TransactionsControllerSecurityTests
     }
 
     /// <summary>
-    /// SECURITY: Verifies that GetAccountTransactions is scoped to the authenticated user.
-    /// The controller first fetches the user's own transactions, then filters by accountId,
-    /// ensuring a user cannot access another user's account transactions even if they
-    /// know the accountId.
+    /// SECURITY (ruling §B2.2): the endpoint asks the question it is documented to answer.
+    ///
+    /// <para>
+    /// It used to read the CALLER's transactions and narrow them to the accountId, and the two
+    /// tests that stood here asserted exactly that — one of them named
+    /// <c>..._OtherUsersAccount_ReturnsEmpty</c>, which pinned the defect in place as if it were
+    /// the requirement. It is worth recording what they were: for any non-owner the endpoint
+    /// returned <c>200 []</c> BY CONSTRUCTION, for every account in the bank, and that empty
+    /// array then passed through a correct projection and a correct completeness gate on its way
+    /// to a supervisor as grounds for reasoning.
+    /// </para>
     /// </summary>
     [Fact]
-    public async Task GetAccountTransactions_OnlyReturnsAuthenticatedUsersTransactions()
+    public async Task GetAccountTransactions_QueriesByAccountId_NotByCaller()
     {
         SetUser("user-1");
-        var userTransactions = new List<Transaction>
-        {
-            new() { Id = "txn-1", AccountId = "acc-1", UserId = "user-1", Amount = 100m, Type = "Credit", Description = "Deposit" },
-            new() { Id = "txn-2", AccountId = "acc-2", UserId = "user-1", Amount = 50m, Type = "Debit", Description = "Purchase" }
-        };
         _transactionServiceMock
-            .Setup(s => s.GetUserTransactionsAsync("user-1", 50))
-            .ReturnsAsync(userTransactions);
+            .Setup(s => s.GetAccountTransactionsAsync("acc-1", 50))
+            .ReturnsAsync(new List<Transaction>
+            {
+                new() { Id = "txn-1", AccountId = "acc-1", UserId = "user-1", Amount = 100m, Type = "Credit", Description = "Deposit" }
+            });
 
-        // Request transactions for acc-1 — should only return txn-1
         var result = await _sut.GetAccountTransactions("acc-1");
 
         result.Should().BeOfType<OkObjectResult>();
-        var okResult = (OkObjectResult)result;
-        var transactions = okResult.Value as IEnumerable<Transaction>;
-        transactions.Should().NotBeNull();
-        transactions!.Should().AllSatisfy(t => t.AccountId.Should().Be("acc-1"));
-
-        // Verify it called GetUserTransactionsAsync with the authenticated userId
+        _transactionServiceMock.Verify(s => s.GetAccountTransactionsAsync("acc-1", 50), Times.Once);
         _transactionServiceMock.Verify(
-            s => s.GetUserTransactionsAsync("user-1", 50), Times.Once);
-        // Verify it did NOT call GetAccountTransactionsAsync directly (which would bypass ownership)
-        _transactionServiceMock.Verify(
-            s => s.GetAccountTransactionsAsync(It.IsAny<string>(), It.IsAny<int>()),
+            s => s.GetUserTransactionsAsync(It.IsAny<string>(), It.IsAny<int>()),
             Times.Never,
-            "Controller should filter through user's transactions, not query account directly");
+            "the caller-derived filter is DELETED, not kept as a fallback: a fallback preserves "
+            + "the exact path that produces the lie");
     }
 
     /// <summary>
-    /// SECURITY: Verifies that GetAccountTransactions for an account the user doesn't own
-    /// returns an empty result set rather than the other user's transactions.
+    /// SECURITY: an ordinary customer reading another customer's account is now told NO, rather
+    /// than told that the account has no history.
     /// </summary>
     [Fact]
-    public async Task GetAccountTransactions_OtherUsersAccount_ReturnsEmpty()
+    public async Task GetAccountTransactions_OtherUsersAccount_ReturnsForbidden()
     {
         SetUser("attacker");
-        // Attacker has no transactions
         _transactionServiceMock
-            .Setup(s => s.GetUserTransactionsAsync("attacker", 50))
-            .ReturnsAsync(new List<Transaction>());
+            .Setup(s => s.GetAccountTransactionsAsync("victims-account-id", 50))
+            .ReturnsAsync(new List<Transaction>
+            {
+                new() { Id = "txn-v", AccountId = "victims-account-id", UserId = "victim", Amount = 5000m, Type = "Credit", Description = "Salary" }
+            });
 
         var result = await _sut.GetAccountTransactions("victims-account-id");
 
-        result.Should().BeOfType<OkObjectResult>();
-        var okResult = (OkObjectResult)result;
-        var transactions = okResult.Value as IEnumerable<Transaction>;
-        transactions.Should().NotBeNull();
-        transactions!.Should().BeEmpty();
+        result.Should().BeOfType<ObjectResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+    }
+
+    /// <summary>
+    /// SECURITY: the victim's rows do not appear in the denied response body either. A 403 whose
+    /// body still carries the data would be a status code apologising for a leak.
+    /// </summary>
+    [Fact]
+    public async Task GetAccountTransactions_DeniedResponse_CarriesNoTransactionData()
+    {
+        SetUser("attacker");
+        _transactionServiceMock
+            .Setup(s => s.GetAccountTransactionsAsync("victims-account-id", 50))
+            .ReturnsAsync(new List<Transaction>
+            {
+                new() { Id = "txn-v", AccountId = "victims-account-id", UserId = "victim", Amount = 5000m, Type = "Credit", Description = "Salary" }
+            });
+
+        var result = (ObjectResult)await _sut.GetAccountTransactions("victims-account-id");
+
+        System.Text.Json.JsonSerializer.Serialize(result.Value)
+            .Should().NotContain("txn-v").And.NotContain("5000");
     }
 
     /// <summary>
@@ -237,5 +254,133 @@ public class TransactionsControllerSecurityTests
         var result = await _sut.GetTransaction("txn-1");
 
         result.Should().BeOfType<UnauthorizedResult>();
+    }
+}
+
+/// <summary>
+/// Ruling §B2, one test per row of the table, driven through the controller.
+///
+/// <para>
+/// Every row is asserted on what the ENDPOINT produces. The failure mode to avoid here is a test
+/// that passes because a fixture supplied a 403 rather than because the endpoint decided on one,
+/// which would stay green with the entire check deleted — so the only thing stubbed is the
+/// repository read, and the status under assertion is always the controller's own.
+/// </para>
+/// </summary>
+[Trait("Category", "Security")]
+public class BankerReadsACustomersTransactionsTests
+{
+    private readonly Mock<ITransactionService> _transactionServiceMock = new();
+    private readonly Mock<ILogger<TransactionsController>> _loggerMock = new();
+    private readonly TransactionsController _sut;
+
+    public BankerReadsACustomersTransactionsTests()
+    {
+        _sut = new TransactionsController(_transactionServiceMock.Object, _loggerMock.Object);
+    }
+
+    private void SetUser(string userId, params string[] roles)
+    {
+        var claims = new List<Claim> { new("userId", userId) };
+        claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
+        _sut.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(claims, "Test")) }
+        };
+    }
+
+    private void LedgerFor(string accountId, params Transaction[] rows) =>
+        _transactionServiceMock.Setup(s => s.GetAccountTransactionsAsync(accountId, 50))
+            .ReturnsAsync(rows.ToList());
+
+    private static Transaction CaseyRow(string id) =>
+        new() { Id = id, AccountId = "acc-casey", UserId = "casey", Amount = 120m, Type = "Debit", Description = "Groceries" };
+
+    [Theory]
+    [InlineData("banker")]
+    [InlineData("supervisor")]
+    public async Task ABankingAuthority_ReadsACustomersLedger(string role)
+    {
+        // The case Brian asked for: the banker works Casey's case and sees Casey's history.
+        SetUser("banker-1", role);
+        LedgerFor("acc-casey", CaseyRow("txn-1"), CaseyRow("txn-2"));
+
+        var result = await _sut.GetAccountTransactions("acc-casey");
+
+        result.Should().BeOfType<OkObjectResult>()
+            .Which.Value.Should().BeAssignableTo<IEnumerable<Transaction>>()
+            .Which.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task AnAdmin_IsForbidden()
+    {
+        // §B1.1: platform authority is not banking authority.
+        SetUser("admin-1", "admin", "Admin");
+        LedgerFor("acc-casey", CaseyRow("txn-1"));
+
+        var result = await _sut.GetAccountTransactions("acc-casey");
+
+        result.Should().BeOfType<ObjectResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+    }
+
+    [Fact]
+    public async Task TheOwner_StillReadsTheirOwnLedgerWithoutAnyRole()
+    {
+        SetUser("casey");
+        LedgerFor("acc-casey", CaseyRow("txn-1"));
+
+        var result = await _sut.GetAccountTransactions("acc-casey");
+
+        result.Should().BeOfType<OkObjectResult>();
+    }
+
+    [Fact]
+    public async Task APermittedCallerWithACleanLedger_GetsAnEmptyArray_AndItIsTrue()
+    {
+        // THE ROW THAT MATTERS. `200 []` is now the only way to say "genuinely nothing", and it
+        // is reached only by a caller who was actually entitled to ask.
+        SetUser("banker-1", "banker");
+        LedgerFor("acc-casey");
+
+        var result = await _sut.GetAccountTransactions("acc-casey");
+
+        result.Should().BeOfType<OkObjectResult>()
+            .Which.Value.Should().BeAssignableTo<IEnumerable<Transaction>>()
+            .Which.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AnUnprivilegedStranger_IsNeverAnsweredWithAnEmptyArray()
+    {
+        // The defect's whole shape, guarded directly: a true-looking answer produced by an
+        // accident of the query. This service does not own accounts, so a non-privileged
+        // caller's entitlement can only be derived from the rows — and an EMPTY result derives
+        // nothing. It therefore is not the table's "permitted and empty" row, and answering
+        // `200 []` on it would rebuild the lie one field over. Errs closed; the copilot always
+        // holds `banker`, and nothing else in the repo calls this endpoint.
+        SetUser("attacker");
+        LedgerFor("acc-casey");
+
+        var result = await _sut.GetAccountTransactions("acc-casey");
+
+        result.Should().NotBeOfType<OkObjectResult>(
+            "an empty array from this endpoint must mean 'this ledger is empty', never 'you are "
+            + "not allowed to know'");
+        result.Should().BeOfType<ObjectResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+    }
+
+    [Fact]
+    public async Task AnUnauthenticatedCaller_IsRejectedBeforeTheLedgerIsRead()
+    {
+        _sut.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+
+        var result = await _sut.GetAccountTransactions("acc-casey");
+
+        result.Should().BeOfType<UnauthorizedResult>();
+        _transactionServiceMock.Verify(
+            s => s.GetAccountTransactionsAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
     }
 }

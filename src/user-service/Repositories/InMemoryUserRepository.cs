@@ -32,6 +32,25 @@ public class InMemoryUserRepository : IUserRepository
         return Task.FromResult<UserModel?>(user);
     }
 
+    public Task<List<UserModel>> LookupByUsernamePrefixAsync(string query, int limit)
+    {
+        var exact = _users.Values
+            .Where(u => u.Username.Equals(query, StringComparison.OrdinalIgnoreCase))
+            .Take(limit)
+            .ToList();
+        if (exact.Count == 1)
+        {
+            return Task.FromResult(exact);
+        }
+
+        var matches = _users.Values
+            .Where(u => u.Username.StartsWith(query, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(u => u.Username, StringComparer.OrdinalIgnoreCase)
+            .Take(limit)
+            .ToList();
+        return Task.FromResult(matches);
+    }
+
     public Task<UserModel?> GetByEmailAsync(string email)
     {
         var user = _users.Values.FirstOrDefault(

@@ -24,6 +24,8 @@ import {
   TerminalReason,
 } from './types';
 import { getCopilotConfig } from '../../config/copilotConfig';
+import { normaliseVerdict, verdictPresentation } from './supervisorVerdict';
+import { isSupervisorUnavailable } from './supervisorFactors';
 
 // ---------------------------------------------------------------------------
 // Terminal reasons — all four must render distinctly
@@ -128,67 +130,205 @@ export function isReversible(approval: Approval): boolean {
   return false;
 }
 
-export type DisagreementKind = 'none' | 'verdict' | 'confidence' | 'both';
+/**
+ * How the two agents' positions relate. TRI-STATE, and the third arm is the
+ * point (ruling §P4.3).
+ *
+ *   `agree`          - both stated a verdict and they are the same verdict.
+ *   `diverge`        - both stated a verdict and they differ.
+ *   `not_comparable` - at least one side stated NO verdict. Not agreement, not
+ *                      dissent: nothing was compared.
+ *   `not_reviewed`   - no independent supervisor opinion is on this card at all.
+ *
+ * The first three are the server's own tokens, verbatim, from
+ * `banker-copilot-service/app/planner/verdicts.py::AGREEMENT_STATES`. The fourth
+ * is a client-side fact — whether a second column is on screen — and is never
+ * sent by anyone.
+ *
+ * What is deliberately GONE:
+ *
+ *   - `'confidence'` and `'both'`. They keyed on `Math.abs(pc - sc) >= 0.2`, a
+ *     numeric threshold on self-reported confidence. It fired on nothing while
+ *     the primary sent no confidence; the moment the primary got a real
+ *     assessment it started firing on the golden fixture (0.88 vs 0.62) and
+ *     turned a genuine verdict divergence into `'both'`. Confidence was measured
+ *     at 0.83-0.98 with NO separation between a stable case and a coin flip, so
+ *     ranking on it shows a human authority the number does not carry — and this
+ *     kind feeds `dwellRequirementMs`, so it GATED. Ruled out entirely: §P7.2(2),
+ *     nothing ranks, sorts, colour-scales or gates on that number.
+ *
+ *   - The client-side re-derivation of the comparison. The server computes
+ *     `compare_verdicts` and sends the result beside the two verdicts; deriving
+ *     it again here is a second definition of one rule in a second language,
+ *     which is exactly what "the verdict was renamed in transit" was.
+ */
+export type AgreementKind = 'agree' | 'diverge' | 'not_comparable' | 'not_reviewed';
 
 export interface Disagreement {
-  kind: DisagreementKind;
+  kind: AgreementKind;
+  /** True only for `agree`. Everything else must read as unresolved, never as consensus. */
+  concurs: boolean;
+  title: string;
   summary: string;
   divergentFactors: string[];
+  /**
+   * Whether the factor-by-factor comparison could run at all.
+   *
+   * An indicator that renders nothing is indistinguishable from one that looked at
+   * the data and found no divergence — "we could not check" reading as "we checked
+   * and it was fine". The divergence guard below is silent whenever one side stated
+   * no factors, so the card needs to know WHY it is silent in order to say so.
+   */
+  factorComparison: FactorComparison;
+}
+
+export type FactorComparison =
+  /** Both sides stated factors; an absent DIVERGENT flag means no divergence was found. */
+  | 'compared'
+  /** The supervisor stated factors and the primary stated none, so nothing could be compared. */
+  | 'primary_stated_no_factors'
+  /** There was no row to compare in the first place — no indicator, and nothing to explain. */
+  | 'no_factors';
+
+/** Why a side has no position, in its own words, naming the failure the server stated. */
+function noPositionReason(assessment: AgentAssessment | undefined, side: string): string | null {
+  if (!assessment) return `no ${side} assessment reached this card`;
+  if (assessment.failure) {
+    return assessment.failureReason
+      ? `the ${side} states ${assessment.failure} (${assessment.failureReason})`
+      : `the ${side} states ${assessment.failure}`;
+  }
+  if (normaliseVerdict(assessment.verdict) === null) {
+    return `the ${side} verdict read as ${verdictPresentation(assessment.verdict).label}`;
+  }
+  return null;
 }
 
 /**
- * Detects divergence between the primary and supervisor assessments.
+ * How the primary and supervisor positions relate, for rendering.
  *
- * Client-side derivation is acceptable here — and only here — because it is
- * descriptive rather than authoritative: it decides how loudly to render two
- * verdicts that are both already on screen. It grants nothing and gates nothing.
+ * Descriptive, not authoritative: it decides how loudly to render two positions
+ * that are both already on screen, and how long the dwell gate holds. It grants
+ * nothing.
+ *
+ * The comparison itself is NOT made here. `approval.assessmentAgreement` is the
+ * server's `compare_verdicts` result, sent under `agentAssessment.agreement`. An
+ * absent or unrecognised token is `not_comparable` — the one thing it may never
+ * become is `agree`.
  */
-export function disagreementOf(assessments: AgentAssessment[]): Disagreement {
+export function disagreementOf(approval: Pick<Approval, 'assessments' | 'assessmentAgreement'>): Disagreement {
+  const assessments = approval.assessments || [];
   const primary = assessments.find((a) => a.role === 'primary');
   const supervisor = assessments.find((a) => a.role === 'supervisor');
 
   if (!primary || !supervisor) {
-    return { kind: 'none', summary: '', divergentFactors: [] };
+    return {
+      kind: 'not_reviewed',
+      concurs: false,
+      title: 'No independent review on this request.',
+      summary:
+        'Only one agent has stated a position. Nothing here has been independently reviewed, and a single opinion is not a second one.',
+      divergentFactors: [],
+      factorComparison: 'no_factors',
+    };
   }
-
-  const verdictDiffers =
-    (primary.verdict || '').toUpperCase() !== (supervisor.verdict || '').toUpperCase();
-
-  const pc = typeof primary.confidence === 'number' ? primary.confidence : undefined;
-  const sc = typeof supervisor.confidence === 'number' ? supervisor.confidence : undefined;
-  const confidenceDiffers = pc !== undefined && sc !== undefined && Math.abs(pc - sc) >= 0.2;
 
   const divergentFactors: string[] = [];
   const supervisorFactors = supervisor.keyFactors || [];
   const primaryFactors = primary.keyFactors || [];
   for (const factor of supervisorFactors) {
+    // The failsafe sentinel is not an opinion about the action, so it cannot
+    // diverge from one. It is rendered as a failed call in its own right.
+    if (isSupervisorUnavailable(factor)) continue;
     const match = primaryFactors.find((f) => f.label === factor.label);
-    if (!match || Boolean(match.concern) !== Boolean(factor.concern)) {
-      divergentFactors.push(factor.label);
+    // TWO conditions, and the second one is the whole guard: divergence is
+    // claimed ONLY where both agents named the same factor AND both explicitly
+    // classified it, in opposite directions.
+    //
+    // What was here before, and why it had to go: `!match || Boolean(match.
+    // concern) !== Boolean(factor.concern)`. While the primary sent no factors
+    // at all, an outer `both sides stated factors` guard kept it silent — the
+    // comparison was safe by COINCIDENCE, not by construction. The primary now
+    // states factors, the outer guard opened, and `!match` immediately flagged
+    // every supervisor factor on the demo card: two independent models writing
+    // free-text labels essentially never choose the same words, so string
+    // equality on model prose returns "no match" ~100% of the time.
+    //
+    // A different choice of words is not a disagreement. Flagging it asserts a
+    // conflict nobody stated — the same fabrication as the `value` field that
+    // read "independently corroborated", in the loudest style the card has.
+    // `Boolean(undefined) !== Boolean(undefined)` was likewise always false, so
+    // the concern half never fired on its own either.
+    //
+    // So this now says only what can be known, and today that is nothing: no
+    // decider classifies its own factors, so it renders silent on live data and
+    // lights up the day one does. Silence is the honest output; an indicator
+    // that fires on every run costs the reader attention and teaches them to
+    // ignore the channel.
+    if (match && typeof match.concern === 'boolean' && typeof factor.concern === 'boolean') {
+      if (match.concern !== factor.concern) divergentFactors.push(factor.label);
     }
   }
 
-  const kind: DisagreementKind = verdictDiffers && confidenceDiffers
-    ? 'both'
-    : verdictDiffers
-      ? 'verdict'
-      : confidenceDiffers
-        ? 'confidence'
-        : 'none';
+  // Why the indicator is silent, so the card can say it out loud. The failsafe
+  // sentinel is not a factor, so a supervisor that only returned it has stated
+  // nothing to compare — that is a failed call, already rendered as one, and not
+  // this label's business.
+  const comparableSupervisorFactors = supervisorFactors.filter((f) => !isSupervisorUnavailable(f));
+  const factorComparison: FactorComparison =
+    comparableSupervisorFactors.length === 0
+      ? 'no_factors'
+      : primaryFactors.length === 0
+        ? 'primary_stated_no_factors'
+        : 'compared';
 
-  const summary =
-    kind === 'none'
-      ? 'Independent review reached the same verdict.'
-      : verdictDiffers
-        ? `Primary recommends ${primary.verdict}. Supervisor recommends ${supervisor.verdict}.`
-        : 'The two agents agree on the verdict but differ sharply in confidence.';
+  const stated = approval.assessmentAgreement;
 
-  return { kind, summary, divergentFactors };
+  if (stated === 'agree') {
+    return {
+      kind: 'agree',
+      concurs: true,
+      title: 'Independent review reached the same verdict.',
+      summary: `Both agents recommend ${verdictPresentation(primary.verdict).label}. Agreement is not proof: both opinions came from the same base model on the same evidence.`,
+      divergentFactors,
+      factorComparison,
+    };
+  }
+
+  if (stated === 'diverge') {
+    return {
+      kind: 'diverge',
+      concurs: false,
+      title: 'THE TWO AGENTS DISAGREE. A HUMAN MUST DECIDE.',
+      summary: `Primary recommends ${verdictPresentation(primary.verdict).label}. Supervisor recommends ${verdictPresentation(supervisor.verdict).label}.`,
+      divergentFactors,
+      factorComparison,
+    };
+  }
+
+  // `not_comparable`, or the server said nothing. Both mean the same thing to a
+  // reader and neither may read as consensus: a dead pipeline is not a review.
+  const reasons = [noPositionReason(primary, 'primary agent'), noPositionReason(supervisor, 'supervisor')]
+    .filter((r): r is string => r !== null);
+  return {
+    kind: 'not_comparable',
+    concurs: false,
+    title: 'NOT INDEPENDENTLY REVIEWED — the two positions could not be compared.',
+    summary:
+      (reasons.length > 0
+        ? `No comparison was possible because ${reasons.join(', and ')}.`
+        : stated === undefined
+          ? 'The service did not state whether these two positions agree.'
+          : 'At least one agent stated no verdict.') +
+      ' Treat this as unreviewed. It is neither agreement nor dissent, and it is excluded from every agreement measurement.',
+    divergentFactors,
+    factorComparison,
+  };
 }
 
 export interface DwellContext {
   approval: Approval;
-  disagreement: DisagreementKind;
+  disagreement: AgreementKind;
   /** True when this approval replaced another — dwell resets to full, no credit carried. */
   supersedes: boolean;
 }
@@ -206,7 +346,11 @@ export function dwellRequirementMs(ctx: DwellContext): number {
 
   let base: number;
   if (approval.requiredRung === 'L2' || approval.requiredSigners > 1) {
-    base = disagreement === 'none' ? dwellMs.l2Agree : dwellMs.l2Disagree;
+    // ONLY a stated `agree` earns the shorter dwell. `not_comparable` and
+    // `not_reviewed` are absences, and an absence buying a banker LESS reading
+    // time is the same bug as an absence rendering as consensus — one level
+    // down, on the gate instead of the banner.
+    base = disagreement === 'agree' ? dwellMs.l2Agree : dwellMs.l2Disagree;
   } else {
     base = isReversible(approval) ? dwellMs.l1Reversible : dwellMs.l1Irreversible;
   }
@@ -431,4 +575,142 @@ export function countdownSeverity(
   if (fraction <= 0.1) return 'critical';
   if (fraction <= 0.25) return 'warning';
   return 'normal';
+}
+
+// ---------------------------------------------------------------------------
+// Batch eligibility — L1 ONLY, structurally
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a single approval may enter a batch.
+ *
+ * The L2 exclusion is NOT a disabled button — it is a set-membership test that
+ * an L2 item simply fails, so no batch UI can ever form around one. Batching a
+ * second opinion defeats the second opinion: the whole point of L2 is that a
+ * different human looked at THIS item, and a "sign all" gesture is exactly the
+ * reflexive click L2 exists to prevent (§6.1, epic O-invariant).
+ *
+ * The rung already encodes "under threshold": an item that resolved to L1 with a
+ * single signer is, by definition, one no escalator raised. So batchability is
+ * read off the rung the server computed, never off a dollar amount re-derived on
+ * the client — the same reason `callerMaySign` is mirrored and never inferred.
+ */
+export function isBatchEligible(approval: Approval): boolean {
+  // Every condition is a POSITIVE assertion, so anything unexpected — a new
+  // lifecycle status, an absent server field, an unknown rung — fails CLOSED.
+  // In particular:
+  //  - status is an allow-list of the two OPEN states, never `!== 'denied'`;
+  //  - `callerMaySign === true` (the server-supplied authorization gate) rejects
+  //    a missing/undefined field: a missing gate is never consent;
+  //  - rung/signers together forbid L2, which must be un-batchable by construction.
+  // See approvalPolicy.test.ts for the per-condition tamper pins.
+  return (
+    (approval.status === 'pending' || approval.status === 'proposed') &&
+    approval.requiredRung === 'L1' &&
+    approval.requiredSigners === 1 &&
+    approval.callerMaySign === true
+  );
+}
+
+export interface BatchGroup {
+  actionId: string;
+  actionLabel: string;
+  items: Approval[];
+}
+
+/**
+ * Groups batch-eligible approvals by action type, capped, sorted by TTL.
+ *
+ * SINGLE action type per group: heterogeneous batching is autonomy laundering.
+ * Only groups of two or more are returned — a "batch of one" is just a card, and
+ * offering a batch affordance for it trains the sign-all reflex for no gain.
+ */
+export function batchableGroups(approvals: Approval[], cap: number, now: number = Date.now()): BatchGroup[] {
+  const byAction = new Map<string, Approval[]>();
+  for (const approval of approvals) {
+    if (!isBatchEligible(approval)) continue;
+    const list = byAction.get(approval.actionId) || [];
+    list.push(approval);
+    byAction.set(approval.actionId, list);
+  }
+
+  const groups: BatchGroup[] = [];
+  for (const [actionId, list] of Array.from(byAction.entries())) {
+    if (list.length < 2) continue;
+    const sorted = [...list].sort((a, b) => msUntil(a.expiresAt, now) - msUntil(b.expiresAt, now));
+    groups.push({
+      actionId,
+      actionLabel: sorted[0].actionLabel,
+      // The cap is a hard slice, not a warning. The remaining items stay as
+      // individual cards; they are not silently dropped, just not batched.
+      items: sorted.slice(0, Math.max(1, cap)),
+    });
+  }
+  // Most-pressing group first — the one with the soonest-expiring lead item.
+  return groups.sort(
+    (a, b) => msUntil(a.items[0].expiresAt, now) - msUntil(b.items[0].expiresAt, now)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Denial counts — grouped by reason, NEVER an undifferentiated total
+// ---------------------------------------------------------------------------
+
+export interface DenialBreakdown {
+  byReason: Record<TerminalReason, number>;
+  /** HUMAN_DENIED only. The one bucket that is evidence about the agent. */
+  humanDenied: number;
+  /** Everything a policy/TTL/payload change caused — the banker did nothing wrong. */
+  systemVoided: number;
+  total: number;
+}
+
+/**
+ * Counts denials, split by cause.
+ *
+ * §5.1.1(c): a single "N denied" figure silently merges a colleague's rejection
+ * with a policy void, and reading the void as a rejection is the exact harm O9
+ * flags. Only `HUMAN_DENIED` is evidence about the agent's judgement; the other
+ * three are evidence about the ground moving. They must never be summed into one
+ * number anywhere the UI renders a count.
+ */
+export function denialCountsByReason(approvals: Approval[]): DenialBreakdown {
+  const byReason: Record<TerminalReason, number> = {
+    HUMAN_DENIED: 0,
+    POLICY_RUNG_ESCALATED: 0,
+    PAYLOAD_SUPERSEDED: 0,
+    TTL_EXPIRED: 0,
+  };
+
+  for (const approval of approvals) {
+    if (approval.status !== 'denied') continue;
+    // A denial with no reason is a defect (the store already logs it); count it
+    // as HUMAN_DENIED would be a lie, so it lands nowhere and the totals below
+    // will visibly not add up, which is the honest signal.
+    if (approval.terminalReason && approval.terminalReason in byReason) {
+      byReason[approval.terminalReason] += 1;
+    }
+  }
+
+  const humanDenied = byReason.HUMAN_DENIED;
+  const systemVoided =
+    byReason.POLICY_RUNG_ESCALATED + byReason.PAYLOAD_SUPERSEDED + byReason.TTL_EXPIRED;
+
+  return { byReason, humanDenied, systemVoided, total: humanDenied + systemVoided };
+}
+
+/** Short human label for a terminal reason, for counts and chips. */
+export function terminalReasonShortLabel(reason: TerminalReason): string {
+  switch (reason) {
+    case 'HUMAN_DENIED':
+      return 'denied by a reviewer';
+    case 'POLICY_RUNG_ESCALATED':
+      return 'voided by a policy change';
+    case 'PAYLOAD_SUPERSEDED':
+      return 'superseded — payload changed';
+    case 'TTL_EXPIRED':
+      return 'expired unsigned';
+    default:
+      return reason;
+  }
 }

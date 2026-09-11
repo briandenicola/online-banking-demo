@@ -1016,3 +1016,345 @@ before `/`. I verified it by running the shell, not by reasoning — and good
 thing, since `sorted(Path.glob(...))` disagrees with bash and would have had me
 assert against a machine that does not exist. **When a test encodes a fact about
 another tool's behaviour, get the fact from that tool.**
+
+---
+
+## Phase 3 — supervisor, fan-out, L2 co-signature (branch `squad/332-phase3-supervisor`)
+
+**26. Prove independence by what was *handed over*, not by what was *said*.** The headline for
+Phase 3 was blind construction: the supervisor agent must not see the proposer's conclusion. The
+brief was explicit that a test checking for an instruction ("please disregard the above") proves
+nothing. So the oracle's `build_supervisor_input(intent)` takes ONLY the banker intent — the
+proposer's plan/reasoning/conclusion have no argument to travel through. This is the Phase-1
+"`ExecuteAsync` takes no payload parameter" trick again: **a leak that cannot be named cannot be
+passed.** The byte-level token scan is a cross-check with a positive control, never the proof —
+because a scan is exactly the thing that passes vacuously on an empty corpus (learning #1).
+
+**27. Re-attack a fixed vuln from one rung lower than where it was fixed.** The Phase-1 escalations
+(my `banker.claimValues ⊇ user`; the coordinator's admin above supervisor and in `L2.cosignerRoles`)
+were fixed in the store. So I attacked the **loader's** cross-file check between `authority-policy.yaml`
+and `role-hierarchy.yaml` — a fresh surface. Tampering the *real* config and preceding every tamper
+with a positive control (untampered pair loads clean) is what makes a green mean "the tamper broke
+it" rather than "it was already broken for another reason" — the wrong-reason false pass.
+
+**28. Watch the tamper fail with the WRONG message and fix the tamper, not the assertion.** My
+admin-in-cosigner tests first failed with "role not defined in signerRoles" instead of the
+seniority-floor message. The loader checks membership before seniority. The fix was to wire admin as
+a first-class signer role so the guard actually reached is the floor — the true shape of the Phase-1
+vuln (admin was a real signer role, not a typo). If I had loosened the assertion to match, I'd have
+shipped a test that green-lights a half-wired admin.
+
+**29. When you find a gap you can't close, pin it — don't defend it.** F3-1: the loader enforces
+"batch is L1-only" only via the global `maxRung` cap, NOT per-action; a `batchable: true` on an L2
+action loads without error (proven empirically). Latent (no batchable action, no batch endpoint). I
+did NOT write a test asserting the loader rejects it — that's a false pass defending an open gap,
+the learning-#2 shape. Instead a tripwire pins the shipping config and fires the day an L2 action is
+marked batchable. Same for F3-2 (the seniority floor trusts the ratified ladder): demonstrate the
+exposure, pin the control file, record it as a boundary — not a tick.
+
+**30. A "redundant" existing test can be quietly vacuous — strengthen it with the real setup.** The
+existing supersede test never SIGNED the original, so its claim "a replan starts from zero
+signatures" had no signature to lose. The Phase-3 L2 window is where it matters: sign the first
+co-signature, mutate payload, prove NO signature survives into the successor and both slots re-open.
+Non-vacuity assertions (a slot WAS filled; the hash DID change) are load-bearing, not decoration.
+
+**31. No .NET tamper harness exists — say so, and tamper manually anyway.** `tamper-test.py` only
+tampers Python. I broke each of the seven .NET guards by hand (break, run the named test, confirm
+red, revert with `git checkout` — or a manual restore for untracked oracle files), and recorded it
+as a non-tick that automation is missing. A guard proven only by a harness that can't reach it is
+not proven; a guard proven by a manual cycle I documented is. Two of my oracle files are untracked,
+so `git checkout` can't revert them — I restored those edits explicitly and re-ran green to confirm.
+
+**32. The oracle is a stand-in, not the destination — attack production the moment it exists.**
+Turk's `app/planner/fanout.py` landed WHILE I was writing. The lazy move is to leave the proof
+against `spec/supervisor.py` and call the headline done. But the oracle only proves the SPEC is
+coherent; it says nothing about Turk's real builder. So I pointed a production suite
+(`tests/production/test_supervisor_blind_construction.py`) at the shipping module and re-ran the
+structural attack — deriving expectations from §6.4, NOT from Turk's field set (or I'd be writing a
+test that agrees with the code, the exact thing this exercise exists to catch). Then I tamper-proved
+it against `fanout.py` itself, not the oracle. Two PROVEN production tampers. Also: my earlier
+`absent:fanout` ledger entry would now be STALE and silently wrong — when the dependency you marked
+absent arrives, the honest move is to verify it, not to keep a red marker pointing at a file that
+now exists.
+
+---
+
+## Check 4.2 — measuring the supervisor's real agreement rate (branch `332-beta`, 2026-09-08)
+
+**33. The headline number was never the hard part; reaching the thing being measured was.**
+The brief said "drive an L2 run and read the agreement rate". Four hours of that is discovering
+you cannot drive ANY run to the fan-out. `PolicyEvaluator.EvidenceComplete` demands the field
+names in `authority-policy.yaml`'s `evidence:` block (`accountId`, `userId`, `count`, `status`);
+the copilot read tools return `id`, `isActive`, and — for `list_account_transactions` — a bare
+JSON **array**, which cannot be a `JObject` under any field names at all. Every proposal dies at
+`evidence_incomplete`, so `requiredRung` is never read and the mandatory L2 fan-out has never
+fired once in production. Two config files that were each individually reviewed and are mutually
+unsatisfiable. **Nothing in the suite compares a tool's actual response shape to the evidence
+contract that consumes it** — that seam has no test on either side of it.
+
+**34. "Exactly TWO L2 actions" was the brief's own framing, and it was wrong.** Two actions have
+`baseRung: L2`. Four more escalate to L2 by rule (credit adjustment, large/stale reversal, adverse
+opening decision, confirmed fraud). The fan-out guards on `requiredRung == "L2"`, i.e. the rung
+AFTER escalation. Taking the brief's number would have given me a corpus of two shapes instead of
+six. **When a brief hands you a count, re-derive it from the file the code actually reads.**
+
+**35. Both base-L2 actions are undrivable by the only role allowed to drive them.** `user.unlock`
+requires `list_login_audits` and `transaction.score.override` requires `get_scored_transaction`;
+both are `require_admin` endpoints, and `require_banker` deliberately excludes admin ("platform
+power is not banking authority"). The copilot forwards the banker's own bearer, so the read 403s
+and the run fails at step 2. The policy demands proof the proposer is structurally forbidden to
+obtain. Same class of defect as #33 — a cross-file contract nobody owns.
+
+**36. When the production path is closed, measure the component and SAY which seam you stubbed.**
+I ran the real `FoundryDecider` inside the live pod (real workload identity, real private-endpoint
+route to Foundry, real deployed `gpt-5.4-mini`, real prompt and parse path) with pre-built evidence
+instead of tool-gathered evidence. That is a legitimate measurement of "is disagreement reachable"
+and a dishonest measurement of "does the co-signature work end to end". The harness docstring says
+so in the file, not just in the report, because the file is what someone re-runs in two months.
+
+**37. `kubectl cp` needs `tar` in the container. Distroless images don't have it.** Base64 over
+`kubectl exec -i` + a `python -c` writer works everywhere Python is the entrypoint. Worth
+remembering — it is the difference between "cannot measure" and "measured".
+
+**38. Build the third bucket before you look at the first number.** `FoundryDecider` fails closed:
+timeout, throttle, content-filter refusal and unparseable output all return `hold` / `0.0` /
+`("supervisor_unavailable",)`. Classifying that as "disagreed" would have manufactured exactly the
+false signal this whole exercise existed to delete — the old defect with the sign flipped. The
+classifier checks the marker AND the zero confidence before it ever compares recommendations.
+Observed 0/34, which is worth stating as a result rather than as an absence.
+
+**39. The failure mode inverted, and the corpus is what made that visible.** 27/34 disagreements,
+not 0. A single-shape corpus would have read as a triumph. Because half the cases were built to be
+*defensible*, I could see the supervisor withholding on 6 of 11 of them — including a textbook
+lockout — and report over-holding as the new risk. **A corpus with only hostile cases cannot
+detect a supervisor that says no to everything, which is the same review theatre as yes-to-everything.**
+
+**40. Byte-identical inputs flip. Measure that, don't average over it.** `unlock-01` returned hold
+three times and proceed twice on the *same bytes*; `reverse-01` and `opening-02` also flipped.
+Any single L2 run's disagreement is therefore partly a coin toss, and a rate quoted without the
+stability probe implies a determinism that is not there. Cheap to measure (`--repeat`), and it
+changes what the number means.
+
+**41. A verdict can be right about the facts and wrong about the question.** On the
+well-documented rejection, the supervisor produced flawless reasoning (sanctions match, repeated
+document tampering) and returned `decline` — 4/4, confidence 0.99 — because it judged *opening the
+account*, not the banker's actual action of *rejecting* it. The seam then records violent agreement
+as disagreement. Root cause is structural: `SupervisorInput` carries `task_framing` + entity ids +
+posture and has **no field for the action id or payload**, so polarity lives only in free prose and
+inverts on adverse-action verbs. This is the blindness guarantee overshooting — the thing withheld
+is the proposer's *conclusion*, not the *question*.
+
+**42. Distinctness is the cheap non-boilerplate check, and it must be run.** 34/34 counter-arguments
+unique, median 294 chars, each naming case-specific facts. That is the quantitative half of "is it
+reasoning or filler"; reading six of them was the qualitative half. Neither alone would have
+convinced me, and the previous scripted decider would have scored 2 distinct strings out of 34.
+
+### Correction, same day — I reported a number that was not the number asked for
+
+**43. I labelled the boundary and still led with the wrong figure. Labelling is not enough.**
+My harness docstring said plainly that it stubs the fan-out seam, and my report still opened with
+"7/34 agreed, 27/34 disagreed" under a heading about check 4.2. Brian read it as a 4.2 result,
+because that is what a headline number under that heading *is*. **A caveat in paragraph three does
+not survive contact with a reader.** The fix was not more caveats: it was renaming the artifacts
+(`component-probe-results-*.jsonl`), putting the BLOCKED status in the first line of the module
+docstring, and making the script itself print "this is NOT a check 4.2 agreement rate" above its own
+summary. If the number can be copied out of a terminal, the disclaimer has to be copied with it.
+
+**44. When the requested measurement is impossible, the deliverable is the impossibility — not a
+nearby measurement that is possible.** I had a working probe and a real model, so I measured the
+thing I could reach and led with it. The honest shape was: 4.2 is BLOCKED, here is the proof, here
+is what unblocks it, here are the preconditions — *and* incidentally the component does work. I had
+all the evidence for that report and wrote a different one because I had a number in hand.
+
+**45. Confirming someone's diagnosis is not the same as agreeing the diagnosis is complete.**
+Brian's admin-403 finding was correct and I had hit it independently. But stopping at "confirmed"
+would have shipped a fix that unblocks nothing: `EvidenceComplete` rejects proposals whose reads all
+returned 200, which I proved with `run_5855e85caad34c12` on an action with zero admin dependency.
+Gate A blocks 4 of 6 L2-reachable actions; Gate B blocks 6 of 6. **The useful reviewer answer to
+"confirm my diagnosis" is the smallest experiment that could show it incomplete** — here, one run on
+the action that touches no admin endpoint. Two minutes, and it changed the fix.
+
+**46. The empty-queue symptom had a plausible cause attached to it for weeks (#356: no seed data),
+and it was wrong.** I seeded exactly what #356 asked for; the queue stayed empty, because the queue
+renders approvals and no run can produce one. Worse, #356's remedy — writing approval records
+directly into every state — would have filled the screen while the propose path stayed dead. **A
+plausible cause that predates the investigation is the most dangerous kind**, and "the demo looks
+right" is the exact failure mode Phase 3 exists to eliminate. Seeding should drive the propose API,
+not the store.
+
+**47. `kubectl logs` does not see `kubectl exec` output.** Brian inferred "the decider never ran"
+from zero `"Supervisor second opinion"` lines. Correct conclusion, but my probe emitted that line 54
+times on the same pod and none of them appear either. The inference holds for *the service*; it
+would silently mislead anyone reusing it as a general detector, so I wrote that down next to the
+finding rather than letting the method propagate unqualified.
+
+## 2026-09-08 — Gate B ruling: evidence contract architecture
+
+Gate B (evidence completeness validation) has been ruled on by Danny. Full ruling: `docs/design/gate-b-evidence-contract-ruling.md`. Turk owns implementation of the declared-projection adapter across `config/copilot-tools.yaml`, `executor.py`, and the C# seam test in `authority-service.UnitTests`. Livingston owns fixture validation and measurement of the two-tool subset (`get_account`, `list_account_transactions`). Both gates (A + B) must pass before the co-signature feature can execute in production.
+
+## 2026-09-08 — Check 4.2 measured end to end (42 live runs)
+
+## Learnings
+
+**48. Both gates fell and the measurement I had specified ran unchanged.** The harness I committed
+while blocked — case corpus, three-bucket classifier, positive success signal — was reusable
+verbatim against the fixed system. Writing the measurement *while* it was impossible, instead of
+waiting to rebuild it after, cost nothing and saved the whole run. The one thing I had to build
+fresh was the transport, not the method.
+
+**49. Ground the corpus in the live ledger before writing a single case.** I read all three
+banker-owned accounts' real transaction histories first, then built cases whose factual claims were
+deliberately TRUE or FALSE against them, and recorded which in a `grounded` field fixed before the
+run. That single field turned out to be the most diagnostic thing in the whole exercise: withheld on
+57% of grounded framings vs 94% of ungrounded. **A corpus of invented facts can only measure tone.
+A corpus checkable against real data measures whether the reviewer reads.**
+
+**50. Build one pair of cases that differ ONLY in a fact the prose cannot carry.** `P01` and `S08`
+have near-identical framing pointed at different accounts. That pair did more to establish the
+supervisor is genuinely reasoning than the other thirty cases combined, because it is the one
+comparison that prose-matching cannot pass. Design at least one such pair into every corpus that
+asks "is this real or is it a tic?"
+
+**51. My own expectation label was wrong and the model was right.** I marked "recover the duplicate
+$3,200 payroll credit" as `proceed`; the supervisor held because *three identical credits do not
+tell you which one is the duplicate*. That is correct and I had not seen it. **Recording
+expectations before the run is what let me notice** — a retrofitted grading would have quietly
+scored my error as the model's. When the graded result disagrees with you, check whether you are
+the one who is wrong before writing it up as a defect.
+
+**52. A withhold rate is not a caution measurement if the evidence surface is narrower than the
+claims.** The supervisor sees only `get_account` and `list_account_transactions`. It can never see
+a written consent, a court order or a fraud case file. So every justification living outside the
+ledger is unverifiable *by construction*, and holding is epistemically correct. Much of the 22.6%
+is that, not over-caution. **Before calling a reviewer trigger-happy, check whether you gave it
+enough to be satisfied with.** Tuning the model here would have optimised the wrong thing.
+
+**53. A fix can be correct and still narrower than its headline.** `ef61d7b` puts `action_id` in
+the prompt and genuinely works — 5 of 8 correct adverse actions proceeded, with reasoning about the
+adverse verb. But `credit` and `debit` share one `action_id`, and the payload is not in
+`SupervisorInput`, so direction still reaches the supervisor only as prose. My corpus stated the
+direction in words, which is why it passed. **Reading the data structure told me the limit of the
+fix; the passing result would not have.** Verify the mechanism, not just the outcome.
+
+**54. Report instability's *shape*, not just its presence.** "It flips" was last time's finding and
+was still true (3/2 on identical bytes). But the clear-cut case was 5/5 stable and only the
+genuinely marginal one flipped — a materially different and more defensible fact. The reportable
+defect turned out to be adjacent: confidence ran 0.82–0.96 across the flipping case with **no
+separation between its holds and its proceeds**, so the card shows a human high confidence on a
+coin flip. Confidence and reproducibility are not the same property.
+
+**55. Say what the number is not.** The primary emits `verdict: PROCEED` always, `rationale` = the
+objective echoed verbatim, `confidence: null`, `keyFactors: null`. So "agreement rate" collapses to
+"supervisor proceed rate" — 4.2 currently measures one agent, not two. The result is still worth
+having and I said so; but a headline that implies a two-agent comparison would have been the same
+kind of false signal as the scripted decider's 100%. **Name the denominator, name the exclusions,
+and name the thing the metric is silently standing in for.**
+
+**56. Keep the failed-call bucket even when it is nearly empty.** One run in 42 returned
+`supervisor_unavailable` at 0.0 (a transient `ChatClientException`); re-running gave a real HOLD at
+0.95. It would have been a single row folded into "disagreed" without effort — and would have
+inflated exactly the number under test. Checking **both** halves of the marker (the factor string
+*and* the zero confidence) is what makes the bucket safe to automate.
+
+**57. A correction to the instrument arrived mid-flight and the number survived — because the
+classifier gated on positive frames, not on a status field.** `run.done.status` turned out to lie
+on the build I measured: a refused proposal reported `completed`. My grading used that field only
+to *demote* a run; admission always required `approval.required(L2)` + `subagent.spawned`. **A
+one-directional dependency on an untrusted field is safe in a way a two-directional one is not** —
+the lie could suppress a data point but never manufacture one. That property was not luck, but it
+was also not deliberate foresight about *this* bug; it fell out of the rule "success is a positive
+signal, never an absence of errors". Rules like that pay out on defects you did not anticipate.
+
+**58. "My instrument was immune" is an argument, not evidence — go and check.** I re-fetched all
+42 traces and re-graded from frames alone: 0 classification changes. Only then did I say the rate
+stood. Re-deriving from stored run ids also beat re-running: it re-grades *the same samples*
+rather than drawing fresh ones, so a changed number would have meant a changed classifier rather
+than model variance. **When correcting a measurement, hold the sample fixed and vary only the
+grading.**
+
+**59. Then distinguish "immune by design" from "never exercised", and say both.** No run in my
+corpus took the propose-refusal path, so the defect was *latent* for me rather than *caught* by
+me. The flattering version — "my harness was immune" — was true and incomplete; the second half is
+luck and belongs in the record next to it.
+
+**60. If a colleague hands you a defect described in prose, reproduce it and hand back a run id.**
+Turk described the propose path; I drove one deliberately bad run and got
+`run.error` → `step.completed` on the failed step → `run.done status=completed`, with the summary
+endpoint agreeing. That is a regression fixture he can use, and it cost one run. **A tester's most
+useful output for another engineer is a reproduction, not a confirmation.**
+
+**61. Three defects in one day, one shape: failure wearing the costume of success.** The
+wrong-verb supervisor, the consensus banner rendering two *absent* verdicts as agreement, and
+`completed` on a refused proposal. Individually three bugs; together a design habit. I stopped
+writing them up as three findings and proposed one rule instead — **every success signal must be
+positive and specific: the thing that was supposed to happen, observed.** Counting instances
+across other people's findings is how a QA role sees a class that no single fix reveals.
+
+**62. When a fix will move your denominator, stamp the build and say which direction.** After the
+status fix deploys, runs that reported `completed` with no approval will report `failed`, and the
+failure count will rise. Without provenance on the number that reads as a regression in the very
+thing I just certified. **A rate without the build it was measured on is a trap for the next
+reader** — including for me.
+
+**63. I published a denominator that was true but not legible, and Brian had to ask.** The
+headline was `7/31` over 32 distinct cases; the re-derivation line beside it said `42 runs`. Both
+correct — the extra 10 were byte-identical repeats of two cases already counted, excluded because
+five gradings of one case is one data point measured five times. But I never said so, and "0
+classification changes" is a per-*run* claim sitting next to a per-*case* denominator. **A reader
+seeing 42 runs and a denominator of 31 will assume eleven runs went quietly missing, and will
+assume the missing ones were the inconvenient ones.** The data was fine; the reporting was not.
+
+**64. The standing rule I proposed has an arithmetic twin, and I broke it in the same document.**
+I argued all day that a success signal must be positive and specific rather than merely
+error-free — then published a rate whose denominator was accurate but unexplained. **Every rate
+must carry its denominator and its exclusions, or it is the same lie in a different costume.** The
+rule I write for the system applies to my own output first; an unexplained ratio is a number
+wearing the costume of a measurement.
+
+**65. When exclusions are questioned, show which direction they moved the number.** The 10
+excluded runs ran 30% agreement against a 22.6% headline — **including them would have RAISED my
+reported rate.** That single fact rebuts the natural suspicion far better than any explanation of
+methodology, and it costs one line to compute. **Always state whether an exclusion flattered or
+penalised your own conclusion**, because the reader cannot know you did not choose it.
+
+**66. Prefer a band to a point when your own repeats prove the point is unstable.** `P06` is a
+coin flip; its single draw in the corpus came up PROCEED, and had it come up HOLD the headline
+would read 19.4% instead of 22.6%. I had *already measured* that instability and still published
+a three-significant-figure point estimate. **If your stability probe says a case is a coin flip,
+the headline containing that case inherits the coin flip** — quote the band and name its cause.
+
+**67. Being asked to reconcile is not a failure; being asked twice would be.** Brian reconstructed
+the discrepancy correctly before asking, and asked anyway rather than assuming — because I had
+retracted a headline once before. **Credibility earned by self-correction is spent by unexplained
+arithmetic**, and it is much cheaper to publish the reconciliation table with the number than to
+be asked for it.
+
+---
+
+**2026-09-09 (Scribe)** — Inbox merge and deploy verification complete. Your 11 queued decisions from `.squad/decisions/inbox/` are now merged into the canonical ledger at `.squad/decisions.md`. Authority-service has deployed cleanly to `banking-demo` namespace with the §B3.2 startup guard active (`banker-copilot-authority`, policyVersion `pv1:d7b3db9f5ada15b8`, 22 thresholds, 13 action types).
+
+**⚠️ Critical for your test suite:** Three policy actions now gather one more piece of evidence than before — `transaction.flag.review`, `transaction.score.override`, `transfer.reversal.execute` all require `get_account` alongside `list_account_transactions` per ruling §B3.2. The reseed moved the accounts under test, so your previous 42 runs do not survive it. Authority-service validates this requirement at startup; deploy will abort if policy violates it.
+
+
+---
+
+**2026-09-09 (Scribe)** — Rulings and empty-ledger fix committed. Brian's reseed path is now unblocked. Rusty moved all four `demo.sh` customer-token call sites from `GET /api/transactions/account/{id}` to `GET /api/transactions/my` (works on empty ledger with owner's own token). Two independent guards (textual + behavioural idempotency sim); no Azure writes; no kubectl mutations; no redeploy required.
+
+Danny's three rulings stand: §B2.2 narrowing correct, §E probe idempotency correct, §F silence requires visibility. All decisions merged to canonical ledger at `.squad/decisions.md`.
+
+**Stage 1 measurement is the next gate.** Measure harness correctness after reseed completes.
+
+
+---
+
+**2026-09-09 (Scribe)** — Verification check 2.5 (TTL_EXPIRED) now unexercised in demo environment.
+
+The 8-hour approval TTL override means no seeded approval reaches expiry inside a demo test window. Check 2.5 — *TTL expiry sweeper fires → `denied`, `terminalReason: TTL_EXPIRED`* — will neither pass nor fail; it simply never fires.
+
+**Nothing was deleted or edited.** The sweeper still runs (`Approval__SweepIntervalSeconds: 60` untouched). The check is intact. It was disabled by a number changing elsewhere.
+
+**To restore coverage, either:**
+1. seed a purpose-built short-TTL approval (e.g. `POLICY_TTL_USER_LOCK` temporarily low, since `user.lock` is not used by the §7 walkthrough), or
+2. run a separate pass with these 9 env keys removed and the pod restarted.
+
+Marked as an affirmative observation for the audit trail — you may find it useful when planning next measurement phase.

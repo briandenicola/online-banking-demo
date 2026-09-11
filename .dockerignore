@@ -1,8 +1,13 @@
 # .dockerignore for ROOT-CONTEXT builds.
 #
-# Only the five .NET services build from the repo root:
+# Services that build from the repo root:
 #   az acr build ... -f ./src/<svc>/Dockerfile .
-# Everything else builds from its own directory and has its own .dockerignore.
+# That is the six .NET services plus banker-copilot-service (Python), which
+# builds from the root because it COPYs shared config/ manifests. Everything
+# else builds from its own directory and has its own .dockerignore.
+#
+# Keep this list in step with docker-compose.yml: any service declaring
+# `context: .` must appear below, or its build fails on a missing COPY path.
 #
 # IMPORTANT — do not add trailing slashes to rules. `az acr build` compiles each
 # rule to an anchored regex (azure/cli/command_modules/acr/_archive_utils.py,
@@ -19,17 +24,32 @@
 # Ignore everything at the top level.
 *
 
-# Re-include only what the .NET Dockerfiles COPY. Parent directories do not need
-# their own `!` rule: az acr build always walks into ignored directories, so a
-# deeper exception still applies.
+# Re-include only what the root-context Dockerfiles COPY. Parent directories do
+# not need their own `!` rule: az acr build always walks into ignored
+# directories, so a deeper exception still applies.
 !Directory.Packages.props
 !src/shared/Contracts
 !src/shared/Observability
+!src/shared/Auth
 !src/account-service
 !src/prompt-eval-service
 !src/transaction-service
 !src/transfer-service
 !src/user-service
+!src/authority-service
+!src/banker-copilot-service
+
+# Config files COPYed by name in the runtime stages. These are individual files,
+# not directories: `config` itself stays ignored so an unrelated file dropped in
+# there never silently enters the build context.
+!config/authority-policy.yaml
+!config/copilot-actions.yaml
+!config/copilot-tools.yaml
+!config/harness-limits.yaml
+# Embedded as a resource by src/shared/Auth (LogicalName
+# Banking.Auth.jwt-audiences.yaml), so every .NET image needs it at compile
+# time even though no Dockerfile COPYs it by name.
+!config/jwt-audiences.yaml
 
 # Re-exclude build output inside the re-included trees. These rules come last,
 # so they take priority over the `!` rules above.
@@ -43,6 +63,9 @@
 **/.mypy_cache
 **/.ruff_cache
 **/*.pyc
+# mutmut copies the service into this sandbox to mutate it; it is a test
+# artifact and must never reach an image.
+**/mutants
 **/.vs
 **/.DS_Store
 **/Thumbs.db

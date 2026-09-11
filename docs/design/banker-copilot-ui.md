@@ -443,18 +443,48 @@ export interface PayloadField {
   material?: boolean;
 }
 
-export interface AgentOpinion {
-  agentId: string;
-  agentName: string;
-  role: 'primary' | 'supervisor';
-  verdict: 'APPROVE' | 'CONDITIONAL' | 'DECLINE';
-  confidence: number;                 // 0..1
-  rationale: string;
-  keyFactors: { label: string; value: string; concern?: boolean }[];
-  citedEvidenceIds: string[];
+// NOTE (corrected 2026-09): this section was reconciled to the SHIPPED contract in
+// `ui-app/src/components/copilot/types.ts`, which is authoritative — it is executable, renders the
+// UI, and is covered by the component tests. An earlier draft of this doc named the agent-opinion
+// type `AgentOpinion` and carried it on `ApprovalRequest.opinions[]`, and named the approval event
+// payloads `{ request: ApprovalRequest }`. The code never used those names: it uses
+// `AgentAssessment`, carries them on `Approval.assessments[]`, and the approval event payloads are
+// `{ approval: Approval }`. The SSE reducer reads `event.payload.approval`; the dual-control card
+// reads `approval.assessments[]` filtered on `role === 'supervisor'`. The names below match the code.
+//
+// WIRE vs CLIENT (2026-09, Arch note): the `Approval` below is the CLIENT shape the reducer stores
+// and the card renders. On the SSE stream the service emits the authority-service WIRE approval
+// body under `payload.approval` (the same body the REST path fetches), and the client normalizes it
+// through the ONE mapper `ui-app/src/api/authorityWire.ts:toApproval` — which flattens the payload
+// (powering the material-field disclosure gate), maps evidence, and assigns assessment ROLES from
+// key position. The supervisor's second opinion is never persisted (the harness registers zero
+// write tools; it is evidence, never a signature), so the service carries it on the wire body as
+// `agentAssessment.supervisor` — a shape `toApproval.toAssessments` already tolerates — and the
+// mapper turns `agentAssessment.{primary,supervisor}` into `assessments[{role}]`. Because the role
+// is derived from the KEY, a supervisor opinion can never silently render as the primary.
+// REQUIRED companion (owner: UI): the SSE ingestion (`api/copilotStream.ts`) must route
+// `approval.required`/`approval.updated` payloads through `toApproval`, exactly as the REST path
+// does — today it applies no transform. Until it does, the live service path stores an unmapped
+// wire body. The frozen wire shape both sides test against is `tests/fixtures/copilot-wire-envelopes.json`.
+
+export interface AgentAssessment {
+  // Every field is optional in the shipped type. On the SSE path `role` is assigned structurally by
+  // `toApproval.toAssessments` from the `agentAssessment.{primary,supervisor}` key the assessment
+  // arrives under — NOT a droppable field — because ApprovalCard.tsx renders a role-less assessment
+  // AS the primary agent, which would paint the supervisor's dissent as the primary.
+  agentId?: string;
+  agentName?: string;
+  role?: 'primary' | 'supervisor';
+  verdict?: string;                   // free label, rendered directly (e.g. 'DECLINE')
+  confidence?: number;                // 0..1
+  rationale?: string;
+  keyFactors?: { label: string; value: string; concern?: boolean }[];
+  citedEvidenceIds?: string[];
 }
 
-export interface ApprovalRequest {
+// The shipped client type is `Approval` (see types.ts). Fields below are the subset relevant to
+// the second opinion; the agent assessments live on `assessments`, NOT `opinions`.
+export interface Approval {
   id: string;
   runId: string;
   taskId: string;
@@ -469,8 +499,8 @@ export interface ApprovalRequest {
   payloadHash: string;
   payload: PayloadField[];
   evidence: EvidenceRef[];
-  /** Primary agent opinion always present; supervisor present iff requiredRung === 'L2'. */
-  opinions: AgentOpinion[];
+  /** Primary assessment always present; supervisor present iff requiredRung === 'L2'. */
+  assessments: AgentAssessment[];
   /** Identity the agent acted under. Also the Cosmos partition key. */
   requesterId: string;
   /**
@@ -535,7 +565,7 @@ interface TraceTreeProps {
 }
 
 interface ApprovalCardProps {
-  request: ApprovalRequest;
+  request: Approval;
   currentActor: ActorRef;
   /** False when currentActor already signed (separation of duties) or lacks the rung. */
   canSign: boolean;
@@ -545,8 +575,8 @@ interface ApprovalCardProps {
 }
 
 interface DualControlApprovalCardProps extends ApprovalCardProps {
-  primary: AgentOpinion;
-  supervisor: AgentOpinion;
+  primary: AgentAssessment;
+  supervisor: AgentAssessment;
   /** Server-computed. Drives the prominent disagreement treatment. */
   disagreement: {
     kind: 'none' | 'verdict' | 'confidence' | 'both';
@@ -584,7 +614,7 @@ interface PayloadDiffViewProps {
 | Existing | How it's used |
 |---|---|
 | `components/account-opening/ApplicationStages.tsx` + `AgentPipeline.tsx` | Its `StageStatus` union (`pending / in_progress / completed / failed`) and the confidence + reasoning + timestamp card shape are exactly the trace node's ancestor. `PlanStepNode` is a denser, streaming-aware evolution of `ApplicationStages`. **Do not extend `ApplicationStages` in place** — it's a horizontal `Stepper` and the trace is a vertical tree. Copy the vocabulary, not the layout. Align `NodeStatus` naming with a small mapping helper so the two don't drift. |
-| `components/eval/EvaluationResults.tsx` | Score/verdict rendering patterns and the pass/fail chip idiom carry straight into `AgentOpinion` rendering. |
+| `components/eval/EvaluationResults.tsx` | Score/verdict rendering patterns and the pass/fail chip idiom carry straight into `AgentAssessment` rendering. |
 | `components/eval/types.ts` | Type-file convention (flat interfaces, no enums, string unions) — followed exactly. |
 | `FlaggedTransactionsTab.tsx` / `AllTransactionsTab.tsx` | Row shape, risk-score chips, and the `formatRiskScore` guard from `AdminPage.tsx` (the 0–1 sanity clamp from #119). **Reuse `formatRiskScore` — promote it to `utils/format.ts`** rather than copy-pasting a third instance. |
 | `components/account-opening/AdminApplicationsTab.tsx` | Existing admin decision flow; its approve/reject affordances show what *not* to do (single-click, no dwell, no evidence adjacency). |
@@ -720,8 +750,8 @@ export interface SubagentCompletedPayload {
   confidence?: number; verdictSummary?: string; durationMs: number;
 }
 
-export interface ApprovalRequiredPayload  { request: ApprovalRequest; }
-export interface ApprovalUpdatedPayload   { request: ApprovalRequest; }
+export interface ApprovalRequiredPayload  { approval: Approval; policyVersion: string; requiredRung: AuthorityRung; }
+export interface ApprovalUpdatedPayload   { approval: Approval; }
 
 /**
  * Fired when an approval reaches ANY terminal state — the four denial reasons
@@ -1303,7 +1333,7 @@ surface is not a trade I would make. Instead:
 // state/copilotStore.ts
 export interface CopilotState {
   runs: Record<string, RunState>;
-  approvals: Record<string, ApprovalRequest>;
+  approvals: Record<string, Approval>;
   queue: TaskQueueState;
   stream: { status: StreamStatus; lastSeq: number; isDraining: boolean };
 }

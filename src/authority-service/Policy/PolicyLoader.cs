@@ -17,6 +17,15 @@ public class PolicyLoader
 {
     private static readonly string[] ValidKinds = ["money", "count", "ratio", "duration_seconds"];
 
+    /// <summary>
+    /// The account ledger evidence key, and the account-existence evidence key that §B3.2
+    /// requires beside it. Named here rather than typed at the call site so the pairing is one
+    /// symbol a test can enumerate.
+    /// </summary>
+    private const string EvidenceAccountLedger = "list_account_transactions";
+
+    private const string EvidenceAccount = "get_account";
+
     /// <summary>Predicate operators that compare magnitudes. These REQUIRE a threshold reference.</summary>
     private static readonly string[] NumericOps = ["gte", "gt", "lte", "lt", "countGte"];
 
@@ -647,6 +656,28 @@ public class PolicyLoader
             foreach (var key in action.RequiredEvidence.Where(k => !document.Evidence.ContainsKey(k)))
             {
                 errors.Add($"action '{actionId}' requires undefined evidence key '{key}'.");
+            }
+
+            // §B3.2. transaction-service DOES NOT OWN ACCOUNTS. Asked about an accountId that
+            // does not exist it answers `200 []`, which is indistinguishable from an account with
+            // a clean history — so `count: 0` on its own is silent about existence and cannot be
+            // made to speak by anything downstream. Existence is get_account's question, and
+            // get_account answers it with a 404, which leaves the evidence key absent and fails
+            // EvidenceComplete. Requiring the ledger without the account would put a supervisor
+            // in front of "no recent activity" for an account nobody has confirmed exists.
+            //
+            // This is a startup abort and not a warning for the same reason §R5 is: a policy the
+            // service merely complains about is a policy that ships.
+            if (action.RequiredEvidence.Contains(EvidenceAccountLedger)
+                && !action.RequiredEvidence.Contains(EvidenceAccount))
+            {
+                errors.Add(
+                    $"action '{actionId}' requires '{EvidenceAccountLedger}' without '{EvidenceAccount}'. " +
+                    "transaction-service does not own accounts: for an accountId that does not exist it " +
+                    "returns an empty list, which is the same answer it gives for an account with no " +
+                    "transactions. Requiring 'get_account' alongside it is what makes an empty ledger mean " +
+                    "'this account has no transactions' rather than 'this account may not exist'. This is " +
+                    "about a fact the transaction service cannot see, not about thoroughness.");
             }
 
             RequireOptionalThresholdRef(action.ApprovalTtl, $"action '{actionId}'.approvalTtl", "duration_seconds", thresholds, errors);

@@ -6,7 +6,10 @@ Three rules, all of them load-bearing:
    container name and no domain Cosmos role assignment, so the rule is enforced by what is
    absent from its configuration, not by discipline here.
 2. **The banker's JWT is forwarded verbatim.** The agent can see nothing the banker could not.
-3. **Redaction happens here**, before the result enters model context or a persisted frame.
+3. **Redaction happens here**, before the result enters model context or a persisted frame, and
+   **evidence projection happens immediately after it** — same lifecycle position, same reason.
+   The projection is what turns a bare array into the assertion the approval record needs
+   (`{accountId, count, items}`); see `app/tools/projection.py` for why its grammar is closed.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ import jsonschema
 import structlog
 
 from app.tools.manifest import READ_METHODS, ReadTool
+from app.tools.projection import ProjectionError, project
 from app.tools.redaction import redact
 from app.tools.registry import ToolRegistry
 
@@ -180,9 +184,24 @@ class ToolExecutor:
         except ValueError:
             payload = {"raw": response.text}
 
+        # Redact first, then project. The projection carries the material through to the approval
+        # record (`items`), so it must carry the *redacted* material — projecting first would
+        # copy an unredacted array into a record that outlives the session.
+        data = redact(payload, tool.redaction)
+        if tool.evidence_projection:
+            try:
+                data = project(data, tool.evidence_projection, arguments)
+            except ProjectionError as exc:
+                # Loud, not silent. A response that does not match its declared projection means
+                # the manifest and the service disagree about a shape; storing the raw response
+                # instead would surface later as an opaque `evidence_incomplete` at propose.
+                raise ToolInvocationError(
+                    "evidence_projection_failed", f"{tool_id}: {exc}"
+                ) from exc
+
         return ToolResult(
             tool_id=tool_id,
             status_code=response.status_code,
-            data=redact(payload, tool.redaction),
+            data=data,
             duration_ms=duration_ms,
         )

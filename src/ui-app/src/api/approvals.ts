@@ -12,10 +12,11 @@
  * harness by nginx location ordering.
  */
 
-import apiClient from './client';
+import apiClient, { apiPath } from './client';
 import { authorityUrl, getCopilotConfig } from '../config/copilotConfig';
 import { Approval } from '../components/copilot/types';
 import { toApproval, WireApproval, WireApprovalList } from './authorityWire';
+import { logger } from '../utils/logger';
 
 /**
  * `mine` — approvals this actor requested.
@@ -35,13 +36,25 @@ export interface ListApprovalsParams {
 
 function approvalsPath(suffix = ''): string {
   const { endpoints } = getCopilotConfig();
-  return authorityUrl(`${endpoints.approvals}${suffix}`);
+  // `apiPath` subtracts the axios `baseURL`. `authorityUrl` yields the absolute
+  // app path (`/api/authority/approvals`); handing that straight to the client
+  // asks for `/api/api/authority/approvals`.
+  return apiPath(authorityUrl(`${endpoints.approvals}${suffix}`));
 }
 
 export async function listApprovals(params: ListApprovalsParams = {}): Promise<Approval[]> {
   const response = await apiClient.get<WireApprovalList>(approvalsPath(), { params });
-  const items = response.data && Array.isArray(response.data.items) ? response.data.items : [];
-  return items.map(toApproval);
+  if (!response.data || !Array.isArray(response.data.items)) {
+    // A 200 that is not the list shape is not an empty queue. It is most often
+    // the SPA history fallback answering a mis-built path with index.html, and
+    // returning [] for it renders "Nothing here." over a queue that is full.
+    logger.error(
+      'approvals: the approvals response carried no `items` array. This is not an empty ' +
+        'queue — the request did not reach authority-service. Check the resolved URL.'
+    );
+    return [];
+  }
+  return response.data.items.map(toApproval);
 }
 
 export async function getApproval(id: string): Promise<Approval> {

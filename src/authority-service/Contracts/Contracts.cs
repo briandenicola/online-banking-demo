@@ -49,6 +49,59 @@ public class DenyRequest
     public string Reason { get; set; } = string.Empty;
 }
 
+/// <summary>
+/// Batch sign (design §8.6). <b>L1 only, one action type, never "Approve All".</b> There is no
+/// endpoint that accepts a batch without an <see cref="ActionId"/>, so an unscoped bulk approve
+/// is not expressible; and any item that resolved to L2 is rejected into
+/// <see cref="BatchSignResponse.Rejected"/> for individual handling rather than co-signed in bulk
+/// — batching a second opinion defeats the second opinion (invariant I-10).
+/// </summary>
+public class BatchSignRequest
+{
+    /// <summary>The approvals to sign. All must carry <see cref="ActionId"/>.</summary>
+    [Required]
+    public List<string> ApprovalIds { get; set; } = [];
+
+    /// <summary>
+    /// The single action type this batch is scoped to. Server-verified against every item; an
+    /// approval of any other action is rejected, not signed. This is what makes "Approve All"
+    /// unrepresentable.
+    /// </summary>
+    [Required]
+    public string ActionId { get; set; } = string.Empty;
+
+    public string? Comment { get; set; }
+
+    /// <summary>
+    /// Optional per-approval expected payload hash (the hash the client displayed). When supplied
+    /// for an item and it does not match, that item is rejected — the same TOCTOU guard the single
+    /// sign path applies, per item.
+    /// </summary>
+    public Dictionary<string, string>? ExpectedPayloadHashes { get; set; }
+}
+
+public class BatchSignResponse
+{
+    public List<ApprovalResponse> Signed { get; set; } = [];
+    public List<BatchRejection> Rejected { get; set; } = [];
+}
+
+public class BatchRejection
+{
+    public string ApprovalId { get; set; } = string.Empty;
+    public string Code { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+
+    public BatchRejection() { }
+
+    public BatchRejection(string approvalId, string code, string reason)
+    {
+        ApprovalId = approvalId;
+        Code = code;
+        Reason = reason;
+    }
+}
+
 public class EvaluateRequest
 {
     [Required]
@@ -73,6 +126,7 @@ public class ApprovalResponse
     public string? SessionId { get; set; }
     public JObject Payload { get; set; } = new();
     public JObject Evidence { get; set; } = new();
+    public ApprovalSubjectView? Subject { get; set; }
     public JObject? AgentAssessment { get; set; }
     public string PayloadHash { get; set; } = string.Empty;
     public string PayloadHashShort { get; set; } = string.Empty;
@@ -112,7 +166,8 @@ public class ApprovalResponse
         RequesterUsername = a.RequesterUsername,
         SessionId = a.SessionId,
         Payload = a.Payload,
-        Evidence = a.Evidence,
+        Evidence = ApprovalDisplay.EnrichEvidence(a.Evidence),
+        Subject = ApprovalDisplay.SubjectFor(a),
         AgentAssessment = a.AgentAssessment,
         PayloadHash = a.PayloadHash,
         PayloadHashShort = Policy.PayloadHasher.Short(a.PayloadHash),
@@ -136,6 +191,18 @@ public class ApprovalResponse
         DownstreamStatus = a.Execution.DownstreamStatus,
         ExecutionError = a.Execution.LastError
     };
+}
+
+public class ApprovalSubjectView
+{
+    public string Kind { get; set; } = "record";
+    public string Label { get; set; } = string.Empty;
+    public string? Summary { get; set; }
+    public string? UserId { get; set; }
+    public string? AccountId { get; set; }
+    public string? AccountNumber { get; set; }
+    public string? AccountType { get; set; }
+    public string? RiskTier { get; set; }
 }
 
 public class FiredEscalatorView
@@ -224,6 +291,8 @@ public class ActionView
     public string BaseRung { get; set; } = string.Empty;
     public bool AgentMayPropose { get; set; }
     public List<string> RequiredEvidence { get; set; } = [];
+    public List<string> HashFields { get; set; } = [];
+    public List<string> MoneyFields { get; set; } = [];
 }
 
 /// <summary>An operational failure the API surfaces verbatim. Never a raw exception message.</summary>

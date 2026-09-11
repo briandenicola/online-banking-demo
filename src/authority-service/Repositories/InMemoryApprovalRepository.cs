@@ -89,7 +89,13 @@ public class InMemoryApprovalRepository : ApprovalRepositoryBase
 
             if (query.Scope == ApprovalScope.AwaitingSupervisor)
             {
-                all = all.Where(a => a.Status == ApprovalStatus.Pending && a.AwaitingSeniority >= 2);
+                var bar = query.AwaitingSeniorityAtLeast
+                    ?? throw new InvalidOperationException(
+                        "AwaitingSupervisor query reached the repository without a derived " +
+                        "seniority bar. It is resolved from rungs.L2.cosignerRoles by " +
+                        "ApprovalService; refusing to guess a literal.");
+
+                all = all.Where(a => a.Status == ApprovalStatus.Pending && a.AwaitingSeniority >= bar);
             }
 
             if (query.RequesterId is not null)
@@ -116,6 +122,19 @@ public class InMemoryApprovalRepository : ApprovalRepositoryBase
                 .ToList();
 
             return Task.FromResult(result);
+        }
+    }
+
+    public override Task<int> CountSupersedesAsync(string requesterId, DateTime sinceUtc, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            var count = ReadAll().Count(a =>
+                a.RequesterId == requesterId &&
+                a.SupersedesApprovalId is not null &&
+                a.CreatedAt >= sinceUtc);
+
+            return Task.FromResult(count);
         }
     }
 

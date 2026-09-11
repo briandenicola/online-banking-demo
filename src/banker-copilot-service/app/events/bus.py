@@ -84,6 +84,12 @@ class RunStream:
     _subscribers: list[asyncio.Queue] = field(default_factory=list)
     _closed: bool = False
     trace_degraded: bool = False
+    #: The status carried on this run's ``run.done`` frame, recorded as it goes past. The REST
+    #: run record reads it rather than computing a second, independent opinion of how the run
+    #: went — two places deciding "did this succeed?" is how one of them comes to disagree.
+    #: ``None`` means no terminal frame was ever emitted (the planner died before `run.done`),
+    #: which is itself a failure and must not read as success.
+    terminal_status: str | None = None
 
     @property
     def last_seq(self) -> int:
@@ -125,6 +131,7 @@ class RunStream:
             queue.put_nowait(envelope)
 
         if kind == "run.done":
+            self.terminal_status = str(payload.get("status") or "failed")
             self._closed = True
             for queue in list(self._subscribers):
                 queue.put_nowait(None)

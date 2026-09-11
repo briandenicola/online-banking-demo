@@ -25,6 +25,31 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+import structlog
+
+logger = structlog.get_logger(__name__)
+
+
+#: Why the catalogue could not be read. Three genuinely different conditions were
+#: collapsed into one silent `available: False` with no log line, which is why Brian could
+#: prove the endpoint returns 13 actions NOW but nobody could say what it returned on the
+#: run that failed. "Not configured" is a deployment mistake, a 5xx is an outage, and an
+#: unparseable body is a contract break — they need different people woken up.
+CATALOGUE_NOT_CONFIGURED = "not_configured"
+CATALOGUE_HTTP_STATUS = "http_status"
+CATALOGUE_TRANSPORT_ERROR = "transport_error"
+CATALOGUE_UNPARSEABLE = "unparseable_response"
+
+
+def _catalogue_unavailable(reason: str, **detail: Any) -> dict[str, Any]:
+    """An unavailable catalogue, named and logged.
+
+    `detail` carries the status code or the exception TYPE — never the response body and
+    never the bearer token. The catalogue fetch is authenticated, and a log line about a
+    failed authenticated call is a natural place for a credential to leak.
+    """
+    logger.warning("Authority policy catalogue unavailable", reason=reason, **detail)
+    return {"actions": [], "available": False, "reason": reason}
 
 PROPOSE_PATH = "/api/authority/approvals"
 
@@ -226,7 +251,7 @@ class AuthorityClient:
         not own and must not copy.
         """
         if not self._base_url:
-            return {"actions": [], "available": False}
+            return _catalogue_unavailable(CATALOGUE_NOT_CONFIGURED)
 
         try:
             response = await self._client.get(
@@ -235,7 +260,17 @@ class AuthorityClient:
                 timeout=self._timeout,
             )
             if response.status_code >= 400:
-                return {"actions": [], "available": False}
+                return _catalogue_unavailable(
+                    CATALOGUE_HTTP_STATUS, status_code=response.status_code
+                )
+        except httpx.HTTPError as exc:
+            return _catalogue_unavailable(
+                CATALOGUE_TRANSPORT_ERROR, error=type(exc).__name__
+            )
+
+        try:
             return response.json()
-        except (httpx.HTTPError, ValueError):
-            return {"actions": [], "available": False}
+        except ValueError as exc:
+            return _catalogue_unavailable(
+                CATALOGUE_UNPARSEABLE, error=type(exc).__name__
+            )

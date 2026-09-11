@@ -50,15 +50,19 @@ import {
   Approval,
   AgentAssessment,
   canSignUnderStream,
+  streamGateReason,
+  streamGateReasonBrief,
   SignatureSlot,
   StreamStatus,
 } from './types';
 import {
+  AgreementKind,
   Disagreement,
   countMaterialChanges,
   diffPayloads,
   disagreementOf,
   dwellRequirementMs,
+  FactorComparison,
   formatFieldValue,
   isReversible,
   shouldSpotCheck,
@@ -67,9 +71,20 @@ import {
   terminalCopy,
   validateReason,
 } from './approvalPolicy';
-import { AuthorityRungChip, ApprovalCountdown, ConfidenceBar, PayloadHashChip } from './CopilotPrimitives';
+import { AuthorityRungChip, ApprovalCountdown, PayloadHashChip } from './CopilotPrimitives';
+import {
+  approvalHeadline,
+  subjectAbsence,
+  whyThisRung,
+  expiryConsequence,
+  signingClosed,
+  DENY_IS_FINAL,
+} from './approvalNarrative';
+import { verdictPresentation } from './supervisorVerdict';
+import { factorPresentation, FACTOR_COMPARISON_UNAVAILABLE } from './supervisorFactors';
 import { getCopilotConfig } from '../../config/copilotConfig';
 import { useCopilot, useNow } from './CopilotContext';
+import { signingIdentity } from './signingIdentity';
 
 // ---------------------------------------------------------------------------
 // Why this rung
@@ -84,8 +99,13 @@ export const EscalatorExplainer: React.FC<{ approval: Approval }> = ({ approval 
         Why this is {approval.requiredRung}
       </Typography>
       {escalators.length === 0 ? (
+        /* §6.4: a base-rung action fires no escalator, so there is no server-authored
+           template to render. "No escalators fired" described the code path rather than the
+           decision. This map is client-side by Danny's explicit assignment; the escalator
+           branch below is still rendered verbatim because THAT text is audit record. */
         <Typography variant="body2">
-          Base rung for “{approval.actionLabel}”. No escalators fired.
+          {whyThisRung(approval.actionId, approval.requiredRung) ??
+            `Base rung for “${approval.actionLabel}”. No escalators fired.`}
         </Typography>
       ) : (
         <Stack spacing={0.5} sx={{ mt: 0.5 }}>
@@ -142,60 +162,173 @@ export function unfilledSlotCopy(slot: SignatureSlot): string {
     : `${seniority} — anyone eligible under this policy`;
 }
 
-export const SignatureRoster: React.FC<{ approval: Approval }> = ({ approval }) => (
-  <Box>
-    <Typography variant="overline" sx={{ color: 'text.secondary' }}>
-      Signatures
-    </Typography>
-    <Stack spacing={0.5} sx={{ mt: 0.5 }}>
-      {approval.signatureSlots.map((slot) => (
-        <Stack
-          key={slot.ordinal}
-          direction="row"
-          spacing={1}
-          sx={{ alignItems: 'center', flexWrap: 'wrap' }}
-        >
-          <Typography variant="body2" sx={{ minWidth: 24 }}>
-            {slot.ordinal}.
+/**
+ * The slot the acting identity would fill: the first unfilled one, and only when
+ * the SERVICE says this caller may sign. Eligibility is never computed here —
+ * `callerMaySign` is authoritative. This only points at the slot the person is
+ * about to affect.
+ *
+ * "First unfilled" is sound rather than merely convenient: the opening slot
+ * carries the lowest `minSeniority` and an empty `mustDifferFrom`, so anyone
+ * eligible for a later slot is also eligible for that one. There is no case
+ * where a caller skips a slot they could have filled.
+ *
+ * Note the ordinals are NOT array indices — the demo fixture numbers its slots
+ * 1 and 2 — so nothing here may key off `ordinal === 0`.
+ */
+export function callerSignatureSlot(approval: Approval): SignatureSlot | undefined {
+  if (!approval.callerMaySign) return undefined;
+  return approval.signatureSlots.find((slot) => !slot.filled);
+}
+
+/**
+ * What this person is actually about to do, in their words rather than the
+ * policy engine's.
+ *
+ * The previous copy branched on `isL2` alone and so told EVERY L2 signer they
+ * were "providing the independent supervisor co-signature ... because you are a
+ * different identity from the requester". For the requester filling the opening
+ * slot that is simply false, and it contradicted itself in one sentence:
+ * Brian, signed in as `banker`, was told his signature counted because he was
+ * not `banker`.
+ *
+ * The truth is in the slots. Whether this signature opens the approval or
+ * closes it is a property of how many remain, not of the rung.
+ *
+ * Returns the sentence that FOLLOWS the bound identity. The identity itself is
+ * rendered separately and always, because making the bound identity
+ * unmistakable is the reason this banner exists.
+ */
+export function signingAttestation(
+  approval: Approval,
+  identityId?: string,
+  now: number = Date.now()
+): string {
+  // A closed record has no future signature to describe. Previously this keyed only on the
+  // SLOTS, so a lapsed L1 with its single slot still unfilled reached the `slots.length <= 1`
+  // branch and told a banker "Yours is the only signature needed" about a dead record.
+  if (signingClosed(approval, now)) return '';
+
+  const slots = approval.signatureSlots;
+  const remaining = slots.filter((slot) => !slot.filled).length;
+
+  // Nothing derivable — say only what we know, which is who is signing.
+  if (remaining === 0) return '';
+
+  if (slots.length <= 1) {
+    return 'Yours is the only signature needed — this goes ahead once you sign.';
+  }
+
+  if (remaining === 1) {
+    const first = slots.find((slot) => slot.filled);
+    const who = first?.signedByUsername;
+    const position = slots.length === 2 ? 'the second signature' : 'the final signature';
+    return who
+      ? `You are ${position} — ${who} signed first. Once you sign, this goes ahead.`
+      : `You are ${position}. Once you sign, this goes ahead.`;
+  }
+
+  const others = remaining - 1;
+  const wait =
+    others === 1
+      ? 'It does not go ahead until a second person signs'
+      : `It does not go ahead until ${others} more people sign`;
+
+  // Only claim the caller is the requester when we can actually check it. The
+  // identity id is the local part of the signed-in email and the record carries
+  // a username; when they do not correspond we fall back to the neutral wording,
+  // which is true either way.
+  const callerIsRequester =
+    Boolean(identityId) &&
+    Boolean(approval.requesterUsername) &&
+    identityId!.toLowerCase() === approval.requesterUsername!.toLowerCase();
+
+  if (callerIsRequester) {
+    return `You raised this request, so you are signing it first. ${wait}, and that person cannot be you.`;
+  }
+  return `You are signing first. ${wait}.`;
+}
+
+export const SignatureRoster: React.FC<{ approval: Approval; activeIdentityLabel?: string }> = ({
+  approval,
+  activeIdentityLabel,
+}) => {
+  // The slot the acting identity would fill. Shared with the attestation banner
+  // so the two can never disagree about which signature the click binds.
+  const callerSlotOrdinal = callerSignatureSlot(approval)?.ordinal;
+
+  return (
+    <Box>
+      <Typography variant="overline" sx={{ color: 'text.secondary' }}>
+        Signatures
+      </Typography>
+      <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+        {approval.signatureSlots.map((slot) => (
+          <Stack
+            key={slot.ordinal}
+            direction="row"
+            spacing={1}
+            sx={{ alignItems: 'center', flexWrap: 'wrap' }}
+          >
+            <Typography variant="body2" sx={{ minWidth: 24 }}>
+              {slot.ordinal}.
+            </Typography>
+            {slot.filled ? (
+              <>
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                  {slot.signedByUsername || slot.signedBy}
+                </Typography>
+                <Chip size="small" color="success" variant="outlined" label="signed" />
+                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                  {slot.signedAt ? new Date(slot.signedAt).toLocaleTimeString() : ''}
+                </Typography>
+              </>
+            ) : (
+              <>
+                {/* A RULE, never a person. There is no `cosignerId` in the
+                    domain — naming a reviewer at proposal time would let the
+                    requester choose who checks their work, which is the
+                    self-dealing pattern L2 exists to prevent. So the copy
+                    describes eligibility, and the service decides who qualifies. */}
+                <Typography variant="body2">{unfilledSlotCopy(slot)}</Typography>
+                <Chip size="small" variant="outlined" label="◷ awaiting" />
+                {slot.ordinal === callerSlotOrdinal && (
+                  // Points at the acting identity's own slot — a "you", derived
+                  // from `callerMaySign`, NOT a prospective assignment of anyone
+                  // else. It disappears the moment the caller cannot sign.
+                  <Chip
+                    size="small"
+                    color="primary"
+                    variant="filled"
+                    label={
+                      activeIdentityLabel
+                        ? `← you (${activeIdentityLabel}) sign here`
+                        : '← you sign here'
+                    }
+                  />
+                )}
+              </>
+            )}
+          </Stack>
+        ))}
+        {approval.requiredSigners > 1 && (
+          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+            You cannot sign twice. Separation of duties means different people, not different proofs —
+            re-authenticating as yourself does not satisfy the second slot.
           </Typography>
-          {slot.filled ? (
-            <>
-              <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                {slot.signedByUsername || slot.signedBy}
-              </Typography>
-              <Chip size="small" color="success" variant="outlined" label="signed" />
-              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                {slot.signedAt ? new Date(slot.signedAt).toLocaleTimeString() : ''}
-              </Typography>
-            </>
-          ) : (
-            <>
-              {/* A RULE, never a person. There is no `cosignerId` in the
-                  domain — naming a reviewer at proposal time would let the
-                  requester choose who checks their work, which is the
-                  self-dealing pattern L2 exists to prevent. So the copy
-                  describes eligibility, and the service decides who qualifies. */}
-              <Typography variant="body2">{unfilledSlotCopy(slot)}</Typography>
-              <Chip size="small" variant="outlined" label="◷ awaiting" />
-            </>
-          )}
-        </Stack>
-      ))}
-      {approval.requiredSigners > 1 && (
-        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-          You cannot sign twice. Separation of duties means different people, not different proofs —
-          re-authenticating as yourself does not satisfy the second slot.
-        </Typography>
-      )}
-    </Stack>
-  </Box>
-);
+        )}
+      </Stack>
+    </Box>
+  );
+};
 
 // ---------------------------------------------------------------------------
 // Payload rows, with the disclosure gate
 // ---------------------------------------------------------------------------
 
 interface PayloadTableProps {
+  /** "You are signing" is false once the record is closed; the disclosure still matters. */
+  heading?: string;
   approval: Approval;
   onMaterialSeen: (path: string) => void;
   onEvidenceOpen?: (evidenceId: string) => void;
@@ -209,7 +342,7 @@ interface PayloadTableProps {
  * theatre — an actual visibility precondition. If the payload is long enough to
  * scroll, you scroll it.
  */
-const PayloadTable: React.FC<PayloadTableProps> = ({ approval, onMaterialSeen }) => {
+const PayloadTable: React.FC<PayloadTableProps> = ({ approval, onMaterialSeen, heading }) => {
   const rowRefs = useRef<Record<string, HTMLElement | null>>({});
 
   useEffect(() => {
@@ -242,7 +375,7 @@ const PayloadTable: React.FC<PayloadTableProps> = ({ approval, onMaterialSeen })
   return (
     <Box>
       <Typography variant="overline" sx={{ color: 'text.secondary' }}>
-        You are signing
+        {heading ?? 'You are signing'}
       </Typography>
       <Stack spacing={0.25} sx={{ mt: 0.5 }}>
         {approval.payload.map((field) => (
@@ -305,31 +438,63 @@ const EvidenceList: React.FC<{ approval: Approval; onOpen: (id: string) => void;
       <Collapse in={open}>
         <Stack spacing={0.5} sx={{ mt: 0.5 }}>
           {approval.evidence.map((item) => (
-            <Stack key={item.id} direction="row" spacing={1} sx={{ alignItems: 'baseline' }}>
-              <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                ▸
-              </Typography>
-              <Typography variant="body2">{item.label}</Typography>
-              {item.sourceToolCallId && (
-                <Link
-                  component="button"
-                  variant="caption"
-                  onClick={() => {
-                    // The trace is the citation index for the recommendation.
-                    // Without this link it is ornamental.
-                    highlightNode(item.sourceToolCallId);
-                    onOpen(item.id);
-                  }}
-                >
-                  show in trace
-                </Link>
-              )}
-              {item.excerpt && (
-                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                  {item.excerpt}
+            <Box key={item.id}>
+              <Stack direction="row" spacing={1} sx={{ alignItems: 'baseline' }}>
+                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                  ▸
                 </Typography>
+                <Typography variant="body2">{item.label}</Typography>
+                {item.sourceToolCallId && (
+                  <Link
+                    component="button"
+                    variant="caption"
+                    onClick={() => {
+                      // The trace is the citation index for the recommendation.
+                      // Without this link it is ornamental.
+                      highlightNode(item.sourceToolCallId);
+                      onOpen(item.id);
+                    }}
+                  >
+                    show in trace
+                  </Link>
+                )}
+                {item.excerpt && (
+                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                    {item.excerpt}
+                  </Typography>
+                )}
+              </Stack>
+
+              {/*
+                PROVISIONAL PRESENTATION — the plumbing is the point here, not the
+                design. Danny's card specification will decide how a finding
+                should read; this exists so the values are on screen instead of
+                discarded, and so that spec has real data to land against. It
+                reuses `formatFieldValue`, the payload rows' formatter, rather
+                than inventing a second display vocabulary. Replaceable in one
+                place.
+              */}
+              {item.findings.length > 0 && (
+                <Stack spacing={0.25} sx={{ mt: 0.25, ml: 2.5 }}>
+                  {item.findings.map((field) => (
+                    <Stack
+                      key={`${item.id}:${field.path}`}
+                      direction="row"
+                      spacing={1}
+                      sx={{ alignItems: 'baseline' }}
+                    >
+                      <Typography
+                        variant="caption"
+                        sx={{ minWidth: 120, color: 'text.secondary' }}
+                      >
+                        {field.label}
+                      </Typography>
+                      <Typography variant="caption">{formatFieldValue(field)}</Typography>
+                    </Stack>
+                  ))}
+                </Stack>
               )}
-            </Stack>
+            </Box>
           ))}
         </Stack>
       </Collapse>
@@ -341,53 +506,200 @@ const EvidenceList: React.FC<{ approval: Approval; onOpen: (id: string) => void;
 // Agent opinions
 // ---------------------------------------------------------------------------
 
+/**
+ * The caveat travels with the number, because the number is the misleading part.
+ *
+ * Measured across 42 runs: min 0.83, median 0.94, max 0.98. The coin-flip case —
+ * identical bytes producing opposite verdicts — sat at 0.82-0.96, overlapping the
+ * rock-solid one. So it never goes low and it does not separate a stable case
+ * from an unstable one, while being shown to a human deciding whether to sign.
+ * It is displayed as PROSE and nothing else: no bar, no colour scale, no rank,
+ * no threshold (ruling §P7.2).
+ */
+export const SELF_REPORTED_CONFIDENCE_CAVEAT =
+  "The model's own stated confidence. It is not a reliability measure: observed 0.83-0.98 across every run, and identical inputs have produced opposite verdicts at overlapping values. Nothing on this screen is ranked, ordered or gated on it.";
+
+/**
+ * Attribution (§P7.1): which decider, which model, which exact bytes.
+ *
+ * The record cannot be reproducible — the call is nondeterministic — so it claims
+ * to be ATTRIBUTABLE instead. `mode` is the field that separates a judgement from
+ * a script, which is the exact confusion this whole feature was built to end, and
+ * the deployment id is how a reader sees for themselves that the "independent"
+ * second opinion came from the same base model as the primary.
+ */
+const AssessmentAttribution: React.FC<{ assessment: AgentAssessment }> = ({ assessment }) => {
+  const parts: string[] = [];
+  if (assessment.mode) parts.push(`mode ${assessment.mode}`);
+  if (assessment.modelDeployment) parts.push(assessment.modelDeployment);
+  if (assessment.promptSha256) parts.push(`prompt ${shortSha(assessment.promptSha256)}`);
+  if (assessment.responseSha256) parts.push(`reply ${shortSha(assessment.responseSha256)}`);
+  if (parts.length === 0) return null;
+  return (
+    <Typography
+      variant="caption"
+      data-testid={`assessment-attribution-${assessment.role ?? 'unknown'}`}
+      sx={{ display: 'block', mt: 1, color: 'text.secondary', fontFamily: 'monospace' }}
+    >
+      {parts.join(' · ')}
+    </Typography>
+  );
+};
+
+function shortSha(sha: string): string {
+  const hex = sha.startsWith('sha256:') ? sha.slice(7) : sha;
+  return hex.slice(0, 8);
+}
+
 const OpinionColumn: React.FC<{
   assessment: AgentAssessment;
   divergentFactors: string[];
+  factorComparison: FactorComparison;
   independent?: boolean;
-}> = ({ assessment, divergentFactors, independent }) => (
+}> = ({ assessment, divergentFactors, factorComparison, independent }) => {
+  // Label, colour and rank all come from the ONE lookup keyed on the server's own
+  // vocabulary. The previous inline ternary compared against 'APPROVE' and
+  // 'DECLINE' — one of which the server never emits and the other of which it
+  // emitted for the WRONG verdict — and swept everything else, `decline`
+  // included, into the same amber "warning" arm.
+  const verdict = verdictPresentation(assessment.verdict);
+  return (
   <Paper variant="outlined" sx={{ p: 1.5, flex: 1, minWidth: 260 }}>
     <Typography variant="overline" sx={{ color: 'text.secondary' }}>
       {assessment.role === 'supervisor' ? 'Supervisor agent' : 'Primary agent'}
       {independent ? ' (independent)' : ''}
     </Typography>
     <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1, flexWrap: 'wrap' }}>
-      <Chip
-        size="small"
-        label={assessment.verdict || 'no verdict'}
-        color={
-          (assessment.verdict || '').toUpperCase() === 'DECLINE'
-            ? 'error'
-            : (assessment.verdict || '').toUpperCase() === 'APPROVE'
-              ? 'success'
-              : 'warning'
-        }
-      />
-      {typeof assessment.confidence === 'number' && <ConfidenceBar value={assessment.confidence} />}
+      <Tooltip title={verdict.description}>
+        <Chip
+          size="small"
+          label={verdict.label}
+          color={verdict.color}
+          variant={verdict.variant}
+          aria-label={verdict.description}
+          data-testid={`verdict-chip-${assessment.role ?? 'unknown'}`}
+          data-verdict-color={verdict.color}
+          data-verdict-severity={verdict.severity}
+        />
+      </Tooltip>
+      {typeof assessment.selfReportedConfidence === 'number' && (
+        <Tooltip title={SELF_REPORTED_CONFIDENCE_CAVEAT}>
+          <Typography
+            variant="caption"
+            data-testid={`self-reported-confidence-${assessment.role ?? 'unknown'}`}
+            aria-label={`self-reported confidence ${assessment.selfReportedConfidence.toFixed(2)}. ${SELF_REPORTED_CONFIDENCE_CAVEAT}`}
+            sx={{ color: 'text.secondary' }}
+          >
+            self-reported confidence {assessment.selfReportedConfidence.toFixed(2)}
+          </Typography>
+        </Tooltip>
+      )}
     </Stack>
+    {assessment.failure && (
+      <Alert
+        severity="error"
+        variant="outlined"
+        role="alert"
+        sx={{ mb: 1, py: 0 }}
+        data-testid={`assessment-failure-${assessment.role ?? 'unknown'}`}
+        data-failure={assessment.failure}
+      >
+        <Typography variant="caption" sx={{ fontWeight: 800 }}>
+          NO ASSESSMENT WAS FORMED — {assessment.failure}
+          {assessment.failureReason ? ` (${assessment.failureReason})` : ''}
+        </Typography>
+      </Alert>
+    )}
     {assessment.rationale && <Typography variant="body2">{assessment.rationale}</Typography>}
-    {assessment.keyFactors && assessment.keyFactors.length > 0 && (
+    {assessment.unverified && assessment.unverified.length > 0 && (
       <Stack spacing={0.25} sx={{ mt: 1 }}>
-        {assessment.keyFactors.map((factor) => (
-          <Stack key={factor.label} direction="row" spacing={1} sx={{ alignItems: 'baseline' }}>
-            <Typography variant="caption" sx={{ minWidth: 110, color: 'text.secondary' }}>
-              {factor.label}
-            </Typography>
-            <Typography variant="caption" sx={{ fontWeight: factor.concern ? 700 : 400 }}>
-              {factor.value}
-              {factor.concern ? ' ✗' : ' ✓'}
-            </Typography>
-            {divergentFactors.includes(factor.label) && (
-              <Typography variant="caption" sx={{ color: 'error.main', fontWeight: 700 }}>
-                ← DIVERGENT
-              </Typography>
-            )}
-          </Stack>
+        <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700 }}>
+          Could not be established from the evidence:
+        </Typography>
+        {assessment.unverified.map((item) => (
+          <Typography key={item} variant="caption" data-testid="unverified-row" sx={{ color: 'warning.main' }}>
+            ? {item}
+          </Typography>
         ))}
       </Stack>
     )}
+    {assessment.keyFactors && assessment.keyFactors.length > 0 && (
+      <Stack spacing={0.25} sx={{ mt: 1 }}>
+        {assessment.keyFactors.map((factor) => {
+          const f = factorPresentation(factor);
+          // A failed supervisor call is not a factor. It is rendered as the failure it
+          // is — error-coloured, bold, ahead of any real factor in weight — and never
+          // with a tick, a value, or a divergence flag.
+          if (f.unavailable) {
+            return (
+              <Typography
+                key={factor.label}
+                variant="caption"
+                data-testid="factor-unavailable"
+                aria-label={f.description}
+                sx={{ color: 'error.main', fontWeight: 700 }}
+              >
+                ⚠ {f.text}
+              </Typography>
+            );
+          }
+          return (
+            <Stack key={factor.label} direction="row" spacing={1} sx={{ alignItems: 'baseline' }}>
+              <Typography
+                variant="caption"
+                data-testid="factor-row"
+                aria-label={f.description}
+                sx={{
+                  // Without a measured value the statement IS the row, so it is not
+                  // squeezed into a 110px label column with nothing beside it.
+                  minWidth: f.value ? 110 : undefined,
+                  color: f.value ? 'text.secondary' : 'text.primary',
+                  fontWeight: factor.concern === true ? 700 : 400,
+                }}
+              >
+                {f.text}
+                {/* No glyph when the agent did not classify the factor. A ✓ on an
+                    unstated judgement is an assertion nobody made. */}
+                {f.value ? null : f.glyph ? ` ${f.glyph}` : null}
+              </Typography>
+              {f.value && (
+                <Typography variant="caption" sx={{ fontWeight: factor.concern === true ? 700 : 400 }}>
+                  {f.value}
+                  {f.glyph ? ` ${f.glyph}` : null}
+                </Typography>
+              )}
+              {divergentFactors.includes(factor.label) && (
+                <Typography variant="caption" sx={{ color: 'error.main', fontWeight: 700 }}>
+                  ← DIVERGENT
+                </Typography>
+              )}
+            </Stack>
+          );
+        })}
+        {/* Where the ← DIVERGENT flags would have been. A divergence indicator that
+            renders nothing looks exactly like one that compared the two sides and
+            found them consistent — "we could not check" wearing the face of "we
+            checked and it was fine". So when the comparison could not run, the card
+            says so in its place, in the same register as the row it replaces.
+            Informational, not error-coloured: nothing failed here, the primary
+            simply stated no factors to compare against, and `error.main` is
+            reserved for a supervisor call that actually failed. */}
+        {independent && factorComparison === 'primary_stated_no_factors' && (
+          <Typography
+            variant="caption"
+            data-testid="factor-comparison-unavailable"
+            aria-label={FACTOR_COMPARISON_UNAVAILABLE}
+            sx={{ color: 'info.main', fontWeight: 700, mt: 0.5 }}
+          >
+            ℹ {FACTOR_COMPARISON_UNAVAILABLE}
+          </Typography>
+        )}
+      </Stack>
+    )}
+    <AssessmentAttribution assessment={assessment} />
   </Paper>
-);
+  );
+};
 
 /**
  * The disagreement banner.
@@ -397,12 +709,37 @@ const OpinionColumn: React.FC<{
  * the screen. Doubled warning glyphs and the word DISAGREE carry it without
  * relying on the red.
  */
-const DisagreementBanner: React.FC<{ disagreement: Disagreement }> = ({ disagreement }) => {
-  if (disagreement.kind === 'none') return null;
+const BANNER: Record<AgreementKind, { severity: 'error' | 'warning' | 'success'; glyph: string }> = {
+  // `not_comparable` is error-severity ON PURPOSE, and it is not the mildest arm.
+  // The mild default is what caused the original defect: two ABSENT verdicts
+  // rendered "Independent review reached the same verdict". A dead pipeline must
+  // never be able to display as consensus, and it must not display as a shrug
+  // either — it is a broken control on an L2 banking action.
+  diverge: { severity: 'error', glyph: '⚠⚠' },
+  not_comparable: { severity: 'error', glyph: '⛔' },
+  not_reviewed: { severity: 'warning', glyph: '⛔' },
+  agree: { severity: 'success', glyph: '✓' },
+};
+
+const DisagreementBanner: React.FC<{ disagreement: Disagreement; showUnreviewed: boolean }> = ({
+  disagreement,
+  showUnreviewed,
+}) => {
+  // On an L1 card nobody promised an independent review, so its absence is not
+  // news. Everywhere a second opinion is expected, its absence is the headline.
+  if (disagreement.kind === 'not_reviewed' && !showUnreviewed) return null;
+  const banner = BANNER[disagreement.kind];
   return (
-    <Alert severity="error" icon={<WarningAmberIcon />} role="alert" sx={{ mb: 1 }}>
+    <Alert
+      severity={banner.severity}
+      icon={<WarningAmberIcon />}
+      role="alert"
+      sx={{ mb: 1 }}
+      data-testid="agreement-banner"
+      data-agreement={disagreement.kind}
+    >
       <AlertTitle sx={{ fontWeight: 800 }}>
-        ⚠⚠ THE TWO AGENTS DISAGREE. A HUMAN MUST DECIDE.
+        {banner.glyph} {disagreement.title}
       </AlertTitle>
       {disagreement.summary}
       {disagreement.divergentFactors.length > 0 && (
@@ -420,10 +757,22 @@ const DisagreementBanner: React.FC<{ disagreement: Disagreement }> = ({ disagree
 
 export const TerminalApprovalCard: React.FC<{ approval: Approval }> = ({ approval }) => {
   const copy = terminalCopy(approval.terminalReason, approval.terminalDetail);
+  const { openApproval } = useCopilot();
+  const [loadingReplacement, setLoadingReplacement] = useState(false);
   const diff =
     approval.previousPayload && approval.previousPayload.length > 0
       ? diffPayloads(approval.previousPayload, approval.payload)
       : [];
+
+  const handleReview = async () => {
+    if (!approval.supersededByApprovalId) return;
+    setLoadingReplacement(true);
+    try {
+      await openApproval(approval.supersededByApprovalId);
+    } finally {
+      setLoadingReplacement(false);
+    }
+  };
 
   return (
     <Paper variant="outlined" sx={{ p: 2, borderColor: `${copy.severity}.main` }}>
@@ -477,6 +826,29 @@ export const TerminalApprovalCard: React.FC<{ approval: Approval }> = ({ approva
           </Stack>
         </Box>
       )}
+
+      {/* The path forward. A blameless void (policy change, payload supersede)
+          that only NAMES its replacement is a dead end; the banker did nothing
+          wrong and must be able to reach the re-approval in one click, not hunt
+          for an id. Only rendered when the server actually supplied a pointer —
+          a fabricated link would be worse than none. */}
+      {approval.supersededByApprovalId && (
+        <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap' }}>
+          <Button
+            variant="contained"
+            size="small"
+            disabled={loadingReplacement}
+            onClick={handleReview}
+          >
+            {loadingReplacement ? 'Loading…' : 'Review the new approval'}
+          </Button>
+          {copy.blameless && (
+            <Typography variant="caption" sx={{ color: 'text.secondary', alignSelf: 'center' }}>
+              A fresh signature is required against the new payload — reading this one does not carry over.
+            </Typography>
+          )}
+        </Stack>
+      )}
     </Paper>
   );
 };
@@ -529,6 +901,7 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
   const config = getCopilotConfig();
   const { sign, deny } = useCopilot();
   const now = useNow();
+  const identity = useMemo(() => signingIdentity(), []);
 
   const [seenMaterial, setSeenMaterial] = useState<Set<string>>(() => new Set());
   const [openedAt] = useState(() => Date.now());
@@ -542,7 +915,11 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
   const [error, setError] = useState<string | undefined>(undefined);
 
   const terminal = approval.status === 'denied' || approval.status === 'executed';
-  const disagreement = useMemo(() => disagreementOf(approval.assessments), [approval.assessments]);
+  // Terminality is NOT a status. An unswept record stays `pending` with `callerMaySign: true`
+  // after its window closes, which is exactly how the signing affordance survived on a record
+  // that could never be signed.
+  const closure = signingClosed(approval, now);
+  const disagreement = useMemo(() => disagreementOf(approval), [approval]);
   const isL2 = approval.requiredRung === 'L2' || approval.requiredSigners > 1;
 
   const dwellMs = useMemo(
@@ -578,17 +955,23 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
   const spotField = spotCheckRequired ? spotCheckField(approval) : undefined;
   const spotExpected = spotField ? spotCheckExpectedAnswer(spotField) : '';
 
-  // Low agent confidence already escalates the rung; it should also force the
-  // evidence panel open. The cases where the agent is least sure are exactly the
-  // ones a fatigued human waves through, because they look like every other card.
-  const lowestConfidence = approval.assessments.reduce<number>(
-    (min, a) => (typeof a.confidence === 'number' ? Math.min(min, a.confidence) : min),
-    1
-  );
-  const evidenceDefaultOpen = lowestConfidence < 0.75 || disagreement.kind !== 'none';
+  // The evidence panel opens whenever the two positions did not concur — which
+  // includes the case where one of them does not exist.
+  //
+  // What used to be here: `lowestConfidence < 0.75 || ...`. That was a numeric
+  // threshold on self-reported confidence deciding what a banker is shown, i.e.
+  // something hidden or revealed because a number crossed a line, on a number
+  // measured at 0.83-0.98 that never crossed it. Ruled out (§P7.2(2)): the
+  // threshold is gone rather than retuned, because there is no honest value for
+  // it. `concurs` is true only for a stated `agree`.
+  const evidenceDefaultOpen = !disagreement.concurs;
 
+  // An override justification is required whenever a supervisor opinion was
+  // expected and the two did not concur. `not_comparable` counts: signing past a
+  // review that never happened deserves at least as much of a stated reason as
+  // signing past one that disagreed.
   const overrideRequired =
-    isL2 && disagreement.kind !== 'none' && approval.assessments.some((a) => a.role === 'supervisor');
+    isL2 && !disagreement.concurs && approval.assessments.some((a) => a.role === 'supervisor');
   const overrideValid = !overrideRequired || validateReason(override, config.overrideJustificationMinLength).valid;
 
   const streamSafe = canSignUnderStream(streamStatus);
@@ -597,7 +980,7 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
   const blockedReason = !approval.callerMaySign
     ? approval.callerMaySignReason || 'You may not sign this request.'
     : !streamSafe
-      ? 'Reconnecting — cannot verify this is still the current payload.'
+      ? streamGateReasonBrief(streamStatus)
       : !disclosureSatisfied
         ? 'Scroll through the material fields above before signing.'
         : !dwellSatisfied
@@ -665,19 +1048,56 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
         borderWidth: highStakes ? 2 : 1,
         borderColor: highStakes ? 'warning.main' : 'divider',
       }}
-      aria-label={`Signature required: ${approval.actionLabel}`}
+      aria-label={
+        closure ? `${closure.header}: ${approval.actionLabel}` : `Signature required: ${approval.actionLabel}`
+      }
     >
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap', mb: 0.5 }}>
         <Typography variant="subtitle2" sx={{ fontWeight: 800, letterSpacing: 0.5 }}>
-          SIGNATURE REQUIRED
+          {closure ? closure.header : 'SIGNATURE REQUIRED'}
         </Typography>
         <Box sx={{ flexGrow: 1 }} />
         <AuthorityRungChip rung={approval.requiredRung} requiredSigners={approval.requiredSigners} />
       </Stack>
 
+      {/* WHO is about to sign, and WHAT their signature does. In the two-session
+          co-signature demo this is the line that stops a supervisor signing while
+          unsure which browser identity the click binds to, so the identity stays
+          first and bold in every case. Display only — eligibility is
+          `callerMaySign`, and this banner is suppressed when the service says
+          this caller may not sign, so it can never read as an invitation the
+          policy engine would refuse.
+
+          The second sentence is derived from the SLOTS, not the rung. Branching
+          on `isL2` alone told the requester they were the independent
+          co-signature, which is false and was self-contradictory. */}
+      {/* The outcome, stated before anything else on a closed record. A banker's first
+          question on a dead approval is whether any of it happened. */}
+      {closure && (
+        <Alert severity={closure.kind === 'signed' || closure.kind === 'executed' ? 'success' : 'info'}
+               sx={{ mb: 1 }}>
+          <Typography variant="body2">{closure.note}</Typography>
+        </Alert>
+      )}
+
+      {!closure && approval.callerMaySign && identity.known && (
+        <Alert severity={isL2 ? 'warning' : 'info'} icon={false} sx={{ py: 0.25, mb: 0.5 }}>
+          <Typography variant="body2">
+            Signing as <strong>{identity.displayName}</strong>
+            {identity.email ? ` · ${identity.email}` : ''}.{' '}
+            {signingAttestation(approval, identity.id)}
+          </Typography>
+        </Alert>
+      )}
+
       <Typography variant="body1" sx={{ fontWeight: 600 }}>
-        {approval.actionLabel}
+        {approvalHeadline(approval)}
       </Typography>
+      {subjectAbsence(approval) && (
+        <Typography variant="body2" sx={{ color: 'text.secondary', mt: 0.25 }}>
+          {subjectAbsence(approval)}
+        </Typography>
+      )}
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', my: 0.5, flexWrap: 'wrap' }}>
         <ApprovalCountdown expiresAt={approval.expiresAt} createdAt={approval.createdAt} />
         <Chip size="small" variant="outlined" label={approval.actionId} />
@@ -688,23 +1108,36 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
           label={isReversible(approval) ? 'reversible' : 'irreversible ⚠'}
         />
       </Stack>
+      {/* §3.8 — the countdown chip states a mechanism; this states the consequence, with a
+          wall-clock time, and closes the "does it fire anyway?" question a banker would
+          otherwise have to ask someone. */}
+      {expiryConsequence(approval, now) && (
+        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 0.5 }}>
+          {expiryConsequence(approval, now)}
+        </Typography>
+      )}
 
       <Divider sx={{ my: 1 }} />
       <EscalatorExplainer approval={approval} />
 
       <Divider sx={{ my: 1 }} />
-      <PayloadTable approval={approval} onMaterialSeen={onMaterialSeen} />
+      <PayloadTable
+        approval={approval}
+        onMaterialSeen={onMaterialSeen}
+        heading={closure ? 'What was proposed' : undefined}
+      />
 
       {approval.assessments.length > 0 && (
         <>
           <Divider sx={{ my: 1 }} />
-          <DisagreementBanner disagreement={disagreement} />
+          <DisagreementBanner disagreement={disagreement} showUnreviewed={isL2} />
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
             {approval.assessments.map((assessment) => (
               <OpinionColumn
                 key={`${assessment.role}-${assessment.agentId || assessment.agentName || 'agent'}`}
                 assessment={assessment}
                 divergentFactors={disagreement.divergentFactors}
+                factorComparison={disagreement.factorComparison}
                 independent={assessment.role === 'supervisor'}
               />
             ))}
@@ -726,7 +1159,7 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
       />
 
       <Divider sx={{ my: 1 }} />
-      <SignatureRoster approval={approval} />
+      <SignatureRoster approval={approval} activeIdentityLabel={identity.known ? identity.displayName : undefined} />
 
       {spotField && !spotSatisfied && (
         <Alert severity="info" sx={{ mt: 1 }}>
@@ -760,7 +1193,7 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
         </Alert>
       )}
 
-      {overrideRequired && (
+      {!closure && overrideRequired && (
         <Box sx={{ mt: 1 }}>
           <Typography variant="body2" sx={{ fontWeight: 600, color: 'error.main' }}>
             ⚠ You are overriding the supervisor agent&apos;s verdict. State why:
@@ -777,8 +1210,13 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
         </Box>
       )}
 
-      {denying && (
+      {!closure && denying && (
         <Box sx={{ mt: 1 }}>
+          {/* Priority 3 / option A. Brian burned three approvals learning this by doing it.
+              The warning has to precede the irreversible click, not confirm it afterwards. */}
+          <Alert severity="warning" sx={{ mb: 1 }}>
+            {DENY_IS_FINAL}
+          </Alert>
           <TextField
             fullWidth
             multiline
@@ -798,19 +1236,34 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
         </Alert>
       )}
 
-      {!streamSafe && (
+      {!closure && !streamSafe && (
         <Alert severity="warning" sx={{ mt: 1 }}>
-          Live updates are interrupted. Signing is disabled until the connection is verified —
-          signing against a payload we cannot confirm is current is the exact risk the payload hash
-          exists to prevent.
+          {streamGateReason(streamStatus)} Signing against a payload we cannot confirm is current
+          is the exact risk the payload hash exists to prevent.
         </Alert>
       )}
 
+      {/* Every signing affordance is gated on `closure`, not just the Sign button. A dead
+          record that still offers Deny is the same lie in a different font. */}
+      {!closure && (
+      <>
+      {/* THREE VERBS, NOT TWO. Brian authorised counter-propose (option B); Danny's ruling is
+          that the row must be built to hold it now and rebuilt never. The leading slot is that
+          third verb's place — deliberately empty rather than a disabled button, because
+          shipping a dead control teaches a banker that the card lies about what it can do.
+          Sign and Deny stay grouped at the trailing edge so the destructive pair keeps its
+          existing muscle memory when the third verb arrives to their left. */}
       <Stack
-        direction={highStakes ? 'row-reverse' : 'row'}
+        direction="row"
         spacing={1}
-        sx={{ mt: 1.5, justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}
+        sx={{ mt: 1.5, justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}
       >
+        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }} />
+        <Stack
+          direction={highStakes ? 'row-reverse' : 'row'}
+          spacing={1}
+          sx={{ justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}
+        >
         {/* Denial has the same visual weight as signing. A UI where denial is
             harder than approval has its thumb on the scale. */}
         <Button
@@ -834,9 +1287,12 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, streamStatus, onS
             </Button>
           </Box>
         </Tooltip>
+        </Stack>
       </Stack>
+      </>
+      )}
 
-      {blockedReason && (
+      {!closure && blockedReason && (
         <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5 }}>
           {blockedReason}
         </Typography>

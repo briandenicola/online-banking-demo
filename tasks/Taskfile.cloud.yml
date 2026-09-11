@@ -20,6 +20,13 @@ includes:
     dir: '{{.ROOT_DIR}}'
     internal: false
 
+  demo:
+    taskfile: ./Taskfile.demo.yml
+    dir: '{{.ROOT_DIR}}'
+    internal: false
+    vars:
+      DEMO_TARGET: cloud
+
 tasks:
   default:
     desc: Show available tasks
@@ -474,9 +481,17 @@ tasks:
     internal: true
     desc: Stream-substitute KV/identity values into SecretProviderClass and apply (manifest on disk is never mutated)
     cmds:
+      # Three providers, three identities. A SecretProviderClass names the identity
+      # the CSI driver authenticates AS, and it overrides rather than inherits the
+      # pod's own — so authority-service and banker-copilot-service, which run under
+      # their dedicated UAMIs (#336), each need a provider naming that same UAMI.
+      # Substituting one client id into all three would put them straight back to
+      # `ClientAssertionCredential authentication failed` and Init that never ends.
       - |
         sed -e "s|REPLACE_WITH_KEYVAULT_NAME|{{.KEYVAULT_NAME}}|g" \
             -e "s|REPLACE_WITH_TENANT_ID|{{.TENANT_ID}}|g" \
+            -e "s|REPLACE_WITH_AUTHORITY_CLIENT_ID|{{.AUTHORITY_CLIENT_ID}}|g" \
+            -e "s|REPLACE_WITH_COPILOT_CLIENT_ID|{{.COPILOT_CLIENT_ID}}|g" \
             -e "s|REPLACE_WITH_AZURE_CLIENT_ID|{{.AZURE_CLIENT_ID}}|g" \
             deploy/kustomize/base/secret-provider-class.yaml \
           | kubectl apply -n {{.NAMESPACE}} -f -
@@ -487,6 +502,10 @@ tasks:
         sh: az account show --query tenantId -o tsv
       AZURE_CLIENT_ID:
         sh: terraform -chdir=./{{.INFRA_DIR}} output -raw banking_services_client_id
+      AUTHORITY_CLIENT_ID:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw authority_service_client_id
+      COPILOT_CLIENT_ID:
+        sh: terraform -chdir=./{{.INFRA_DIR}} output -raw banker_copilot_service_client_id
 
   _init:
     internal: true

@@ -72,7 +72,7 @@ const navItems = [
 ];
 
 const AppShell: React.FC<AppShellProps> = ({ children }) => {
-  const { user, logout, isAdmin } = useAuthContext();
+  const { user, logout, isAdmin, isBanker, mayViewAdminObservability } = useAuthContext();
   const { isEnabled } = useFeatureFlags();
   const navigate = useNavigate();
   const location = useLocation();
@@ -87,8 +87,14 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
   // deliberate, not a transitional accident. Running the same task on each is
   // the only way the "the harness is better" claim can be checked rather than
   // asserted. See docs/design/banker-copilot-ui.md §11.
-  const showClassicAdmin = isAdmin && isEnabled('classicAdminTabs');
-  const showCopilot = isAdmin && isEnabled('bankerCopilot');
+  //
+  // The Admin link mirrors the /admin ROUTE gate, so it must use the same
+  // capability the route does — a supervisor with the read-only tabs but no nav
+  // entry has a surface they can only reach by typing a URL. `isAdmin` still
+  // gates the write tabs inside the page, and the "Surfaces & flags" panel
+  // below, which is platform configuration.
+  const showClassicAdmin = mayViewAdminObservability && isEnabled('classicAdminTabs');
+  const showCopilot = isBanker && isEnabled('bankerCopilot');
 
   React.useEffect(() => {
     const loadAvatar = async () => {
@@ -119,7 +125,34 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
   );
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        // A full-bleed surface owns the viewport and scrolls internally, so the
+        // shell must CONSTRAIN rather than grow. `minHeight` lets a child that
+        // asks for too much push the page taller than the window, which is what
+        // buried the copilot command bar below the fold.
+        //
+        // `dvh` where supported: on mobile and on desktop browsers that hide
+        // chrome on scroll, `100vh` is the LARGEST viewport height, so the last
+        // row of a `100vh` column sits under the browser UI. The command bar is
+        // that last row.
+        ...(fullBleed
+          ? {
+              height: '100vh',
+              '@supports (height: 100dvh)': { height: '100dvh' },
+              overflow: 'hidden',
+              // `overflow: hidden` only clips absolutely-positioned descendants
+              // when this element is their containing block. Left static, MUI's
+              // off-screen inputs (checkboxes inside collapsed sections) resolve
+              // against the initial containing block, escape the clip, and give
+              // the document ~950px of blank scrollable space below the surface.
+              position: 'relative',
+            }
+          : { minHeight: '100vh' }),
+      }}
+    >
       {/* Top Navigation */}
       <AppBar position="sticky" elevation={0} sx={{ bgcolor: 'primary.main' }}>
         <Toolbar sx={{ px: { xs: 2, md: 4 } }}>
@@ -247,7 +280,16 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
       </AppBar>
 
       {/* Main Content */}
-      <Box component="main" sx={{ flexGrow: 1, pb: isMobile ? 8 : 0, minHeight: 0 }}>
+      <Box
+        component="main"
+        sx={{
+          flexGrow: 1,
+          pb: isMobile ? 8 : 0,
+          minHeight: 0,
+          // Full-bleed children fill the remaining space by flexing into it.
+          ...(fullBleed ? { display: 'flex', flexDirection: 'column' } : {}),
+        }}
+      >
         <FullBleedContext.Provider value={setFullBleed}>
           {fullBleed ? (
             children
@@ -282,7 +324,7 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
       )}
 
       {/* Footer */}
-      {!isMobile && (
+      {!isMobile && !fullBleed && (
         <Box
           component="footer"
           sx={{

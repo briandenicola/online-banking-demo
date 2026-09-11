@@ -143,6 +143,14 @@ tools:
       additionalProperties: false
     capabilityScope: transactions.read
     redaction: []
+    # The upstream returns a bare array, which asserts nothing about whose transactions these
+    # are. `accountId` is not in the response and never will be — it exists only in the bound
+    # argument, which is why this projection is expressible only on the calling side.
+    # Lossless: `items` carries the full array through to the approval record.
+    evidenceProjection:
+      accountId: { bind: $args.accountId }
+      count: { count: $ }
+      items: { collect: $ }
 
   # ------------------------------------------------------------ accounts ----
   - toolId: get_account
@@ -164,6 +172,56 @@ tools:
       additionalProperties: false
     capabilityScope: accounts.read
     redaction: []
+    # The response already carries `balance`; only the identity needs naming. `id` on an account
+    # response IS the account id — the rename adds specificity and discards nothing.
+    evidenceProjection:
+      accountId: { rename: id }
+
+  - toolId: list_customer_accounts
+    displayName: List customer accounts
+    description: >-
+      List accounts for a resolved customer id. Used by the planner to bind natural-language
+      references such as "checking" or "savings" to a concrete account id.
+    target:
+      service: account-service
+      method: GET
+      path: /api/accounts/customer/{userId}
+      timeoutMs: 8000
+    parameters:
+      type: object
+      properties:
+        userId:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+      required: [userId]
+      additionalProperties: false
+    capabilityScope: accounts.read
+    redaction: []
+    evidenceProjection:
+      userId: { bind: $args.userId }
+      count: { count: $ }
+      accounts: { collect: $ }
+
+  - toolId: get_account_by_number
+    displayName: Get account by number
+    description: Retrieve one account by account number for reference resolution.
+    target:
+      service: account-service
+      method: GET
+      path: /api/accounts/number/{accountNumber}
+      timeoutMs: 8000
+    parameters:
+      type: object
+      properties:
+        accountNumber:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+      required: [accountNumber]
+      additionalProperties: false
+    capabilityScope: accounts.read
+    redaction: []
+    evidenceProjection:
+      accountId: { rename: id }
 
   # ----------------------------------------------------------- transfers ----
   - toolId: get_transfer
@@ -209,6 +267,28 @@ tools:
     capabilityScope: identity.read
     redaction:
       - $.email
+
+  - toolId: lookup_customer
+    displayName: Lookup customer identity
+    description: >-
+      Bounded username lookup for resolving a named customer to an id. It is exact-match-first,
+      returns identity only, and is not a directory listing primitive.
+    target:
+      service: user-service
+      method: GET
+      path: /api/customer-directory/lookup
+      timeoutMs: 8000
+    parameters:
+      type: object
+      properties:
+        username:
+          type: string
+          minLength: 3
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$'
+      required: [username]
+      additionalProperties: false
+    capabilityScope: customer-directory.read
+    redaction: []
 
   - toolId: list_login_audits
     displayName: List login audit events

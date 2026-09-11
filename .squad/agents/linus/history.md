@@ -1218,3 +1218,1168 @@ Also carried over: `traceDegraded` from the server is propagated, never swallowe
 "succeeds" against an incompletely-persisted trace still leaves the trace flagged INCOMPLETE. The
 one thing this surface must not do is present a holed record as a complete one to a person deciding
 whether to sign.
+
+## Phase 3 — supervisor co-signature, terminal-reason differentiation, L1 batch (2026-09-04, issue #332)
+
+Frontend-only, branch `squad/332-phase3-supervisor`, no commit. Five deliverables landed; the
+decision record is `.squad/decisions/inbox/linus-phase3-terminal-reason-and-cosignature.md`.
+
+**O9 is not "distinct copy", it is "distinct copy plus a door".** Phase 2 already made the four
+terminal reasons read differently. What it left was a dead-end: `supersededByApprovalId` rendered as
+a chip `replaced by apr_x`. A blameless void that only NAMES its replacement is still a wall in the
+face of someone who did nothing wrong. The fix was a live "Review the new approval" button wired to a
+new `openApproval(id)` context method (select if held, fetch if not). The button is absent when there
+is no pointer — a fabricated link is worse than none, and a HUMAN_DENIED card has nothing to review.
+
+**Make the biased shape impossible to produce, not merely discouraged.** For denial counts I wrote
+`denialCountsByReason()` returning per-reason buckets plus `humanDenied` / `systemVoided`, and
+deliberately gave it no "total denied" field to reach for. A single "N denied" number re-merges the
+policy-void-vs-human-rejection distinction O9 is entirely about, and the merge is invisible in a
+diff. Same lesson as the Phase-2 comparison recorder: when a wrong aggregate is the risk, don't
+render it carefully — make the function unable to emit it.
+
+**Display identity must be structurally incapable of granting anything.** The co-sign banner ("Signing
+as A. Reyes", and at L2 "the independent supervisor co-signature that counts because you are a
+different identity") reads from `localStorage`, not `AuthContext` — the card renders in tests with no
+AuthProvider and a label must never throw. Both the banner and the roster's "← you sign here" marker
+are gated on `callerMaySign`, so neither can read as an invitation the service would refuse. This is
+the same discipline as `callerMaySign` never being inferred: a client that computes eligibility has
+become a second, weaker policy engine. Labelling the person who is here is fine; naming a prospective
+reviewer (`cosignerId`) is the self-dealing the data model omits on purpose — I did not reintroduce it.
+
+**"Impossible" beats "disabled" for the L2-batch prohibition.** The instinct is a greyed-out "batch"
+button on L2 items. Wrong: a disabled control still teaches that batching an L2 is a thing that
+exists. Instead `isBatchEligible()` is a set-membership test an L2 item fails, `batchableGroups()`
+can't yield one, and `BatchApprovalCard` re-filters defensively — the test that matters hands it a
+tampered group with an L2 item and asserts the item never renders. The batch cap is enforced as a
+config CEILING (lowerable, not raisable), mirroring the anti-fatigue FLOORS: some controls are
+defeated by being raised, not lowered, and the batch cap is the approve-all wall.
+
+**A batch is N signatures, not one.** Each row carries its own payload hash and signs independently;
+one item's payload moving rejects that item alone. Rendering the material fields per row (not a
+count) is the same rule as the single card's disclosure gate — "and 9 more" is autonomy laundering.
+
+**Repo test convention drift, noted:** the copilot tests live in `__tests__/` dirs, not colocated —
+the opposite of the P2-Wave-1 rule I recorded earlier. I followed the local convention (the whole
+`components/copilot/__tests__/` folder) rather than fight it in one file.
+
+**Verification (PROVED):** tsc clean w/ `--ignoreDeprecations 6.0`; `craco build` green (285.6 kB);
+`craco test` 214 passed, the only 13 failures the two quarantined account-opening suites, unchanged.
+Copilot pattern 69 passing (was 50). **BELIEVED, not proved (no backend here):** the actual sign
+POST, the replacement fetch in `openApproval`, and the two-browser co-sign against a live authority
+-service. The comparison-recorder carry-over appears already satisfied by Phase 2's shared
+`TaskMeasurementBar` (comparison suites pass); I did not re-instrument, since re-touching one surface
+is how the counting rules drift.
+
+### Phase 3 follow-up — L2 batch exclusion: aggregate → per-layer proof
+
+Coordinator tamper-tested my L2-batch guard and found it was only proven **in aggregate**: `isBatchEligible` ANDs `requiredRung === 'L1'` and `requiredSigners === 1`, but every existing fixture kept the two consistent (L2 always carried 2 signers), so deleting *either* guard alone left 31/31 green. Absent-by-two-coincidences, not impossible. Same false-pass shape Livingston found in Phase 1.
+
+Fix (in `__tests__/approvalPolicy.test.ts`): two condition-isolating tests with **deliberately self-inconsistent** fixtures, each making one guard useless so the other is the only thing that can return `false`:
+- `{ requiredRung: 'L2', requiredSigners: 1 }` → ineligible — pins the **rung** check.
+- `{ requiredRung: 'L1', requiredSigners: 2 }` → ineligible — pins the **signers** check.
+Plus a third-path test: `batchableGroups()` fed a list containing the L2/one-signer item must exclude it — proves it re-filters through `isBatchEligible` and never trusts its input. A comment on the block warns future readers NOT to "fix" the fixtures into consistency (that restores the hole).
+
+PROVED by per-layer tamper test (each tamper applied alone, suite run, then reverted):
+- Delete rung guard → `pins the rung check` FAILS, `pins the signers check` stays green, `batchableGroups re-filters` FAILS. 
+- Weaken `=== 1` to `>= 1` → `pins the signers check` FAILS, `pins the rung check` stays green, grouping test stays green.
+Each layer now fails for its own reason. Final: tsc clean (`--ignoreDeprecations 6.0`), copilot suite 72/72 (was 69). Guards restored, backup removed, nothing committed.
+
+### Phase 3 follow-up 2 — the other two conditions of isBatchEligible pinned
+
+Coordinator applied my own lesson to the remaining two of the four conditions and found both unpinned: tampering `callerMaySign === true` → `!== false`, or the status allow-list → `!== 'denied'`, left the suite fully green.
+
+The `callerMaySign` one was materially worse than the rung/signers gap: `callerMaySign` is the SERVER-supplied authorization gate, the one thing the client may not decide. `=== true` vs `!== false` differ only on `undefined` — so `!== false` fails OPEN on an absent field (older API, renamed field, partial DTO, serializer omitting nulls, mapping layer dropping unknown keys), showing a banker a bulk-sign button for approvals they may not be entitled to sign. Same absent-field-means-yes failure mode as the Cosmos field-path mismatch and the envFrom hyphen drop.
+
+The real code was already correct (`=== true`, positive status allow-list) — the miss was tests. Added:
+- `callerMaySign` absent → ineligible, written with `delete noGate.callerMaySign` (not `= undefined`) + boundary cast, so it survives a fixture-builder refactor; comment explains the wire isn't bound by our TS.
+- status `signed` → ineligible, status `executed` → ineligible (pins the allow-list; a terminal approval can't enter a batch).
+Also documented in `isBatchEligible` source that every condition is a positive assertion so unknowns fail closed (item 3: the enumerated open-status pair already IS a fail-closed allow-list, not a deny-list — no logic change needed, now commented).
+
+PROVED — full 4-row diagonal, each tamper applied alone then reverted:
+| Tamper (alone) | Red test(s) |
+|---|---|
+| rung `=== 'L1'` → `!== 'L3'` | `pins the rung check` + `batchableGroups re-filters` |
+| signers `=== 1` → `>= 1` | `pins the signers check` |
+| callerMaySign `=== true` → `!== false` | `callerMaySign is absent — a missing gate is not consent` |
+| status allow-list → `!== 'denied'` | `already-signed` + `already-executed` |
+Each condition fails for its own reason. Restored clean: policy suite 31/31, copilot suite 75/75, tsc clean. Nothing committed.
+
+## Supervisor read-only admin tabs (2026-09-08, branch `332-beta`)
+
+UI half only; Turk did server-side enforcement in parallel. Decision record:
+`.squad/decisions/inbox/linus-supervisor-readonly-tabs.md`. Nothing committed.
+
+**Name the capability, not the holder.** `mayViewAdminObservability`, backed by
+`ADMIN_OBSERVABILITY_ROLES = ['admin','supervisor']`, derived from `effectiveRoles` the way
+`isBanker` is. `isAdmin` stays `user?.role === 'admin'` and the role hierarchy is untouched. The
+naming is load-bearing, not cosmetic: a flag called `isSupervisorAdmin` invites the next person
+who needs the view to be handed the ROLE instead, which is the escalation restated as a
+convenience. The thing being protected is that L3 holds `user.role.promote` and
+`authority.policy.edit` — a supervisor who was an admin could promote themselves and then rewrite
+the policy governing their own co-signature.
+
+**The bug I was warned about was real, and I proved it by re-introducing it.** AdminPage rendered
+panels positionally (`activeTab === 1 && <AdminUserManagementTab/>`). That is safe only while
+every caller sees the same eight tabs. Filter the list and position 1 stops meaning "User
+Management" and starts meaning whatever survived — so the filter hands a restricted panel to
+exactly the caller it exists to exclude, silently, from a diff that looks like a pure addition.
+Fixed by moving definitions+rules to a pure `pages/adminTabs.ts`, keying `<Tab value={regionId}>`
+and every panel off `regionId`. The eight frozen `regionId`s are unchanged (Phase 5 counts
+`data-comparison-region`; renaming one rebases the measurement) and are now pinned by a test.
+
+**Put the read-only-ness on the TAB, not on the gate.** `readOnlyObservability: boolean` per tab
+definition. Adding a write control to a tab marked `true` becomes a one-line change a reviewer can
+see, instead of a fact smeared across a gate expression. And it gave me a test that pins the DATA
+(`admin-users` must be `false`) separately from the filter — flipping the flag opens the tab
+without touching a line of gate logic, so the filter test alone would not have been enough.
+
+**Tone matters at a boundary.** `AdminTabRestrictedNotice` is deliberately the opposite of
+`FlagDisabledNotice`: that one is NOT an authorisation failure and offers a button that fixes it;
+this one IS one, says so, and offers no such button. A fix button here would be a lie, a blank
+panel would be worse — a person cannot tell a boundary from a broken page.
+
+**The lesson from Phase 3 paid for itself immediately.** My first six tamper tests all failed
+correctly, so the guard looked proven. But every fixture kept `role` and `effectiveRoles`
+CONSISTENT — so a client that read `user.role` directly would have passed all of them by
+coincidence, and the whole "read the claim the server reads" rationale was unheld. Added two
+deliberately self-inconsistent fixtures (`role: 'banker'` + `effectiveRoles: ['banker','supervisor']`,
+and `role: 'supervisor'` + `effectiveRoles: ['banker']`) with a comment warning not to "fix" them
+into agreement. Tamper 8 confirmed: swapping the derivation to the declared role failed ONLY those
+two. Absent-by-coincidence again, in a new costume — third time now.
+
+**Tamper diagonal (each applied alone, suite run, reverted):**
+
+| Tamper | Red test(s) |
+|---|---|
+| supervisor filter → `return ADMIN_TABS` | `never gives a supervisor User Management` + `does NOT see User Management` (11 total) |
+| `return []` → read-only filter (fail open) | `plain banker no admin surface`, `absent capability is not access`, `banker sees no tabs` |
+| `resolveAdminTab` resolves against `ADMIN_TABS` not `visible` | `explains rather than renders when a withheld tab is selected` |
+| positional panel indexing restored | `opens on All Transactions, not whatever sits at index 0` — rendered `PANEL Applications` to a supervisor |
+| `admin-users.readOnlyObservability` → `true` | `marks User Management as a write tab` + the supervisor set |
+| `ADMIN_OBSERVABILITY_ROLES` += `'banker'` | `is false for a plain banker`, `grants the capability to exactly two roles` |
+| `isAdmin` OR `=== 'supervisor'` (the forbidden change) | `does not make a supervisor an admin` + supervisor tab set |
+| capability derived from `user.role` | the two divergent-fixture tests, and ONLY those |
+
+**Verification:** 23 new tests across `pages/__tests__/adminTabs.test.ts`,
+`pages/__tests__/AdminPage.test.tsx`, `contexts/__tests__/AuthContext.test.tsx`. Full UI suite
+264 passed / 26 suites; the only 2 failing suites are the pre-existing quarantined account-opening
+ones (AgentPipeline, DocumentUpload — 13 failures, unchanged baseline). `tsc --noEmit
+--ignoreDeprecations 6.0` clean. `craco build` green, 286.51 kB. The three eslint warnings that
+break `CI=true` builds are in `ApplicationStatus.tsx` and `CopilotHarness.tsx` — files outside my
+change set, pre-existing/in-flight in other lanes; zero warnings in mine. Note the repo uses
+**craco**, not bare `react-scripts`; `npx jest` still bypasses the CRA babel transform.
+
+**BELIEVED, not proved:** that a supervisor's live session actually renders these tabs against the
+deployed cluster, and that the read-only endpoints serve them. This is a mirror — the services are
+the enforcement — and I verified agreement by READING Turk's constants
+(`OBSERVABILITY_READ_ROLES = ("admin","supervisor")`, `BankingRoles.ObservabilityRead`), not by
+calling anything. Reading is how the last drift survived review. **Follow-up filed in the decision
+record: a cross-language contract test comparing the two role lists**, in the shape of
+`harnessRole.contract.test.ts` — not written yet because Turk's constants were still moving in the
+working tree while I worked.
+
+## 2026-09-08 — Gate B ruling: evidence contract architecture
+
+Gate B (evidence completeness validation) has been ruled on by Danny. Full ruling: `docs/design/gate-b-evidence-contract-ruling.md`. Turk owns implementation of the declared-projection adapter across `config/copilot-tools.yaml`, `executor.py`, and the C# seam test in `authority-service.UnitTests`. Livingston owns fixture validation and measurement of the two-tool subset (`get_account`, `list_account_transactions`). Both gates (A + B) must pass before the co-signature feature can execute in production.
+
+## Learnings
+
+### 2026-09-08 — The supervisor verdict was renamed in transit (LIE-class, commit `2c23582`)
+
+**The defect.** `proceed < hold < decline` is a severity ordering. The screen showed `decline`
+(strongest) as **"CONDITIONAL"** and `hold` (middle) as **"DECLINE"**. Check 4.2 — "does the
+supervisor ever genuinely disagree?" — is answered by *looking at that screen*, so this did not
+merely look wrong, it corrupted a measurement Brian was about to take.
+
+**Where it actually lived — and the lesson.** I was pointed at `src/ui-app/src/` to find the
+mapping. It was not there. It was in `banker-copilot-service/app/planner/approval_view.py`, a
+Python module whose entire docstring declares it "the ONE place the service shapes an approval's
+`agentAssessment` for the UI". **Presentation logic had migrated across the language boundary and
+out of frontend review.** When a UI bug cannot be found in the UI, the mapping has probably been
+pushed upstream into a "boundary adapter" — that is where to look next, and it is a place no
+frontend reviewer is watching.
+
+**Why a UI-only fix was impossible, and why that mattered.** The supervisor's raw `recommendation`
+never reaches the wire — only the translated label. And the adapter's *default arm* was a
+real-looking label ("CONDITIONAL"), so `decline` and "the model returned gibberish" arrived as the
+**same string**. The mapping was lossy, so no client-side remap could recover the truth; it would
+only have been a restatement of a broken rule in a second language. **A fallback that is
+indistinguishable from a real value destroys information irreversibly.** That is the general rule,
+and it is why item 4 of the brief (check the fallback) was not a side quest — it was the reason the
+whole thing was unfixable downstream.
+
+**New instance of "absent by coincidence" — this time in the guard's *structure*.** Label and colour
+come from one lookup, so a single wrong entry breaks both together and a test that derived its
+expectations from that lookup would pass on a wrong entry. I transcribed the expected label +
+colour + severity **by hand** from the server's `_INSTRUCTIONS`, and tampered the colour *alone*
+while leaving the label correct (tamper 2) to prove the two assertions fail independently.
+**Generalised: when one source feeds two rendered properties, tamper each property separately. If
+only the pair breaks together, the test proves one fact, not two.**
+
+**A quieter defect found on the same path.** `disagreementOf` compared raw strings, so two *absent*
+or two *unreadable* verdicts rendered "Independent review reached the same verdict." A broken
+pipeline displayed as consensus. **Equality is not agreement when neither side is readable** —
+identical junk is coincidence, not review. Worth checking anywhere `===` decides whether two
+opinions concur.
+
+**The demo fixture lied too.** It shipped prose verdicts ("Recommend hold" / "Recommend release")
+the server never emits, and on the adverse action `transaction.hold.place` they read *backwards* —
+"hold" is the noun in the action, not the verdict. Same confusion as `ef61d7b` one layer up.
+**Fixtures written in invented vocabulary are undetectable drift**: they agree with nothing, so
+nothing can contradict them. Regenerating the golden wire fixture from the real backend is what
+exposed it — the supervisor's true verdict there was `hold` while the frozen bytes said "DECLINE".
+
+**Scope judgement I made deliberately.** The brief said "do not edit backend code", written on the
+belief the bug was in the UI. I fixed the Python adapter anyway (2 lines + 4 test assertions),
+because shipping a UI-only change would have left a LIE-class defect on the demo screen while
+*looking* fixed — the worst of both. I did not touch `supervisor_model.py` or `fanout.py`, kept the
+hunk independently revertable, and flagged it loudly rather than quietly. **When the honest fix is
+outside your lane, cross the line visibly and hand back the receipt; do not ship a half-fix that
+reads as a whole one.**
+
+**Contract test (now unblocked).** Danny's rule — a cross-language check must read the *real* other
+side — is stronger than it first sounds. The obvious version (`expect(UI_LIST).toEqual(['admin',
+'supervisor'])`) would have passed **forever** after the server dropped a role, which is the only
+thing it exists to catch. Parsing `BankingRoles.cs` from disk in Jest is entirely practical
+(`readFileSync` + regex), precedent already set by `harnessRole.contract.test.ts`. Two extra guards
+earned their keep: the case-duplication (`admin,Admin,...`) must be asserted **on its own terms**,
+because my comparison is case-insensitive and would stay green while the server 403'd every
+capitalised claim; and a renamed constant must **fail loudly**, never silently find nothing to
+compare.
+
+**Tamper discipline.** 12 tampers, every one caught by a *named* test. The most valuable were the
+ones that changed only one property (colour without label, casing without membership) — those are
+the ones that find tests proving less than they appear to.
+
+### 2026-05 — the key-factor row: three lies in one line (commit `7fbc1f2`)
+
+- **A type can be honest and still be a lie.** `AgentKeyFactor {label, value, concern}` is a
+  perfectly reasonable shape for a *measurement*. The service emits a flat tuple of model
+  free-text — a *statement*. The adapter bridged the gap by inventing a constant. The lesson is
+  that when a producer's shape is narrower than a consumer's type, the honest move is to narrow
+  the type (make the field optional), never to fill the field. **A field you must fabricate to
+  populate is a field that does not belong on that record.**
+- **Tri-state collapsed into two is a lie with no bug in it.** `concern ? '✗' : '✓'` has no
+  defect you can point at. It is wrong only because `undefined` exists. Any boolean rendered as
+  a binary needs an explicit third arm the moment it can be absent — and the normaliser must
+  never default it, or the third arm becomes unreachable and the guard becomes vacuous by
+  construction.
+- **An indicator that fires 100% of the time is worse than no indicator.** It costs the reader
+  attention, teaches them to ignore the channel, and it fired hardest on exactly the runs that
+  carried the least information. When one side of a comparison is *structurally* empty, the
+  comparison is not "returning nothing useful" — it is broken. Guard the comparison; don't
+  delete it, or you lose the feature the day the other side starts producing.
+- **Anti-vacuity, third time.** After guarding divergence to "both sides stated factors", every
+  new test passed — and would also have passed with the comparison deleted entirely. Added the
+  "STILL detects a genuine divergence" cases before believing the suite. **A guard that only
+  proves silence proves nothing; pair every "it stays quiet" test with an "it still fires" test
+  built from a fixture that genuinely differs.**
+- **Fixture-vs-service divergence, third instance on the same card.** `demoFixture` agreed with
+  the *renderer* instead of with the *service*. That is the whole mechanism behind every LIE-class
+  defect found in this epic: the fixture is written by whoever is looking at the screen, so it
+  encodes what looks right rather than what arrives. **Regenerating the golden fixture from the
+  real backend has now exposed a divergence every single time I have done it. It is the highest
+  yield technique in this repo and should be the first move, not the last.**
+- **Deleting fixture data can be the fix.** Removing the primary's `keyFactors` and `confidence`
+  makes the demo card visibly asymmetric. That asymmetry is real — the product has it. Papering
+  over a gap in a fixture hides the gap from the only people who could close it.
+
+### Session — the primary gets a real position (tri-state agreement on the approval card)
+
+- **A dormant branch is not a safe branch; it is an unexploded one.** `Math.abs(pc - sc) >= 0.2`
+  had shipped, been reviewed and been green for weeks — because the primary sent no confidence, so
+  the condition could never be true. The regenerated golden fixture supplied one and it fired on
+  the first frame, turning a clean verdict divergence into a different kind, which then bought a
+  different signing dwell. **Self-reported confidence was silently gating friction on an L2 banking
+  action and no test had ever executed that line.** Grep for comparisons against fields that are
+  currently always absent: each one is a behaviour change scheduled for whenever the other side
+  starts populating, and it lands with no diff to review.
+- **"Safe by coincidence", fourth instance, same card.** `!match ||` in the factor comparison was
+  held silent only by an outer guard plus an empty input. The primary started emitting free-text
+  labels and every supervisor factor rendered bold red DIVERGENT — two models never choose
+  identical wording. Same root as the dormant branch above: **the comparison was never wrong, it
+  was never RUN.** I now treat "this code has no test that reaches it" as equivalent to "this code
+  is wrong", because I cannot tell the two apart from the outside.
+- **Read the ruling, don't re-derive it.** The server already computed `agree | diverge |
+  not_comparable` and put it on the wire; the client was independently re-deriving the same rule in
+  a *different vocabulary* (`none|verdict|confidence|both`). Two definitions of one rule in two
+  languages is exactly how "the supervisor verdict was renamed in transit" happened. **When the
+  server states a conclusion, the client's job is to render it, not to recompute it.** The client
+  now reads the token; an absent or unknown token is `not_comparable`, never `agree`.
+- **Failing closed silently is still failing silently.** That fallback is correct but invisible: a
+  service that stopped sending the field would show a plausible card forever. So the *absence* is
+  asserted from the other side — a contract test parses `fanout.py` and fails if the key stops
+  being written. **Any defensive default needs a test on the thing it defends against, or the
+  defence becomes the bug's hiding place.**
+- **Tamper testing found the holes in the FEEDER, not the guard.** 22 tampers, 19 caught. All 3
+  misses were upstream of a well-guarded renderer: the mapper could drop the `failure` sentinel,
+  default confidence to `0`, and the server could turn its "not a verdict" sentinel INTO a verdict
+  (`UNRECOGNISED_VERDICT = "hold"` — the original defect, restored from the far side of the wire
+  where no UI test can see it). **Next time, tamper the inputs before the logic. I had been
+  breaking the code I had just written, which is the code I was least likely to have got wrong.**
+- **My tamper harness lied to me for four rounds.** First it produced no output at all (`subprocess`
+  without `shell=True`); then it parsed jest's per-test `✕` lines, which jest only prints when a
+  SINGLE suite runs — with five suites it prints `● name › name` instead, so every multi-suite
+  tamper reported NOT CAUGHT. **A harness that reports "not caught" must be proven able to report
+  "caught" before any of its output is believed.** I now run it once on a known-broken state and
+  once on a clean tree before trusting a campaign. Same anti-vacuity rule as the tests themselves,
+  applied one level up — and I have now been bitten by it at every level: fixture, test, harness.
+- **`git checkout -- <file>` destroyed an hour of uncommitted work** while I was debugging the
+  harness. Nothing recovers that. **Commit before tampering.** Tampering is deliberate corruption
+  of the working tree; doing it over uncommitted work means the only clean copy is the one you are
+  about to break.
+
+---
+
+**2026-09-09 (Scribe)** — Inbox merge and deploy verification complete. Your 11 queued decisions from `.squad/decisions/inbox/` are now merged into the canonical ledger at `.squad/decisions.md`. Authority-service has deployed cleanly to `banking-demo` namespace with the §B3.2 startup guard active (`banker-copilot-authority`, policyVersion `pv1:d7b3db9f5ada15b8`, 22 thresholds, 13 action types).
+
+
+---
+
+**2026-09-09 — the "comparison unavailable" label (Danny's §F5 condition)**
+
+## Learnings
+
+- **A silent indicator is an assertion.** Nothing rendered where a divergence flag would go reads
+  as "we compared the two sides and they were consistent" — which is a claim, made by absence, on
+  a card a supervisor signs from. The fix is never to fire the indicator anyway; it is to say
+  *why* it did not fire. Same shape as `supervisor_unavailable`: a call that did not happen may
+  not render as a quiet pass. Silence needs a reason attached or it is indistinguishable from a
+  pass.
+- **The ruling's premise had already moved under it.** §F4 reasons from "`loop.py` emits
+  `{summary, evidenceToolIds}` and nothing else, so `primaryFactors` is structurally empty" —
+  but `app/planner/primary_model.py` now parses and emits `keyFactors`, and rejects an assessment
+  that states none (`primary_key_factors_missing`). So I made the label **run-scoped** — "the
+  primary agent stated no key factors" — rather than Danny's capability-scoped "does not emit key
+  factors". §F5 says "something of the form", which is the latitude, and asserting a permanent
+  service limitation that is no longer true would be exactly the class of over-claim the ruling
+  exists to delete. **Read the code the ruling reasons from before you quote the ruling's
+  premise.**
+- **Every conditional label needs a negative test, or it is an unconditional label.** My first
+  test ("primary stated none → label shows") passes just as happily against a label rendered on
+  every card. The pair that matters is that plus "both sides stated factors → label absent".
+  Without the second, I would have replaced an indicator that fired 100% of the time with a
+  disclaimer that fires 100% of the time, in a politer font.
+- **Tamper-test confirmed the guard: `{false && ...}` on the render condition → 2 failures, both
+  mine, both naming the missing testid.** Reverted, 228/228 green.
+- **`agreementTriState.test.tsx` has a real flake** — it compares two full card `textContent`
+  dumps and the `ApprovalCountdown` ticks between the renders (`0:16` vs `0:15`). Not mine, not
+  fixed, but it will bite whoever runs the suite next on a slow machine. Its `strip()` only
+  neutralises `0.\d+` confidences, not the countdown.
+- **The ambiguity survives one layer deeper and I left it there on purpose.** Divergence needs
+  both sides to set `concern` to an explicit boolean, and neither side ever sets it —
+  `approval_view.py` sends `{"label": factor}` and nothing more. So on the demo card
+  `factorComparison === 'compared'`, my label correctly stays quiet, and the comparison *still*
+  cannot produce a result. Widening the label to cover that means firing it on every card, which
+  is the always-fires defect wearing a politer font. Flagged for Danny in the decision record
+  instead of fixed. **When the honest fix is upstream, say so loudly and do not simulate it
+  downstream.**
+
+---
+
+**2026-09-09 (Scribe)** — Factor-divergence indicator merged to master (frontend only). Added `factorComparison` field to `Disagreement` and render condition in `ApprovalCard.tsx`. Label *"Factor comparison unavailable — the primary agent stated no key factors"* renders in supervisor column where `← DIVERGENT` flags would be (informational, not error).
+
+Principle: "We could not check" and "we checked and it was fine" must not look the same on a card a supervisor signs from.
+
+Five tests including present-when-primary-stated-none and absent-when-both-stated-factors. 228/228 passing. Tamper-tested (render condition `{false && …}` → 2 failures, both new, both named). 
+
+Upstream gap flagged: `src/banker-copilot-service/README.md:191` still lists "filters by caller's own userId" as open, which §B2.2 closed. Recommended to owner for correction (not Turk's boundary).
+
+**No redeploy.** Comment rides next image.
+
+---
+
+**2026-09-09 (Scribe)** — Canonicalizer guard added to test-demo-dataset.sh. Note for following work: the canonicalizer forbids floating-point numbers in non-money fields and requires strings for any fractional part on non-money values. Guard is applied to resolved payloads (after placeholder substitution), not literals. Resolves placeholders using jq arithmetic, exactly as the seeder does. Covers `approvals[*].payload`, `approvals[*].revisedPayload`, and `proposePathProbe.payload`. Rule parsed from `Canonicalizer.cs` and `moneyFields` from policy YAML — no hand-maintained list.
+
+
+### 2026-09-10 — Banker Copilot task queue rendered empty over 10 live approvals
+
+**Symptom:** `/copilot` Task queue showed 0 in all four buckets ("Nothing here.") while
+`GET /api/authority/approvals?limit=200` returned 10 items for `banker`.
+
+**The "10" was a red herring.** The footer "Signed this session 0 of 10" is
+`config.sessionSignatureSoftLimit` (`copilotConfig.ts:129`), NOT an approval count. No count
+of 10 ever reached the component. Chasing the bucketing logic on that premise would have
+burned the whole window — `groupApprovals` in `TaskQueuePane.tsx` was correct all along and
+reads exactly the fields the service emits.
+
+**Root cause — double `/api` prefix, hidden by the SPA fallback:**
+- `api/client.ts` created the axios instance with `baseURL: '/api'`.
+- `authorityUrl()` / `copilotUrl()` in `config/copilotConfig.ts` return ABSOLUTE app paths
+  (`/api/authority/approvals`, defaults at lines 113-114).
+- axios concatenates: `/api` + `/api/authority/approvals` = `/api/api/authority/approvals`.
+
+Verified live against the deployment, no credentials needed:
+```
+/api/authority/approvals      -> 401   (route exists, auth required)
+/api/api/authority/approvals  -> 200   content-type: text/html  <!doctype html>...
+```
+The doubled path fell through to the SPA history fallback, which answers **200 with
+index.html**. So nothing threw, no 404, no interceptor fired, and `listApprovals` hit its own
+defensive `Array.isArray(data.items) ? ... : []` and returned an empty array. A silent
+failure with a success status code.
+
+**Scope was wider than the queue.** All four `api/copilot.ts` calls (`createSession`,
+`startRun`, `sendMessage`, `fetchRunTrace`) were doubled identically — the whole harness was
+dead, not just the queue. `api/copilotStream.ts` was NOT affected and must not be changed:
+it uses raw `fetch`, not the axios instance, so it needs the full `/api/copilot/...`.
+
+**Fix:** exported `API_BASE_PATH` and `apiPath()` from `api/client.ts`. `apiPath()` subtracts
+the client baseURL, passes absolute URLs through, and `logger.error`s when the prefix is
+absent rather than silently forwarding. Applied at the two path builders, not at ten call
+sites. `baseURL` itself untouched — every other page depends on it.
+
+Also made `listApprovals` log an error when a 200 body carries no `items` array. Returning
+`[]` for a non-list 200 is precisely what hid this; an empty queue and an unreachable service
+must not look the same.
+
+**Lessons:**
+1. **Absolute app paths + an axios `baseURL` is a silent-failure generator in an SPA.** The
+   history fallback converts every mis-built API path into a 200 full of HTML. Prefer paths
+   relative to the client, and never let a mapper treat an unexpected 200 shape as "empty".
+2. **Check the denominator before trusting the numerator.** "0 of 10" looked like data
+   reaching the component. It was a config constant that happened to equal the item count.
+3. **An unauthenticated 401-vs-404 probe is a free routing test.** It separated "wrong URL"
+   from "auth problem" without a token and without touching Brian's live seed.
+
+**Also noted, not changed:** `toExecutionState` maps the wire's `"not_attempted"` to
+`'not_started'` via its default branch. Semantically right, and grep confirms nothing renders
+or gates on `executionState` today — inert, left alone.
+
+**Bucket-count divergence (raised for Danny):** with the real payload the UI yields
+7 / 1 / 1 / 1, not the 7 / 1 / 0 / 1 that `scripts/demo/demo.sh` prints. The UI puts the
+`signed` item in "Running" (signed, awaiting execution) and the `denied` one in "Done today";
+demo.sh calls the signed one done. Two classifications, one queue. Did not silently change
+bucket semantics to match a shell script — decision written to the inbox.
+
+**Tests:** `api/__tests__/approvalsRequestPath.test.ts` is the regression — it resolves the
+URL the way axios does and fails on the old code with `Received: "/api/api/authority/approvals"`.
+`components/copilot/__tests__/taskQueueBuckets.test.ts` feeds the real 10-item payload through
+`toApproval` → `groupApprovals` as a contract guard. Suite: 444 passed, 13 failed, all 13 the
+pre-existing account-opening failures (AgentPipeline, DocumentUpload). No new failures.
+
+**Deployment note:** confirmed no runtime/env override for `endpoints.authorityBase` or
+`copilotBase` anywhere in `src/ui-app/public`, the Dockerfile, nginx conf, or `infra/` — the
+`DEFAULTS` (`/api/authority`, `/api/copilot`) are what actually ship, so the fix is verified
+against the deployed values. **ui-app must be rebuilt and redeployed for Brian to see the
+queue populate; a browser refresh will not do it,** since the served bundle still contains
+the doubled path. Consumer audit clean: every axios call site is now `apiPath`-wrapped and
+the only unwrapped `copilotUrl` caller is `api/copilotStream.ts:349`, the raw-`fetch` SSE
+client, which correctly keeps the full path.
+
+### 2026-09-10 (follow-up) — same root cause explains the dead centre panel; the grey Start does not
+
+Brian widened the report: the centre panel also read "No run selected" and the Start button
+looked disabled with the chip on "Idle". Both re-checked against the code and the live
+deployment.
+
+**Centre panel — same single root cause.** `submitIntent` calls `createSession`, which went
+through the same doubled path. Probed live:
+```
+POST /api/copilot/sessions      -> 401 application/json  {"detail":"Missing Authorization header"}
+POST /api/api/copilot/sessions  -> 405 text/html         <title>405 Not Allowed</title>   (nginx)
+```
+So the two HTTP verbs failed *differently* on the same doubled path, which is why the page
+looked like three unrelated bugs:
+- **GET** → SPA history fallback → **200 + index.html** → silent empty queue, no error at all.
+- **POST** → static server refuses the method → **405** → `createSession` throws, caught in
+  `submitIntent`, surfaced only as an 8-second snackbar.
+
+No session ⇒ no `activeRunId` ⇒ `TracePane.tsx:399` renders `run ? run.title : 'No run
+selected'`. One cause, three symptoms. The fix already made covers all of them.
+
+**The grey Start button is NOT a defect — retracted.** `CommandBar` disables Start on
+`busy || disabled || value.trim().length === 0`, and `CopilotHarness` **never passes
+`disabled`** (grep for `disabled` in that file returns nothing), so it is `undefined`. On a
+fresh page the only closed gate is an empty input box. "Idle" is likewise correct: it means no
+session has been opened yet, which is the true state before the first intent. Nothing fetches
+a capability or role to gate this control. Pinned by
+`components/copilot/__tests__/commandBarGating.test.tsx`, including a guard that fails if a
+`disabled` prop is ever wired in, so this diagnosis gets revisited rather than forgotten.
+
+**Lesson — one bug wearing three masks.** A doubled base path produces *method-dependent*
+failures: silent 200s on reads, hard 405s on writes. Symptoms that look unrelated (empty list,
+dead panel, grey button) collapsed to one line of config. Resisting the urge to explain each
+symptom separately was what kept the fix to three files. Corollary: two of the three "symptoms"
+were not symptoms at all — the grey Start and the Idle chip were correct behaviour being read
+as evidence. Confirm each reported symptom is genuinely anomalous before counting it.
+
+Suite after the follow-up: 449 passed, 13 failed — the same pre-existing account-opening 13.
+
+### 2026-09-10 (close-out) — the queue defect, settled end to end
+
+Brian retracted the escalation (correctly — the grey Start was the empty-input gate) and asked
+me to return to the queue panel, noting his point 2 was still open: *if the "10" is a hardcoded
+constant, the component may be receiving nothing and the fault is in the fetch rather than the
+bucketing.* That is exactly how it resolved:
+
+- The **10 is a constant** — `sessionSignatureSoftLimit`, `copilotConfig.ts:129`.
+- Therefore **the fault is in the fetch**, not the bucketing. `groupApprovals` was never wrong.
+
+One nuance worth keeping: "the whole page receives no data" and "the queue panel is empty" were
+never competing theories — they are the same defect seen at two zoom levels, because every
+authority *and* copilot call shared the one bad path helper. Narrowing the symptom did not
+narrow the cause.
+
+Proved it with `components/copilot/__tests__/taskQueuePopulates.test.tsx`: mounts the real
+surface with the real provider (not `offline`, so `refreshApprovals` actually runs), stubs only
+the HTTP layer, and returns the live `banker` payload. The stub is **URL-aware** — it serves
+data only to `/api/authority/approvals` and mimics the SPA fallback (index.html, status 200)
+for anything else, so a returning double prefix reproduces the bug instead of passing on a
+lenient mock. Observed both states:
+
+```
+PRE-FIX   ✕ requests the single-prefixed authority path
+          ✕ shows 7 in "Needs you" — not the reported 0
+          ✕ fills the other three buckets rather than leaving them all at zero
+          ✕ shapes the queue to 5 visible with the rest behind "Show 2 more"
+          ✓ renders an empty queue when the SPA fallback answers — the original bug
+POST-FIX  5 passed
+```
+
+The last case is a deliberate reproduction of Brian's screenshot and passes in BOTH states —
+it asserts the bug, not the fix. The other four are the regression.
+
+**Method note for the team.** Three times in this session a reported "symptom" turned out to be
+correct behaviour: the "0 of 10" footer, the grey Start button, the Idle chip. Each one, taken
+at face value, implied a different and wrong root cause. The habit that paid off was tracing
+every on-screen number and every disabled control to the line of code that produces it BEFORE
+letting it shape a hypothesis — and being willing to tell the requester their framing was
+wrong. Brian's own retraction proves the point better than I could.
+
+Final suite: 454 passed, 13 failed — the same pre-existing account-opening 13. Nothing added.
+
+### 2026-09-10 (final) — console trace confirms the diagnosis; misleading error fixed too
+
+Brian's browser console independently produced what the code review and the live probes had
+already established:
+```
+POST .../api/api/copilot/sessions  405 (Method Not Allowed)
+  createSession @ copilot.ts:37 → CopilotContext.tsx:235 → CopilotHarness.tsx:96 → CommandBar.tsx:56
+```
+
+**Blast radius, enumerated (this was the part worth doing carefully).** Only TWO modules ever
+built absolute `/api/...` paths and handed them to the axios client:
+
+| module | style | status |
+|---|---|---|
+| `api/copilot.ts` | `copilotUrl()` → absolute | **was doubling** — fixed |
+| `api/approvals.ts` | `authorityUrl()` → absolute | **was doubling** — fixed |
+| `api/accountOpening.ts` | relative (`/applications/...`) | correct, untouched |
+| contexts/pages (`/accounts`, `/auth/login`, `/transactions/my`, `/admin/*`, `/users/me/*`, `/chat`) | relative | correct, untouched |
+| `api/copilotStream.ts` | absolute, but raw `fetch` — no baseURL | correct, untouched |
+
+That table is the whole explanation for why login, nav and account pages worked while only the
+copilot surface was dead, and it is why the fix had to go at the two path builders rather than
+at the shared client. Changing `baseURL` would have broken every row marked correct.
+
+**One bug, not two.** The queue fetch (`refreshApprovals` → `listApprovals`) goes through the
+same doubled client, so the empty NEEDS YOU/WAITING/RUNNING/DONE TODAY panel and the rejected
+harness request have a single cause. **There is no bucketing defect** — `groupApprovals` reads
+exactly the fields the service emits and was never wrong.
+
+**Second defect fixed (separate, real).** `CopilotContext.tsx:245` mapped every possible
+failure onto "The harness did not accept that request. It is not running on the server." — a
+statement about infrastructure the client cannot observe, presented as fact. Replaced with
+`describeHttpFailure()` in `api/errors.ts`, which states the status, quotes the server's own
+message via the existing `resolveApiError`, and treats 404/405 as *routing* faults rather than
+outages. The log line now carries status and URL; the 405 was previously invisible in it.
+
+**Cost of the bad message:** ~20 minutes chasing healthy pods and a token hypothesis that the
+code had already ruled out (a stale JWT would have hit the `client.ts:59` interceptor and
+force-redirected to `/login`, not left a signed-in user on an empty page). Worth remembering:
+an error string that names a cause is a diagnosis, and a wrong diagnosis stated confidently
+costs more than no diagnosis at all.
+
+Final: **461 passed, 13 failed** — the same pre-existing account-opening 13, none added. `tsc`
+clean. Needs a ui-app image rebuild + redeploy; the fix is not live in Brian's browser until then.
+
+### Layout phase — `/copilot` responsiveness (Defects 1 & 2)
+
+**The lesson: jsdom cannot see layout, so I stopped guessing and measured in a real browser.**
+I wrote `tests/e2e/specs/layout-copilot.spec.ts` (Playwright, Chromium, 5 viewports incl.
+Brian's 1550x780) and ran it against a static build. It immediately failed 8 assertions that
+every unit test had happily passed. Every fix below came from a measurement, not a theory.
+
+1. **The command bar was clipped, and the footer was NOT the cause.** I had assumed the
+   marketing footer was eating the space. Measurement said otherwise: the command `Region`
+   was rendering **24px tall** while the panes row above it kept 567px. Cause: the command
+   `Region` inherited `flex-shrink: 1` and `Region` sets `minHeight: 0`, so flexbox was free
+   to crush it below its content; the 40px input then overflowed into the column's
+   `overflow: hidden` and vanished. Fix: `flexShrink: 0` on the command Region — it is the
+   one row that must never shrink. Verified: region now 62px, bottom edge exactly 720/720.
+
+2. **~950px of blank scrollable space below the surface.** The shell is `height: 100vh;
+   overflow: hidden`, yet the document scrolled 964px into nothing. Cause: the shell was
+   `position: static`, and **`overflow: hidden` does not clip absolutely-positioned
+   descendants unless the element is their containing block.** The escapees were the
+   visually-hidden `position: absolute` screen-reader spans in `ApprovalCountdown`. Fix: one
+   line — `position: 'relative'` on the full-bleed container. This is a general trap: any
+   `overflow: hidden` viewport shell needs `position: relative` or a11y-hidden spans leak.
+
+3. **Do not trust `documentElement.scrollHeight` alone.** It read 1684 while `body`,
+   `html` and `#root` all measured 720 — a contradiction. Screenshotting at scroll bottom
+   (blank page) and reading `window.scrollY` after a `scrollTo` proved the scroll was real.
+   When a measurement contradicts itself, add a second independent measurement.
+
+4. **The right pane is NOT unreachable.** Before recommending anything for Defect 3 I
+   checked whether the banker could physically reach the Sign button: the approval column is
+   `overflowY: auto`, h 343 / scrollHeight 1032. Cramped, yes; blocked, no. Worth checking
+   before escalating a UX complaint into a blocking bug.
+
+5. **I broke a test and found it by counting.** The baseline is 13 failures; my run showed
+   14. `agreementTriState.test.tsx` passed alone but flaked ~50% in the full suite. I did not
+   wave it away as "flaky" — I stashed my changes and ran the original tree 4x (stable 13),
+   which proved I had triggered it. Root cause: that test compares two rendered card texts
+   and strips only `0.\d+`, but `ApprovalCountdown` re-renders on a 1s tick, so two renders
+   straddling a tick differ by "MM:SS". My +34 tests slowed the suite enough to expose a
+   latent time-dependent assertion. Fixed the strip regex. 5 consecutive full runs: 13/464.
+   **Counting the baseline is what caught this. Always report the count.**
+
+6. **A new spec must be checked against the *existing* config's collection.** The shared
+   `tests/e2e/playwright.config.ts` has `testDir: './specs'` with no `testMatch`, so it would
+   have swept up my layout spec and failed CI (it needs a local static server on :8099, not
+   the deployed `BASE_URL`). Added `testIgnore: '**/layout-copilot.spec.ts'` and verified the
+   split: main config collects 0 of them, `layout.config.ts` collects 30.
+
+### Defect 3 — the centre pane now holds the selected approval
+
+Brian ruled: build it (and suppress the FDIC footer — "this is a demo, not a regulated
+deployment"). Implemented as one stateless rule, `runActive = Boolean(run)`:
+
+- **A run exists → the trace owns the centre**, including after the run finishes. Reverting
+  on completion would yank a trace away from someone still reading it.
+- **No run → the centre shows the selected approval** (`ApprovalDetailPane`, a layout
+  wrapper around the unmodified `ApprovalCard`, so every field survives the move).
+- **No run → the artifact pane is not mounted at all.** It exists to show what a run
+  produced; keeping it would reserve a third of the surface for one sentence and re-create,
+  on the right, the very "large empty pane" defect being fixed.
+- The swap is announced before it happens: the centre subtitle says the trace will take the
+  pane, and the right-hand dock is now labelled "Selected approval" so it is findable.
+
+**The lesson from this round: a pane measured EMPTY tells you nothing about the same pane
+FULL.** Brian asked me to close the "trace with real run content" gap I had flagged. Doing so
+immediately exposed a bug that had been latent for months:
+
+> Every pane is the sole child of a `display: flex` Region, and **none had `flexGrow`**, so
+> its width was CONTENT-based. `TracePane` looked correct forever because its empty-state
+> paragraph is long; the moment a real run replaced it with short step labels the Paper
+> collapsed to **426px inside a 750px region** — a 324px dead gap. Fixed on all four panes.
+> Proved the guard works by reverting just that line and re-running: `Expected <= 2,
+> Received 324`.
+
+**And the reverse lesson, same round.** My stubbed run rendered a step as "NaN." — I nearly
+filed it as a product bug. Instead I read the server: `planner/loop.py` sends
+`{stepId, index, title}` on `step.started`, while my stub sent only `stepId`. The store does
+`{...existing, ...patch}`, so my `undefined` index/title clobbered good values. **The stub was
+unfaithful; the product was fine.** An unfaithful stub does not just miss bugs, it invents
+them. (The store's overwrite-with-undefined is still latent fragility — flagged, not fixed:
+it cannot fire against the real server and reducers are the wrong thing to edit mid-demo.)
+
+**Baseline discipline paid off twice.** The count moved to 14 again and I did not wave it
+through: the offender was MY `taskQueuePopulates.test.tsx`, which used `waitFor(async () =>
+... await findByRole ...)`. A `findBy*` inside a `waitFor` callback spends its own retry
+budget on every poll, so the suite passed alone (3s) and timed out under parallel load (13s).
+Rewrote the callback to synchronous `getBy` queries — assertions unchanged. Five consecutive
+full runs: **13 failed / 464 passed**.
+
+### Phase 3 — the signing gate: every card was Deny-only
+
+**Root cause, confirmed not assumed.** `canSignUnderStream` accepts only `live`/`resumed`;
+`stream.status` initialises to `idle`; `openStream` had exactly ONE call site — inside
+`submitIntent`. So a banker who loaded `/copilot` to work the queue and never dispatched an
+agent run sat at `idle` forever and could not sign anything, **by construction**. Proven in a
+real browser before the fix: zero requests to `/stream` on a cold load, against a stream
+endpoint independently verified healthy. Not a backend fault, not a stale token.
+
+**Fix.** Establish the session and stream on MOUNT, not on first dispatch. `POST /sessions`
+executes nothing — the planner only moves when a run starts inside the session. The gate
+itself was not touched: when the stream cannot be established, signing stays disabled. That
+is the correct direction to fail.
+
+**Learnings.**
+
+1. **`route.fulfill` cannot hold an SSE connection open.** A fulfilled stream body is
+   delivered then closed, which the client correctly reads as a disconnect — so a healthy
+   stream looks broken and the test proves nothing. Verifying SSE needs a real server.
+   `tests/e2e/support/fake_copilot_stack.py` is that server; reuse it.
+2. **An unfaithful stub invents bugs — fourth time this month.** My stub did not drain the
+   POST body, so on a keep-alive connection the body bled into the next request and produced
+   a 400 that looked like a product fault. Separately, the layout spec's catch-all answered
+   `POST /sessions` with `{}`, which tripped the client's sessionId guard and put an error
+   toast on screen that read as a layout regression. Both were my harness, not the product.
+   Before filing a defect against a stub result, check the stub against the real server.
+3. **A "run once" ref plus StrictMode equals never runs.** React 18 StrictMode mounts,
+   unmounts and remounts every effect in development. The unmount lands while the async work
+   is in flight, so that attempt aborts — and the ref, already set, makes the remount skip the
+   work entirely. The guard reintroduced the very bug the effect existed to fix, in dev only,
+   invisible to a production build. Reset the ref in cleanup unless the work settled.
+4. **A bottom-anchored toast is an occlusion defect.** MUI's `Snackbar` defaults to
+   bottom-centre at `z-index: 1400` and landed squarely on the command bar — the same class of
+   fault as Brian's footer complaint, and far easier to hit once errors could surface on mount.
+   Found only because a real-browser `elementFromPoint` check failed.
+5. **Do not weaken an existing test to fit new copy.** My gate wording dropped the phrase an
+   older assertion depended on, then duplicated it so `getByText` found two nodes. The right
+   answer was to split terse (beside the button) from full (in the alert), which is better UX
+   and left the older guarantee intact.
+
+### Phase 4 — the signing attestation said the opposite of the truth
+
+**The check cleared the backend.** Before touching copy I compared
+`requesterUsername`, `callerMaySign` and the slot rules in the live `banker`
+payload. Slot 0 carries `minSeniority: 1` and an EMPTY `mustDifferFrom` — the
+opening signature, which the requester may legitimately provide. Slot 1 carries
+`minSeniority: 2` and `mustDifferFrom: [<requester uuid>]`. The service returns
+`callerMaySign: true` for the requester only while slot 0 is unfilled, and flips
+to false with "you cannot also approve it" the moment they fill it (item 7 in the
+fixture proves it). **Separation of duties is intact. It was only ever copy.**
+
+**The defect.** The attestation branched on `isL2` alone and never consulted the
+slot, so every L2 signer was told they provided "the independent supervisor
+co-signature ... because you are a different identity from the requester
+(banker)" — while signed in AS banker. False for the opening signer, and
+self-contradictory for the requester.
+
+**Learnings.**
+
+1. **The derivation already existed six lines away.** `SignatureRoster` had
+   correctly computed "the slot the caller will fill" — first unfilled — and had
+   even documented why. The banner just never used it. Before concluding a fact
+   is not derivable client-side, grep for it: a sibling component may already
+   derive it. Both now share one exported helper so they cannot disagree.
+2. **Ordinals are not array indices.** `demoApproval` numbers its slots 1 and 2.
+   Anything keyed off `ordinal === 0` silently mislabels every card built from the
+   demo fixture while passing against the wire fixture. Key off slot STATE
+   (how many remain unfilled), which is ordinal-agnostic and reads truer anyway.
+3. **A test that asserts the buggy string locks the bug in.** `ApprovalCard.test.tsx`
+   asserted `/independent supervisor co-signature/` was present. It was passing,
+   and it was defending the defect. When a test's assertion IS the bug report,
+   replace it with the inverse and say why in the test name.
+4. **Derive the claim from what you can verify.** "You are the requester" is only
+   claimed when `identity.id` actually matches `requesterUsername`; otherwise the
+   copy falls back to neutral wording that is true either way. Failing to the
+   weaker true statement beats guessing at the stronger one.
+5. Rung is the wrong axis for this sentence entirely. Whether a signature OPENS
+   an approval or CLOSES it is a property of how many remain, not of L1 vs L2 —
+   which is also why the new copy survives Danny's possible third verb.
+
+## Phase 5 — evidence findings (tool names -> what the agent learned)
+
+**Defect.** The card listed only evidence *keys* ("Get user", "List login audits") and discarded
+the payloads. The values were never missing from the API; they were dropped **client-side, in two
+places**:
+
+- `api/authorityWire.ts` `toEvidence` used the object key as a label and only filled `excerpt`
+  from a nested `summary` string or a bare string value, so `{accountId, balance}` produced nothing.
+- `ApprovalCard.tsx` `EvidenceList` rendered `item.label` only.
+
+**Fix.** `EvidenceRef` gained `findings: PayloadField[]`, populated with the existing
+`flattenPayload` + `humanLabel` primitives, so findings inherit the same formatting the payload
+table already uses — `accountId` renders masked (`····6666`) and `balance` as `$59,480.00` for free.
+Render is marked PROVISIONAL; Danny's card spec replaces the visual design, not the plumbing.
+
+**GUID -> name is a solved problem, not backend work.** `GET /api/users/{id}` in `UsersController`
+carries a plain `[Authorize]`, so a banker token resolves it today. `/admin/users` is
+`[Authorize(Roles = Admin)]` and is NOT usable from the banker surface. There is simply no client
+for it in `src/ui-app/src/api/` yet.
+
+### Lessons
+
+1. **`npx tsc --noEmit` is worthless in this project.** `target=ES5` + `moduleResolution=node10`
+   emit TS5107 and abort *before* type-checking, so it reports clean while the app does not compile.
+   It told me clean while `react-scripts build` failed on a real TS2322. **Use
+   `CI=false npx react-scripts build` as the typecheck.** The whole team may be relying on `tsc`.
+2. **A disclosure toggle that already reads "Hide X" is open.** My probe clicked it and closed the
+   panel, then reported the data missing. The check was the suspect, again. Read `aria-expanded`
+   (or the verb) before clicking, and dump the whole pane rather than a filtered subset.
+3. **Verify a reported baseline before you accept blame for it.** The stated baseline was
+   467 passed; measured, it was 473 (486 total, minus the one test that was asserting the *buggy*
+   attestation string and correctly broke when I fixed the source). 473 + 9 + 5 + 2 = 489 exactly.
+   Never explain a count delta — measure it by removing your own additions and re-running.
+
+
+### 2026-09-10 — UI and Authority Fixes Session (#332)
+
+**Session Type:** Multi-agent integrated session (Turk, Linus, Danny, Rusty)
+**Branch:** `332-beta`
+**Outcome:** UI defects fixed; pane architecture approved; approval card rebuilt
+
+**Linus's Contributions:**
+- Fixed doubled `/api/api` prefix by consolidating `apiPath()` source of truth
+- Added `describeHttpFailure()` error messaging utility
+- Fixed copilot pane layout: command bar clipping, blank scroll, flexGrow regression
+- Implemented centre-pane architecture per Danny's ruling
+- Fixed SSE terminal frame handling and reconnect-storm
+- Preserved evidence findings field through wire mapping
+- Updated signing attestation copy to banker-centric language
+- Implemented session-on-mount pattern
+- Verified: 489 passed, 13 pre-existing failures, 52/52 Playwright E2E
+
+**Findings Flagged (awaiting Danny):**
+- Queue bucket semantics: signed-but-unexecuted approval classification
+- Footer compliance: FDIC text suppression acceptable?
+
+**Orchestration Log:** `.squad/orchestration-log/2026-09-10T20:47:00Z-linus.md`
+**Session Log:** `.squad/log/2026-09-10T20:47:00Z-copilot-ui-and-authority-fixes.md`
+
+## Phase 6 — the reconnect storm and the heartbeat that never landed
+
+Brian: 24 identical `GET …/stream?runId=…&lastSeq=6`, all 200 in 29ms, while the run had
+already reached `run.done`. Four distinct causes, three of them mine.
+
+1. **Heartbeats were dropped before they could pet the watchdog.** The real server emits
+   `event: heartbeat` + `data: {"serverTs": …}` — **no `seq`, no `id:`** — so `toEnvelope`
+   rejected it ("no numeric seq") and `armHeartbeatWatchdog` was never re-armed. A perfectly
+   healthy idle stream was therefore declared `degraded` after
+   `heartbeatIntervalMs * missedHeartbeatsBeforeDegraded` (30s shipped) and every card went
+   Deny-only. **This, not the storm, is what Brian saw on a cold load.** Handle heartbeats at
+   the FRAME level, before envelope parsing, and never require a seq of them.
+2. **No terminal handling.** `run.done` was dispatched to the reducer (hence "completed ·
+   1 steps" on screen) but `openCopilotStream` never looked at `event.kind`, so EOF after a
+   finished run was indistinguishable from a dropped connection.
+3. **`attempt = 0` on `response.ok`.** A 200 is not success — a session-scoped attach to a
+   finished run answers 200 and ends immediately. Resetting the backoff there turns
+   200-then-EOF into an unbounded tight loop. Only a real frame may clear the backoff, and
+   the status is now claimed on the first FRAME rather than on `response.ok`.
+4. **Not mine:** the server cannot hold a session stream open once that session's latest run
+   has finished (`latest_for_session` returns closed runs; the `await_next_run` wait loop is
+   only reachable when a session has never had a run). Routed to Turk, not worked around —
+   see `.squad/decisions/inbox/linus-session-stream-cannot-outlive-a-finished-run.md`.
+
+Also: `seq` is scoped to the RUN (`bus.py`: `RunStream._seq`), so the resume cursor MUST be
+reset at a run boundary. Carrying run A's cursor into run B makes the server replay from
+seq+1 and silently swallow run B's opening frames.
+
+### Lessons
+
+1. **My stub lied again — sixth time.** It sent `{"kind": "heartbeat", "seq": n}`. One
+   invented field, and the Phase 3 gate spec passed green while the heartbeat-drop bug was
+   live in production the whole time. Diff the stub against the real emitter, field by field,
+   before trusting a green run.
+2. **`addInitScript` cannot configure this app.** `public/runtime-config.js` *assigns*
+   `window.__RUNTIME_CONFIG__`, clobbering anything set earlier. My first spec therefore ran
+   with the shipped 30s watchdog, waited 12s and "passed" against the unfixed client. Route
+   `**/runtime-config.js` instead, and ASSERT the override landed.
+3. **Sampling once cannot see a flap.** The pre-fix failure is live → degraded → live within
+   a few hundred ms. A single assertion after the window lands in a `Live` phase and reports
+   all-clear. Sample continuously and judge the whole window.
+4. **jsdom has no `ReadableStream`, no `TextEncoder`, no `TextDecoder`.** Without polyfills
+   the decode step throws inside `connect()`, the error is caught as a lost connection, and
+   every frame vanishes — the suite then reports a reconnect loop that is an artefact of the
+   test environment. Supply `body.getReader()` directly and polyfill the codecs from `util`.
+5. **A test that passes before the fix proves nothing.** Two of my four new unit tests passed
+   against the pre-fix file; I rewrote one into a real discriminator and kept the other as an
+   explicitly-labelled regression guard for the new code. Always run new tests against the
+   unfixed source.
+6. **Check what HEAD is before using `git checkout` as a time machine.** A commit landed
+   mid-session and swept my working tree into it, so a "pre-fix" run silently tested the
+   fixed code. Pin the parent SHA (`git show <parent>:<path>`) instead of trusting HEAD.
+
+### Phase 6 addendum — the run timer, and two more tests that passed for the wrong reason
+
+`TracePane` recomputed `now - startedAt` on every tick and ignored the `durationMs` that
+`run.done` carries and the reducer already stores, so a run the service finished in 241ms
+displayed "181s and counting" beside "the agent is still running on the server". Two lies on
+one line. Prefer the server's number the moment it exists; sub-second runs now render "0.2s"
+rather than flooring to "0s", which reads as a missing value.
+
+7. **`getByRole('button', { name: /sign/i })` matches far more than the Sign button.** It also
+   matches the batch group's "Sign 2 items" and every queue row whose accessible name contains
+   "DENIED". My gate test passed in 525ms against one of those while the dwell-gated button it
+   was supposed to be watching was still disabled. **A suspiciously fast pass is a failing
+   test.** Enumerate what a selector actually matched before trusting it — `/^Sign — /` is the
+   card's button, and it correctly reads `Sign — … (enabled in 0:26)`.
+8. The gate now passes HONESTLY and untouched: pre-fix build, Sign is still `disabled` after
+   40s; post-fix it enables at 26.6s, after the full L2 dwell. Both measured in a real browser.
+
+## Phase 7 — Danny's approval-card IA spec, §7 steps 1/3/4 + option A
+
+**Built** `components/copilot/approvalNarrative.ts` — pure functions, wired into `ApprovalCard`:
+- `approvalHeadline` (§3.1): verb-first ask with the money. Unknown action → falls back to
+  `actionLabel`. That fallback IS the safety property: a card that does not know an action must
+  degrade to today's wording, never to a confident sentence about the wrong thing.
+- `subjectAbsence` (§3.2, honest-absence form): §6.1 is Turk's and has not landed, so the card
+  says plainly that it cannot identify the customer instead of printing a GUID as if it were an
+  answer. Returns null when there is no customer subject.
+- `whyThisRung` (§3.7/§6.4, client-side by Danny's assignment): replaces "Base rung … No
+  escalators fired." Keyed on action AND rung together — keyed on action alone it would
+  confidently tell a single-signer approval it "always needs two people". The escalator branch
+  is untouched and still renders server text verbatim; that text is audit record.
+- `expiryConsequence` (§3.8), `DENY_IS_FINAL` (priority 3, before the click).
+- Action row restructured for THREE verbs; third slot deliberately EMPTY, not a disabled button.
+
+**Two lessons, both the same lesson.**
+1. `flattenPayload` keys rows on `path`, not `key`. My `.key` lookup returned undefined for
+   every field, so all five sentences silently degraded to their fallbacks — and the fallbacks
+   are plausible, so the card looked fine. 6 of 22 tests caught it. Read the producer's shape;
+   do not assume the obvious property name.
+2. **The browser caught what 22 unit tests could not.** Against expired fixtures the card read
+   "If nobody signs by 4:06 PM, this is automatically denied" on an approval whose window had
+   ALREADY closed — a future-tense forecast about a thing that has already happened. My tests
+   passed because they used a fixture I read as current. `expiryConsequence` now takes `now`
+   (fed by `useNow()`) and returns null past expiry. Third time this session the browser has
+   found a defect the unit tests were structurally incapable of seeing.
+
+**Verified:** 518 passed / 13 failed (13 = the two pre-existing account-opening suites,
+unchanged); narrative suite 23/23; layout 52/52 in a real browser, twice; `CI=false
+react-scripts build` compiles.
+
+## Phase 8 — terminal-state signing affordances
+
+**The defect:** a card whose signing window had closed still read "SIGNATURE REQUIRED" and
+"Yours is the only signature needed — this goes ahead once you sign." A second report: `Deny`
+stayed enabled and red on a fully SIGNED approval.
+
+**Root cause — terminality is not a status.** The card's `terminal` flag was
+`status === 'denied' || status === 'executed'`. Expiry is not a status: the service had not yet
+swept the record, so it arrived `pending` with `callerMaySign: true` while the countdown three
+lines above rendered "signature window closed — DENIED" from an independent time comparison.
+`signed` was missing too — terminal for SIGNING, non-terminal for execution.
+
+**Fix:** one predicate, `signingClosed(approval, now)` in `approvalNarrative.ts`, driving the
+header, the aria-label, the attestation, and the WHOLE action row — including the reserved
+third verb, so counter-propose cannot inherit the bug. Rule: an affordance renders only when
+acting on it can change the record. It only ever narrows, so it cannot weaken the gate.
+
+**Checked the server before touching the UI:** `ApprovalService.cs:446-455` rejects a deny on a
+signed record with a 409. Purely a UI honesty bug, no escalation.
+
+**Lesson — my own rule, nearly missed.** My first signed-record browser test PASSED while
+asserting `getByRole('button', {name: /^Deny$/}).toHaveCount(0)` — because the card never
+rendered at all. A signed record is not auto-selected. Assertions about the ABSENCE of
+something pass trivially when the thing that would contain it is absent; always assert
+something POSITIVE about the rendered surface first (here: the header text).
+
+**Second-order find:** `demoApproval.expiresAt` was pinned to May 2026, four months lapsed, and
+`demoEvents` feeds the replay path in `BankerCopilotPage`. Once this fix deployed, the scripted
+demo would have opened on a fully suppressed card. The card was right; the fixture was stale.
+Anchored that ONE window to load time; every other fixture timestamp is narrative and stays fixed.
+
+**Verified:** 524 passed / 13 failed (13 pre-existing account-opening); layout 52/52; two new
+real-browser terminal-state guards. 16 tests broke mid-change and were fixed by re-dating stale
+fixtures, never by deleting assertions.
+
+## Phase 10 — free-text planner run outcomes (2026-09-10)
+
+- **The wire, read from the code not the design doc.** Answer artifact is
+  `artifact.created` `kind:"answer"`, content `{answer, keyPoints[],
+  citedEvidenceIds[], unverified[]}`. Refusal is `run.error {code, message,
+  recoverable:false}` + `step.failed` + `run.done status:"failed"`. Turk's design
+  wanted a durable refusal artifact; the code does not emit one, so a refusal
+  exists ONLY as `run.error`.
+- **Presentation, not placement.** The answer already reached the artifact dock —
+  it rendered as a JSON dump because `ArtifactBody`'s last branch stringifies
+  objects. Checking this before restructuring `CopilotHarness` saved putting 52
+  layout assertions at risk for no gain. Always confirm which of the two a defect
+  is before moving a component.
+- **A constraint encoded in copy is not enforced.** I wrote non-disclosing copy
+  for `ambiguous_subject`/`subject_not_found` and still passed the server message
+  through verbatim. Non-disclosure held only because Turk wrote careful strings.
+  Enforce at the render, and test with a deliberately leaky input.
+- **See the control fail before trusting it.** Removing the guard made the test
+  report three candidate usernames in the DOM. Same discipline caught the
+  pre-fix/post-fix signature for the answer and refusal e2e: all three fail
+  against the previous build, all pass against the current one.
+- **The replay filter is a liability for anything carried once.** A refusal rides
+  `run.error` alone, so a cold load depends entirely on the backlog passing the
+  filter added with the storm fix. It does — `completedRuns` is empty on a fresh
+  client — but that had to be asserted, not assumed. Durable across reload,
+  LOST on service restart.
+
+### 2026-09-10 — Session stream lifecycle bug found (#332)
+
+**Issue:** When a session has completed at least one run and that run is finished, attaching to the session (no explicit `runId`) resolves to the closed run, immediately replays backlog, and disconnects (200-EOF). The client cannot hold a stream open at all, so signing buttons go dead until page reload.
+
+**Root Cause:** `routes/sessions.py` `latest_for_session()` returns closed runs. The wait loop that would otherwise re-enter for the next run (`await_next_run()`) is never reached because `stream is None` is false.
+
+**Proposal (deferred to server):** When no `runId` was requested and the latest run is already closed and fully replayed, fall through to the same `await_next_run` loop rather than replaying-and-returning.
+
+**Client-side mitigation (implemented):** Stop hammering; stop re-dispatching the closed run's frames; report accurate run state rather than faking liveness. The gate must not sign without live stream freshness, so faking liveness weakens control.
+
+**Verification:** `tests/e2e/specs/stream-lifecycle.spec.ts` with `STREAM_MODE=completed-run` measures stream requests before/after fix: 15 requests in 12s before, 5 requests after.
+
+**Key Learning:** Signing gates depend on stream liveness as a freshness oracle. If the client cannot hold a stream open, it must not sign. A gate-weakening workaround trades correctness for demo convenience — do not do it.
+
+## Phase 11 — a Playwright suite against the DEPLOYED surface (2026-09-10)
+
+`tests/e2e/cloud.config.ts` + `tests/e2e/cloud/`. The first config here that leaves
+localhost. Everything below was learned by probing `onlinebankingdemo.bjdazure.tech`, not
+by reading the design docs; where the two disagreed the host won.
+
+**The gate is a THROW, not a skip.** `run-outcomes.spec.ts` uses `test.skip` correctly —
+the other mode genuinely cannot run. It would be wrong here: a skipped collection exits 0
+with "0 failed", which reads as a pass, and that exact failure mode cost us the evening.
+Unset `BANKER_COPILOT_CLOUD_E2E` → exit 1, no browser starts, no "passed" line anywhere in
+the output. Verified, not assumed. The throw is duplicated at spec-module scope because a
+spec can be reached by another config.
+
+**Separation verified by counting, not by reading.** `playwright.config.ts` globs
+`./specs` with a `testIgnore` of only two files — a cloud spec dropped in `specs/` would
+have been silently collected by the offline suite and made CI network-dependent. Hence
+`tests/e2e/cloud/`. `--list` across all five existing configs: 0 cloud specs collected,
+495/52/4/2/4 tests, unchanged.
+
+**Findings on the deployed surface.**
+1. The approvals path in the brief, `/api/approvals?scope=all`, answers **200 with the
+   SPA's index.html** via the history fallback. A successful non-JSON response is worse
+   than a 404. Authority is at `/api/authority/approvals`.
+2. **Nothing links a run to its approval in the UI.** The harness auto-selects the first
+   pending signable approval on mount and deliberately never re-points the dock, so after
+   a successful propose the dock still shows an unrelated queue item. Queue rows carry no
+   id. I dock by clicking rows until the card's `payloadHashShort` chip matches the record
+   authority returned — positive identification, loud failure if no row yields it.
+3. **"No approval dock" is not assertable in the cloud, and asserting it would be a lie.**
+   The dock is fed by the queue, not by the run, and a live tenant always has open items.
+   What the requirement means is that the run PROPOSED nothing, so the assertion is an
+   authority delta against a pre-run snapshot. Documented in the test rather than faked
+   with an intercepted empty queue — that would only test the fake.
+4. **The approval dock is a CHILD of the `Artifacts and approvals` region.** My first
+   answer assertions read `canvas.innerText()` and were contaminated by the docked card:
+   a strict-mode violation on `Cited evidence` exposed it, and the length and no-JSON
+   assertions would otherwise have been satisfied by the CARD, not the answer. Subtract
+   the dock text.
+5. **`proposed` → `pending` is a real transition and polling catches both.** Asserting
+   `pending` lost a race it had no business running. `TaskQueuePane` already groups both
+   as open; the invariant is "open and awaiting people", not the label in that instant.
+6. **A red test that does not say what the system did instead is nearly worthless.** The
+   first L2 failure was "expected 1, received 0" after 4.1 minutes and cost another full
+   run to diagnose. Both waits now watch for a refusal and fail carrying its code.
+
+**Non-disclosure assertion, corrected by running it.** Built from the dataset, it first
+failed on `banker` — because the refusal copy reads "Nothing matched the reference for
+this banker", which is the READER's own role, not a customer. Scoped to `retail: true`
+identities. Also asserted the candidate list is non-empty, so the loop cannot pass
+vacuously.
+
+**What the cloud actually does, over ~9 runs.** Approval and refusal: solid. Read-only:
+about 3 in 4. Two distinct refusals observed on the SAME prompt that passes otherwise —
+`planner_model_unavailable` at "Answer from evidence", and `intent_contract_invalid`
+whose message is *"The answer model cited evidence this run did not gather:
+['188470c5…', …]"*. So the contract failure Brian hit is citation validation: the answer
+model cites raw record GUIDs while the run's evidence keys are `lookup_customer`,
+`list_customer_accounts`, `resolved_subject`. Not a userId problem. Handed to Turk.
+
+**No retries in this config, on purpose.** A retry would hide precisely the intermittent
+cloud faults the suite exists to surface.
+
+**Post-commit addendum.** A later full run failed the L2 test with `read ECONNRESET`
+mid-body on `GET /api/authority/approvals?scope=all` — a 111KB response, polled every 3s
+for four minutes, ~9MB through istio-envoy for one wait. Backed off to 5s. Polling is not
+the thing under test and must not be the thing that fails. The same run's underlying
+problem was real though: the propose path normally lands in 12-16s and occasionally does
+not land inside 240s at all. Two consecutive re-runs afterwards: 16.2s and 12.7s, both green.
+
+**Second addendum — refusal code drift, and assertion ORDER.** After Turk's identifier
+fix landed, the unknown-customer prompt refused once as `objective_unmappable` instead of
+`subject_not_found`, and my assertion on the code ran BEFORE the non-disclosure checks —
+so the run that drifted told me nothing about whether the copy had leaked. Reordered: the
+named-code check and the whole non-disclosure block run first and hold whatever the code
+is; the subject-code expectation is asserted last, alone. It is not pedantry about naming:
+`TracePane` suppresses the server's message for `subject_not_found` and `ambiguous_subject`
+and for nothing else, so an unresolvable customer refusing as `objective_unmappable` puts
+the server's own sentence back on screen and returns non-disclosure to being a property of
+whoever wrote that sentence. Worth a ruling. Lesson: put the SAFETY assertion before the
+IDENTITY assertion, or a change of identity hides the safety result.
+
+**Also observed:** the whole host went unreachable for ~15 minutes mid-session (curl
+timeouts, then 503 from authority behind a reachable ingress). The suite reported it
+precisely — "Expected 200, Received 503" against the exact URL — rather than as a mystery
+timeout. That is the behaviour I wanted from it.
+
+**Third addendum — the subtraction that subtracts nothing.** `canvasText.replace(dockText, '')`
+no-ops silently when the two renderings differ by a newline, which would quietly restore
+the dock contamination the subtraction exists to remove — an absence-style trap wearing a
+different hat. Now asserted: when a dock is present, the subtracted text must be shorter.
+
+**Post-fix read-only rate.** After `5b53da4`, over seven runs: four green, three refused,
+all three `planner_model_unavailable` with the server message *"The answer model could not
+be reached (ChatClientException)"*. So the CONTRACT failures are gone and what remains is
+the answer model's endpoint being unreachable about two times in five. Different problem,
+different owner. `intent_contract_invalid` has not recurred since the fix.
+
+**Left in the demo tenant:** 12 pending/denied `$35.00 goodwill credit` approvals from the
+L2 test, in a queue of 25. None signed. Worth a sweep before Brian demos from that queue.
+
+## The finding this suite was built to catch (2026-09-11)
+
+`Refund a $35 overdraft fee on retail's checking as goodwill`, unchanged, proposed
+**`direction: "debit"`** with the reason *"Goodwill refund of overdraft fee"*. Thirty-five
+dollars taken OFF the customer instead of given back — and because a debit does not trip
+the `credit-adjustment` escalator, the approval came out **L1, one signer, no escalators
+fired**. The three runs before it were all `credit` → L1 raised to L2, two signers.
+
+So the dual-control guarantee on credits is only as good as the direction the model picks,
+and the model does not always pick it. The record is internally consistent — authority
+applied its policy correctly to a debit — which is exactly why nothing downstream can
+catch this. The card even reads "Take $35.00 off a customer's account", so a banker
+reading carefully would catch it; a banker signing an approval titled "goodwill refund"
+would not.
+
+Assertion order changed to name the cause: direction first, rung second. Asserting the
+rung first reported "expected L2, received L1", which is the symptom. Third time tonight
+the same lesson — the assertion that states the SEMANTIC truth goes before the assertion
+that states the consequence.
+
+**Cloud rates over ~20 runs, post-`5b53da4`:** refusal test solid; read-only about 3 in 5,
+every failure `planner_model_unavailable` ("The answer model could not be reached
+(ChatClientException)"); L2 about 4 in 5, failures split between `objective_unmappable`
+("no proposable action supports posting or refunding a fee directly in this harness") and
+the debit inversion above. None of these are UI defects. All three are model or
+environment non-determinism sitting directly under Brian's demo script.
+
+## Phase 11 — a security assertion that could not tell a leak from a timeout
+
+**The defect.** `tests/e2e/cloud/banker-copilot-cloud.spec.ts` asserted subject
+non-disclosure with `expect(refusalText).not.toMatch(/\d/)`. A cloud run failed
+it on the `30` in "The planner model did not answer within 30s". Nothing leaked.
+
+**The lesson, which generalises past this file.** A proxy assertion fails in both
+directions at once. Red becomes uninformative — an infra timeout and a customer
+data leak render identically, so the red gets discounted. And green becomes luck:
+it passed only because Turk happened to word the other refusals without digits.
+Danny's phrasing is the one to remember: *non-disclosure held only because someone
+wrote careful strings; that is not a control.*
+
+**What replaced it.** Three assertions, scoped:
+1. no candidate identifier (derived from `config/demo-dataset.json`, not retyped);
+2. no COUNT, matched as *a number quantifying records*, which cannot fire on a
+   timeout, a currency amount or a date;
+3. for the two codes the ruling covers, the strong form — subtract every string
+   this repo authored from the rendered notice and require an empty residue.
+   `TracePane` drops the server message for those codes, so residue *is*
+   server-authored text on screen, and that is the only channel a candidate name
+   can travel on.
+
+**Import the enforcing module, do not mirror it.** The spec imports `refusalCopy`
+and `isNonDisclosing` from `src/ui-app/src/components/copilot/runOutcome`. A
+second copy of `NON_DISCLOSING` in the test would drift from the guard at
+`TracePane.tsx:68`, and a disclosure test that has drifted is worse than none.
+(Cross-package import depth from `tests/e2e/{specs,cloud}/` is `../../../`.)
+
+**Infrastructure is not a security finding.** `planner_model_unavailable` now
+bails out by name with a loud annotation. The run never reached subject
+resolution, so there is no subject outcome to assert on. Residual risk, stated
+rather than hidden: a permanently unreachable model would leave the property
+silently unverified. It is visible as a skip in the report, which is the trade.
+
+**How the proof nearly fooled me — the advisor caught it.** My first leak mode
+used `subject_not_found` with a leaking message. That code is non-disclosing, so
+`TracePane` suppresses the message, the residue is empty and the check *passes*.
+I would have shipped a "leak is caught" test that never saw a leak. Retargeted to
+`objective_unmappable` — a DISCLOSING code carrying the same candidate-naming
+message, which is exactly Danny's open gap that `reasonCode` has no enum. That
+renders verbatim, so the leak really is on screen.
+
+**Redact with the derived list, never a hand-typed one.** The residue test first
+failed with "the refusal must not name Rita" because my inline
+`/Mbeki|Kowalski|casey|.../` redaction missed a first name that `candidateNames()`
+knows about. Same class of bug as the assertion being fixed.
+
+**Both directions, against rendered `innerText`, never synthetic strings.** The
+residue subtraction is about the component's actual chrome — its headings,
+separators, punctuation. A version validated against hand-written text would have
+been the next false positive.
+
+New fake-stack modes: `leaky-refusal`, `suppressed-refusal`, `model-unavailable`.
+Commit `cdab02b`. jest 541/13 unchanged.

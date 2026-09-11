@@ -1,0 +1,276 @@
+# Banker Copilot — model-facing action metadata
+#
+# Contract of record: docs/epics/banker-copilot.md §3.1–§3.3.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+#  This file is DESCRIPTION, never PERMISSION.
+#
+#  The set of proposable actions is a property of config/authority-policy.yaml,
+#  fetched from authority-service at run time. Nothing here can add an action,
+#  make one proposable, change a rung, or alter what a signature covers. An id
+#  listed here that authority does not offer is inert; an id authority offers
+#  that is missing here simply reaches the model without prose. The loader
+#  checks neither direction against the catalogue, because it cannot: the
+#  catalogue is a live fetch and this file is static.
+#
+#  It lives HERE, in the copilot service's own config, and not in the policy
+#  file, by Danny's ruling of 2026-09-11: the policy file is risk-operations'
+#  document, is read by a YamlDotNet loader whose strictness makes an unexpected
+#  key a startup crash, and has six separate edit points. Descriptive metadata
+#  for a model is ours. `app/tools/propose.py` says this service must not
+#  restate the policy's ACTION SET — that boundary is about the set, not about
+#  how we describe one to a model.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# WHY IT EXISTS
+#
+# Read tools reach the intent model with prose descriptions and full JSON
+# Schemas — types, `required`, `additionalProperties: false`, patterns. Actions
+# reached it as names only: an id, a display name, a rung, and three lists of
+# field NAMES. So the model had to bridge "Refund a $35 overdraft fee" to the
+# four words "Post a balance adjustment" unaided, and had to guess that
+# `direction` takes `credit` or `debit` — the very field Brian's ruling makes
+# the difference between L1 and L2.
+#
+# When it could not bridge that gap it did not say "I am unsure". It reported
+# its guess as a fact about the bank: "no proposable action supports posting or
+# refunding a fee directly in this harness." Measured at 4 failures in 12 live
+# runs of one prompt, with the catalogue present every time.
+#
+# HOW TO WRITE AN ENTRY
+#
+# `description` is for a reader deciding WHETHER this action is the one the
+# banker's sentence is asking for. Say what the action does to a customer's
+# money or access, and name the everyday words a banker would use for it —
+# "refund", "goodwill", "chargeback" — because matching the banker's vocabulary
+# is the entire job. Do not restate the rung: authority owns that, it is already
+# on the wire as `baseRung`, and a second copy here is a second thing to get
+# wrong.
+#
+# `fields` describes the values the action SIGNS OVER (its hashFields). Give the
+# type and, where the set is closed, the allowed values. A field the model must
+# take from the banker's words rather than infer should say so.
+
+apiVersion: copilot-actions/v1
+
+actions:
+  account.balance.adjust:
+    description: >-
+      Move money into or out of a customer's account balance as a correction rather than as a
+      transfer. This is the action for refunding or reversing a fee, crediting goodwill, giving
+      money back for a duplicate or disputed charge, correcting a posting error, or writing off
+      a small amount. A banker may say refund, reimburse, credit back, reverse, adjust, write
+      off, or make good.
+    fields:
+      accountId:
+        type: string
+        description: >-
+          The account to adjust. Resolved server-side from subjectHints; never supply it.
+      amount:
+        type: string
+        description: >-
+          A positive decimal amount, taken from the banker's sentence and never invented. The
+          direction field, not the sign, says which way the money moves.
+      direction:
+        type: string
+        allowedValues: [credit, debit]
+        description: >-
+          Which way the money moves, from the customer's point of view. `credit` puts money INTO
+          the customer's account — a refund, a reimbursement, goodwill, a reversal of a charge
+          they should not have paid. `debit` takes money OUT. If the objective does not say
+          which, omit it rather than guessing: the two are not interchangeable and the choice
+          changes how many signatures the approval needs.
+      reason:
+        type: string
+        description: >-
+          A short plain statement of why, in the banker's own terms, for the person who signs it.
+
+  user.unlock:
+    description: >-
+      Restore a locked-out customer's ability to sign in, without changing their password. This
+      is the action for a lockout caused by failed sign-in attempts, a stale saved password, or
+      a customer who says they are locked out or cannot get in.
+    fields:
+      userId:
+        type: string
+        description: >-
+          The customer to unlock. Resolved server-side from subjectHints; never supply it.
+      reason:
+        type: string
+        description: A short plain statement of why the lockout should be lifted.
+
+  user.lock:
+    description: >-
+      Prevent a customer from signing in. This is the action for suspected account takeover, a
+      customer asking to freeze access, or a control tightened while something is investigated.
+      It restricts access rather than restoring it.
+    fields:
+      userId:
+        type: string
+        description: >-
+          The customer to lock. Resolved server-side from subjectHints; never supply it.
+      reason:
+        type: string
+        description: A short plain statement of what prompted the lock.
+
+  transaction.score.override:
+    description: >-
+      Replace the AI risk score on one specific, already-scored transaction. This is the action
+      for a banker who says a flagged transaction is legitimate, expected, or was notified in
+      advance, and who is willing to sign for lowering its score. It changes an assessment; it
+      does not move money and does not clear or release anything.
+    fields:
+      transactionId:
+        type: string
+        description: >-
+          The one transaction whose score changes. The objective must identify a specific
+          transaction; if it does not, refuse rather than choosing one.
+      newScore:
+        type: string
+        description: >-
+          The replacement score as a decimal between 0 and 1. It must be stated or clearly
+          implied by the objective — "lower it" alone does not fix a number, and inventing one
+          puts a figure the banker never chose in front of them to sign.
+      rationale:
+        type: string
+        description: >-
+          Why the new score is right, naming both the prior score and the proposed one.
+
+  transaction.flag.review:
+    description: >-
+      Close out a flagged transaction by clearing it or confirming the flag. This is the action
+      for a banker who has looked at a flagged item and wants to record a verdict on it — clear,
+      release, confirm, or uphold. It settles a review; it does not change the risk score and it
+      does not move money.
+    fields:
+      transactionId:
+        type: string
+        description: The one flagged transaction being decided.
+      amount:
+        type: string
+        description: The transaction's own amount, taken from the evidence, not from the objective.
+      decision:
+        type: string
+        allowedValues: [clear, confirm]
+        description: >-
+          `clear` releases the transaction as legitimate. `confirm` upholds the flag. If the
+          objective does not say which way it goes, refuse rather than choosing.
+      note:
+        type: string
+        description: A short plain statement of what the reviewer concluded.
+
+  transfer.reverse:
+    description: >-
+      Undo a transfer that has already completed, sending the money back the way it came. This
+      is the action for a transfer sent in error, to the wrong person, or twice. It reverses a
+      whole transfer; adjusting a balance by an arbitrary amount is a different action.
+    fields:
+      transferId:
+        type: string
+        description: The completed transfer to reverse.
+      amount:
+        type: string
+        description: The transfer's own amount, taken from the evidence, not from the objective.
+      reason:
+        type: string
+        description: A short plain statement of why the transfer is being undone.
+
+  account_opening.application.review:
+    description: >-
+      Approve or decline a pending application to open a new account. This is the action for a
+      banker deciding on a prospective customer's application. It decides an application; it
+      does nothing to an existing account.
+    fields:
+      applicationId:
+        type: string
+        description: The application being decided.
+      decision:
+        type: string
+        allowedValues: [approve, decline]
+        description: >-
+          Which way the application goes. If the objective does not say, refuse rather than
+          choosing.
+      rationale:
+        type: string
+        description: Why, in terms the signer can weigh.
+
+  loan.decision.record:
+    description: >-
+      Record an underwriting verdict on a loan application, including the amount approved. This
+      is the action for approving, declining or conditionally approving a loan.
+    fields:
+      applicationId:
+        type: string
+        description: The loan application being decided.
+      verdict:
+        type: string
+        allowedValues: [approve, decline, refer]
+        description: >-
+          The underwriting outcome. If the objective does not fix one, refuse rather than
+          choosing.
+      amount:
+        type: string
+        description: >-
+          The amount being approved, as a positive decimal. It must come from the objective or
+          the application; never invent a figure someone would then sign.
+      rationale:
+        type: string
+        description: The underwriting reasoning, in terms the signer can weigh.
+
+  # ── Never proposable by the Copilot ──────────────────────────────────────────
+  #
+  # These reach the model on the KNOWN FORBIDDEN ACTIONS list so it can refuse them
+  # HONESTLY — naming the thing it will not do — rather than claiming the bank has no
+  # such capability. Describing them is as load-bearing as describing the proposable
+  # ones: "no proposable action supports that" is only a true sentence if the model
+  # was shown enough to know.
+
+  user.password.reset:
+    description: >-
+      Reset a customer's password. A banker may ask for this as resetting, changing, or clearing
+      a password, or as sending someone a new one. The Copilot may never propose it: possession
+      of a credential is the one thing an agent must not be able to hand out.
+    fields:
+      userId:
+        type: string
+        description: The customer whose password would be reset.
+
+  user.delete:
+    description: >-
+      Delete a customer entirely. Never proposable by the Copilot — it is irreversible and
+      destroys the record of everything the customer did.
+    fields:
+      userId:
+        type: string
+        description: The customer who would be deleted.
+
+  user.role.promote:
+    description: >-
+      Grant a user administrative privilege. Never proposable by the Copilot: an agent that can
+      widen someone's authority can widen its own reach through them.
+    fields:
+      userId:
+        type: string
+        description: The user who would be promoted.
+      role:
+        type: string
+        description: The privileged role that would be granted.
+
+  events.replay:
+    description: >-
+      Replay the event stream. Never proposable by the Copilot: a replay can re-apply effects
+      that already happened.
+    fields:
+      streamKey:
+        type: string
+        description: The stream that would be replayed.
+
+  authority.policy.edit:
+    description: >-
+      Change the authority policy itself — the rungs, the allowlist, the rules that decide what
+      needs whose signature. Never proposable by the Copilot, for the plainest reason in the
+      harness: an agent that can edit the leash is not on one.
+    fields:
+      policyId:
+        type: string
+        description: The policy that would be modified.

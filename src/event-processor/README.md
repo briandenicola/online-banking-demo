@@ -4,15 +4,37 @@ Background event consumer for banking event streams and audit logging.
 
 ## Purpose
 
-Consumes banking events from Redis Streams, processes them for audit logging and analytics, and handles dead letter queue for failed events. Runs as a standalone background worker.
+Consumes banking events from Redis Streams, emits a structured audit record per recognised event
+type, and handles a dead letter queue for failed events. Runs as a standalone background worker.
 
 ## Technology Stack
 
 - Go 1.22+
 - Redis Streams
-- Azure Cosmos DB (audit log storage)
 - OpenTelemetry
 - Entra ID authentication
+
+## Audit durability — read this before relying on it
+
+**This service does not persist audit records to a database.** It has no Cosmos DB dependency;
+`go.mod` carries Redis, OpenTelemetry and `azidentity` only.
+
+Each recognised event is emitted as a structured `slog` record to stdout (see `processMessage`),
+plus an OpenTelemetry span. Durability is therefore whatever the surrounding platform provides —
+container log retention, and Application Insights when
+`APPLICATIONINSIGHTS_CONNECTION_STRING` is configured. Nothing here is queryable as a system of
+record, and an unrecognised event type falls through to the default branch and is acknowledged
+without an audit line.
+
+This is a deliberate scope boundary for the demo, not an oversight, and it is recorded here so the
+gap is visible rather than assumed closed. Two consequences worth stating plainly:
+
+- **Do not cite this service as the audit system of record.** The authority/approval chain keeps
+  its own durable trail; this stream is observability, not evidence.
+- **Log retention is the retention policy.** If audit records must outlive the pod's logs, that
+  requires a persistence layer this service does not currently have.
+
+Related: #335 (event types published but unaudited).
 
 ## API Endpoints
 
@@ -39,7 +61,6 @@ Consumes banking events from Redis Streams, processes them for audit logging and
 ### Prerequisites
 - Go 1.22+
 - Redis instance with Streams enabled
-- Azure Cosmos DB for audit logs
 
 ### Run Locally
 
@@ -68,7 +89,8 @@ docker run --env-file .env event-processor
    - Transaction creation
    - Transfer initiation
    - Admin actions
-3. Writes audit records to Cosmos DB
+3. Emits a structured `slog` audit record per recognised event type (see "Audit durability" above —
+   these go to stdout, not to a database)
 4. Failed events retry with exponential backoff
 5. After max retries, moves to dead letter queue: `banking-events:dlq`
 
@@ -78,5 +100,6 @@ docker run --env-file .env event-processor
 - No authentication required (internal service)
 - Uses Redis consumer groups for at-least-once delivery
 - OpenTelemetry traces all event processing
-- Cosmos DB partition key is `eventType` for efficient queries
+- Audit records are structured logs, not database rows — there is no partition key and nothing to
+  query. See "Audit durability" above.
 - DLQ events require manual intervention to reprocess

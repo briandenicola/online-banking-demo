@@ -239,7 +239,7 @@ public class PolicyEvaluator : IPolicyEvaluator
             ThresholdName = threshold?.Name,
             ThresholdEnv = threshold?.Env,
             ThresholdValue = threshold?.Value,
-            Reason = Render(template, document, threshold, actionLabel)
+            Reason = Render(template, when, document, threshold, actionLabel)
         };
     }
 
@@ -248,14 +248,22 @@ public class PolicyEvaluator : IPolicyEvaluator
     /// approval so a record read back a year later shows the reasons as they were evaluated,
     /// not as re-rendered against today's config.
     /// </summary>
-    private static string Render(string template, JObject document, ResolvedThreshold? threshold, string actionLabel)
+    private static string Render(
+        string template,
+        PredicateDefinition when,
+        JObject document,
+        ResolvedThreshold? threshold,
+        string actionLabel)
     {
-        return Placeholder.Replace(template, match =>
+        var actual = ActualFor(when, document);
+        var rendered = Placeholder.Replace(template, match =>
         {
             var token = match.Groups[1].Value;
 
             return token switch
             {
+                "actual" => actual ?? match.Value,
+                "threshold" => threshold?.Value ?? match.Value,
                 "threshold_value" => threshold?.Value ?? match.Value,
                 "threshold_name" => threshold?.Name ?? match.Value,
                 "threshold_env" => threshold?.Env ?? match.Value,
@@ -263,6 +271,54 @@ public class PolicyEvaluator : IPolicyEvaluator
                 _ => Stringify(PredicateEvaluator.Resolve(document, token)) ?? match.Value
             };
         });
+
+        rendered = rendered.Trim();
+        if (!Placeholder.IsMatch(rendered)) return rendered;
+
+        var scrubbed = string.Join(" ",
+            Regex.Split(rendered, @"(?<=[.!?])\s+")
+                .Select(s => s.Trim())
+                .Where(s => s.Length > 0 && !Placeholder.IsMatch(s)));
+
+        return string.IsNullOrWhiteSpace(scrubbed)
+            ? "Additional human review is required by the authority policy."
+            : scrubbed.Trim();
+    }
+
+    private static string? ActualFor(PredicateDefinition predicate, JObject document)
+    {
+        var field = PredicateEvaluator.Resolve(document, predicate.Field);
+        if (field is null) return null;
+
+        if (predicate.Op == "countGte")
+        {
+            return field switch
+            {
+                JArray array => array.Count.ToString(CultureInfo.InvariantCulture),
+                JObject obj => obj.HasValues ? "1" : "0",
+                _ => field.Type == JTokenType.Null ? "0" : "1"
+            };
+        }
+
+        if (predicate.Abs && DecimalFor(field) is { } absolute)
+        {
+            return ToInvariant(Math.Abs(absolute));
+        }
+
+        return Stringify(field);
+    }
+
+    private static decimal? DecimalFor(JToken token)
+    {
+        return token.Type switch
+        {
+            JTokenType.Integer or JTokenType.Float => token.Value<decimal>(),
+            JTokenType.String => decimal.TryParse(
+                token.Value<string>(), NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed)
+                ? parsed
+                : null,
+            _ => null
+        };
     }
 
     private static string? Stringify(JToken? token) => token switch

@@ -168,7 +168,18 @@ async def start_run(
         try:
             await planner.run(planner_request, stream)
         finally:
-            run.status = "completed" if not stream.trace_degraded else "completed_degraded"
+            # The persisted run record reports what the TRACE said, not a second opinion.
+            # This used to hardcode "completed" in a `finally`, so a run that emitted
+            # `run.done status: "failed"` — or that died before emitting anything at all —
+            # still answered `GET /runs/{id}` with `completed`. That is the run-status field
+            # a harness or dashboard polls, so the lie outlived the run.
+            #
+            # A missing terminal frame means the planner never got to say how it went; that
+            # reads as failed, never as success by omission. `trace_degraded` is an orthogonal
+            # fact (the frames did not all persist) and stays a suffix on whatever happened,
+            # rather than overwriting it.
+            terminal = stream.terminal_status or "failed"
+            run.status = f"{terminal}_degraded" if stream.trace_degraded else terminal
             run.finished_at = utc_now_iso()
             run.final_seq = stream.last_seq
             run.trace_degraded = stream.trace_degraded
@@ -334,12 +345,13 @@ async def stream_session(
     stream = runs.get(runId) if runId else runs.latest_for_session(session_id)
     if stream is None and runId:
         raise HTTPException(status_code=404, detail="Unknown run for this session")
-    if stream is None:
-        # Attach-then-dispatch is the normal UI order, not an error. Wait one heartbeat
-        # interval for the run to appear; if none does, open the stream anyway and let the
-        # heartbeats carry it. A client that asked to watch a session it owns gets a live
-        # connection, not a 404 that trips its reconnect backoff.
-        stream = await runs.await_next_run(session_id, timeout=heartbeat_seconds)
+    # Attach-then-dispatch is the normal UI order, not an error, so a session with no run
+    # yet opens the stream anyway and lets the heartbeats carry it. That waiting happens
+    # INSIDE `_events()` and must never happen here: anything awaited before the handler
+    # returns holds back `http.response.start`, so the client sees no status line — and no
+    # frame — for a full heartbeat interval. It then reads the connection as never
+    # established and disables signing, which is the correct gate reacting to a stall we
+    # caused ourselves.
 
     if stream is not None and not stream.replay_available_from(lastSeq):
         # Never hand the client a trace with a hole in it and let it look complete.
@@ -360,14 +372,22 @@ async def stream_session(
             # No run yet: heartbeat until one starts, the client goes away, or the session
             # idles out. The connection is honest about being alive-and-waiting, which is
             # the distinction §4.6 exists to preserve.
+            #
+            # The heartbeat is yielded BEFORE the wait, not after it. Headers are already out
+            # by now — uvicorn writes the status line on `http.response.start`, which is why
+            # the fix for the stall was moving the wait off the handler. This ordering is for
+            # the frame: a stream that opens and then says nothing for a full heartbeat is
+            # indistinguishable from a half-open socket, and the client's watchdog allows
+            # only two missed heartbeats. One extra frame per stream buys a connection that
+            # is provably alive from the first instant rather than merely accepted.
             waited = 0.0
             while stream is None:
                 if await request.is_disconnected() or waited >= idle_budget:
                     return
+                yield _heartbeat_frame()
                 stream = await runs.await_next_run(session_id, timeout=heartbeat_seconds)
                 if stream is None:
                     waited += heartbeat_seconds
-                    yield _heartbeat_frame()
 
             # Subscribe exactly once, and only here. Subscribing before the generator ran
             # would replay the backlog twice — a duplicate-seq stream that looks plausible.

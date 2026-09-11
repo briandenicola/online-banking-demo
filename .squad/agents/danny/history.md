@@ -2146,3 +2146,1398 @@ unaudited surface sitting beside a governed one is an **incentive**, not just an
 heavy approval load the rational move becomes "just use the other UI" and the ladder degrades to
 opt-in. In a demo nobody is under load, so the incentive is inert. That framing is what makes the
 caveat defensible now and obviously urgent later.
+
+---
+
+## 2026-09-08 — Gate B, the evidence contract seam (`danny-evidence-contract-ruling.md`)
+
+Ruled **for Turk's declared projection**, with three amendments. Two config files, each reviewed
+and correct in isolation, mutually unsatisfiable, untested on both sides — 6 of 6 L2-reachable
+actions refused at propose, so the co-signature feature had never once executed.
+
+**The thing worth remembering:** the fix everyone agreed on would have shipped a lie. Turk,
+Livingston and Brian all converged on "project the tool output into the contract shape." Correct
+for `get_account` and `list_account_transactions`. But `list_login_audits` has **no `userId`
+anywhere** — not in the response, not in the arguments, not in the path; the upstream filters by
+recency only, and *the tool's own description says so*. Its projection could only source `userId`
+from the proposal payload, producing an approval record asserting "user X's recent logins, N of
+them" over a global unfiltered list. **A formatting fix becomes a false statement in an audit
+artifact about a security action** — and `user.unlock` is where a reviewer leans on it hardest.
+Found only by reading the tool's *parameters* rather than its response shape, which is the field
+everyone else was looking at.
+
+**Generalisable rule I want to reuse:** a projection is legitimate only where the subject identity
+is *already determined by the call that was made*. `$args` is safe (it describes the HTTP call that
+happened, and the trace can check it); the proposal payload never is (the proposer stamps its own
+conclusion onto its own evidence). That single line decides the grammar, and it is what quarantines
+`list_login_audits` instead of papering over it.
+
+**Overruled Turk on test placement, and the reason generalises.** He proposed the seam test on the
+Python side. A Python test asserting "the projected object has the required fields" re-implements
+`EvidenceComplete` in a second language — a *third* document holding a seam between two, which
+silently stops holding the moment the C# predicate is strengthened. Ruled it into
+`authority-service.UnitTests` (which already exists) so it calls the **real** predicate. Committing
+this repo's signature defect a third time, inside the fix for the second, was a live risk.
+
+**Also refused "neither config file should move much" as an absolute.** `get_user` wants `status`;
+the tool returns `isActive`. Renames are legitimate only when they *add* specificity to the same
+value (`id` → `accountId`); swapping one concept for another puts `true` in a field called `status`
+and calls it evidence. That one is a policy bug and the policy moves.
+
+**Scope held to two tools, one loader change, one test** — exactly `account.balance.adjust`'s
+evidence, the only L2 action clearing Gate A unaided. Deferred with names attached: the
+evidence↔payload identity cross-check (converts a proposer's claim into a checked one) and the
+per-key provenance envelope, both **required before `main`, not before the demo**.
+
+**Brian's test is a good instrument and I should keep using it.** *Does the defect make the demo
+FAIL, or make it LIE?* It disposed of relaxing `EvidenceComplete` in one line (the check would
+survive in the code and the narration as a tautology that can never fail), and it is what
+promoted the `list_login_audits` finding from a footnote to a ruling.
+
+---
+
+## 2026-09-08 — The primary assessment, and what independence has to mean (`danny-primary-assessment-ruling.md`)
+
+The primary agent had no judgement at all: `agentAssessment: {summary: <the banker's own
+objective, echoed back>, evidenceToolIds}`. Meanwhile the supervisor is a real model call. So
+check 4.2's headline "22.6% agreement" measured **one agent** — Livingston disqualified his own
+number, correctly, and should not be talked out of it.
+
+**The question that mattered was not "give the primary a model" — it was what independence
+MEANS once both sides are the same model.** Two instances of one model, prompted alike, seeing
+the same evidence, would score *better* on 4.2 while being worth *less* than what we had. Ruled
+the mechanism is an **adversarial role asymmetry — the two agents are never asked the same
+question** — plus the evidence-provenance asymmetry that already ships (the supervisor's own
+second draw). A different model or temperature is a **knob, not a control**, and its worst
+property is that it is *claimable*: it reads to a reviewer as independence while guaranteeing
+nothing.
+
+**The trap in the candidate list I was handed, and I nearly agreed with it.** "Give the
+supervisor a different evidence view — the projected evidence *and the proposal*" sounds like
+strengthening independence. The proposal is **downstream of the primary**. `FanOutEngine`
+already sources `action_id` from the request rather than the approval body, with a comment
+saying why. That candidate would have undone a shipped structural control in the name of
+improving it. **Rule of thumb worth keeping: when a proposal to strengthen a control widens the
+signature the control is made of, the proposal is the bug.**
+
+**A real defect found by reasoning about failure, not by reading for it.**
+`_primary_recommendation` falls back to `"proceed"`. Harmless while the primary always proceeds
+— but the moment the primary can *fail*, a supervisor `hold` against a manufactured position
+renders as **disagreement**. That is exactly the classification error Livingston had to correct
+by hand on the supervisor side (a failed call is not dissent), mirrored onto the primary, and
+living **inside the code** rather than inside a probe. Agreement had to become tri-state:
+`agree | diverge | not_comparable`. **Every default that is currently invisible becomes a lie
+the day the other side gains a new state.**
+
+**Confidence is not honest and I said so.** 0.83–0.98, median 0.94, no separation between a case
+that was 5/5 stable and one that flips on identical bytes — displayed to a human deciding
+whether to sign. Refused both easy answers: not deleted (it is the model's own statement, and
+deleting data is its own dishonesty), not recalibrated (nothing to calibrate against). Ruled:
+nothing may rank, colour or gate on it, and the field is renamed `selfReportedConfidence` —
+**a field name carries a caveat where a tooltip cannot, because the name survives being copied
+into a screenshot.**
+
+**Deferring the evidence ceiling for a measurement reason, not a caution reason.** Brian accepted
+"the model may gather MORE, never less". Correct, and I specified it fully — but shipping it in
+the same deploy as the assessment changes the evidence surface *and* the number of agents at
+once, so no movement in 4.2 could be attributed to either. **Ship, re-measure, then open the
+ceiling.** Same argument applies to aligning the supervisor's `0.0` confidence sentinel: right
+fix, wrong week, because it perturbs the baseline mid-measurement.
+
+**Confirmed the adverse proposal on an argument the brief did not have.** The strongest reason
+the primary must still propose when it concludes "don't" is not the empty screen — it is that
+**the banker still needs to act, and a refusal relocates the work to the admin tabs, which leave
+no audit record** (my own earlier ruling). A refusal does not prevent the action; it routes it
+around the ladder. Rulings compound: the audit-parity caveat from the earlier session was the
+deciding fact here.
+
+**The generalisation I want to reuse, and it is the companion to Gate B's.** Gate B: every defect
+was *correct in its own file and unheld across a boundary*. This one: **every defect on this
+feature has been a claim the system was not entitled to make** — review (scripted supervisor),
+consensus (the banner over two absent verdicts), completion (`run.done` over a refused
+proposal), corroboration (the fabricated constant), assessment (the echoed objective),
+independence (the metric). None of them threw. So: **does this artifact claim more than the
+mechanism behind it can support?** That question is what §R5 was, and it is what caught three of
+the rulings here.
+
+**On confirming other agents' deviations.** Turk broke the letter of my §R7 and was right to:
+taken literally it demanded a C# interpreter of the projection grammar — a third drifting
+document, inside the fix for the second instance of that exact defect. He applied the *reason*
+and flagged it. **I amended §R7 rather than defending it.** A ruling whose letter defeats its own
+reason should move; the test is whether the agent can state the reason back, and he did. Linus's
+boundary crossing got the rule rather than a one-off pass: **a charter boundary follows the
+concern, not the file extension — and the permission is asymmetric. Delete presentation logic
+from the backend, never add it there.**
+
+### Same day, amendment — the evidence ceiling, and a sequencing constraint I mis-stated as a scope one
+
+Brian wanted the ceiling in scope now. The coordinator took my own reason apart correctly: **my
+objection was to a shared DEPLOY, not a shared BUILD.** I was protecting attribution between two
+measurements, and two staged deploys are two measurements — that was never an argument for
+writing the code a week later. **Worth remembering as a failure mode of my own: I expressed a
+measurement constraint as a risk judgement, and the two have different remedies.** Amended in
+place rather than writing a second document.
+
+**But I accepted it with the condition the coordinator himself offered to lose the argument
+over, because he was right to ask it: a flag that is a BRANCH means stage 1 runs a code path that
+never ships.** That is this feature's signature defect again. The answer is that the switch must
+be a **budget, not a branch** — at `perRunAdditionalToolBudget: 0` the same prompt, the same
+parser and the same additions call all execute, and the function simply returns empty. Stage 1 is
+the loop running zero iterations, not the loop switched off. **The general form: a feature flag
+implemented as a quantity keeps one code path; implemented as a conditional it makes two, and
+then the pre-rollout measurement is of a configuration nobody runs.**
+
+The condition paid for itself twice. It forced the assessor prompt to be byte-identical across
+stages — which only works because §P2.1 already gave the primary an `unverified` array, so the
+*request channel already existed* and no stage-2-only paragraph was needed. And because refusals
+must be recorded, **stage 1 measures the demand for the ceiling before the ceiling runs**: we
+learn which tools the primary asks for and how often, which is the evidence for whether a budget
+of 3 is right instead of a number I picked.
+
+**The finding I would have missed if I had only answered the six questions asked.**
+`FanOutEngine` derives the supervisor's read list from `sorted(primary_evidence.keys())`. The
+moment discretionary evidence lands in that dict, **the supervisor's independent draw silently
+widens to follow the primary's choices.** Blindness — the control I had just spent a whole
+section defending against an explicit proposal to widen it — would have been defeated by a
+data-flow change in a module that never mentions the supervisor, in a diff nobody would flag.
+Ruled the supervisor's tool ids come from the action's `requiredEvidence` instead, which is also
+simply more correct: its draw should be defined by the action under review, not by what the
+primary happened to do. **Lesson: when adding a producer to a shared data structure, find every
+consumer that derives behaviour from its SHAPE rather than its contents.**
+
+**Sharpest correction to the brief's assumptions:** the risk in discretionary gathering is not
+tool choice, it is **arguments**. A model that names a tool exercises authority it already has
+(same bearer token, upstream enforces, 403s are recorded and spend budget). A model that could
+supply *arguments* could read a different customer's account and file it in this customer's
+approval record. So: **the model names a tool id and never supplies arguments** — binding stays
+deterministic from banker inputs, and an unbindable tool is refused rather than invented, which
+is §R5's rule reappearing in a new place. Also corrected an assumption in the brief: the harness
+does **not** enforce `capabilityScope` (it is metadata; enforcement is upstream by token) — which
+makes the guarantee *stronger* than assumed, but only if stated accurately.
+
+**Non-convergence resolves by the same argument as the adverse proposal**, and it is reassuring
+when a new question falls out of an existing ruling: propose anyway with the adverse assessment,
+because an agent that gathers what it can, stays unsatisfied and then declines to propose has
+*disposed* — and the banker's work relocates to the unaudited admin path. `converged: false` must
+be a positive recorded fact, or "hit the cap unsatisfied" and "satisfied on the first pass" read
+identically.
+
+**On Brian's "how agentic is this really?" question — answered by bounding the claim, not by
+inflating it.** This adds a genuine feedback loop on the **evidence** axis and deliberately none
+on the **authority** axis (step selection stays deterministic; the supervisor's verdict still
+gates nothing, per ratified §6.4(6)). Saying which axis the loop is on is more useful than
+claiming the harness "decides", and it is §P11's own test applied to my own amendment: *does this
+artifact claim more than the mechanism behind it can support?*
+
+### 2026-09-09 — Auditing the primary assessment and evidence ceiling (§P12)
+
+- **A widened signature is only a widened control when a new parameter can INCREASE what the
+  function permits.** I nearly rejected Turk's `additional_evidence` on arity alone. The real test
+  is directional: four of his five added parameters can only shrink the granted set, and the one
+  he *removed* — the objective — was a door I had left open for a later edit to reason about
+  intent inside a pure classifier. The suspicion ("the ruled signature could not do its job" is
+  what precedes a control widening) was correct to hold; the answer was that my signature was the
+  weaker one.
+- **Delete the parameter rather than filter it.** Third payment for the same move
+  (`build_supervisor_input(intent)`, §R5's `bind`, now `FanOutEngine`). Written into the ruling as
+  a standing standard: a filtered channel is a promise, an absent parameter is a fact.
+- **Layered guards fire at different stages of one mistake; that is not redundancy.** The tamper
+  that "beat" the byte-equality test was an incomplete edit that could not yet cause the defect —
+  the prompts genuinely were equal. Correcting the premise mattered more than ruling on the test.
+  But the residue was real: I cannot let others assume a guard can fail, so I required a positive
+  control instead of deleting the backstop.
+- **A false label in a record is not cosmetic when the record IS the product.** `_is_bindable`'s
+  `or` fallback errs closed, so it has no authority consequence — and it still had to be fixed
+  before deploy, because it files a real request under the wrong reason and stage 1 exists to
+  count requests.
+- **Confirm the unflagged interpretation too.** `_proposal_permitted` blocking only `decline` was
+  not flagged and is *compelled* by two other sections. Unwritten correctness is the kind that
+  gets "fixed" later; I required the reasoning at the call site, not in the ruling.
+- All three of Turk's departures from my text narrowed something I had left wide, and each named
+  the line it departed from. That is what a good implementation of a ruling looks like.
+
+### 2026-09-09 — Banker/customer read ruling (docs/design/banker-customer-read-ruling.md)
+
+- **When the data has to be shaped so a defect does not show, the workaround has become the
+  design.** The seeder's banker-owned accounts were the tell, and they stayed invisible because
+  they made everything pass. Look for the workaround in the fixtures, not the code.
+- **`return Ok(emptyList)` can be a lie.** `GetAccountTransactions` narrowed the CALLER's
+  transactions by accountId, so for any non-owner it asserted "no history" for every account in
+  the bank. Three correct components in series — controller, projection, `EvidenceComplete` —
+  each faithful to its input, carrying a falsehood the whole way because the first answered a
+  question it was never asked.
+- **The structural fix was free, and it came from naming the facts correctly at the source.** Once
+  a denial is a 403 instead of a 200, there is no successful response to project, so the evidence
+  key is absent and Gate B rejects. I did not have to make Gate B check truth — which I refused,
+  because a projection describes a response and cannot know whether it is true.
+- **Say the blast radius out loud when you accept it.** "Any banker reads any account" is right
+  for this demo; the value is in stating what a real bank would add so the demo narrates the gap
+  instead of quietly overclaiming. We are genuinely close to only one of the three (the read
+  record), so that is the only one anyone may claim.
+- **Rejecting service identity protected a control I had already measured.** It would have moved
+  the enforcement point out from under Gate A mid-feature. Role-based needed no identity change at
+  all — the claim was already minted and already expanded.
+- **Look one step past the reported defect.** Nobody listed `UpdateBalance`, which carries the
+  same owner check; the demo would have failed one step LATER, which is worse, because by then it
+  looks like the harness worked.
+- **Sequencing is part of the ruling.** This moves the accounts under test, so it must land before
+  stage 1 is measured, not between the two stages — otherwise it becomes the third uncontrolled
+  variable in a measurement I spent the previous night protecting.
+
+---
+
+**2026-09-09 (Scribe)** — Inbox merge and deploy verification complete. Your 11 queued decisions from `.squad/decisions/inbox/` are now merged into the canonical ledger at `.squad/decisions.md`. Authority-service has deployed cleanly to `banking-demo` namespace with the §B3.2 startup guard active (`banker-copilot-authority`, policyVersion `pv1:d7b3db9f5ada15b8`, 22 thresholds, 13 action types).
+
+
+---
+
+## Learnings — 2026-09-09 (three rulings: empty-ledger narrowing, probe idempotency, divergence silence)
+
+Written to `docs/design/empty-ledger-narrowing-ruling.md` and
+`docs/design/probe-idempotency-and-divergence-silence-ruling.md`.
+
+- **A falsified cost claim reopens the change, not just the claim.** Turk's §B2.2 narrowing was
+  accepted on "it costs no shipping caller." It cost four. That is why this was a ruling and not a
+  coordinator patch — the reasoning that bought the acceptance had failed, so the acceptance had to
+  be re-earned. It was re-earned: the narrowing still stands. But it had to be re-earned.
+- **The blast-radius rule has to name the roots or it will not survive.** "Search the repo" is
+  advice. `src/ scripts/ tests/ config/ infra/ .github/ Taskfile.yml`, with the pattern and the hit
+  list quoted, is a gate. Turk's search was competent and scoped to `src/`; the defect was that
+  nothing forced him to say what he had searched.
+- **Distinguish dodging a check from asking a question you can prove.** The seeder borrowing a
+  banker token and the seeder calling `/api/transactions/my` both make the 403 go away, and they
+  are opposites: the first acquires authority it does not have, the second asks about its own rows.
+  Rusty's lesson 44 bites the first and not the second — and I had to write that distinction down
+  in one sentence, because otherwise the next reviewer sees only "the seeder changed to avoid the
+  error" and relitigates it.
+- **Prefer the fix that does not need a redeploy when it is also the honest one.** The
+  architecturally cleaner answer (transaction-service asks account-service) would have blocked
+  Brian behind a build for a defect whose entire reach was one shell script. Smallest measured
+  change is not a compromise here; it happened to coincide with the correct one. Check for that
+  coincidence before reaching for the clean architecture.
+- **The evidence that a caller-side fix suffices was already in the caller.** `resolve_account_refs`
+  already probes account-service for ownership at line 617. Reading the caller before ruling on the
+  service is what turned a service-to-service design debate into a four-line script edit.
+- **When a count changes meaning, the label must change in the same commit.** The verify pass moves
+  from "the account's transactions" to "the owner's transactions on that account." Equal today
+  under single ownership. A verification pass that silently changes what it counts is the worst
+  possible place in the repo for an unlabelled meaning change.
+- **Silence is a valid rendering; blankness is not.** Linus was right to prefer a structurally
+  silent divergence indicator over three fabricated corroborations. But silence must carry its
+  reason on the card, or a viewer reads "no divergence found" out of a component that cannot find
+  any. The condition cost one string.
+- **A fixture may never assert a field the service cannot produce.** `demoFixture` was agreeing
+  with the renderer instead of the service. That failure mode detonates at the demo, in front of
+  the audience, the first time live data replaces the fixture. Generalised into the ruling.
+- **A probe that drives a real path may not be idempotent.** Reuse turns "is this open now" into
+  "was this open once", and the second answer passes on precisely the day the first would fail.
+  Rusty was right to ask rather than invent, and right in what he had already built.
+
+### 2026-09-09 — items 5 and 6 (#140 sequencing, #335 triage)
+
+- **Boundaries beat judgement calls.** #140 got permission with a four-path file list
+  (`harness-limits.yaml`, `authority-policy.yaml`, `copilot-tools.yaml`, `banker-copilot-service/`)
+  instead of "be careful not to disturb the measurement". A reviewer can check the first with
+  `git diff --name-only`. The second is a conversation every time.
+- **The discriminating fact was arithmetic, not architectural.** `maxConcurrentSubagents: 4` vs
+  #140's six agents. Stage 2 is a config-only edit to that same file. Without reading the number I
+  would have ruled on epic size and got a defensible but ungrounded answer.
+- **`loan.decision.record` is inert by ABSENCE, not by a flag** — `agentMayPropose: true` already,
+  no `enabled: false`. Safety is real but unguarded, and one line in `copilot-tools.yaml` ends it.
+  I declined to add a flag: a state stated twice is stated wrong once.
+- **Read the code before ruling on the issue.** #335 was raised expecting the authority events to
+  be dropped. They are not — all eleven are handled and guarded. Defect A is fixed outright. Half
+  the issue is stale. Ruling on the title would have produced a false blocker on #332.
+- **Third instance this week of the same seam.** `publishedEventTypes` is a hand-maintained Go list
+  whose own comment claims it catches a producer added without a case. It cannot. Same shape as
+  Turk's falsified cost claim, hours apart. **Both were catchable only because the false claim was
+  written down.** That is now twice in one day that a written premise was the only handle — it is
+  the strongest argument I have for the compaction rule I wrote into the manifest.
+
+---
+
+**2026-09-09 (Scribe)** — Inbox merge complete. Three ruling documents committed to `docs/design/`:
+- `empty-ledger-narrowing-ruling.md` (§B2.2 narrowing stands; seeder was wrong)
+- `probe-idempotency-and-divergence-silence-ruling.md` (probe may not be idempotent; silence needs one visible condition)
+- `sequencing-140-and-audit-gap-335-ruling.md` (#140 may open for research/design; stage 2 gates touching `config/harness-limits.yaml` and copilot-service; #335 not a blocker, approval trail audited)
+
+Six rulings and all follow-ups documented. Two open items flagged from Linus's work (wording deviation, factor-classification gap surviving one layer deeper) and one from Turk (upstream docs gap at banker-copilot-service). All recorded in `.squad/decisions.md`.
+
+**Reseed unblocked.** Stage 1 measurement is the next gate.
+
+
+### 2026-09-09 — item 7: seeded approval rung non-determinism (`flag-review-denied`)
+
+Written to `docs/design/seeded-approval-rung-nondeterminism-ruling.md`. Brian's hypothesis was
+right in mechanism and understated the damage.
+
+- **The arithmetic was the whole ruling.** Threshold `25000.00`; of 23 seeded transactions
+  exactly two clear it (`61200`, `48500`, both `anomalous: true`), the other 21 top out at
+  `9480`. `minScoredRequired: 1` means the poll exits at the *first* scored transaction, so
+  21 of 23 possible winners give L1. I could not have ruled on this by reasoning about
+  "a race" — I had to read both numbers. Same shape as #140's `maxConcurrentSubagents: 4`.
+- **Confirming a hypothesis is not the end of the job; look one line further.** The rung was
+  the symptom Brian could see. One line above the ref assignment, `demo.sh:598` silently
+  falls back from the flagged pool to the scored pool. Flagging needs `riskScore >= 0.7`,
+  scoring needs nothing. So the seeded "flagged transaction" can be one
+  `get_flagged_transaction` 404s on, at the demo. **The observable defect was the less
+  serious of the two.** If I had stopped at "hypothesis confirmed" I would have shipped a
+  ruling that fixed the noise and left the break.
+- **My own prior ruling already governed it.** *A fixture may never assert a field the service
+  cannot produce* (§F5, written this morning about `demoFixture`). Same failure, different
+  layer — a fixture agreeing with the race instead of the service. Worth noticing that the
+  general rule found its second instance within a day; that is evidence it was worth
+  generalising rather than fixing in place.
+- **The advisor stopped me writing the wrong fix.** I was about to recommend rewriting the
+  payload amount as `@threshold`+`@delta` to match its nine neighbours. That pins the rung and
+  breaks the payload/service agreement — `amount` is a `hashField` and must equal a real
+  transaction's amount. **Pin the selection, not the value.** The elegant-looking fix would
+  have introduced deliberately the exact defect I was ruling against. The uniform pattern
+  across the other approvals was the trap: they pin values because their subjects are pinned
+  too.
+- **Two well-built guards, one shared blind spot.** `demo.sh:1091` asserts a declared escalator
+  actually fired; `test-demo-dataset.sh:408` asserts threshold-derived amounts stay below the
+  line. Both are good. Both are blind to a value that appears only at runtime — the first
+  because `flag-review-denied` declares no escalator, the second because an `@ref` is not a
+  `@threshold` expression. **A guard's coverage is defined by what it can see, not by what it
+  checks.** The cheapest fix is to declare the escalator and inherit the existing assertion.
+- **Answering "can we measure" required a distinction I nearly skipped.** Rung drift alone
+  would have been a *yes, measure and record the variance*. I ruled no only because the seed
+  cannot be shown to be in the merely-noisy state rather than the broken one — and I gave
+  Brian a one-call test to settle it instead of guessing which. **Refusing to guess is cheaper
+  than a wrong ruling, but only if the refusal comes with the experiment that resolves it.**
+  A "cannot determine" with no next step is just a stalled decision.
+- **Checked the sibling class and it was narrower than feared — say so plainly.** Only
+  `flag-review-denied` can drift on rung. I was ready for a class defect and found one bug plus
+  a design gap. Reporting the smaller true answer beats the larger dramatic one.
+  `l2-score-override-pending` is the near-miss: stable rung (`rules: []`), varying subject and
+  evidence. Flagged for Livingston in case stage 1 reads evidence values.
+- **Killed one of Brian's worries outright.** §7.x does not expect L2 — §7.1's L2 is a live
+  proposal, §7.5 needs only `HUMAN_DENIED`, which `after: deny` sets regardless. Writing down
+  the *negative* finding matters as much as the positive one; otherwise it gets re-raised.
+
+### 2026-09-09 — item 7 REVISED after the §R6 diagnostic came back
+
+Revision 1 appended to `docs/design/seeded-approval-rung-nondeterminism-ruling.md` (§R9-§R14).
+My §R6 answer flipped and my §R7 fix contained a defect. Both worth keeping.
+
+- **I diagnosed right and prescribed a fix that could not run.** §R4's principle ("pin the
+  selection, not the value") survived the diagnostic untouched. §R7.1's *implementation* of it —
+  filter the pool after the poll — would have died ~21 runs in 23, because `minScoredRequired: 1`
+  means the poll has already exited with one transaction in the pool and only 2 of 23 clear
+  $25,000. **I had every number needed to catch this and never multiplied them together**, because
+  I stopped once the principle felt settled. A principle is not a fix. The arithmetic lives in
+  the gap between them, and that gap is exactly where I stopped looking.
+- **The trap has a general name and I want it reusable:** *a seeder must wait for the thing it
+  will later require; any predicate used to SELECT must be the predicate that TERMINATES the
+  wait.* Filtering on a property the poll did not wait for is a race with an assertion bolted on.
+  This generalises past seeders to any poll-then-assert code.
+- **§R6 was a correct process producing an unhelpful answer.** Refusing to certify a seed I could
+  not distinguish between two states was defensible, and the practical effect was blocking
+  Livingston for the length of one read-only call. **The escape hatch was the load-bearing part
+  of that ruling, not the "no".** Next time I cannot decide: weight a cheap experiment as
+  *resolving* the question, not as a caveat attached to a block. The block was the packaging; the
+  experiment was the content, and I inverted their prominence.
+- **The stronger design rested on the weaker field.** Option (iii) — name the subject in the
+  dataset, match by identity — pins more than the fix I chose. I rejected it because `.id` is
+  `str(uuid.uuid4())` minted per scoring event, so matching must go via `.transactionId`, and
+  only 14 of 128 flagged rows carry one. **Check what a design rests on before preferring it for
+  what it achieves.** Elegance is a property of the foundation, not the outcome.
+- **A do-not-change guard stated too broadly becomes the next bug.** The Coordinator asked me to
+  record "`.id` is correct, `.transactionId` is NOT". True for *lookup* — but stated as a blanket
+  ban it forbids the correlation use that option (iii) would legitimately need. I split it into a
+  two-row table: `.id` for references, `.transactionId` for correlation. **A guard must forbid
+  the error, not the field.**
+- **The control case is what caught the Coordinator's false negative.** Their matcher reported
+  the subject absent; it was only suspicious because run A's *known-present* subject also came
+  back absent. **When a check gives the same surprising answer for a case whose answer you
+  already know, the check is the suspect.** A control case is nearly free and it stood between a
+  matcher bug and a discarded seed. Adopting this as standard practice for any diagnostic I ask
+  someone to run.
+- **Refused to weaken a product default to make a demo convenient.** The 20-minute
+  `ttl_balance_adjust` kills 8 of the 10 seeded approvals — the whole NEEDS YOU queue — inside a
+  walkthrough that cannot finish that fast. The tempting fix is editing the default. That is the
+  §R7 error in a different costume. The `env:` override mechanism already exists and I *verified
+  the loader honours it* before recommending it (`PolicyLoader.cs:156-160`, env → default, no
+  third source) — the advisor was right to make me check, since "the YAML declares `env:`" is not
+  evidence anything reads it. That check is the difference between a recommendation and the
+  fourth false written premise this week.
+- **Raising a TTL silently disables verification check 2.5.** The sweeper check is observable
+  only *because* the TTL is short. Third instance in one ruling of the same shape: **a guard
+  whose coverage depends on a value somebody else is about to change.** §R3 was the first two.
+  I now look for this automatically whenever I recommend changing a threshold.
+- **"Usable today" and "usable tomorrow" are different claims.** The seed passes now and expires
+  in 20 minutes, so it buys nothing for Brian's morning UI test. That single fact moved my fix
+  from a parallel workstream onto the blocking path. **I also wrote that my own ruling does not
+  discharge it** — Rusty's work is done when a reseed completes and the card reads L2, not when
+  I have reasoned that it will.
+
+## Durable guards (carried into future work)
+
+### Guard (a): Flagged row lookup key is `.id`, not `.transactionId`
+
+**Rule:** `.id` is the Redis lookup key for flagged transactions; `.transactionId` is NOT.
+
+- `.id` = scoring-event UUID, minted per scoring event (`anomaly_service.py:879`). Use for **references**: payload fields, evidence API calls, anything a read tool resolves.
+- `.transactionId` = the banking transaction id, carried on rows. Legitimate for **correlation** only.
+- A read on `.id` returns 200 (or 404 if the row was purged). A read on `.transactionId` returns 404 even for rows that exist.
+
+**Do NOT "fix" a seeder to use `.transactionId` even if it "looks more meaningful".** The error would not become visible until the read fails in production.
+
+**Why it matters:** only **14 of 128** flagged rows carry a non-empty `.transactionId`. The 114 that don't cannot be identity-matched. A design that rests on this field is weaker than one that rests on `amount`/`accountId`, which fresh rows always populate.
+
+### Guard (b): A seeder must wait for what it will later require
+
+**Rule:** Any predicate used to **select** a subject must be the same predicate that **terminates** the wait.
+
+**Failure mode:** Filtering on a property the poll did not wait for is a race with an assertion bolted onto the end. If the poll breaks on `n_usable >= 1` and the filter requires `.amount >= 25000`, you are racing the moment a second transaction scores against the moment its amount is computed. ~21 of 23 runs will fail.
+
+**Implementation:** The same function must be called from both the break condition and from the selection. That is the whole point.
+
+**Die distinction:** The `die` must name its cause. "nothing flagged at all" (stream/Foundry/FLAGGING_THRESHOLD problem) vs "flagged but nothing qualifies" (model scored low, or poll window too small) send debuggers to different services.
+
+**Opt-out:** If the qualifying subject depends on a model score, a hard `die` on low-score days leaves the operator with no demo. An escape hatch with a typed flag (`--allow-unescalated` style) that degrades the run and prints what is degraded is legitimate. A *silent* default variance is not.
+
+## Learnings — 2026-09-10 (human override: the primitive was already built)
+
+**Ruling:** `.squad/decisions/inbox/danny-human-override-counter-proposal.md`
+
+### The finding that reframed the whole question
+
+Brian objected that the banker is "just the sign off" — sign or deny, no override. The brief
+framed this as a missing primitive to design. It was not. **`POST /api/authority/approvals`
+with `supersedesApprovalId` is counter-proposal, fully implemented**
+(`ApprovalService.cs:105-141`), and the supersede gate is *requester-only*.
+
+The unlock: **the copilot forwards the banker's own bearer token verbatim** to the authority
+service (`auth.py:57`, `sessions.py:163,306`, `planner/loop.py:750`). So `RequesterId` on every
+"agent-proposed" approval is the banker's own user id. **The banker already passes the
+requester-only gate.** The agent is not a principal here; it is a drafting surface operating
+under the human's identity. Nobody on the team had connected those two facts, because one lives
+in a Python auth module and the other in a C# guard clause.
+
+**Generalise this:** before designing a new primitive, check whether the backend already
+implements it and only the UI lacks it. The tell is a terminal state or enum member that exists
+in the schema, is asserted by tests, and has no user-reachable path that produces it. Here it
+was `PAYLOAD_SUPERSEDED` — present in 33 files, exercised by `demo.sh`, exposed by zero buttons.
+Write-path-first search (who *writes* this value?) found in minutes what a UI-first search would
+have missed entirely.
+
+### The hole the good news exposed
+
+`PolicyEvaluator.cs:150-153` — **slot 0 carries `MustDifferFrom = []`**. Only slots 1..n get the
+requester-exclusion. So at L1 the requester signs their own approval. Fine for an agent-drafted,
+evidence-gated payload. **Not fine for a human-authored one**, which carries no agent evidence
+for the figure the human just invented. Exposing counter-propose without a floor would have
+shipped a self-approval surface into a banking demo.
+
+**Principle worth keeping: less evidence must mean more signers, not the same.** A provenance
+change that removes an evidence trail is a rung input, and if it is not wired as one, the rung
+silently under-prices the risk.
+
+**The safe hook** is the server-controlled `context.*` namespace in
+`EvaluationContext.BuildDocument()` (`:39-41`). `context.selfDealing` is the precedent: injected
+by the service, unforgeable by the caller, readable by policy predicates. Adding
+`context.humanAuthored` + an escalator with `minRung: L2` gets a structural floor for one boolean
+and six lines of YAML, and the evaluator's `max`-only monotonicity means **config can raise it and
+the policy grammar has no verb to lower it**. When a codebase gives you a monotone evaluator, new
+risk signals are cheap — spend the design effort on getting the *signal* unforgeable, not on
+enforcement machinery.
+
+### Refusing the symmetric-looking request
+
+Brian also asked why the *supervisor* has no override. Symmetry is seductive and wrong here. The
+requester-only supersede gate is **what keeps the payload's author distinct from its second
+signer**. Let the supervisor author *and* co-sign and dual control collapses to one person doing
+both jobs — the exact failure `MustDifferFrom` exists to prevent. Said no plainly and gave the
+real answer: the supervisor's verb is deny-with-validated-reason, which *returns* the case to the
+banker to re-author. The genuine gap there is presentational — a denial reads as termination when
+it should read as "returned to you."
+
+**Watch for this shape:** when a user asks for capability X for role A and it is right, they will
+immediately ask why role B lacks X. Sometimes the asymmetry *is* the control.
+
+### Bucket ruling (Linus)
+
+Signed-but-unexecuted = **Running**, not Done. The buckets answer "what does the banker still have
+to do?" — a signed item has cleared human control. "Done" must mean nothing further will happen,
+and that is false: execution re-evaluates policy and can still void
+(`ApprovalsController.cs:110-140`). Accepted Linus's two follow-ups — key `running` on execution
+state with a visible *stalled* affordance (show the stall, don't relabel it done), and either
+implement `doneToday`'s date window or rename it (`TaskQueuePane.tsx:75`).
+
+**Honesty note I want to keep making:** I could not find the four-lane tally in `demo.sh` myself.
+I took Linus's reported numbers at face value because he ran it, and I **labelled it unverified
+in the ruling** rather than writing it as a finding. Marking the seam between what I confirmed and
+what I inherited costs one sentence and is the difference between a ruling and a guess.
+
+### The part I got wrong first, and the rule that comes out of it
+
+My first draft proposed injecting `context.humanAuthored` and asserted "the caller cannot forge
+it, exactly as `selfDealing` cannot." **Wrong, and wrong in an instructive way.** `selfDealing` is
+server-*derived* — computed from actor and target. Authorship has no such derivation, precisely
+because of the finding that made the whole ruling possible: **the agent proposes on the banker's
+token**, so agent re-plan and human counter-proposal are the same principal on the same credential
+through the same code path. And the fields that look like provenance — `AgentId`, `SessionId`,
+`AgentAssessment` — are caller-supplied body fields (`Contracts.cs:22,24,26`). I had *already
+established* the fact that killed my own mechanism and did not carry it forward two sections.
+
+**Rule: a provenance flag meaning "a human did this" is defeated by omitting it. Invert to
+fail-closed — escalate on the *absence of positive attestation*, so defeating it requires
+manufacturing evidence rather than withholding a boolean.** The corrected escalator keys on
+`context.supersedes` (a fact the service observes in the request it is handling) and treats every
+replacing payload as unattested. Costs a blanket L2 on agent re-plans too; that is the honest
+price of a system that genuinely cannot tell who wrote the payload.
+
+**The deeper architectural debt, now named:** a service that calls another service purely on the
+user's forwarded token **has no identity of its own**, and therefore *nothing it asserts about
+itself is evidence*. Convenient for authorization pass-through, fatal the moment you want to price
+risk by authorship. On-behalf-of (service credential + user identity) is the durable fix. Logged as
+a future epic, explicitly out of scope for the fast follow.
+
+### Second miss: a defence becomes an attack when a different actor drives it
+
+`Approval.IsTerminal => Denied or Executed` (`Models/Approval.cs:238`) — **`Signed` is not
+terminal**, so a signed approval can be superseded. `SupersedeSignatureVoidTests.cs` shows this is
+deliberate: it proves no signature survives a payload change, blocking an agent from smuggling an
+unsigned figure past a human. Correct, and untouchable.
+
+But hand that same mechanism to a human and it is **reviewer-shopping**: dislike your co-signature,
+supersede, re-roll for a different supervisor. The queue refuses to name a prospective signer,
+which prevents *picking* a reviewer — it does not prevent *re-rolling* until a preferred one
+appears.
+
+**Generalise: before exposing an existing mechanism to a new actor, re-derive its security property
+with that actor substituted in.** The property is a claim about (mechanism, actor) — never the
+mechanism alone. I nearly shipped "separation of duties strictly strengthened" while opening a
+re-roll path.
+
+Mitigation used the same trick as the first fix — a **live fact with no consumer**.
+`actor.mutatingProposalsInWindow` is computed and published to the predicate document
+(`EvaluationContext.cs:37`) and no escalator reads it. Worth grepping for these deliberately: a
+monotone evaluator makes an unused-but-populated fact into a guard for six lines of YAML.
+
+### On leaving the retraction visible
+
+I kept the wrong version in the ruling as a marked revision rather than editing to a clean
+document. The original reasoning was plausible enough to have shipped, and the failure mode is
+more useful to the team than a tidy artefact that hides it. Also: I found both flaws by re-reading
+my own draft adversarially *after* writing it, not while writing it. **Write the ruling, then
+attack it as if a colleague wrote it** — the mistakes are legible in a way they are not while you
+are still constructing the argument.
+
+### Revision 2 — Brian reframed it and the reframe was load-bearing
+
+Brian: *"it proposed — but again with only one option is not a proposal its a directive."* Correct,
+and conceding it changed the ruling far more than a wording fix should. I had been reasoning about
+a **missing button**. The actual defect is a **missing vocabulary**: the model has agree and
+destroy, and no way to disagree with the *specifics*. Once I accepted his frame, two findings fell
+out within minutes that I had walked straight past in draft 1.
+
+**Finding A — the ordering trap.** Supersede requires a non-terminal target
+(`ApprovalService.cs:119-122`); `IsTerminal => Denied or Executed` (`Models/Approval.cs:238`).
+So **deny permanently forecloses supersede.** The single verb the UI offers for "I disagree" is
+the one that destroys the remedy. Brian burned three approvals hunting for a door his own clicks
+were closing.
+
+**The methodological lesson, and it stings:** in draft 1 I checked whether the capability was
+*reachable* and stopped when the answer was yes. I never asked **what makes it unreachable.**
+Reachability analysis is only half the work — the other half is enumerating the transitions that
+close the door, especially the ones a user is *funnelled toward*. "Can they do X?" and "can they
+still do X after doing the obvious thing first?" are different questions with different answers.
+
+**Finding B — a mandatory input with no reader.** `DenialReasonValidator` enforces six rules
+including an explicit anti-mashing rule (`:68-121`), and the design note says *"'no' is not a
+reason."* The system works genuinely hard to extract a substantive human judgement — then stores
+it, audits it, streams it to the UI, and **shows it to no agent, ever.** The planner ends the run
+at `approval.required` (`planner/loop.py:788-790`); nothing resumes, nothing reads it back.
+
+**Generalise: look for mandatory, heavily-validated inputs whose consumers are all sinks.** High
+validation effort signals the team believed the field mattered; if every read is a store, an audit
+or a render, the belief was never cashed. That gap is usually a missing *loop*, and the fix is
+often a better primitive than the one being requested. Here it is: routing the denial reason into
+the next run gives "not that, this" **without** turning the banker into an origination surface and
+**without** an unevidenced payload — the human *directs*, the agent re-drafts with evidence. That
+resolves the exact tension the original brief said it could not resolve.
+
+**Third retraction in one document.** I had written that a supervisor's denial "returns the case
+to the banker to re-author — a round trip, not a dead end." Finding A proves that false. I
+asserted a workflow the code does not implement, because it was the *sensible* design and I
+narrated it instead of checking it. **The most dangerous claims are the ones plausible enough that
+verifying feels unnecessary.** All three retractions in this ruling were of that type.
+
+**On correcting the person who briefed me.** The revised brief said a denial destroys the evidence
+bundle. It does not — the record persists 90 days intact (`retention_seconds` = 7776000,
+`ApprovalRepositoryBase.cs:97`). Said so plainly. "No shortcuts, no lies" has to point at the
+brief as well as at the code, and here the precision decided the build: we are restoring a broken
+**link**, not recovering lost **data**. Directionally-right framing with a wrong mechanism still
+sends implementers to the wrong place.
+
+**On severity when the gap is in the claim, not the code.** Final answer was not
+demo-blocking but **claim-limiting**, plus a Tier 0 of pure copy: warn that Deny is final, and
+narrow what the demo asserts. The system is excellent at *enforcement* (nothing executes without
+human signature, two above a threshold, signatures void on payload change) and thin at
+*collaboration*. Claiming only the first is both true and strong. **When a demo overclaims, the
+fix is the sentence, not the sprint** — and giving Brian the exact honest line to say on stage was
+worth more than any code I could have recommended this week.
+
+### Revision 3 — I nearly shipped a ruling that would have refused the demo's best moment
+
+My §2.3 escalator was written `raiseBy: 1` + `minRung: L2`. Caught in final review, and it was a
+genuine near-miss: `RungOrder.RaiseBy(L2, 1) = L3` (`Models/Rung.cs:41-46`), and **L3 is not a
+rung, it is a refusal** — step 7 returns `Refuse(...)`, "outside the Copilot's authority"
+(`PolicyEvaluator.cs:144-152`). So my "add a second signer" guard would have made **superseding
+any already-L2 approval impossible**, which is exactly the marquee walkthrough beat. Turk would
+have implemented it as written.
+
+Fix: `minRung: L2` **alone**, which folds as `max(current, L2)` — a true floor, L1→L2, L2→L2. The
+validator accepts minRung with no raiseTo/raiseBy (`PolicyLoader.cs:725-730`), so this is a legal
+form. Left an explicit ⚠️ warning in the ruling telling Turk *not* to add the obvious `raiseBy`,
+because it is the natural thing to write.
+
+**The lesson, and it is a sharp one: in a ladder where the top rung means "refuse," "escalate by
+one" and "require more scrutiny" are not the same operation.** I had internalised the engine's
+monotonicity as an unconditional safety property — "escalators can only raise, so raising is
+always safe" — and wrote prose describing a *floor* while writing YAML expressing a *step*. The
+monotonicity guarantee is real and it protected me from lowering a rung; it says nothing about
+stepping off the top of the ladder. A structural guarantee constrains one failure direction, and
+believing it covers you generally is how you stop checking.
+
+**Method fix I want to keep: when recommending declarative config, evaluate it by hand against
+every input state, not just the motivating one.** I validated my rule against the L1 case that
+prompted it and never ran L2 through it. One extra line of arithmetic — `L2 + 1 = ?` — was the
+whole defect. **For any rule I propose, enumerate the input states and write down the output for
+each, including the states the rule was not written for.**
+
+**Also worth noting how it was caught.** Every one of the four errors in this ruling — the
+forgeable provenance flag, the re-roll path, the fictitious supervisor round trip, and this — was
+found by *adversarial re-reading after the document existed*, never while composing it. Three of
+the four came from a reviewer working off my own transcript. **Recommendations in declarative
+config deserve the same "run it in your head against hostile inputs" discipline as code, and they
+rarely get it, because YAML reads like prose and prose does not look like it needs testing.**
+
+## Learnings — 2026-09-10 (approval card rewrite: same hole, other side)
+
+**Ruling:** `.squad/decisions/inbox/danny-approval-card-information-architecture.md`
+
+Brian: *"The output here needs a complete rework. It's too robotic with lots of words without
+meaning or understanding."* Remit expanded to own this alongside the authority ruling, and they
+turned out to be one defect:
+
+- **No override** — the human may not disagree with the specifics.
+- **No rationale** — the human is not shown the specifics well enough to disagree.
+
+**A human cannot counter-propose against reasoning they cannot see.** So the card is a
+*precondition* for the override work, not cosmetic groundwork — shipping the override verb onto
+today's card would give bankers authority to disagree with a GUID. I reordered on that basis and
+said so explicitly, because it changed which team ships first.
+
+### Root cause worth naming: producer's view vs decider's view
+
+The card is the policy engine and the tool runner **explaining themselves**. Every element answers
+"what did the system do?" when the reader needs "what is happening and what should I do about it?"
+*"Base rung for this action. No escalators fired"* is accurate, well-engineered, and useless to a
+banker.
+
+**This will not yield to a copy pass — the wrong things are on the card.** Worth catching early:
+when someone reports tone ("robotic", "words without meaning"), check whether it is actually an
+*information architecture* defect wearing tone's clothes. Rewriting those sentences more warmly
+would have burned a cycle and fixed nothing.
+
+**The diagnostic that made it tractable:** the one line Brian did *not* complain about was the
+human-written reason — "Lockout was caused by a stale saved password on the customer's phone."
+Concrete, situational, about a person. **Find the element the user did not object to and make it
+the specification for everything else.** That gave me an objective test to hand Linus — *would a
+banker say this sentence to a colleague?* — which is far more useful than "make it less robotic."
+
+### The defect under the tone complaint
+
+`evidence[tool_id] = result.data` (`planner/loop.py:620`) writes raw tool output. The client mapper
+`toEvidence` (`api/authorityWire.ts:211-229`) only produces an `excerpt` when the value is a bare
+string or carries `.summary`; a raw data object yields neither, so the card renders the humanised
+**tool name** alone. Values are on the wire and the UI drops them.
+
+**The fix is not "make the mapper dump the object."** Raw tool payloads are arbitrary JSON and
+rendering them generically makes a worse card. It is a *contract gap* — nobody defined what an
+evidence item should say to a human. Cheapest correct fix: producer populates `label` and
+`summary`, which the existing mapper already reads, **zero client change**. Worth the pattern:
+when a renderer looks broken, check whether the field it wants was ever specified. Fixing the
+consumer would have entrenched presentation knowledge of tool payloads in the client.
+
+### Defining a contract nobody had written
+
+Turk was blocked asking whether `agentAssessment` is ever populated. Two useful moves:
+1. **Answered the empirical question as a labelled hypothesis with a five-minute test** — the
+   planner passes `primary_proposal_assessment(...)` on every propose (`loop.py:739-751`), so
+   `null` on live records is very likely a *seeder* omission. Told him to confirm by dispatching a
+   real run rather than asserting it for him.
+2. **Specified what it must contain**, field by field, with required/optional and card usage —
+   because "does it get populated" was the wrong question. A populated field whose `rationale`
+   reads *"Policy evaluation completed; no escalators fired"* satisfies the type and fails the
+   card. **Register is part of the contract, not a nicety**, and if the prompt does not ask for
+   situational explanation, changing the prompt is part of the work.
+
+### Two constraints I put in the spec that will not survive on their own
+
+- **Never blur the agent's claim with the harness's observation.** The service separates them
+  deliberately (`approval_view.py:110-117`); the card must preserve it visually. A model opinion
+  styled identically to a system fact is the most dangerous thing this card could do.
+- **Absence is information.** `concern: undefined` means the agent did not say; a ✓ there is an
+  assertion nobody made (`types.ts:212-217`). Never default, never fill.
+
+### Demote, never delete
+
+Every mechanism element I pulled off the primary surface goes into a collapsed "how this was
+decided" region — hashes, policy version, raw ids, tool ids, iteration counts. Auditors and
+sceptical bankers both need it. **A simplification ruling that deletes audit surface is a
+regression wearing a redesign's clothes**, and saying so up front stops the implementer guessing.
+
+Also gave a **priority order for a partial build** against a hard deadline, with each step
+independently valuable and an explicit *do not attempt* on the one item (subject enrichment) that
+cannot be rushed honestly.
+
+### Scope correction — Brian checked that we hadn't turned "fix this panel" into a rework
+
+> *"i want to make sure it wasn't something along the lines of Brian has now called for a complete
+> rework of the application. Cause that is not what I'm asking for lol. Just that panel detail."*
+
+Arrived after both documents were written. Checked mine honestly rather than assuming they
+complied:
+
+- **Card spec: compliant.** Genuinely card-only; I never touched queue, trace, artifact or command
+  bar. Added an explicit in/out scope block at the top anyway, because a 360-line document about
+  one panel *looks* like a rework at a glance and the reader should not have to infer scope from
+  absence.
+- **Authority ruling: partly overreached.** I was asked to rule demo-blocking / fast-follow /
+  future-epic and I delivered that — wrapped in more design than anyone authorised. Fixed by
+  adding a **one-page decision summary** with three options, sizes and a recommendation, plus a
+  note stating which sections are *decisions* and which are *sketches to size an option*. §2b in
+  particular is now explicitly labelled "not authorised, do not build from."
+
+**The lesson: a ruling and a specification are different deliverables, and length signals which
+one you think you're writing.** Asked to size a gap, I produced something shaped like an
+implementation plan. Even correct content in the wrong shape misrepresents what has been decided —
+a reader reasonably assumes a document this detailed reflects an approved direction. **When asked
+"how big is this and should we do it now," lead with a decision table and put the evidence behind
+it.** I kept the detail (it prevents a real shipping bug) but made the decision extractable in a
+page.
+
+**Second lesson, on scoping language.** My colleague's briefing sentence — "Brian has now called
+for a complete rework of the approval card" — is what prompted Brian to check. Accurate in
+substance and alarming in phrasing. **When relaying a stakeholder's dissatisfaction, name the
+artefact precisely and the scope explicitly**, because "complete rework" travels further than
+whatever noun follows it. I have started doing this in my own documents: state what is *out* of
+scope, not just what is in.
+
+**Dependency framing.** Rewrote card §6 from "backend items" to "dependencies, with owners" —
+stating what the card *requires and why*, then naming the owner, rather than designing services
+Turk owns. Where I kept a ruling (display data must never enter the hashed payload) it is flagged
+as a constraint on the signing model, which *is* mine — and it turned out to match point 6 of
+Turk's own reason-template skill independently. **Two people deriving the same constraint from
+opposite directions is the strongest signal it is real.**
+
+Also checked before writing whether my §3.7 escalator-copy request collided with the `{actual}`
+template bug Turk already owns. It did. Marked it explicitly as his and reduced my ask to the one
+genuinely new case (base-rung actions fire no escalator, so there is no template to render at
+all). **Check the team's in-flight work before specifying anything adjacent to it** — the cheapest
+duplicate to prevent is the one you cause yourself.
+
+
+### 2026-09-10 — UI and Authority Fixes Session (#332)
+
+**Session Type:** Multi-agent integrated session (Turk, Linus, Danny, Rusty)
+**Branch:** `332-beta`
+**Outcome:** Approval-card IA and counter-proposal model ruled; implementation tracked
+
+**Danny's Contributions:**
+- Ruling 1: Approval-card information architecture spec (full ruling preserved in decisions.md)
+- Ruling 2: Human override & counter-proposal model option A+B (full ruling preserved in decisions.md)
+- Open: Queue bucket semantics (signed-but-unexecuted classification)
+- Open: Footer compliance (FDIC text suppression acceptable?)
+
+**Manifest:** Two long specs (`danny-approval-card-information-architecture.md`, `danny-human-override-counter-proposal.md`) merged into decisions.md with full content preserved
+
+**Implementation Status:**
+- Turk: counter-proposal support, churn guard, L2 floor
+- Linus: centre-pane ownership rule, approval detail rendering, separation-of-duties copy rewrites
+
+**Orchestration Log:** `.squad/orchestration-log/2026-09-10T20:47:00Z-danny.md`
+**Session Log:** `.squad/log/2026-09-10T20:47:00Z-copilot-ui-and-authority-fixes.md`
+
+### Free-text planner: subject resolution and `newScore` (epic #332)
+
+- **Verify "no endpoint exists" claims by reading authorization attributes, not route lists.**
+  Turk said no banker-safe user lookup existed. A route list showed `GET /api/admin/users` — which
+  looks like a counterexample and is not: `[Authorize(Roles = Admin)]` (`AdminController.cs:12`)
+  and it returns every user unbounded. The route existing and the route being *reachable by this
+  principal* are different questions. Always read the class-level attribute before concluding a
+  capability is available.
+- **The codebase had already ruled the distinction I needed.** `BankingRoles.cs:90-95` states that
+  reading a balance is *banking* authority while reading an identity record is *platform*
+  authority. That single sentence decided Ruling 1: a name→id lookup is identity-plane discovery,
+  so it is a third authority, not a reuse of either. Read the doc comments on shared constants
+  before inventing a distinction — a previous ruling may already be encoded there, and reusing its
+  vocabulary makes the new ruling consistent for free.
+- **Blast radius is a step change, not a gradient.** Bankers can already read any customer's
+  balances *by id* (accepted and documented, `BankingRoles.cs:99-104`). Adding name search sounds
+  incremental but converts "reads anyone he can identify" into "enumerates the customer base."
+  When assessing a new read capability, ask what it changes about *discovery*, not about *access*.
+- **A refusal that lists candidates is the search API you just declined to build.** Ambiguity
+  handling looked like a UX question and was actually the security question: returning "2 matches:
+  casey.reid, casey.moore" leaks the directory one query at a time through the error channel.
+  Check every failure path for whether it re-grants the capability the success path withholds.
+- **Watch for category errors framed as missing features.** I was asked whether the policy
+  grammar's lack of *downgrade* vocabulary was a gap or a boundary. It was neither: the ladder
+  governs authority-required, while `newScore` is a payload value. Acting on the stated framing
+  would have meant making the monotone ladder bidirectional — a genuinely dangerous change — to
+  solve a problem that was really "policy cannot express payload field domains." When a request
+  implies a change to a structural invariant, re-derive what the requester actually needs first.
+- **Prefer a ruling expressible in the grammar that already exists.** The `newScore` bound needed
+  no new policy vocabulary: a `ratio` threshold (precedent `agent_confidence_floor`) plus one rule
+  using `raiseTo: L3`, which is a refusal rather than a rung. Verified each link before writing it
+  — payload fallback in `PredicateEvaluator.Resolve:46-54`, `lt` at `:38`, L3 gate at
+  `PolicyEvaluator.cs:144-152`. A recommendation you have traced through the evaluator is worth
+  more than one that merely sounds consistent.
+- **A shipped primitive answers the next question for free.** "Who picks the number, and is
+  human-picks a payload edit?" looked like it needed new mechanism. Counter-propose (option B) had
+  landed hours earlier and already solved it exactly. Before designing, check what shipped since
+  the last ruling — the same instinct as the latent-capability audit, applied to your own recent
+  decisions.
+- **Review the unglamorous branch.** Turk's `propose` path was rigorously allowlisted; the `read`
+  path had no equivalent validation because reads feel harmless. Same for `subjectHints`: the
+  resolver accepting an id-shaped hint would let the model skip resolution entirely. Both were
+  bypasses through the channel nobody was guarding. When a design defends one branch well, spend
+  the review budget on the other one.
+- **Second occurrence of the same trap class — verify the OUTCOME, not the mechanism.** I wrote
+  `raiseTo: L3` on an action rule citing an earlier read of the L3 gate. Under challenge I checked
+  properly and found three things I had assumed: no existing rule in the file uses `raiseTo: L3`
+  (mine is the first), the loader accepts it only because `ValidateRaise` defers to
+  `RungOrder.Parse`, and rule-produced L3 reaches `Refuse` only because the gate sits at step 7
+  *after* rules and escalators. All three held — but I had not earned the claim. Related discovery
+  in the same pass: action rules receive `minRung: null` explicitly
+  (`PolicyEvaluator.cs:92`), so `minRung` on a rule loads silently and does nothing. The mirror
+  image of the previous ruling's trap, in the same file.
+- **Run the constraint against the actual demo data before shipping it.** My "prefix match on
+  username" rule collided with seeded `banker` / `banker2` — an exact, unambiguous username would
+  have fired my own `ambiguous_subject` refusal. Cost: one grep of `demo-dataset.json`. Any bound
+  written as a rule should be replayed against the fixtures the demo will actually use.
+- **A bound that is correct can still break the thing it protects.** The 0.25 score floor is right,
+  and the demo prompt ("legitimate, she notified us in advance") invites a model to propose 0.1 —
+  below the floor, hence a refusal, killing the marquee beat. The fix is not a looser bound but
+  telling the model the signable band, *projected from live policy* rather than pasted into the
+  prompt. When adding an enforcement bound, ask what the actor does when it does not know the
+  bound exists.
+- **Primary evidence beats reasoning when it is available.** I argued from first principles that
+  the monotone ladder was deliberate. `PolicyLoader.cs:733-736` names it — "invariant I-4" — which
+  settles it outright. Grep for the invariant before constructing the argument for it.
+
+### Merge-readiness assessment for #332
+
+- **"Deployed" is a claim to test, not a state to read off a pod list.** Every pod showed 36m age
+  on a `:latest` tag, which reads as current. Commit times (16:49–16:53) against pod age (~16:20)
+  proved the pods predate every commit. `:latest` destroys the tag as evidence, so age plus commit
+  time is the only honest inference — and even that is circumstantial until confirmed directly.
+- **Two cheap probes settle deployment questions outright.** For an interpreted service, `kubectl
+  exec ... ls` the module directory: a missing file in the running image is proof, not inference.
+  For a compiled one, probe the route **with a control in the same call** — the directory endpoint
+  returned 404 while `/api/users/me` returned 401 on the same host, so the 401 rules out "service
+  down" and the 404 can only mean the route is absent. A probe without a control proves nothing.
+- **Second false negative this session from a careless grep, and this one nearly reached a
+  deliverable.** I grepped `hashFields\|moneyFields` (JSON casing) against C# source, matched
+  `HashFields` only because I had separately included the capitalised form, and concluded
+  `MoneyFields` was missing from the policy projection. I had already drafted it as a defect —
+  "a money-canonicalisation guard that silently no-ops because its input never arrives" — which
+  was vivid, plausible, and wrong. `PolicyController.cs:66` emits it. **When a grep produces an
+  absence across a naming-convention boundary (C# PascalCase vs JSON camelCase, snake vs camel),
+  confirm the absence by reading the region before building anything on it.** Absence evidence
+  from a case-sensitive tool is the weakest evidence there is.
+- **Check what a test suite actually exercises before citing it as proof.** The 31-prompt
+  acceptance suite looked like strong evidence. It imports `IntentDecision` from `intent_model` and
+  constructs decisions directly — the model never runs. So it pins routing and payload handling,
+  and says nothing about whether the model reasons. The distinction was the load-bearing claim of
+  the whole assessment; "8 tests, all green" would have been true and deeply misleading.
+- **Assess as shipped, and be willing to find it better than you specified.** I went into the
+  directory-lookup review expecting to catch the corners (exact-match short-circuit, `_` as an
+  unblocked LIKE wildcard). Both were already handled — and the `LIKE` concern was moot because the
+  implementation uses parameterised `STARTSWITH`, which has no wildcard semantics at all. Saying so
+  explicitly is worth more than manufacturing a finding.
+- **Distinguish present-tense risk from structural risk.** The directory API returns the candidate
+  list while the non-disclosure rule lives in the copilot resolver one layer above. Today the
+  property holds because the resolver is the only caller. That is a note-on-the-endpoint, not a
+  blocker — and conflating the two would have inflated a good design into a false alarm.
+- **When quality and evidence diverge, say which one is missing.** The honest headline was not
+  "the epic is unfinished" — the work was done and good. It was "nobody has watched it run." Those
+  need different remedies (an hour of deployment, not another epic), and naming the right one is
+  the entire value of the assessment.
+
+## 2026-09-10 — Ruling on the two strict-xfail demo prompts (#332)
+
+Ruled: build the two-customer comparison fix; cut the "lower its risk score" utterance.
+Written to `.squad/decisions/inbox/danny-two-xfail-prompts.md`.
+
+- **Check the premise of the question before answering the question.** I was asked to weigh a
+  unique evidence key against canonicalization risk. I traced `PayloadHasher.Compute` and
+  `Canonicalizer` end to end: the preimage is `scheme \n actionId \n policyVersion \n
+  canonical(project(payload, hashFields))`. Evidence is *not* an argument. `VerifyStoredHash`
+  recomputes from the stored payload only. **The risk I was asked to trade against did not exist**,
+  and the whole ruling flipped on that one read. A hard question can dissolve rather than resolve —
+  but only if you read the preimage instead of reasoning about it.
+- **"Not in the hash" is not "not load-bearing."** The same evidence key that is irrelevant to the
+  signature is an exact-match lookup in `PolicyEvaluator.EvidenceComplete` and the `already_gathered`
+  check in the evidence ceiling. First fails closed (422 on every propose); second **fails open and
+  silent** (re-reads granted, stage-1 demand numbers corrupted). Always ask of a key change: which
+  consumer fails loudly, and which one just gets quietly wrong?
+- **Look one layer below the reported bug.** The xfail blamed `evidence[tool_id]` (last writer
+  wins). Directly beneath it, `request.facts.setdefault(...)` has the mirror bug (**first** writer
+  wins) — and `facts` binds tool arguments *and* ships to authority. So a two-customer run leaves
+  evidence holding one subject and facts holding the other, with the stale subject travelling to a
+  real approval. Fixing only the reported half would have looked like a fix and left the more
+  dangerous side intact.
+- **Verify the near-miss you would have made last time.** Redaction rules are keyed by tool id, so
+  suffixed bundle keys looked like an SSN/DOB leak. They are not: the executor redacts off the tool
+  *definition* before the result leaves it. Same class as the case-sensitive-grep near-miss —
+  checked, cleared, and said so rather than shipping a plausible finding.
+- **A prohibition can be right and still be the wrong reason.** Cutting prompt B on "search is
+  forbidden" would have been lazy. The blast-radius argument behind the customer-search refusal
+  does *not* carry to the transaction plane: once the subject is authorised, filtering her own
+  transactions discloses nothing new. What carries is the **determinism** half — a description is a
+  semantic match, and the model must never pick the subject of a signable action. Reusing a rule
+  requires re-deriving *which part* of it applies.
+- **Re-test a scoping argument when the schedule loosens.** I said neither prompt demonstrates human
+  authority over an agent. Retested with four extra days: **false for A** (it flipped to build),
+  **still true for B** — because `:452` already shows a bounded score proposal reaching L2 and
+  `:475` already shows the floor→L3 refusal. B loses a phrasing, not a capability. An argument that
+  survives the removal of the pressure that produced it is a different, better argument.
+- **Half a stale reason string is still a stale reason string.** The B xfail cited "no transaction
+  id and no target score." The score half was closed by my own §2.3 ruling and is covered by two
+  passing tests in the same file. Test reasons rot silently; they are documentation nobody lints.
+- **Rewrite xfails, do not delete them.** Both encode something worth keeping: `:332` holds the
+  bug's shape, `:499` holds the exact demo sentence. Deleting removes the evidence that we
+  considered the case. Converting `:499` into a green test asserting a *named refusal* keeps the
+  31-prompt bar intact with one prompt documenting a deliberate refusal.
+- **Run the test before costing the fix.** I wrote that B was "a test rewrite and a doc note, half
+  an hour" while only knowing the xfail asserted `propose_calls` was truthy — i.e. that *something*
+  refused. Running it printed `failed / payload_unfillable / propose_calls == []`: the exact honest
+  triple. The estimate held, but it held by luck until I checked. If it had completed with an empty
+  bundle, B would have been a live taxonomy violation, not a doc note. Ten seconds of pytest is
+  cheaper than a wrong ruling.
+- **A spec that gives two examples of one rule will be implemented as two rules.** My key-format
+  section illustrated `#1, #2` in one bullet and "bare id first, suffix from the second" in
+  another. Both were me describing the same intent; either could ship. Fixed to one statement:
+  *suffix on collision with the next ordinal.* Prescriptive docs need the rule said once.
+- **Follow the observation you made to its consumer.** I noted evidence keys become
+  `citedEvidenceIds` and then never said which key set the citation layer validates against. With a
+  projection now in the design, "the obvious one" is ambiguous — and picking the projected set
+  would have quietly re-created the collision at the citation layer while the bundle looked fixed.
+  Naming a new seam obliges you to route every existing consumer across it explicitly.
+
+### 2026-09-10 — Epic #332 merge readiness assessment (#332)
+
+**Question:** Is #332 safe to merge and demo?
+
+**Answer:** Work is done; proof is not. Deploy + 3 browser prompts, then merge.
+
+**Findings (proven):**
+- Free-text planner not deployed: image lacks `intent_model.py`; does not appear on running pod path
+- Directory endpoint not deployed: returns 404 in cluster; control probe returns 401 (proves service up)
+- Pods pre-date commits by 36 minutes
+- Acceptance suite proves routing only, not reasoning (model injected, never invoked)
+- What IS deployed and proven: `actionId` path is real, exercised live, authority model intact, Brian personally signed a live approval at 4:16:45 PM
+
+**Blocking merge (in order):**
+1. Deploy both services from `332-beta`
+2. Run three prompts in browser (read-only, reaching approval, refusing)
+3. Confirm directory lookup resolves exact match and refuses ambiguous
+
+**Residual risk (non-blocking):**
+- Non-disclosure rule lives one layer above data (enforced in resolver, exposed by endpoint); should be documented as ADR constraint on endpoint
+- One demo prompt pair flagged as xfail; rulings follow separately
+
+**Recommendation:** Fifteen minutes of deployment + browser time converts amber to green.
+
+### 2026-09-10 — Two xfail demo prompts (#332)
+
+**Prompt A: "Compare dana's checking history against casey's"**
+
+**Ruling:** BUILD IT. Canonicalization risk is zero (proved by tracing preimage: evidence is not in it). Real hazards:
+- Evidence dict last-writer-wins overwrite (multi-subject runs lose one subject silently)
+- **🔴 CRITICAL:** Facts map first-writer-wins merge across subjects (stale subject travels to approval)
+- Redaction keyed by tool id (safe; checked)
+- Citation key consistency (safe; checked)
+
+**Fix:** Per-invocation keys in accumulator; authority-facing evidence keyed by tool id (bare on first call, `#2` on second). Facts map carries only first-invocation results; no cross-subject merge.
+
+**Tests:** Three required: bundle shape, `already_gathered` refusal still fires, facts carry no cross-subject value.
+
+**Prompt B: "Lower its risk score"**
+
+**Ruling:** CUT THE UTTERANCE. Keep the capability (score override already demonstrated by passing tests). Determinism > feature coverage. Model cannot deterministically resolve "offshore wire" without semantic search, which violates §1.4 (model never chooses between candidates).
+
+**Tests:** Rewrite `:499` to green test asserting named refusal (`failed / payload_unfillable / propose_calls == []`), not as failure. Thirty-one prompts, one documents deliberate refusal.
+
+### 2026-09-10 — Subject resolution and risk-score override authority (#332)
+
+**Ruling 1 — Subject Resolution:** Add lookup tools (no banker-safe path exists; verified independently). New authority constant `CustomerDirectoryLookup` (same members as `CustomerFinancialRead` today, separate on purpose). Bounded lookup (not search): exact/prefix match, 3-char min, 5-candidate cap, identity projection only (id, username, display name, status; no email, PII, financial data). Both terminal refusals (ambiguous and no-match) must never list candidates — that is the search API declined.
+
+**Ruling 2 — Risk-Score Override:** Model proposes `newScore` bounded; both L2 signers see it; it is hash-bound (payload value, not in canonicalization). No human edit at sign time (option C already solved by counter-proposal: disagree → new hash, fresh L2 chain).
+
+**Ruling 3 — Constraints:** Ratio-floor threshold plus one action rule raising to L3; expressible in policy today, zero grammar change.
+
+**Ruling 4 — Gap:** Payload domain constraints are new (separate from canonicalization). Define action `requiredFields` explicitly or treat action `hashFields` as required.
+
+**Defects found in Turk's design:** Refusal xfail structure, evidence key boundary, facts-map cross-subject merge (critical), answer model prompt isolation, payload validation sequence.
+
+### 2026-09-10 — Decisions ledger growth: threshold, archiving, and the spawn-time read
+
+**Question:** Scribe proposed a 14-day active window + 300KB trigger for `.squad/decisions.md`
+(385KB, read by every agent at spawn). Rule on threshold, split, findability, and mechanism.
+
+**Ruling:** Rejected as written. Cap the file (64KB), enforced unconditionally at every merge.
+Split by **kind** (constraint stays forever; narrative moves to `decisions/records/D-NNN-*.md`).
+Findability is the permanent stub — the body archives, the existence never does. Spawn reads a
+bounded constraint index, full records demand-loaded by ID.
+
+**Learnings:**
+
+- **Read the rule before ruling on the proposal to change it.** Scribe framed this as "the 30-day
+  rule is too slow." The rule at `squad.agent.md:865` is *"exceeds ~20KB **AND** older than 30
+  days."* The size trigger already existed and had been satisfied nineteen times over for weeks.
+  The proposal was `300KB AND 14 days` — the same structure with both numbers moved, inheriting
+  the same defect. The defect was never the number. It was the `AND`. I would have ruled on the
+  wrong axis if I had accepted the problem statement's framing and argued about whether 14 was
+  better than 30.
+
+- **A conjunctive trigger fails at its weakest conjunct, and nobody notices because the other one
+  is loudly true.** 385KB is nineteen times over budget and screams it every day. That visible,
+  satisfied condition masked the silent, never-satisfied one. When a rule "has a size limit" and
+  the file is huge, the size limit is not the part to inspect.
+
+- **Prefer triggers on monotone quantities over triggers on a clock.** A file that only grows
+  cannot fail to cross a fixed cap. An age gate can have a permanently empty eligible set if the
+  project supersedes entries faster than they age — which is exactly what happened here. The
+  right question about any threshold is not "is the number right" but "can the eligible set be
+  empty forever."
+
+- **Ruling well means relocating the risk, not eliminating it, and saying which.** The cap moves
+  the failure mode from "never fires" to "evicts the wrong thing." That is strictly better —
+  visible, scheduled, governed — but it is not gone, and the eviction policy (§2) is the thing
+  that now carries it. Claiming a fix removes risk when it moves risk is how the next defect gets
+  built on a false floor.
+
+- **"Not actively cited" is a filter that deletes the best rules first.** Scribe's eviction
+  criterion was age AND non-citation. A constraint so well-settled that nobody re-argues it stops
+  being cited *because it is working*. Applied literally, in fourteen days it evicts "never add a
+  field to `hashFields` merely to make it required" — a permanent constraint on the signing
+  preimage. Quietness is evidence a rule is load-bearing, not evidence it is dead.
+
+- **Separate the constraint from the narrative; they have opposite lifetimes.** The normative
+  sentence must survive forever and is ~3 lines. The reasoning, evidence and transcript that
+  justify it are ~6.5KB average (38.6KB at the top end) and are re-read approximately never. A
+  ledger that stores them together has to choose one lifetime for both, and will get it wrong for
+  whichever half it did not optimize for.
+
+- **Findability is solved by never archiving *existence*.** The whole hazard Brian named — a
+  ruling that exists but cannot be found, so agents re-litigate it — dissolves if the stub stays
+  in the spawn-read file permanently. Nothing to discover, nothing to grep, nothing for the
+  coordinator to remember. When asked "does this become my job," the answer being *no* is only
+  credible if you can point at the mechanism that carries it instead.
+
+- **Measure the thing you are about to promise.** I was about to write "59 stubs × ~12 lines,
+  manageable." Instead I generated the headings-only index: **12.3KB, 3.2% of the file.** That is
+  a floor, not the answer — real stubs carry normative text headings do not — so I published 64KB
+  as a *design target Scribe must hit and report back on*, explicitly labelled unverified. An
+  estimate presented as a measurement is the exact shape of a lie under Brian's rule, and it is
+  easy to do by accident when the number happens to be right.
+
+- **The premise worth questioning was the granularity, not the design.** "Every agent reads the
+  shared decisions at spawn" is correct and is why this team stays coherent. What is wrong is
+  reading 385KB of it. Worth saying out loud: we do not currently *have* full recall — a 385KB
+  blob at the bottom of a spawn prompt is skimmed, and a ruling at line 6,000 is already
+  invisible. We have the appearance of it. A 64KB index that is actually read is *more* team
+  memory, not less. Shrinking the read increased coverage.
+
+- **Check whether the mechanism you are proposing already exists.** Spawn tiering (`:279-311`)
+  was already in the template, with Lightweight already skipping the decisions read. Framing the
+  change as *finishing* an existing mechanism rather than inventing one makes it cheaper to
+  execute and much harder to argue with.
+
+- **The archive is evidence about the proposal.** `decisions-archive.md` is 728KB — nearly twice
+  the active ledger — with 59 exact-duplicate entry groups totalling 271.8KB (37%). "Archive to a
+  second flat file" is not a hypothesis here; it was already tried, and it produced a larger
+  unread file than the one it was draining. That is dispositive against any ruling whose answer is
+  another flat file, and I would not have known it if I had only looked at `decisions.md`.
+
+- **Heeded the truncation caution.** Every count in the ruling comes from a full-file parse, not a
+  head-limited grep. It also paid for itself: the full parse is what surfaced the archive
+  duplication and the orphaned 162KB `decisions/decisions.md`, neither of which I was looking for.
+
+- **Label the inference you did not chase.** `merge=union` is confirmed in `.gitattributes` and is
+  the obvious cause of the archive duplication, but I did not trace a specific merge to a specific
+  duplicate pair — so it is filed as inferred. And I explicitly declined to claim tonight's ~76KB
+  growth was duplication: the active file has **zero** duplicates, which cuts against it. A
+  convenient theory that the evidence contradicts is worth killing in writing, so nobody revives it.
+
+- **A ruling that changes a file's write pattern must be checked against that file's merge
+  driver.** I flagged `merge=union` in the *Also found* cleanup section and then failed to follow
+  it into my own design one section earlier: my stubs are *rewritten in place* on supersession,
+  and union merge keeps both sides' lines. I had aimed the exact duplication mechanism I was
+  complaining about at the one file my whole findability argument depends on. Flagging a config as
+  someone else's cleanup is not the same as asking what it does to the thing you just designed.
+
+- **Order the directives, because a correct rule enabled early does the damage it was written to
+  prevent.** "Enforce the budget unconditionally" and "convert entries to stubs" are both right,
+  but enforcement-first means the next merge hits a 385KB over-budget file with no stub format to
+  compact into — and the only tool on hand is the flat-file archive move that I had just proved
+  already failed. Sequencing is part of the ruling, not an implementation detail to leave to the
+  executor.
+
+## 2026-09-11 — Refusal code accuracy and reachability (#332)
+
+Ruled: `subject_not_found` is correct; both codes ARE reachable; the system changes, not the test.
+Found a blocking defect nobody reported. Written to
+`.squad/decisions/inbox/danny-refusal-code-reachability.md`.
+
+- **Test the hypothesis you were handed, in the pod, not in the design doc.** Chuck's hypothesis was
+  that two of ten refusal codes were decoration. It was wrong in a specific, checkable way: the
+  resolver is called at `loop.py:952` and the refuse dispatch is at `:968` — the resolver runs
+  *before* the branch that was supposed to pre-empt it. Sixteen lines of control flow settled a
+  question that could have been argued about for an hour. Read the order of operations before
+  theorising about which component "gets there first."
+
+- **Four kinds of reachability evidence, and they are not interchangeable.** Emission site exists;
+  emission site exists *in the serving image*; dependency registered *in the serving image*; proven
+  to the terminal wire frame by a test. I had all four for `subject_not_found` and only the first
+  three for `ambiguous_subject` — which has zero end-to-end Python coverage. Saying "reachable by
+  inspection" for one and "proven to the wire" for the other is the difference between a ruling and
+  a reassurance. The weaker claim is the one worth making precisely.
+
+- **`kubectl exec grep` into the running pod settled in one call what a week of design reading could
+  not.** Same lesson as the deployment assessment, now habit: for an interpreted service, read the
+  source *out of the container*. It returned identical line numbers to the repo **and** Turk's
+  resolved-id-wins comment at `:996`, so "is the fix deployed" and "is the code reachable" were
+  answered by the same command.
+
+- **A one-token differential is the cheapest causal experiment available, and it beat the model's own
+  explanation.** `casey` passed, `nonexistent-customer-zqx` refused, same verb, same clause, same
+  file, minutes apart. The model said "no proposed action matches summarization" — refuted by the
+  passing test sixteen seconds earlier. **The model's stated reason was confabulated, not
+  honest-but-imprecise**, and the passing sibling test is what proved it. When two tests differ by
+  one token, the diff *is* the cause; do not accept the subject's account of itself over it.
+
+- **Label n=1 against a non-deterministic model as n=1.** The differential is strong and I built the
+  ruling on it — and it is still one run per prompt. Writing "this is proof that *this* run
+  confabulated, not that every unknown-subject prompt does" costs one sentence and is the difference
+  between a finding and an overclaim.
+
+- **Go looking for the mechanism, and you find the defect nobody reported.** The reported symptom was
+  a wrong code. Chasing *why* took me to `_INTENT_SCHEMA`, where `reasonCode` is
+  `{"type":"string","minLength":1}` — **no enum** — while `runOutcome.ts` sets
+  `showServerMessage: true` for the two non-disclosing codes on the stated grounds that "Turk writes
+  them for a banker." True of the resolver's literals; false of a model-emitted one, and the file
+  cannot tell them apart. The model can forge `ambiguous_subject` with its own prose. That was more
+  serious than the thing I was asked about and would not have surfaced from ruling on the symptom.
+
+- **A fabricated disclosure is worse than a real one.** My instinct was to rank a hallucinated "two
+  customers match" below an actual leak. Backwards. A leak tells a banker something true they should
+  not know; this tells them something false, in the channel we hardened specifically so it could be
+  trusted. Severity of a disclosure defect is not proportional to how much real data escapes.
+
+- **Second "guarantee asserted in a comment with no mechanism holding it" tonight.** Turk's refusal
+  artifact was the first. Both read as settled because the prose was confident and well-written. A
+  comment explaining *why* an invariant holds is now a prompt to go find the code that enforces it —
+  good documentation is a correlate of care, not evidence of enforcement.
+
+- **When the failure is in the assertion order, say what the test never got to check.** The run died
+  on the code assertion, so non-disclosure went unchecked. The sharp part is *which* branch went
+  unchecked: `objective_unmappable` is emitted before any read and is **vacuously** non-disclosing.
+  The resolver refusal — the one holding the candidate set in memory — is the only one that can leak,
+  and it is exactly the one never reached. We had proof on the branch that cannot fail and none on
+  the branch that can. A blocked assertion is not "unproven" in general; name the specific case that
+  is now uncovered.
+
+- **Locate an instruction, not just its presence.** The prompt *does* say "do not refuse merely
+  because the objective names a person in words" — in the **propose** paragraph. The failing prompt
+  was a **read**, whose paragraph has no equivalent. A grep proving the sentence exists would have
+  closed the investigation wrongly. Where a rule sits in a prompt is part of the rule.
+
+- **Never give a model a code it cannot determine.** `subject_not_found` and `ambiguous_subject` are
+  findings about a directory the model cannot see, yet both sit in its refuse vocabulary at
+  `intent_model.py:206`. Offering them invites fabrication in one direction exactly as omitting the
+  resolver invites it in the other. A taxonomy is not a shared vocabulary: each code belongs to
+  whichever component can actually establish it.
+
+- **Prefer a pipeline fix to a prompt fix, and say so as a preference.** Prompt changes make the
+  model less likely to be wrong; carrying `subjectHints` through the refuse branch so the resolver
+  can *upgrade* the code makes correctness structural. I ruled prompt+enum as required and the
+  pipeline fix as recommended-with-written-dissent, rather than mandating my own design — and I
+  named its consequence (a read happens before that refusal) instead of letting it be discovered.
+
+### 2026-09-11 — Re-ruling after Chuck corrected me (#332)
+
+Chuck was right and I was wrong on §4. Revised in place. Merge verdict: §8 blocks, §4 does not.
+
+- **I confirmed a property at the declaration site and never visited the enforcement site.** I read
+  `showServerMessage: true` in the copy table and concluded the UI renders those messages.
+  `TracePane.tsx:68` suppresses them — `copy.showServerMessage && !isNonDisclosing(code)` — and
+  Linus's comment there anticipates my concern in almost my own words. This is the third costume of
+  the same error: case-sensitive grep, truncated grep, and now **a config table read without its
+  consumer**. The general rule that covers all three: *an assertion about behaviour must be verified
+  where behaviour happens, never where behaviour is configured.* A flag is an input to a decision,
+  not the decision.
+
+- **Being corrected made my finding stronger, not weaker, and I nearly missed that.** My instinct on
+  being shown the guard was "then there is no defect." Wrong: the guard fires on membership of a
+  two-element set, and the model chooses which code it returns. The model does not collide with the
+  guard — it walks around it by picking any of the other eight codes. **A guard keyed on an
+  attacker-chosen discriminator is not a guard.** Check what a control is *keyed on*, not whether it
+  exists and fires.
+
+- **Look for the mechanism instantiated before ruling on its severity.** I had §4 as structural and
+  speculative until I found `test_demo_prompt_live_model.py:447-461` — a live transcript of
+  `'The answer model cited evidence this run did not gather: [tx_casey_wire]'` rendered under
+  `intent_contract_invalid`. Model-authored text carrying a customer username, post-read, on a
+  banker's screen, observed, in our own repo. I found it while checking something else. An
+  architectural argument plus one real instance is a different document from the argument alone.
+
+- **Narrow your own finding out loud.** I checked every server-authored refusal message
+  (`_validate_read_plan`, `_validate_action_choice`, `_construct_payload`, `_normalise_money`,
+  `_argument_shape`) and they interpolate ids, field names and type names only — never values. And
+  the intent model has no customer data in context. Saying "today's exposure is fabrication plus one
+  echo channel, not the database" is what makes the structural half credible. Overstating is how a
+  real finding gets dismissed.
+
+- **Reject the sanitiser.** Offered three controls, I ruled scrub REJECTED and said why: it fails
+  open on anything off the list, cannot tell the banker's own words from a record, needs maintenance
+  in lockstep with demo data, and — worst — it would *license* rendering untrusted prose because it
+  had been "cleaned". **We do not sanitise untrusted text into a trusted channel; we decline to put
+  untrusted text in a trusted channel.**
+
+- **A recommendation made before a finding must be re-checked against it.** My §3.4 (resolver
+  upgrades a subject-bearing refusal) puts a directory read on the refusal path. Under §4, the
+  model's choice of code then becomes the only thing between a candidate set and the screen. I wrote
+  §3.4 before I understood §4 and had to gate it explicitly: §4 lands first or §3.4 does not land.
+  New findings invalidate earlier recommendations in the same document; re-read your own output as
+  if someone else wrote it.
+
+- **Read the failure artefact, never the summary line.** "The run refused instead of proposing"
+  sounded like flakiness. The artefact carried the model's actual sentence — *"no proposable action
+  supports posting or refunding a fee directly in this harness"* — which is the **same confabulation
+  shape** as the refusal test's *"no proposed action matches summarization."* Two tests I was
+  treating as unrelated are one defect. I would not have seen it from the summary.
+
+- **Pass rates are evidence about inputs, not just about models.** read 3/3, propose 1/3. Read tools
+  ship to the model with prose descriptions and a full JSON Schema; `_action_wire` ships
+  `displayName` (four words, written for an approval card) and bare `hashFields` names — no
+  description, no types, no allowed values. The asymmetry in outcomes mirrors the asymmetry in
+  inputs exactly. **The model was not being unreliable; it was being asked to guess, and it reported
+  its guess as a fact about the catalogue.** When something "works sometimes", diff what it is given
+  in the working and failing cases before reaching for temperature.
+
+- **The fix already exists in the repo, one file over.** `copilot-tools.yaml` solved model-facing
+  description for tools and nobody did it for actions. Ruling "copy the proven sibling pattern" is
+  cheaper to execute and far harder to argue with than ruling a new design.
+
+- **Separate merge-blocking from demo-blocking from safety-blocking, and answer the one Brian
+  asked.** He asked "does this block merge." The honest answer was: not the security finding —
+  nothing unsafe is proven and I downgraded my own "blocking" — but yes, the 1-in-3 propose rate,
+  **on honesty grounds**, because merging records the epic as done when its headline capability
+  works one time in three. A blocker whose fix is hours costs almost nothing to hold; a false record
+  on main costs indefinitely.
+
+- **Demand a before-number.** I required n≥10 measured *before and after* the fix. Without a
+  baseline we cannot distinguish a working fix from three lucky runs — and after a 3-run sample,
+  three lucky runs is exactly what a "fixed" report would look like.
+
+- **Retract in the document, not by editing it away.** The revision notice names the false claim at
+  the top and the proof/inference ledger records it as corrected. A silent edit would have left Turk
+  and Linus with no way to know which of my claims had ever been wrong — and I am asking them to
+  trust the rest of the document.
+
+- **I named a file and a data path without tracing it, in a document whose whole premise is "verify
+  in code."** §8.3 first said "add `description` to `authority-policy.yaml` and project it through."
+  Tracing it found **six** edit points across two services and two languages — `PolicyDocument`,
+  `ActionView`, an explicit six-field whitelist at `PolicyController.cs:57-67`, the frozen
+  `_ActionSpec`, the fixed-key read in `_action_specs`, and `_action_wire` — plus a YamlDotNet
+  deserializer built without `IgnoreUnmatchedProperties`, so the YAML edit I was casually
+  prescribing would likely have crashed policy load on startup. **Prescribing a change is making a
+  claim about the code, and it earns exactly the same burden of proof as a finding does.**
+- **Tracing the path changed the ruling, not just its cost.** Once I could see all six sites, the
+  right answer stopped being "thread it through authority" and became "it does not belong in
+  authority at all" — a model-facing description is presentation for the planner, not policy, and
+  routing it through the copilot service's own config keeps a cosmetic model-prompting change out of
+  the file that governs the signing preimage. **Enforce a constraint by distance where you can,
+  rather than by discipline.** I would not have reached that by reasoning about the design.
+
+## 2026-09-11 — Propose-branch identifier resolution and server-filled hash fields (#332, PR #362)
+
+Ruled: the boundary does not move — it already works. Both reported mechanisms were wrong, and the
+real defect signs money to the wrong customer. Written to
+`.squad/decisions/inbox/danny-propose-payload-resolution.md`.
+
+- **Two people independently handed me a mechanism and both were wrong, in opposite directions.**
+  Chuck: "the server's resolved identifiers never reach `_construct_payload`." Turk: "it builds from
+  the model's draft *before* the resolve step runs." The resolver writes `draft["accountId"] = ...`
+  and returns `replace(decision, payload_draft=draft)`; resolve is at `:1021` and propose at `:1104`.
+  Chuck had verified his own reading and told me so. **A careful reader's verified mechanism is still
+  a hypothesis** — he read `_with_resolved_ids` (which is read-plan only) and reasonably concluded
+  propose was unguarded, never noticing a second, older path that writes the same values earlier.
+  When two independent parties agree on a mechanism, that is a reason to check it, not to skip it.
+
+- **Running it beat reading it, and only running it could have.** "The resolver does not feed
+  propose" and "the prompt named no subject" predict the *identical* symptom — `payload_unfillable`
+  on `accountId` — and are indistinguishable by inspection. Two probes through the existing
+  `_drive` harness separated them in about five minutes. **When two hypotheses predict the same
+  observable, stop reading and execute.**
+
+- **Check the measurement's inputs before believing its output.** `ab_action_metadata.py:26` is
+  `REFUND = "Refund a $35 overdraft fee"`. The cloud prompt is *"...on retail's checking as
+  goodwill."* No customer, no account — so nothing to resolve and `accountId` genuinely unfillable.
+  The headline "0/12, never proposed" was **the system correctly refusing to invent an account**,
+  and the A/B's mapping arm is void for the same reason. A shortened paraphrase in a harness is a
+  different experiment wearing the same name. I nearly ruled on the number without reading the
+  constant that produced it.
+
+- **Disproving a reported defect is when to look hardest, not when to stop.** Having shown propose
+  was guarded, the obvious next question was *how well*. Probe C: banker says casey, model supplies
+  Dana's account id, `get_account` returns 200, and a $35 credit to **Dana** reaches two signers
+  signed. `if account is None` was the entire check — existence read as identity. Worse than
+  anything reported, found only because I kept going after the answer was "they were wrong."
+
+- **`hashFields` tells you what the signature cannot contradict.** `[accountId, amount, direction,
+  reason]` has no `userId`, so nothing in the preimage binds the money to the customer the banker
+  named. Reading a hash field list as a *positive* description of what is signed is half of it; the
+  other half is what its absence means a signer cannot detect.
+
+- **The correct pattern was twenty lines below the defect.** The `accountType` branch derives the
+  account from `list_customer_accounts(userId)` and is safe *by construction*. The two broken
+  branches fetch an arbitrary account and check existence. **Prefer derivation to post-hoc
+  validation: derivation cannot fail open.** And when a function contains both a safe and an unsafe
+  form of the same operation, the fix is to converge on the one already there, not to invent a third.
+
+- **Refuse the framing that smuggles in the premise.** "The banker signs a payload neither party
+  wholly authored" made the model a *party*. It is not — it is a drafting aid with no authority, no
+  accountability and no signature. Once that is said, the question dissolves: the preimage has no
+  authorship field and correctly so, provenance is an evidence property, and the server-filled value
+  is *more* faithful to the banker's sentence than a model-chosen one. Probe C is the proof that the
+  alternative is what actually hurts. **Answer the question, but name the bad premise first.**
+
+- **A conditional ruling obliges you to check its conditions.** I was ready to rule "signable,
+  provided the resolution is disclosed to the signer." Then I grepped: **zero** UI consumers of
+  `basis` / `resolved_account` / `resolved_subject`. The disclosure control my own ruling leaned on
+  does not exist, on the path that most needs it — and the card already admits it cannot name the
+  customer. That turned a proviso into a required fix. **If you find yourself writing "provided X",
+  go and confirm X before you publish.**
+
+- **Say which failure a fix does not fix.** §3.1 will make the refund prompt propose in Turk's
+  harness. That is *not* the cloud's `objective_unmappable`, which happened on a prompt that **did**
+  name a customer and an account. Two different failures on one sentence, one now tractable and one
+  still unexplained. Turk flagged the non-reproduction as unknown rather than explaining it away;
+  the right response was to raise its weight, not absorb it. Left open in writing so the tractable
+  fix cannot be mistaken for the other.
+
+- **Rule "void" rather than picking a side on bad data.** The wire dropped mapping 11/12 → 4/12 —
+  but the file says `accountId: "never supply it"` and the prompt supplies no subject, so the model
+  may have been refusing *correctly*. `_outcome()` records per-run labels and only totals were kept,
+  so the two readings are indistinguishable. Don't revert, don't enable, keep the flag at 0, re-run
+  with the real prompt. **"I cannot tell, and here is the one artefact that would tell us" is a
+  ruling.** Guessing to look decisive is not.

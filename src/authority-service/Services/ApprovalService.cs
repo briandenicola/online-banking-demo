@@ -22,6 +22,7 @@ public class ApprovalService
     private readonly IDenialReasonValidator _denialReasons;
     private readonly IAuditPublisher _audit;
     private readonly IActionBroker _broker;
+    private readonly INotificationSink _notifications;
     private readonly ILogger<ApprovalService> _logger;
 
     public ApprovalService(
@@ -32,6 +33,7 @@ public class ApprovalService
         IDenialReasonValidator denialReasons,
         IAuditPublisher audit,
         IActionBroker broker,
+        INotificationSink notifications,
         ILogger<ApprovalService> logger)
     {
         _repository = repository;
@@ -41,6 +43,7 @@ public class ApprovalService
         _denialReasons = denialReasons;
         _audit = audit;
         _broker = broker;
+        _notifications = notifications;
         _logger = logger;
     }
 
@@ -55,6 +58,8 @@ public class ApprovalService
         CancellationToken ct = default)
     {
         var policy = _policyProvider.Current;
+        var supersedes = !string.IsNullOrWhiteSpace(request.SupersedesApprovalId);
+        actor = await WithProposalWindowCountsAsync(actor, supersedes, policy, ct);
 
         var context = new EvaluationContext
         {
@@ -62,7 +67,8 @@ public class ApprovalService
             Payload = request.Payload,
             Evidence = request.Evidence,
             Facts = request.Facts,
-            Actor = actor
+            Actor = actor,
+            Supersedes = supersedes
         };
 
         var decision = _evaluator.Evaluate(context, policy);
@@ -258,6 +264,8 @@ public class ApprovalService
 
     public async Task<IReadOnlyList<Approval>> ListAsync(ApprovalQuery query, CancellationToken ct = default)
     {
+        query = ResolveAwaitingSeniority(query);
+
         var results = await _repository.QueryAsync(query, ct);
         var projected = new List<Approval>(results.Count);
 
@@ -269,6 +277,26 @@ public class ApprovalService
         }
 
         return projected;
+    }
+
+    /// <summary>
+    /// Fills <see cref="ApprovalQuery.AwaitingSeniorityAtLeast"/> for the co-sign queue from the
+    /// LIVE policy, so no seniority integer is written in code and the bar tracks
+    /// <c>rungs.L2.cosignerRoles</c> through the ratified hierarchy. The old code compared
+    /// <c>awaitingSeniority &gt;= 2</c> in both repositories — a magic number, and one that would
+    /// have silently diverged from the role model the day a co-signer role's seniority moved.
+    /// </summary>
+    private ApprovalQuery ResolveAwaitingSeniority(ApprovalQuery query)
+    {
+        if (query.Scope != ApprovalScope.AwaitingSupervisor || query.AwaitingSeniorityAtLeast is not null)
+        {
+            return query;
+        }
+
+        var policy = _policyProvider.Current;
+        var cosignerRoles = policy.Rung(Rung.L2).CosignerRoles;
+
+        return query with { AwaitingSeniorityAtLeast = policy.MinimumSeniorityAmong(cosignerRoles) };
     }
 
     /// <summary>
@@ -369,7 +397,38 @@ public class ApprovalService
         await _audit.PublishAsync(
             SharedIdentifiers.Events.ApprovalSigned, AuditEvents.ApprovalSigned(approval, filled), ct);
 
+        // §5.6 out-of-band ping: a signature landed but the card is still pending because a
+        // co-signature is outstanding — the "Awaiting supervisor co-signature" beat of §1.3.
+        // Fire-and-forget and NEVER gates state: notification failures are the sink's problem,
+        // not the signer's. `awaitingSeniority` on the payload says what KIND of signer is
+        // needed; no co-signer is ever named (epic §5.2.2).
+        if (approval.Status == ApprovalStatus.Pending &&
+            approval.SignaturesCollected > 0 &&
+            approval.PendingSlotOrdinal is not null)
+        {
+            await FireSupervisorNotificationAsync(approval, ct);
+        }
+
         return approval;
+    }
+
+    /// <summary>
+    /// Sends the out-of-band supervisor notification. Isolated and defensive on purpose: it may
+    /// never throw back into the signing path, because I-6 forbids a failed notification from
+    /// changing an approval's outcome.
+    /// </summary>
+    private async Task FireSupervisorNotificationAsync(Approval approval, CancellationToken ct)
+    {
+        try
+        {
+            await _notifications.NotifyAsync(SupervisorNotification.FromApproval(approval), ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Out-of-band supervisor notification for approval {ApprovalId} failed; the approval " +
+                "is unaffected.", approval.Id);
+        }
     }
 
     // =====================================================================================
@@ -618,10 +677,37 @@ public class ApprovalService
             Payload = approval.Payload,
             Evidence = approval.Evidence,
             Facts = approval.Facts,
-            Actor = RequesterContext(approval, policy)
+            Actor = RequesterContext(approval, policy),
+            Supersedes = !string.IsNullOrWhiteSpace(approval.SupersedesApprovalId)
         };
 
         return _evaluator.Evaluate(context, policy);
+    }
+
+    private async Task<ActorContext> WithProposalWindowCountsAsync(
+        ActorContext actor, bool supersedes, ResolvedPolicy policy, CancellationToken ct)
+    {
+        var count = 0;
+
+        if (supersedes)
+        {
+            var windowSeconds = policy.Threshold("supersede_churn_window_seconds").AsInt();
+            var since = DateTime.UtcNow.AddSeconds(-windowSeconds);
+            count = await _repository.CountSupersedesAsync(actor.UserId, since, ct);
+        }
+
+        return new ActorContext
+        {
+            UserId = actor.UserId,
+            Username = actor.Username,
+            Role = actor.Role,
+            EffectiveRoles = actor.EffectiveRoles,
+            Seniority = actor.Seniority,
+            SessionId = actor.SessionId,
+            SignaturesInWindow = actor.SignaturesInWindow,
+            MutatingProposalsInWindow = count,
+            SelfDealing = actor.SelfDealing
+        };
     }
 
     private static ActorContext RequesterContext(Approval approval, ResolvedPolicy policy) => new()

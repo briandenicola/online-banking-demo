@@ -26,7 +26,7 @@ import { FeatureFlagProvider, useFeatureFlags } from './contexts/FeatureFlagCont
 import { setComparisonEnabled } from './telemetry/comparison';
 
 const AppContent: React.FC = () => {
-  const { user, isAdmin } = useAuthContext();
+  const { user, isBanker, mayViewAdminObservability } = useAuthContext();
   const { isEnabled } = useFeatureFlags();
 
   // Keep the comparison recorder in step with its flag. Instrumentation is a
@@ -62,13 +62,18 @@ const AppContent: React.FC = () => {
         {/*
           Surface routes are gated by BOTH the role check and a feature flag.
           The two do different jobs and must not be confused:
-            - `isAdmin` is the (client-side mirror of the) authorisation check.
+            - `mayViewAdminObservability` is the (client-side mirror of the)
+              authorisation check. It is a MIRROR, not the decision: the
+              services enforce the role on the admin endpoints, and this only
+              decides whether we bother rendering the route. A supervisor holds
+              it for the read-only tabs; `isAdmin` still gates the write tabs
+              INSIDE the page (see pages/adminTabs.ts).
             - the flag is a presentation toggle for the coexistence comparison.
           The flag renders an explanatory, reversible notice rather than a 404,
           precisely so it is never mistaken for an access denial. See
           src/config/featureFlags.ts.
         */}
-        {isAdmin && (
+        {mayViewAdminObservability && (
           <Route
             path="/admin"
             element={
@@ -82,7 +87,7 @@ const AppContent: React.FC = () => {
             }
           />
         )}
-        {isAdmin && (
+        {isBanker && (
           <Route
             path="/copilot"
             element={

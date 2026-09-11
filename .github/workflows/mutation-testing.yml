@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
@@ -74,7 +74,7 @@ jobs:
 
       - name: Upload mutation report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: stryker-report-policy-engine
           path: src/authority-service.UnitTests/StrykerOutput/**/reports/*.html
@@ -86,7 +86,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
@@ -94,7 +94,9 @@ jobs:
         working-directory: src/banker-copilot-service
         run: |
           pip install -q -e . 2>/dev/null || pip install -q -e '.[dev]' || true
-          pip install -q pytest pytest-asyncio mutmut
+          # Pinned deliberately. This job was installing mutmut unpinned, so the 3.x
+          # release arrived silently and broke a 2.x invocation that had been passing.
+          pip install -q pytest pytest-asyncio 'mutmut==3.7.0'
 
       # The registry is where "zero write tools registered" is enforced, and the
       # manifest loader is where an unconstrained path parameter is refused. If a
@@ -103,10 +105,14 @@ jobs:
       - name: Mutate the tool registry and manifest loader
         working-directory: src/banker-copilot-service
         run: |
-          mutmut run \
-            --paths-to-mutate app/tools/ \
-            --tests-dir tests/ \
-            --no-progress || true
+          # Configuration lives in [tool.mutmut] in pyproject.toml: mutmut 3.x reads it at
+          # import time, so the old --paths-to-mutate/--tests-dir flags no longer exist and
+          # passing them aborts the run.
+          #
+          # No `|| true` here. It used to mask the failure, which meant a mutmut that never
+          # started looked exactly like a run with nothing to report — the job was red for
+          # days while appearing to assert something.
+          mutmut run --max-children 4
           echo "::group::surviving mutants"
           mutmut results
           echo "::endgroup::"
@@ -118,7 +124,7 @@ jobs:
 
       - name: Upload mutation report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mutmut-report-tool-registry
           path: src/banker-copilot-service/mutmut-results.xml

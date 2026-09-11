@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Request
 
-from app.auth import UserContext, require_admin, verify_jwt
+from app.auth import UserContext, require_observability_read, verify_jwt
 from app.models import ChatRequest, ChatResponse
 from app.services.agent_service import AgentState, get_agent_state
 from app.services.chat_service import (
@@ -44,7 +44,7 @@ async def history(
 
 @router.get("/api/chat/admin/foundry-status")
 async def foundry_status_admin(
-    user: UserContext = Depends(require_admin),
+    user: UserContext = Depends(require_observability_read),
     agent_state: AgentState = Depends(get_agent_state),
 ):
     return await foundry_status(agent_state)

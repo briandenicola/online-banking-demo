@@ -41,6 +41,11 @@ public class UserService : IUserService
         return await _userRepository.GetByUsernameAsync(username);
     }
 
+    public async Task<List<UserModel>> LookupUsersByUsernamePrefixAsync(string query, int limit = 5)
+    {
+        return await _userRepository.LookupByUsernamePrefixAsync(query, Math.Clamp(limit, 1, 5));
+    }
+
     public async Task<UserModel?> GetUserByEmailAsync(string email)
     {
         return await _userRepository.GetByEmailAsync(email);
@@ -185,18 +190,22 @@ public class UserService : IUserService
     {
         try
         {
-            var evt = new UserRegisteredEvent
-            {
-                UserId = user.Id,
-                Username = user.Username,
-                Email = user.Email
-            };
-
+            // The consumer reads camelCase keys, as do every other event published
+            // on this stream. Serializing the typed contract here emitted PascalCase
+            // instead, so the consumer's map lookups missed and it logged null for
+            // every field — silently, because a Go map miss is nil, not an error.
+            // Built inline to match the shape of its siblings rather than introduce
+            // a second serialization convention.
             var payload = JsonConvert.SerializeObject(new
             {
                 eventType = global::UserService.Constants.EventTypes.UserRegistered,
                 timestamp = DateTime.UtcNow.ToString("o"),
-                data = evt
+                data = new
+                {
+                    userId = user.Id,
+                    username = user.Username,
+                    email = user.Email
+                }
             });
 
             await _eventPublisher.PublishAsync(global::UserService.Constants.DefaultStreamName, payload);

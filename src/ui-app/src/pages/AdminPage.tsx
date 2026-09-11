@@ -18,6 +18,7 @@ import PendingActionsIcon from '@mui/icons-material/PendingActions';
 import VerifiedIcon from '@mui/icons-material/Verified';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
+import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import apiClient from '../api/client';
 import AdminEvalTab from '../components/AdminEvalTab';
 import AdminUserManagementTab from '../components/AdminUserManagementTab';
@@ -30,6 +31,12 @@ import FlaggedTransactionsTab, {
 } from '../components/FlaggedTransactionsTab';
 import AllTransactionsTab, { ScoredTransaction } from '../components/AllTransactionsTab';
 import TaskMeasurementBar from '../components/comparison/TaskMeasurementBar';
+import { useAuthContext } from '../contexts/AuthContext';
+import {
+  AdminTabId,
+  resolveAdminTab,
+  visibleAdminTabs,
+} from './adminTabs';
 
 interface AdminStats {
   totalFlagged: number;
@@ -60,25 +67,56 @@ function formatRiskScore(value: number | null | undefined): string {
  * that is a tab; in the Copilot harness it is a pane. Moving between two of them
  * is one context switch on either surface — the same rule, applied to whatever
  * each surface actually makes you traverse.
+ *
+ * The definitions themselves live in ./adminTabs.ts, alongside the visibility
+ * rules that decide which of them a given viewer is shown.
  */
-const ADMIN_TABS: { label: string; regionId: string }[] = [
-  { label: 'Account Applications', regionId: 'admin-applications' },
-  { label: 'User Management', regionId: 'admin-users' },
-  { label: 'All Transactions', regionId: 'admin-transactions' },
-  { label: 'Flagged Transactions', regionId: 'admin-flagged' },
-  { label: 'Chatbot Prompt', regionId: 'admin-prompt' },
-  { label: 'AI Evaluation', regionId: 'admin-eval' },
-  { label: 'Login Audit', regionId: 'admin-audit' },
-  { label: 'System Health', regionId: 'admin-health' },
-];
+
+/**
+ * Shown when a real tab exists but this viewer may not see it.
+ *
+ * Unlike FlagDisabledNotice — which is emphatically NOT an authorisation
+ * failure and offers a button that fixes it — this one IS an access boundary,
+ * so it says so plainly and offers no such button. Presenting a fix here would
+ * be a lie; presenting a blank panel would be worse, because a person cannot
+ * tell a boundary from a broken page. Naming the boundary is the honest option.
+ */
+const AdminTabRestrictedNotice: React.FC<{ label: string }> = ({ label }) => (
+  <Alert severity="info" icon={<LockOutlinedIcon />} sx={{ my: 2 }}>
+    <Typography variant="subtitle2" gutterBottom>
+      {label} is not part of your access
+    </Typography>
+    <Typography variant="body2">
+      You can see the read-only review tabs here. {label} changes platform state, so it is
+      reserved for administrators. This is a permission boundary, not an error — and the
+      services enforce it independently of this screen.
+    </Typography>
+  </Alert>
+);
 
 const AdminPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState(0);
+  const { isAdmin, mayViewAdminObservability } = useAuthContext();
+
+  const tabs = React.useMemo(
+    () => visibleAdminTabs({ isAdmin, mayViewAdminObservability }),
+    [isAdmin, mayViewAdminObservability]
+  );
+
+  // Selection is a tab IDENTITY, never an index. See adminTabs.ts for why a
+  // positional selector becomes actively unsafe once the list is filtered.
+  const [activeTabId, setActiveTabId] = useState<AdminTabId | undefined>(
+    () => tabs[0]?.regionId
+  );
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [flaggedTransactions, setFlaggedTransactions] = useState<FlaggedTransaction[]>([]);
   const [allTransactions, setAllTransactions] = useState<ScoredTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const resolution = React.useMemo(
+    () => resolveAdminTab(activeTabId, tabs),
+    [activeTabId, tabs]
+  );
 
   const fetchData = useCallback(async () => {
     try {
@@ -127,7 +165,9 @@ const AdminPage: React.FC = () => {
             Admin Dashboard
           </Typography>
           <Typography variant="subtitle1" color="text.secondary">
-            Monitor and review flagged transactions
+            {isAdmin
+              ? 'Monitor and review flagged transactions'
+              : 'Read-only review — transactions, audit and system health'}
           </Typography>
         </Box>
         <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchData}>
@@ -236,37 +276,69 @@ const AdminPage: React.FC = () => {
         which is the whole reason the recorder sat unused through Phase 1.
       */}
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-        <Tabs value={activeTab} onChange={(_, newValue) => setActiveTab(newValue)}>
-          {ADMIN_TABS.map((tab) => (
-            <Tab key={tab.regionId} label={tab.label} data-comparison-region={tab.regionId} />
+        <Tabs
+          value={resolution.kind === 'render' ? resolution.tab.regionId : false}
+          onChange={(_, newValue: AdminTabId) => setActiveTabId(newValue)}
+        >
+          {tabs.map((tab) => (
+            <Tab
+              key={tab.regionId}
+              value={tab.regionId}
+              label={tab.label}
+              data-comparison-region={tab.regionId}
+            />
           ))}
         </Tabs>
       </Box>
 
-      <Box data-comparison-region={ADMIN_TABS[activeTab]?.regionId || 'admin'}>
-        {activeTab === 0 && <AdminApplicationsTab />}
-        {activeTab === 1 && <AdminUserManagementTab />}
-
-        {activeTab === 2 && (
-          <AllTransactionsTab
-            transactions={allTransactions}
-            onRefresh={fetchData}
-            onError={setError}
-          />
+      {/*
+        Panels are selected by tab IDENTITY. Nothing here may reintroduce
+        `tabs[n]` or an `activeTab === 3` comparison: with a filtered list those
+        render the wrong panel, and the panel they get wrong is the restricted
+        one. See adminTabs.ts.
+      */}
+      <Box
+        data-comparison-region={
+          resolution.kind === 'none' ? 'admin' : resolution.tab.regionId
+        }
+      >
+        {resolution.kind === 'restricted' && (
+          <AdminTabRestrictedNotice label={resolution.tab.label} />
         )}
 
-        {activeTab === 3 && (
-          <FlaggedTransactionsTab
-            transactions={flaggedTransactions}
-            onRefresh={fetchData}
-            onError={setError}
-          />
+        {resolution.kind === 'none' && (
+          <Alert severity="info" icon={<LockOutlinedIcon />} sx={{ my: 2 }}>
+            You do not have access to the admin console.
+          </Alert>
         )}
 
-        {activeTab === 4 && <AdminChatbotPromptTab />}
-        {activeTab === 5 && <AdminEvalTab />}
-        {activeTab === 6 && <AdminLoginAuditTab />}
-        {activeTab === 7 && <AdminFoundryStatusTab />}
+        {resolution.kind === 'render' && (
+          <>
+            {resolution.tab.regionId === 'admin-applications' && <AdminApplicationsTab />}
+            {resolution.tab.regionId === 'admin-users' && <AdminUserManagementTab />}
+
+            {resolution.tab.regionId === 'admin-transactions' && (
+              <AllTransactionsTab
+                transactions={allTransactions}
+                onRefresh={fetchData}
+                onError={setError}
+              />
+            )}
+
+            {resolution.tab.regionId === 'admin-flagged' && (
+              <FlaggedTransactionsTab
+                transactions={flaggedTransactions}
+                onRefresh={fetchData}
+                onError={setError}
+              />
+            )}
+
+            {resolution.tab.regionId === 'admin-prompt' && <AdminChatbotPromptTab />}
+            {resolution.tab.regionId === 'admin-eval' && <AdminEvalTab />}
+            {resolution.tab.regionId === 'admin-audit' && <AdminLoginAuditTab />}
+            {resolution.tab.regionId === 'admin-health' && <AdminFoundryStatusTab />}
+          </>
+        )}
       </Box>
     </Box>
   );

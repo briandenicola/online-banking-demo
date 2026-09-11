@@ -8,6 +8,7 @@
  */
 
 import { parseSseChunk, toEnvelope } from '../../../api/copilotStream';
+import { logger } from '../../../utils/logger';
 
 describe('parseSseChunk', () => {
   it('parses a single complete frame', () => {
@@ -92,5 +93,74 @@ describe('toEnvelope', () => {
 
   it('drops malformed JSON', () => {
     expect(toEnvelope({ data: '{not json' })).toBeNull();
+  });
+});
+
+describe('toEnvelope approval mapping (one-mapper invariant on the SSE path)', () => {
+  const wireApproval = {
+    id: 'apr_1',
+    status: 'pending',
+    actionId: 'transaction.hold.place',
+    actionLabel: 'Place hold',
+    requesterId: 'usr_1',
+    payload: { amount: 24500, fromAccountId: 'acc_1' },
+    evidence: {},
+    agentAssessment: {
+      primary: { agentName: 'Primary', verdict: 'APPROVE' },
+      supervisor: { agentName: 'Supervisor', verdict: 'DECLINE' },
+    },
+    payloadHash: 'sha256:abc',
+    payloadHashShort: 'abc',
+    policyVersion: 'p1',
+    policyId: 'pol_1',
+    baseRung: 'L1',
+    requiredRung: 'L2',
+    requiredSigners: 2,
+    signaturesCollected: 0,
+    firedEscalators: [],
+    signatureSlots: [],
+    createdAt: '2026-05-12T14:00:00Z',
+    expiresAt: '2026-05-12T14:15:00Z',
+    executionState: 'not_started',
+    callerMaySign: true,
+  };
+
+  function frame(kind: string, payload: unknown): { data: string } {
+    return { data: JSON.stringify({ id: 'e', seq: 11, runId: 'r', kind, ts: 'now', payload }) };
+  }
+
+  it('client-shapes an approval.required payload through toApproval', () => {
+    const envelope = toEnvelope(frame('approval.required', { approval: wireApproval }));
+    expect(envelope).not.toBeNull();
+    const approval = (envelope as { payload: { approval: { payload: unknown; assessments: unknown[] } } })
+      .payload.approval;
+    // Wire `payload` is an object; the mapper flattens it to a PayloadField[].
+    expect(Array.isArray(approval.payload)).toBe(true);
+    // Both assessments survive so the disagreement banner has what it needs.
+    expect(approval.assessments).toHaveLength(2);
+  });
+
+  it('client-shapes an approval.updated payload through toApproval', () => {
+    const envelope = toEnvelope(frame('approval.updated', { approval: wireApproval }));
+    expect(envelope).not.toBeNull();
+    const approval = (envelope as { payload: { approval: { payload: unknown } } }).payload.approval;
+    expect(Array.isArray(approval.payload)).toBe(true);
+  });
+
+  it('drops an approval frame whose approval is absent, loudly', () => {
+    // The reducer reads `payload.approval.id` unguarded; a frame without an
+    // approval would throw a TypeError and kill the run on every replay. It must
+    // be rejected here, and the rejection must be audible (error), never silent.
+    const spy = jest.spyOn(logger, 'error').mockImplementation(() => {});
+    try {
+      expect(toEnvelope(frame('approval.required', {}))).toBeNull();
+      expect(toEnvelope(frame('approval.updated', { approval: null }))).toBeNull();
+      // An approval object with no `id` is also unusable — absence is an error,
+      // not a benign empty approval.
+      expect(toEnvelope(frame('approval.required', { approval: { status: 'pending' } }))).toBeNull();
+      expect(spy).toHaveBeenCalledTimes(3);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

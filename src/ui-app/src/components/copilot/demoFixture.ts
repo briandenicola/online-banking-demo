@@ -82,12 +82,20 @@ export const demoApproval: Approval = {
       label: 'Three wires to the same counterparty in 48 hours',
       sourceToolCallId: 'tc_2',
       excerpt: '2026-05-10 $8,200 · 2026-05-11 $8,100 · 2026-05-11 $8,200',
+      findings: [
+        { path: 'transferCount', label: 'Transfer count', value: 3, format: 'text', material: true },
+        { path: 'windowHours', label: 'Window hours', value: 48, format: 'text', material: false },
+        { path: 'aggregate', label: 'Aggregate', value: 24500, format: 'currency', material: true },
+      ],
     },
     {
       id: 'ev_2',
       kind: 'record',
       label: 'Counterparty first seen 6 days ago',
       sourceToolCallId: 'tc_3',
+      findings: [
+        { path: 'firstSeenDaysAgo', label: 'First seen days ago', value: 6, format: 'text', material: false },
+      ],
     },
     {
       id: 'ev_3',
@@ -95,39 +103,86 @@ export const demoApproval: Approval = {
       label: 'AML-14 structuring threshold',
       sourceToolCallId: 'tc_4',
       excerpt: 'Three or more transfers within 72h aggregating above $20,000.',
+      findings: [
+        { path: 'threshold', label: 'Threshold', value: 20000, format: 'currency', material: true },
+      ],
     },
   ],
+  // Every field below is a field the REGENERATED GOLDEN WIRE FIXTURE
+  // (`tests/fixtures/copilot-wire-envelopes.json`) actually carries, and
+  // `demoFixtureShape.test.ts` fails if this fixture ever invents one that the
+  // service does not send. Three separate defects on this card came from this
+  // fixture teaching the UI a shape the service has never produced, so the rule
+  // is now held by a test instead of by a comment.
   assessments: [
     {
-      agentId: 'agent_primary',
-      agentName: 'Transaction review',
+      // No `agentId`: the golden wire's primary assessment carries none. The
+      // supervisor's is `run_demo::supervisor`, derived from its subagent run id;
+      // the primary is the run itself and has no separate one.
+      agentName: 'Primary agent',
       role: 'primary',
-      verdict: 'Recommend hold',
-      confidence: 0.81,
+      // The action is `transaction.hold.place`. The primary PROPOSED it, so its verdict is
+      // `proceed` — proceed with placing the hold. Prose verdicts ("Recommend hold") were
+      // invented vocabulary the server never emits, and on an adverse action they read
+      // backwards: "hold" is the noun in the action, not the verdict.
+      verdict: 'proceed',
+      // The primary now makes a REAL model-backed assessment, so it states its own
+      // confidence, its own factors and what it could not establish. Until this week it
+      // emitted only `{summary, evidenceToolIds}` and this fixture deliberately carried
+      // neither, because inventing them is what taught the UI a shape that did not exist.
+      // They are here now because the wire carries them — not because the card looks
+      // better with them.
+      selfReportedConfidence: 0.88,
       rationale:
         'Amounts sit just under the $8,500 single-wire review threshold and aggregate above the AML-14 structuring trigger.',
       keyFactors: [
-        { label: 'Aggregate', value: '$24,500 / 48h', concern: true },
-        { label: 'Counterparty age', value: '6 days', concern: true },
-        { label: 'Account history', value: '11 years, no prior flags' },
+        // `{label, citedEvidenceIds}`. No `value` and no `concern`: a flat model factor is
+        // a statement, not a dimension-and-measurement pair, and the builder has no
+        // parameter for either.
+        { label: 'amounts reconcile against the flagged transaction record' },
+        { label: 'aggregate crosses the AML-14 structuring trigger' },
       ],
+      unverified: ["the beneficiary's identity could not be established"],
       citedEvidenceIds: ['ev_1', 'ev_3'],
+      mode: 'foundry',
+      modelDeployment: 'gpt-4o-banker',
+      promptSha256: 'sha256:5772aae6c2733eddaae29ee24193f56311e01ab7a5a30f513472ae86fa6ca0cc',
+      responseSha256: 'sha256:36903754aa4b4e04e8516e7c8acfc524b34641adb6d82333317a71b235f25efa',
     },
     {
       agentId: 'agent_supervisor',
-      agentName: 'Independent review',
+      agentName: 'Independent supervisor',
       role: 'supervisor',
-      verdict: 'Recommend release',
-      confidence: 0.62,
+      // "Recommend release" argued AGAINST placing the hold — that is `decline`, the
+      // strongest objection available, not a mild condition. Under the old label adapter
+      // this exact opinion reached the screen as "CONDITIONAL".
+      verdict: 'decline',
+      selfReportedConfidence: 0.62,
       rationale:
         'Counterparty is a freight vendor and the customer runs a haulage business; the pattern matches invoice settlement, not structuring.',
       keyFactors: [
-        { label: 'Customer sector', value: 'Haulage' },
-        { label: 'Prior vendor payments', value: '4 similar in 12 months' },
+        // Flat statements, which is what a decider actually holds: `SecondOpinion.
+        // key_factors` is a `tuple[str, ...]` of the supervisor's own short factors.
+        // The `value` field is absent because the service has nothing to put in it —
+        // it used to send the constant "independently corroborated", which was not
+        // read off anything.
+        { label: 'counterparty is an established freight vendor' },
+        { label: 'pattern matches invoice settlement' },
       ],
       citedEvidenceIds: ['ev_2'],
+      // NO attribution block, and that asymmetry is real rather than an oversight.
+      // `supervisor_wire_assessment` spreads attribution only when the decider
+      // supplied one, and the golden capture's supervisor supplies none. Adding a
+      // plausible-looking `modelDeployment` here would show a reader that the two
+      // opinions came from the same base model — a fact this fixture cannot know
+      // and the capture does not state. That invention is precisely the bug this
+      // fixture has now produced three times.
     },
   ],
+  // SERVER-STATED, never re-derived here. `fanout.py` puts `compare_verdicts`'
+  // result on the wire beside the two verdicts; a fixture with two assessments
+  // and no `agreement` is a shape the service never emits.
+  assessmentAgreement: 'diverge',
   payloadHash: '9f2c4a7b1e8d3f60a5c2b9e4d7f1a8c3b6e9d2f5a8c1b4e7d0f3a6c9b2e5d8f1',
   payloadHashShort: '9f2c4a7b',
   policyVersion: 'policy-2026.05.1',
@@ -151,8 +206,13 @@ export const demoApproval: Approval = {
     },
   ],
   signatureSlots: slots,
-  createdAt: at(31_000),
-  expiresAt: at(31_000 + 15 * 60 * 1000),
+  // ANCHORED TO LOAD TIME, not to T0. Every other timestamp here is a fixed point in the
+  // scripted narrative, but a SIGNING WINDOW is not narrative — it is a live deadline the card
+  // now enforces. Pinned to May 2026 this record was four months lapsed, so the replay demo
+  // would have opened on "SIGNATURE WINDOW CLOSED" with every action suppressed. The card was
+  // right; the fixture was stale.
+  createdAt: new Date(Date.now() - 31_000).toISOString(),
+  expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
   executionState: 'not_started',
   callerMaySign: true,
 };
@@ -354,7 +414,12 @@ export const demoEvents: CopilotEvent[] = [
       subagentId: 'sa_1',
       status: 'complete',
       confidence: 0.81,
-      verdictSummary: 'Pattern matches AML-14 structuring',
+      // No `verdictSummary`. The ONLY producer of this field in the service is
+      // `fanout.py`, which fills it with a verdict token for the SUPERVISOR. A
+      // specialist has no verdict, so prose here ('Pattern matches AML-14 structuring')
+      // taught the UI that the field is free-form narration when live it is a
+      // one-word structural caption. (That the planner emits no specialist
+      // `subagent.completed` at all is a wider demo-vs-service gap — noted, not fixed.)
       durationMs: 2_000,
     },
   },
@@ -384,7 +449,13 @@ export const demoEvents: CopilotEvent[] = [
       subagentId: 'sa_sup',
       status: 'complete',
       confidence: 0.62,
-      verdictSummary: 'Recommend release — vendor settlement pattern',
+      // `fanout.py` sends `verdict_for(opinion.recommendation)` here and documents it as
+      // "a short, server-derived summary of the STRUCTURAL opinion, never free prose the
+      // supervisor authored". The fixture carried authored prose ('Recommend release —
+      // vendor settlement pattern') and TracePane renders this field in quotation marks,
+      // so the demo showed a sentence attributed to the supervisor that the service is
+      // explicitly built never to emit. Third fixture-vs-service divergence found today.
+      verdictSummary: 'DECLINE',
       durationMs: 2_200,
     },
   },

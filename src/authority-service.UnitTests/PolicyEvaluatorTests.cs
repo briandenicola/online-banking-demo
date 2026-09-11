@@ -75,8 +75,19 @@ public class PolicyEvaluatorTests
                             "escalation may add exclusions, never drop them (mask {0})", mask);
                     }
                 }
+
             }
         }
+    }
+
+    [Fact]
+    public void Supersede_floor_uses_min_rung_not_raise_by()
+    {
+        var supersede = Policy.Document.Escalators.Single(e => e.Id == "superseding-proposal");
+
+        supersede.MinRung.Should().Be("L2");
+        supersede.RaiseBy.Should().BeNull("an L2 counter-proposal must stay L2, not become L3");
+        supersede.RaiseTo.Should().BeNull();
     }
 
     [Fact]
@@ -120,6 +131,50 @@ public class PolicyEvaluatorTests
         decision.SignerSlots.Should().HaveCount(2);
         decision.SignerSlots[1].MustDifferFrom.Should().NotBeEmpty();
         decision.FiredEscalators.Should().Contain(e => e.Key == "large-flagged-amount");
+    }
+
+    [Fact]
+    public void Threshold_reason_templates_render_actual_and_threshold_without_trailing_newline()
+    {
+        var threshold = Policy.Threshold("flagged_transaction_dual_control_amount").AsDecimal();
+        var amount = (threshold + 1).ToString("F2");
+
+        var decision = Evaluate(0, payload => payload["amount"] = amount);
+
+        var escalator = decision.FiredEscalators.Single(e => e.Key == "large-flagged-amount");
+        escalator.ThresholdName.Should().Be("flagged_transaction_dual_control_amount");
+        escalator.ThresholdValue.Should().Be(Policy.Threshold("flagged_transaction_dual_control_amount").Value);
+        escalator.Reason.Should().Contain(amount);
+        escalator.Reason.Should().Contain(escalator.ThresholdValue);
+        escalator.Reason.Should().NotContain("{");
+        escalator.Reason.Should().NotEndWith("\n");
+    }
+
+    [Fact]
+    public void Categorical_reason_templates_render_the_actual_matched_value()
+    {
+        var decision = Evaluate(0, (_, actor) => { }, facts =>
+            Set(facts, "customer", "riskTier", "high"));
+
+        var escalator = decision.FiredEscalators.Single(e => e.Key == "high-risk-customer");
+        escalator.ThresholdName.Should().BeNull();
+        escalator.ThresholdValue.Should().BeNull();
+        escalator.Reason.Should().Be("The customer's risk tier is high.");
+    }
+
+    [Fact]
+    public void Unresolved_reason_placeholders_are_never_emitted_to_signers()
+    {
+        var yaml = TestHarness.MutatedPolicyYaml(
+            "The customer's risk tier is {actual}.",
+            "The customer's risk tier is {actual}. Internal placeholder {missing.value}.");
+        var policy = PolicyLoader.FromConfiguration(TestHarness.Configuration()).LoadFromYaml(yaml);
+
+        var decision = Evaluate(policy, 0, facts => Set(facts, "customer", "riskTier", "high"));
+
+        var escalator = decision.FiredEscalators.Single(e => e.Key == "high-risk-customer");
+        escalator.Reason.Should().Be("The customer's risk tier is high.");
+        escalator.Reason.Should().NotContain("{");
     }
 
     [Fact]
@@ -206,9 +261,63 @@ public class PolicyEvaluatorTests
         decision.RequiredSigners.Should().BeGreaterThanOrEqualTo(2);
     }
 
+    [Fact]
+    public void Score_override_below_the_floor_escalates_out_of_the_copilot_harness()
+    {
+        var floor = Policy.Threshold("score_override_floor").AsDecimal();
+
+        var decision = Evaluator.Evaluate(new EvaluationContext
+        {
+            ActionId = "transaction.score.override",
+            Payload = new JObject
+            {
+                ["transactionId"] = "txn-1",
+                ["newScore"] = (floor - 0.01m).ToString("F2"),
+                ["rationale"] = "Manual review found the model overweighted one factor."
+            },
+            Evidence = new JObject
+            {
+                ["get_scored_transaction"] = new JObject { ["transactionId"] = "txn-1", ["riskScore"] = 0.91 },
+                ["get_account"] = new JObject { ["accountId"] = "acct-1", ["balance"] = 1000 },
+                ["list_account_transactions"] = new JObject { ["accountId"] = "acct-1", ["count"] = 3 }
+            },
+            Actor = TestHarness.Banker()
+        }, Policy);
+
+        decision.Outcome.Should().Be(DecisionOutcome.NotPermitted);
+        decision.RequiredRung.Should().Be(Rung.L3);
+        decision.FiredEscalators.Should().Contain(e => e.Key == "deep-score-reduction");
+    }
+
     // =====================================================================================
 
     private static PolicyDecision Evaluate(int mask, Action<JObject>? mutatePayload = null)
+    {
+        return Evaluate(Policy, mask, mutatePayload);
+    }
+
+    private static PolicyDecision Evaluate(
+        int mask,
+        Action<JObject, MutableActor> mutateActor,
+        Action<JObject> mutateFacts)
+    {
+        return Evaluate(Policy, mask, null, mutateActor, mutateFacts);
+    }
+
+    private static PolicyDecision Evaluate(
+        ResolvedPolicy policy,
+        int mask,
+        Action<JObject>? mutateFacts)
+    {
+        return Evaluate(policy, mask, null, (_, _) => { }, mutateFacts ?? (_ => { }));
+    }
+
+    private static PolicyDecision Evaluate(
+        ResolvedPolicy policy,
+        int mask,
+        Action<JObject>? mutatePayload = null,
+        Action<JObject, MutableActor>? mutateActor = null,
+        Action<JObject>? mutateFacts = null)
     {
         var request = TestHarness.FlagReview("100.00");
         var facts = new JObject();
@@ -220,6 +329,8 @@ public class PolicyEvaluatorTests
         }
 
         mutatePayload?.Invoke(request.Payload);
+        mutateActor?.Invoke(facts, actor);
+        mutateFacts?.Invoke(facts);
 
         return Evaluator.Evaluate(new EvaluationContext
         {
@@ -239,7 +350,7 @@ public class PolicyEvaluatorTests
                 MutatingProposalsInWindow = actor.MutatingProposalsInWindow,
                 SelfDealing = actor.SelfDealing
             }
-        }, Policy);
+        }, policy);
     }
 
     private static void Set(JObject facts, string group, string field, JToken value)
