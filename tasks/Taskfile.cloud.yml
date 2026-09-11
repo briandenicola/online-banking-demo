@@ -139,6 +139,128 @@ tasks:
           | awk 'NR==1{print "CHAT_MEMORY_ENABLED="$0} NR==2{print "CHAT_MEMORY_REQUIRED="$0} NR==3{print "CHAT_MEMORY_EMBEDDING_DEPLOYMENT="$0} NR==4{print "CHAT_MEMORY_DATABASE="$0} NR==5{print "CHAT_MEMORY_CONTAINER="$0}'
       - kubectl logs -n {{.NAMESPACE}} deployment/chatbot-service --tail=80 --since=10m | grep -Ei "memory|agent memory|cosmos|embedding" || true
 
+  # === Logs ===
+  #
+  # The services log structlog JSON, one object per line. Raw `kubectl logs` is therefore
+  # technically complete and practically unreadable — the line that matters is usually a
+  # `level: warning` buried in a 200-line wall, and the field that explains it (an upstream
+  # status code, a model error class) is at the far right of a 400-character line.
+  #
+  # These pretty-print through jq when it is present and fall back to raw output when it is
+  # not, because a log task that fails on a machine without jq is a log task you cannot use
+  # in the one situation you need it.
+  #
+  # DEFAULT SERVICE is banker-copilot-service: it is the one with a model behind it, so it is
+  # the one whose failures are not self-evident. Override by passing the deployment name:
+  #
+  #     task cloud:logs                      # banker-copilot-service, last 15m
+  #     task cloud:logs -- ai-service        # any other deployment
+  #     task cloud:logs:follow               # stream it
+  #     task cloud:logs:model                # model-call health only (see below)
+  #
+  # SINCE and TAIL are environment knobs, because `--` is consumed entirely by the service
+  # name: `SINCE=2h task cloud:logs`, `TAIL=200 task cloud:logs:follow`.
+  #
+  # Health-probe access lines are filtered out. If a follow shows nothing, that is an idle
+  # service, not a broken pipe — its recent output was all probes.
+
+  logs:
+    desc: 'Show recent logs for a service, pretty-printed (default: banker-copilot-service; pass a deployment name to override)'
+    silent: true
+    cmds:
+      - |
+        svc="{{.CLI_ARGS}}"; svc="${svc:-banker-copilot-service}"
+        if kubectl get deployment "$svc" -n {{.NAMESPACE}} -o jsonpath='{.spec.template.spec.containers[*].name}' 2>/dev/null | tr ' ' '\n' | grep -qx "$svc"; then CSEL="-c $svc"; else CSEL="--all-containers"; fi
+        echo "━━━ $svc — last {{.SINCE}} ━━━"
+        if command -v jq >/dev/null 2>&1; then
+          kubectl logs -n {{.NAMESPACE}} "deployment/$svc" --since={{.SINCE}} $CSEL 2>&1 \
+            | grep -vE 'GET /(healthz|readyz)' \
+            | jq -R -r '. as $line | try (fromjson | "\(.timestamp // "")  \((.level // "info") | ascii_upcase)  \(.event // "")  \(del(.timestamp, .level, .event, .logger) | to_entries | map("\(.key)=\(.value)") | join(" "))") catch $line'
+        else
+          echo "(jq not found — raw output)"
+          kubectl logs -n {{.NAMESPACE}} "deployment/$svc" --since={{.SINCE}} $CSEL 2>&1 | grep -vE 'GET /(healthz|readyz)'
+        fi
+    vars:
+      SINCE: '{{.SINCE | default "15m"}}'
+
+  logs:follow:
+    desc: 'Stream logs for a service as they arrive (default: banker-copilot-service; Ctrl-C to stop)'
+    silent: true
+    cmds:
+      - |
+        svc="{{.CLI_ARGS}}"; svc="${svc:-banker-copilot-service}"
+        if kubectl get deployment "$svc" -n {{.NAMESPACE}} -o jsonpath='{.spec.template.spec.containers[*].name}' 2>/dev/null | tr ' ' '\n' | grep -qx "$svc"; then CSEL="-c $svc"; else CSEL="--all-containers"; fi
+        echo "━━━ following $svc — Ctrl-C to stop ━━━"
+        if command -v jq >/dev/null 2>&1; then
+          kubectl logs -n {{.NAMESPACE}} "deployment/$svc" -f --tail={{.TAIL}} $CSEL 2>&1 \
+            | grep --line-buffered -vE 'GET /(healthz|readyz)' \
+            | jq -R -r --unbuffered '. as $line | try (fromjson | "\(.timestamp // "")  \((.level // "info") | ascii_upcase)  \(.event // "")  \(del(.timestamp, .level, .event, .logger) | to_entries | map("\(.key)=\(.value)") | join(" "))") catch $line'
+        else
+          kubectl logs -n {{.NAMESPACE}} "deployment/$svc" -f --tail={{.TAIL}} $CSEL 2>&1 | grep --line-buffered -vE 'GET /(healthz|readyz)'
+        fi
+    vars:
+      TAIL: '{{.TAIL | default "50"}}'
+
+  # Model-call health, which is a different question from "what did the service do".
+  #
+  # Written after a live run came back `planner_model_unavailable` and the cause turned out to
+  # be an HTTP 429 from the Foundry deployment — not a timeout, not configuration. That is
+  # invisible in the UI, which shows only that the model was unavailable, and easy to miss in
+  # raw logs, where it appears as a truncated `detail` field on a warning.
+  #
+  # Reports counts first because the shape matters more than any single line: one 429 is
+  # weather, eighteen across four phases is a saturated deployment. A single objective makes
+  # several model calls (intent, answer, primary, supervisor), so one run can burn several
+  # requests against the quota and the supervisor fan-out multiplies it again.
+  #
+  # A 429 here is also the cleanest available proof that the model call is real: the service
+  # reached Foundry, and Foundry refused it. Nothing canned gets rate limited.
+  logs:model:
+    desc: 'Model-call health for banker-copilot-service: rate limits, failures and timeouts, with counts by phase'
+    silent: true
+    cmds:
+      - |
+        svc="banker-copilot-service"
+        raw="$(kubectl logs -n {{.NAMESPACE}} "deployment/$svc" --since={{.SINCE}} -c banker-copilot-service 2>&1)"
+
+        echo "━━━ Model calls — last {{.SINCE}} ━━━"
+        total=$(printf '%s\n' "$raw" | grep -c '"logger": "app.planner.model_call"' || true)
+        fails=$(printf '%s\n' "$raw" | grep -c '"event": "Model call failed"' || true)
+        retries=$(printf '%s\n' "$raw" | grep -c 'retrying once inside the same budget' || true)
+        rl=$(printf '%s\n' "$raw" | grep -c 'rate_limit_exceeded' || true)
+        to=$(printf '%s\n' "$raw" | grep -cE '"(error|event)": "[^"]*([Tt]imeout|timed out)[^"]*"' || true)
+        echo "  model_call log lines     ${total}"
+        echo "  calls that FAILED        ${fails}"
+        echo "  retried once             ${retries}"
+        echo "  rate limited (HTTP 429)  ${rl}"
+        echo "  timeouts                 ${to}"
+
+        echo
+        echo "━━━ Failures by phase ━━━"
+        printf '%s\n' "$raw" | grep '"event": "Model call failed"' \
+          | grep -oE '"phase": "[a-z]+"' | sort | uniq -c | sed 's/^/  /' || echo "  none"
+
+        echo
+        echo "━━━ Most recent failures ━━━"
+        if command -v jq >/dev/null 2>&1; then
+          printf '%s\n' "$raw" | grep -E '"level": "(error|warning)"' \
+            | jq -R -r '. as $line | try (fromjson | "  \(.timestamp // "")  \(.event // "")  \(.error // "")  \(.detail // "")") catch empty' \
+            | tail -12
+        else
+          printf '%s\n' "$raw" | grep -E '"level": "(error|warning)"' | tail -12
+        fi
+
+        echo
+        if [ "${rl}" -gt 0 ]; then
+          echo "⚠ HTTP 429 present. The model deployment is rate limited — the service is"
+          echo "⚠ reaching Foundry and being refused, which is NOT a timeout and NOT a"
+          echo "⚠ misconfiguration. The SDK already retries with sub-second backoff and the"
+          echo "⚠ planner retries once more on top; if you are seeing this, both were refused."
+          echo "⚠ Wait for the window to clear, or raise the quota on the deployment."
+        fi
+    vars:
+      SINCE: '{{.SINCE | default "30m"}}'
+
   # === One-time infra configuration ===
   # Run after Terraform creates AKS. Sets up credentials, namespaces, secrets,
   # configmap values, secret-provider-class, and cert-manager.
