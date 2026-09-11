@@ -43,6 +43,7 @@
 # not directories: `config` itself stays ignored so an unrelated file dropped in
 # there never silently enters the build context.
 !config/authority-policy.yaml
+!config/copilot-actions.yaml
 !config/copilot-tools.yaml
 !config/harness-limits.yaml
 # Embedded as a resource by src/shared/Auth (LogicalName
