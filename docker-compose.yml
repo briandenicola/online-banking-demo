@@ -360,6 +360,10 @@ services:
       - COPILOT_SESSION_TTL_SECONDS=${COPILOT_SESSION_TTL_SECONDS:-3600}
       - COPILOT_PLANNER_MAX_ITERATIONS=${COPILOT_PLANNER_MAX_ITERATIONS:-12}
       - COPILOT_UPSTREAM_TIMEOUT_MS=${COPILOT_UPSTREAM_TIMEOUT_MS:-8000}
+      # Per-CALL model budget. Four hardcoded 30.0 literals until now, which is why it
+      # could not be moved in the cloud without a rebuild. A run makes several calls, so
+      # the ceiling for a RUN is a multiple of this.
+      - BANKER_COPILOT_MODEL_TIMEOUT_S=${BANKER_COPILOT_MODEL_TIMEOUT_S:-60}
       # Unset locally: the service falls back to in-memory session/trace stores.
       # Container names are still supplied so the same env contract holds in both
       # modes and a name change is made in one place.

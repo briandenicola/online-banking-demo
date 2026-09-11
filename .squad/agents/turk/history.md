@@ -3462,3 +3462,17 @@ whose result depends on file collection order proves nothing in either direction
 
 Offline 453 → **470 passed**, 12 deselected, 0 xfailed. 17 new tests; all 6 catalogue tests
 watched failing against the old code first.
+
+**Follow-up the same day: a config knob nobody can turn is not a config knob.** I shipped
+`BANKER_COPILOT_MODEL_TIMEOUT_S` and nearly stopped there. Both deployment surfaces enumerate
+env explicitly — `docker-compose.yml` and `deploy/kustomize/base/configmap.yaml` (reaching the
+pod via `envFrom: configMapRef`) — so the variable existed only in code and the cloud still
+could not move the ceiling without a rebuild, which is the exact problem it was written to fix.
+Added to both. **When you replace a literal with an env var, follow it all the way to the
+manifest or you have only moved the literal.**
+
+Also checked the other half of doubling the budget: the run ceiling is now up to 4x60s, so a
+proxy read timeout below that would turn a slow propose into a broken stream rather than a
+refusal. `/api/copilot/` already carries `proxy_read_timeout 3600s` in the local gateway, so
+there is headroom. The cloud ingress is not in `deploy/`, so I have NOT verified it — stated
+rather than assumed.

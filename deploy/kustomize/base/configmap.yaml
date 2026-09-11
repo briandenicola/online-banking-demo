@@ -49,6 +49,12 @@ data:
   COPILOT_SESSION_TTL_SECONDS: "3600"
   COPILOT_PLANNER_MAX_ITERATIONS: "12"
   COPILOT_UPSTREAM_TIMEOUT_MS: "8000"
+  # Per-CALL ceiling on a model round trip, not a per-run one. This was four hardcoded
+  # 30.0 literals in the service, and two of three cloud runs died on them. It is here
+  # so the ceiling can be moved without a rebuild — which is the whole point of having
+  # found it. A run makes several calls (intent, answer, and on a propose the primary
+  # and the supervisor), so the wall-clock ceiling for a RUN is a multiple of this.
+  BANKER_COPILOT_MODEL_TIMEOUT_S: "60"
   # Read-tool upstreams (epic §3.3). The harness resolves a logical tool target
   # to a base URL through these; an unlisted service resolves to None and the
   # tool fails closed rather than defaulting to anything.
