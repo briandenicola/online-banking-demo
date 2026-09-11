@@ -314,3 +314,47 @@ def test_the_prompt_is_unchanged_when_actions_are_present():
     )
 
     assert "READ-ONLY" not in prompt
+
+
+# --------------------------------------------------------------------------------------
+# The wiring, which is the part that actually ships.
+# --------------------------------------------------------------------------------------
+
+
+def test_the_deployed_planner_is_leashed_when_the_env_is_unset():
+    """Settings and Planner are each tested above; this tests that lifespan CONNECTS them.
+
+    Without it, deleting one line in `app/lifespan.py` leaves every other test in this file
+    green while the deployed service runs unleashed — a knob proven to work, attached to
+    nothing. That is the exact shape this session keeps producing, so it gets its own test
+    rather than a trusting assumption.
+
+    Asserted through the real app boot, not by re-reading the settings object, because the
+    question is what `app.state.planner` ended up holding.
+    """
+    from fastapi.testclient import TestClient
+
+    import app.main as main_module
+
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop(PROPOSE_ENABLED_ENV, None)
+        with TestClient(main_module.app) as client:
+            planner = client.app.state.planner
+
+    assert planner._propose_enabled is False, (
+        "the deployed planner is NOT leashed with the env unset — Settings.propose_enabled is "
+        "correct but lifespan.py is not passing it through"
+    )
+
+
+def test_the_deployed_planner_honours_the_flag_when_it_is_set():
+    """The other half: proves the assertion above is about the wiring, not a constant False."""
+    from fastapi.testclient import TestClient
+
+    import app.main as main_module
+
+    with patch.dict(os.environ, {PROPOSE_ENABLED_ENV: "1"}):
+        with TestClient(main_module.app) as client:
+            planner = client.app.state.planner
+
+    assert planner._propose_enabled is True

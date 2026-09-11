@@ -3739,3 +3739,22 @@ refusal is what makes that difference testable.
   re-run. Flake, not regression — but recorded rather than quietly re-run until green.
 - The account-ownership work is stopped, not abandoned: committed at `7fb7d05`, behind a path
   the leash now makes unreachable. It matters the day writes come back.
+
+### Postscript: I tested the knob, not the deployment
+
+I had a test that `Settings.propose_enabled` is False when the env is unset, and a test that
+`Planner(propose_enabled=False)` refuses. I did not have a test that `lifespan.py` connects
+them — and that one line is the entire difference between a leashed demo and an unleashed one.
+
+Proved by deleting it: **15 of 16 leash tests stayed green** while the deployed service ran
+unleashed. A knob proven to work, attached to nothing.
+
+Same shape as the vacuous ownership test earlier today, and as the jsdom SSE suite, and as the
+31-prompt suite that never ran the model. The pattern is always the same: **the test covers the
+component and assumes the seam.** Verified the two ends, trusted the wire between them.
+
+Also verified rather than assumed, since I had written a new banker-facing sentence:
+`forbidden_action` carries `showServerMessage: true` in `runOutcome.ts`, so the server message
+actually reaches the banker instead of being replaced by client copy; and the ConfigMap's
+`metadata.name` really is `banking-demo-config`, the Deployment's `envFrom` target. Either one
+wrong and the flag would have been set somewhere nothing reads.
