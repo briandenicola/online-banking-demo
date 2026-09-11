@@ -221,6 +221,10 @@ export async function waitForNewApprovals(
 ): Promise<CloudApproval[]> {
   const deadline = Date.now() + timeoutMs;
   let latest: CloudApproval[] = [];
+  // 5s, not 3s. The approvals list is 111KB on the live tenant; a tighter poll
+  // pulled ~9MB through the gateway across one four-minute wait and ended in a
+  // `read ECONNRESET` mid-body. Polling is not the thing under test and it
+  // should not be the thing that fails.
   while (Date.now() < deadline) {
     latest = (await listApprovals(request, token)).filter((a) => !before.has(a.id));
     if (latest.length > 0) return latest;
@@ -229,7 +233,7 @@ export async function waitForNewApprovals(
         `the run refused instead of proposing:\n${await refusalNotice(page).innerText()}`
       );
     }
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await new Promise((resolve) => setTimeout(resolve, 5000));
   }
   if (page) {
     throw new Error(

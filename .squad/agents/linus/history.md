@@ -2262,3 +2262,10 @@ model cites raw record GUIDs while the run's evidence keys are `lookup_customer`
 
 **No retries in this config, on purpose.** A retry would hide precisely the intermittent
 cloud faults the suite exists to surface.
+
+**Post-commit addendum.** A later full run failed the L2 test with `read ECONNRESET`
+mid-body on `GET /api/authority/approvals?scope=all` — a 111KB response, polled every 3s
+for four minutes, ~9MB through istio-envoy for one wait. Backed off to 5s. Polling is not
+the thing under test and must not be the thing that fails. The same run's underlying
+problem was real though: the propose path normally lands in 12-16s and occasionally does
+not land inside 240s at all. Two consecutive re-runs afterwards: 16.2s and 12.7s, both green.
