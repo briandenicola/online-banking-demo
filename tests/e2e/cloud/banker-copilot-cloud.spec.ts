@@ -93,6 +93,14 @@ test.describe('banker copilot, deployed', () => {
     const canvasText = await canvas.innerText();
     const dockText = (await dock.count()) ? await dock.innerText() : '';
     const prose = dockText ? canvasText.replace(dockText, '') : canvasText;
+    if (dockText) {
+      // `replace` no-ops silently if the two renderings differ by so much as a
+      // newline, which would quietly restore the contamination this subtraction
+      // exists to remove. A subtraction that subtracted nothing is a failure.
+      expect(prose.length, 'the docked approval was actually subtracted').toBeLessThan(
+        canvasText.length
+      );
+    }
 
     // Prose, not a stub. Length, not wording: the model writes a different
     // paragraph every run and this suite never asserts its sentences.

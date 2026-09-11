@@ -2286,3 +2286,17 @@ IDENTITY assertion, or a change of identity hides the safety result.
 timeouts, then 503 from authority behind a reachable ingress). The suite reported it
 precisely — "Expected 200, Received 503" against the exact URL — rather than as a mystery
 timeout. That is the behaviour I wanted from it.
+
+**Third addendum — the subtraction that subtracts nothing.** `canvasText.replace(dockText, '')`
+no-ops silently when the two renderings differ by a newline, which would quietly restore
+the dock contamination the subtraction exists to remove — an absence-style trap wearing a
+different hat. Now asserted: when a dock is present, the subtracted text must be shorter.
+
+**Post-fix read-only rate.** After `5b53da4`, over seven runs: four green, three refused,
+all three `planner_model_unavailable` with the server message *"The answer model could not
+be reached (ChatClientException)"*. So the CONTRACT failures are gone and what remains is
+the answer model's endpoint being unreachable about two times in five. Different problem,
+different owner. `intent_contract_invalid` has not recurred since the fix.
+
+**Left in the demo tenant:** 12 pending/denied `$35.00 goodwill credit` approvals from the
+L2 test, in a queue of 25. None signed. Worth a sweep before Brian demos from that queue.
