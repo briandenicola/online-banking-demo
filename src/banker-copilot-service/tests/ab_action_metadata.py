@@ -25,7 +25,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import test_demo_prompt_live_model as live  # noqa: E402
 
-REFUND = "Refund a $35 overdraft fee"
+#: The prompt the system is judged on, verbatim from docs/design/banker-copilot-demo-prompts.md.
+#: The first run of this A/B used the shortened "Refund a $35 overdraft fee", which names no
+#: customer and no account — so neither arm could propose, and both arms measured a sentence
+#: that genuinely does not say whose account to credit. A paraphrase in a measurement harness
+#: is a different experiment wearing the same name.
+REFUND = "Refund a $35 overdraft fee on retail's checking as goodwill"
 #: The refusal-path prompts matter MORE than the refund one here. Richer descriptions bias
 #: the model toward proposing, so the risk of this change is that an honest refusal turns
 #: into a confident propose — a far worse regression than the one being fixed.
@@ -35,7 +40,9 @@ REFUSALS = [
 ]
 
 
-async def _arm(prompts: list[str], runs: int, *, metadata: bool) -> dict[str, collections.Counter]:
+async def _arm(
+    prompts: list[str], runs: int, *, metadata: bool
+) -> tuple[dict[str, collections.Counter], dict[str, list[str]]]:
     # `_live_action_metadata()` reads this on every run, so one process can hold both arms.
     os.environ["BANKER_COPILOT_LIVE_ACTION_METADATA"] = "1" if metadata else ""
 
@@ -46,19 +53,22 @@ async def _arm(prompts: list[str], runs: int, *, metadata: bool) -> dict[str, co
     answerer = FoundryEvidenceAnswerer(endpoint=endpoint, model=model)
 
     results: dict[str, collections.Counter] = {p: collections.Counter() for p in prompts}
+    labels: dict[str, list[str]] = {p: [] for p in prompts}
     try:
         for prompt in prompts:
             for _ in range(runs):
                 try:
                     run = await live._run_live_prompt(prompt, (selector, answerer))
                 except BaseException as exc:  # noqa: BLE001 - a crashed run is an outcome
-                    results[prompt][f"harness_error:{type(exc).__name__}"] += 1
-                    continue
-                results[prompt][_outcome(run)] += 1
+                    label = f"harness_error:{type(exc).__name__}"
+                else:
+                    label = _outcome(run)
+                results[prompt][label] += 1
+                labels[prompt].append(label)
     finally:
         await selector.aclose()
         await answerer.aclose()
-    return results
+    return results, labels
 
 
 def _outcome(run) -> str:  # type: ignore[no-untyped-def]
@@ -76,6 +86,10 @@ def _outcome(run) -> str:  # type: ignore[no-untyped-def]
 
 
 def _print(title: str, results: dict[str, collections.Counter], runs: int) -> None:
+    """Totals AND per-run labels. Danny could not rule on the first A/B because only totals
+    were reported, and 11/12 -> 4/12 was equally consistent with genuine mapping loss and with
+    the model correctly declining a prompt that named no account. `_outcome()` recorded the
+    labels; they were simply not kept. Keep them."""
     print(f"\n=== {title} (n={runs} per prompt) ===")
     for prompt, counter in results.items():
         print(f"  {prompt!r}")
@@ -83,15 +97,25 @@ def _print(title: str, results: dict[str, collections.Counter], runs: int) -> No
             print(f"      {count:>3}/{runs}  {outcome}")
 
 
+def _print_runs(title: str, labels: dict[str, list[str]]) -> None:
+    print(f"\n--- {title}: per-run outcome labels ---")
+    for prompt, seq in labels.items():
+        print(f"  {prompt!r}")
+        for index, label in enumerate(seq, start=1):
+            print(f"      run {index:>2}: {label}")
+
+
 async def main() -> None:
     runs = int(sys.argv[1]) if len(sys.argv) > 1 else 12
     prompts = [REFUND, *REFUSALS]
 
-    before = await _arm(prompts, runs, metadata=False)
-    _print("BEFORE — actions as names only", before, runs)
+    before, before_labels = await _arm(prompts, runs, metadata=False)
+    after, after_labels = await _arm(prompts, runs, metadata=True)
 
-    after = await _arm(prompts, runs, metadata=True)
+    _print("BEFORE — actions as names only", before, runs)
     _print("AFTER — actions with descriptions and field metadata", after, runs)
+    _print_runs("BEFORE", before_labels)
+    _print_runs("AFTER", after_labels)
 
 
 if __name__ == "__main__":

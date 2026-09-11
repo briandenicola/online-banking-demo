@@ -296,6 +296,18 @@ class _ReferenceResolution:
     evidence: dict[str, Any] = field(default_factory=dict)
 
 
+def _account_id_of(account: Mapping[str, Any]) -> str | None:
+    """The account id under either name the services use.
+
+    `get_account`'s evidence projection renames `id` to `accountId` and is lossless, so both
+    keys can be present; `list_customer_accounts` collects raw records where only `id` may be.
+    Reading one name and not the other would make ownership matching miss silently, which is
+    the failure mode this whole change exists to remove.
+    """
+    value = account.get("accountId") or account.get("id")
+    return str(value) if value else None
+
+
 class ReferenceResolver:
     """Resolve model hints through read tools; never trust identifier-shaped text directly."""
 
@@ -326,47 +338,151 @@ class ReferenceResolver:
         account_hint = _first_present(hints, "account", "accountType") or draft.get("accountType")
         account_id_hint = _first_present(hints, "accountId") or draft.get("accountId")
         account_number_hint = _first_present(hints, "accountNumber") or draft.get("accountNumber")
-        if account_id_hint:
-            account = await self._invoke("get_account", {"accountId": str(account_id_hint)}, request.bearer_token)
-            if account is None:
+        resolved_user_id = draft.get("userId")
+
+        # Derivation, not verification. These branches used to call `get_account` on whatever
+        # the model supplied and treat a 200 as approval — so the banker could say "casey",
+        # the model could supply Dana's account id, and a credit would reach two signers
+        # against Dana. `hashFields` for a balance adjustment carries no `userId`, so nothing
+        # in the signed preimage contradicted the banker's own sentence.
+        #
+        # Listing the resolved customer's accounts and matching inside that set cannot fail
+        # open. A post-hoc ownership check can: it depends on the owner field being present,
+        # correctly named, and correctly compared, and any of those going wrong silently
+        # restores the old behaviour. Deriving means an account the customer does not own is
+        # not rejected — it is never a candidate.
+        if resolved_user_id and (account_id_hint or account_number_hint or account_hint):
+            accounts_doc = await self._invoke(
+                "list_customer_accounts", {"userId": str(resolved_user_id)}, request.bearer_token
+            )
+            if accounts_doc is None:
+                # `_invoke` returns None for BOTH "tool not registered" and "the call failed",
+                # and neither means "this customer has no accounts". Collapsing them would
+                # tell a banker their customer does not own an account they are looking at —
+                # the same sentinel collision that let an empty catalogue mean "the bank
+                # cannot act". Refuse under a code that says we could not ask.
+                logger.warning(
+                    "Account ownership could not be derived; the customer's accounts could not be listed",
+                    action_id=decision.action_id,
+                )
                 return _ReferenceResolution(
-                    decision=_refusal("subject_not_found", "The referenced account could not be resolved for this banker."),
+                    decision=_refusal(
+                        "subject_lookup_unavailable",
+                        "This customer's accounts could not be checked just now, so nothing was proposed.",
+                    ),
                     evidence=evidence,
                 )
-            draft["accountId"] = account.get("accountId") or account.get("id") or str(account_id_hint)
-            evidence["resolved_account"] = {"query": str(account_id_hint), "matched": {"accountId": draft["accountId"]}, "basis": "account-id-read"}
-        elif account_number_hint:
-            account = await self._invoke("get_account_by_number", {"accountNumber": str(account_number_hint)}, request.bearer_token)
-            if account is None:
-                return _ReferenceResolution(
-                    decision=_refusal("subject_not_found", "The referenced account could not be resolved for this banker."),
-                    evidence=evidence,
-                )
-            draft["accountId"] = account.get("accountId") or account.get("id")
-            evidence["resolved_account"] = {"query": str(account_number_hint), "matched": {"accountId": draft["accountId"]}, "basis": "account-number-read"}
-        elif account_hint and draft.get("userId"):
-            accounts_doc = await self._invoke("list_customer_accounts", {"userId": str(draft["userId"])}, request.bearer_token)
             accounts = accounts_doc.get("accounts") if isinstance(accounts_doc, Mapping) else accounts_doc
-            matches = [
-                a for a in (accounts or [])
-                if str(a.get("accountType", "")).lower() == str(account_hint).lower()
-            ]
+            owned = [a for a in (accounts or []) if isinstance(a, Mapping)]
+
+            if account_id_hint:
+                query, basis = str(account_id_hint), "customer-account-ownership"
+                matches = [a for a in owned if _account_id_of(a) == query]
+            elif account_number_hint:
+                query, basis = str(account_number_hint), "customer-account-number-ownership"
+                matches = [a for a in owned if str(a.get("accountNumber", "")) == query]
+            else:
+                query, basis = str(account_hint), "customer-account-type"
+                matches = [
+                    a for a in owned
+                    if str(a.get("accountType", "")).lower() == query.lower()
+                ]
+
             if not matches:
+                # Deliberately the same code and the same sentence whether the account does
+                # not exist or belongs to somebody else. Telling the banker which one it was
+                # would answer "does account X belong to customer Y?" for any X and Y — the
+                # customer-search API we declined to build, reachable one refusal at a time.
                 return _ReferenceResolution(
-                    decision=_refusal("subject_not_found", "No account matched the requested account type for the resolved customer."),
+                    decision=_refusal(
+                        "subject_not_found",
+                        "That account is not one of this customer's accounts.",
+                    ),
                     evidence=evidence,
                 )
             if len(matches) > 1:
                 return _ReferenceResolution(
-                    decision=_refusal("ambiguous_subject", "More than one account matched the requested account type; no account was selected."),
+                    decision=_refusal(
+                        "ambiguous_subject",
+                        "More than one of this customer's accounts matches. Please say which one.",
+                    ),
                     evidence=evidence,
                 )
-            draft["accountId"] = matches[0].get("accountId") or matches[0].get("id")
+
+            draft["accountId"] = _account_id_of(matches[0])
             evidence["resolved_account"] = {
-                "query": str(account_hint),
-                "matched": {"accountId": draft["accountId"], "accountType": matches[0].get("accountType")},
-                "basis": "customer-account-type",
+                "query": query,
+                "matched": {
+                    "accountId": draft["accountId"],
+                    "accountType": matches[0].get("accountType"),
+                    # Danny §3.1: the customer travels in EVIDENCE, never in hashFields. The
+                    # signed preimage stays exactly as risk-operations defined it.
+                    "userId": resolved_user_id,
+                },
+                "basis": basis,
             }
+
+        elif account_id_hint or account_number_hint:
+            # No customer in the sentence, so there is nothing to bind to and ownership
+            # cannot be checked. Danny ruled against simply allowing this because it is
+            # harder: resolve the account, then resolve its OWNER, and put the owner in
+            # evidence so the signer is told whose account this is even though the banker
+            # never said. Silence here would be a signer approving money movement for a
+            # customer nobody named.
+            if account_id_hint:
+                account = await self._invoke(
+                    "get_account", {"accountId": str(account_id_hint)}, request.bearer_token
+                )
+                query, basis = str(account_id_hint), "account-id-read-owner-disclosed"
+            else:
+                account = await self._invoke(
+                    "get_account_by_number",
+                    {"accountNumber": str(account_number_hint)},
+                    request.bearer_token,
+                )
+                query, basis = str(account_number_hint), "account-number-read-owner-disclosed"
+
+            if account is None:
+                return _ReferenceResolution(
+                    decision=_refusal(
+                        "subject_not_found",
+                        "That account could not be found.",
+                    ),
+                    evidence=evidence,
+                )
+
+            owner_id = account.get("userId") or account.get("ownerId")
+            if not owner_id:
+                # The owner is what makes this case signable. Without it the signer sees a
+                # bare id and no indication of whose money moves, which is the disclosure gap
+                # that made the defect above invisible. Refuse rather than proceed blind.
+                return _ReferenceResolution(
+                    decision=_refusal(
+                        "subject_not_found",
+                        "That account could not be matched to a customer, so it cannot be acted on.",
+                    ),
+                    evidence=evidence,
+                )
+
+            draft["accountId"] = _account_id_of(account) or query
+            owner = await self._resolve_user(str(owner_id), request.bearer_token)
+            matched: dict[str, Any] = {"accountId": draft["accountId"], "userId": str(owner_id)}
+            if not isinstance(owner, IntentDecision):
+                matched["username"] = owner.get("username")
+                matched["displayName"] = owner.get("displayName")
+                evidence["resolved_subject"] = {
+                    "query": query,
+                    "matched": {
+                        "userId": owner["id"],
+                        "username": owner.get("username"),
+                        "displayName": owner.get("displayName"),
+                    },
+                    # The banker did not name this customer; the account did. The basis says
+                    # so, because a signer reading "casey" needs to know whether that came
+                    # from the banker's sentence or from a lookup on an id.
+                    "basis": "account-owner-lookup",
+                }
+            evidence["resolved_account"] = {"query": query, "matched": matched, "basis": basis}
 
         if evidence:
             decision = replace(decision, payload_draft=draft)
@@ -1107,10 +1223,11 @@ class Planner:
             assert action is not None
             payload_or_error = _construct_payload(action, decision.payload_draft or {})
             if isinstance(payload_or_error, dict) and "code" in payload_or_error:
+                refusal = _refine_payload_refusal(payload_or_error, decision.payload_draft or {})
                 added, next_step_number = _insert_steps(
                     steps,
                     position,
-                    [*resolve_step, _step(next_step_number, "Refuse objective", "refusal", **payload_or_error)],
+                    [*resolve_step, _step(next_step_number, "Refuse objective", "refusal", **refusal)],
                 )
                 return added, next_step_number, [], False
             request.action_id = action.action_id
@@ -1386,6 +1503,18 @@ class Planner:
         emitted = dict(body)
         if isinstance(body.get("agentAssessment"), dict):
             emitted["agentAssessment"] = primary_wire_assessment(body)
+        # Danny §3.2(c): a server-filled hash field is signable in principle and unsignable in
+        # practice by someone who cannot see what it means. Today the card shows a raw id and
+        # says out loud that it cannot tell you whose it is — on the one path where the id was
+        # chosen by resolution rather than by the banker. So the resolution travels with the
+        # approval: what the identifier resolved FROM and what it resolved TO.
+        #
+        # Display only. It sits beside `payload`, never inside it, so the preimage is
+        # byte-identical to what it was — same treatment as the assessment verdict above. The
+        # value returned to the caller is the unenriched `body`.
+        resolution = _subject_resolution_wire(evidence)
+        if resolution:
+            emitted["subjectResolution"] = resolution
         await stream.emit(
             "approval.required",
             {
@@ -1398,6 +1527,42 @@ class Planner:
             },
         )
         return ProposeStepResult(approval=body)
+
+
+def _subject_resolution_wire(evidence: Mapping[str, Any]) -> dict[str, Any] | None:
+    """What the identifiers on this card resolved from, and to, for the signer to read.
+
+    Every value here is server-authored — it comes from the resolver's own reads, not from
+    anything the model wrote — which is the property that makes it safe to render. `basis`
+    travels because "this account exists" and "this account belongs to the customer the banker
+    named" are different claims, and a signer cannot tell them apart from an id alone.
+
+    Returns None when nothing was resolved, so the card never shows an empty disclosure that
+    implies a check which did not happen.
+    """
+    subject = evidence.get("resolved_subject")
+    account = evidence.get("resolved_account")
+    wire: dict[str, Any] = {}
+
+    if isinstance(subject, Mapping):
+        matched = subject.get("matched") or {}
+        wire["customer"] = {
+            "query": subject.get("query"),
+            "displayName": matched.get("displayName"),
+            "username": matched.get("username"),
+            "userId": matched.get("userId"),
+            "basis": subject.get("basis"),
+        }
+    if isinstance(account, Mapping):
+        matched = account.get("matched") or {}
+        wire["account"] = {
+            "query": account.get("query"),
+            "accountId": matched.get("accountId"),
+            "accountType": matched.get("accountType"),
+            "userId": matched.get("userId"),
+            "basis": account.get("basis"),
+        }
+    return wire or None
 
 
 def _plan_steps(evidence_tools: list[str], action_id: str | None) -> list[dict[str, Any]]:
@@ -1730,15 +1895,58 @@ def _is_proposable_action(action: _ActionSpec, known_tool_ids: frozenset[str]) -
     )
 
 
+#: Banker-facing sentences for the fields a run can fail to fill. Each one names the gap in
+#: the banker's terms and implies their next move, which is the entire purpose of a refusal.
+_MISSING_FIELD_MESSAGES = {
+    "accountId": "The request did not say which account this should apply to.",
+    "amount": "The request did not say how much.",
+    "direction": "The request did not say whether this adds money or takes it away.",
+    "reason": "The request did not give a reason, and one is required.",
+    "userId": "The request did not say which customer this is about.",
+    "transactionId": "The request did not say which transaction this is about.",
+    "newScore": "The request did not say what the new score should be.",
+}
+
+
+def _refine_payload_refusal(error: Mapping[str, Any], draft: Mapping[str, Any]) -> dict[str, Any]:
+    """Separate "the sentence did not say" from "we understood and still could not choose".
+
+    Both used to surface as `payload_unfillable`, and they are different failures with
+    different next moves. If no customer was resolved, the objective genuinely did not name
+    one and the banker needs to say so. If a customer WAS resolved and the account still could
+    not be chosen, the sentence was fine and the server understood it — that is an ambiguous
+    subject, and the banker's next move is to name the account.
+
+    The message deliberately does not list the candidates. "Which account?" is a question;
+    "Your Checking or your Savings?" is the customer-search API we declined to build.
+    """
+    refusal = {k: v for k, v in error.items() if k != "field"}
+    if error.get("code") == "payload_unfillable" and error.get("field") == "accountId":
+        if draft.get("userId"):
+            return {
+                "code": "ambiguous_subject",
+                "message": "Which of this customer's accounts should this apply to?",
+            }
+    return refusal
+
+
 def _construct_payload(action: _ActionSpec, draft: Mapping[str, Any]) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     fields = action.hash_fields or tuple(str(k) for k in draft.keys())
     for field in fields:
         value = _resolve_mapping_path(draft, field)
         if value is None:
+            # Engine vocabulary in front of a banker fails Danny's governing test — would a
+            # banker say this to a colleague? The old sentence named an internal field and an
+            # action id, and told the banker nothing they could act on. `field` stays for the
+            # caller to route on; it does not reach the banker.
             return {
                 "code": "payload_unfillable",
-                "message": f"The planner could not fill required payload field '{field}' for {action.action_id}.",
+                "field": field,
+                "message": _MISSING_FIELD_MESSAGES.get(
+                    field,
+                    "The request did not include everything needed to act on it.",
+                ),
             }
         if field in action.money_fields:
             money = _normalise_money(value, field)

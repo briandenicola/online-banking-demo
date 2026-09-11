@@ -77,6 +77,8 @@ class _FakeRegistry:
             self._tools["lookup_customer"] = _FakeTool("lookup_customer", ("username",), "customer-directory.read")
         if "get_account" in tool_ids:
             self._tools["get_account"] = _FakeTool("get_account", ("accountId",), "accounts.read")
+        if "list_customer_accounts" in tool_ids:
+            self._tools["list_customer_accounts"] = _FakeTool("list_customer_accounts", ("userId",), "accounts.read")
 
     @property
     def tool_ids(self):
@@ -100,7 +102,20 @@ class _Executor:
         if tool_id == "lookup_customer":
             return _FakeResult({"query": arguments["username"], "count": 1, "matches": [{"id": "usr_casey", "username": "casey", "displayName": "Casey Retail"}]})
         if tool_id == "get_account":
-            return _FakeResult({"id": arguments["accountId"], "accountId": arguments["accountId"], "accountType": "Checking"})
+            return _FakeResult({"id": arguments["accountId"], "accountId": arguments["accountId"], "userId": "usr_casey", "accountType": "Checking"})
+        if tool_id == "list_customer_accounts":
+            # Every account these tests name belongs to the resolved customer. Ownership is
+            # not what they are about — they pin that an identifier-shaped hint is LOOKED UP
+            # rather than used — so the fixture grants ownership and leaves that point intact.
+            # The cross-customer case has its own suite in test_account_ownership_binding.py.
+            return _FakeResult({
+                "userId": arguments["userId"],
+                "count": 3,
+                "accounts": [
+                    {"id": acct, "accountId": acct, "userId": arguments["userId"], "accountNumber": number, "accountType": "Checking"}
+                    for acct, number in (("acc_1", "1001"), ("acc_checking_casey", "1002"), ("acct_casey_checking", "1003"))
+                ],
+            })
         return _FakeResult({"transactionId": "tx_1", "amount": "245.00"})
 
 
@@ -370,7 +385,7 @@ async def test_free_text_propose_path_selects_action_validates_payload_and_propo
     frames = await _drive(
         authority=authority,
         executor=_Executor(),
-        evidence_tools=("get_flagged_transaction", "get_account"),
+        evidence_tools=("get_flagged_transaction", "get_account", "list_customer_accounts"),
         action_id=None,
         intent_selector=selector,
         answerer=None,
@@ -416,7 +431,7 @@ async def test_free_text_identifier_shaped_customer_hint_is_resolved_not_passed_
     frames = await _drive(
         authority=authority,
         executor=executor,
-        evidence_tools=("get_user", "get_account"),
+        evidence_tools=("get_user", "get_account", "list_customer_accounts"),
         action_id=None,
         intent_selector=selector,
     )
@@ -461,7 +476,7 @@ async def test_free_text_guid_subject_hint_is_looked_up_before_payload_use():
     frames = await _drive(
         authority=authority,
         executor=executor,
-        evidence_tools=("get_user", "get_account"),
+        evidence_tools=("get_user", "get_account", "list_customer_accounts"),
         action_id=None,
         intent_selector=selector,
     )
@@ -508,7 +523,7 @@ async def test_free_text_guid_subject_hint_refuses_when_lookup_cannot_verify_ide
     frames = await _drive(
         authority=authority,
         executor=DenyingExecutor(),
-        evidence_tools=("get_user", "get_account"),
+        evidence_tools=("get_user", "get_account", "list_customer_accounts"),
         action_id=None,
         intent_selector=selector,
     )

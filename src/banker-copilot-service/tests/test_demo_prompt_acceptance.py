@@ -91,15 +91,20 @@ USERS = {
     "verify-target": {"id": "usr_verify", "username": "verify-target", "displayName": "Verify Target"},
 }
 
+# `userId` and `accountNumber` are here because the REAL account carries them
+# (`src/account-service/Models/Account.cs`) and evidence projection is lossless, so they
+# survive to the resolver. A fixture without an owner cannot express the question "does this
+# account belong to the customer the banker named?", and a fixture that cannot express the
+# question cannot catch the answer being wrong.
 ACCOUNTS = {
     "usr_casey": [
-        {"id": "acct_casey_checking", "accountId": "acct_casey_checking", "accountType": "Checking", "balance": "16143.46"},
-        {"id": "acct_casey_savings", "accountId": "acct_casey_savings", "accountType": "Savings", "balance": "45000.00"},
+        {"id": "acct_casey_checking", "accountId": "acct_casey_checking", "userId": "usr_casey", "accountNumber": "1001", "accountType": "Checking", "balance": "16143.46"},
+        {"id": "acct_casey_savings", "accountId": "acct_casey_savings", "userId": "usr_casey", "accountNumber": "1002", "accountType": "Savings", "balance": "45000.00"},
     ],
-    "usr_dana": [{"id": "acct_dana_checking", "accountId": "acct_dana_checking", "accountType": "Checking", "balance": "2200.00"}],
+    "usr_dana": [{"id": "acct_dana_checking", "accountId": "acct_dana_checking", "userId": "usr_dana", "accountNumber": "2001", "accountType": "Checking", "balance": "2200.00"}],
     "usr_retail": [
-        {"id": "acct_retail_checking", "accountId": "acct_retail_checking", "accountType": "Checking", "balance": "900.00"},
-        {"id": "acct_retail_savings", "accountId": "acct_retail_savings", "accountType": "Savings", "balance": "30000.00"},
+        {"id": "acct_retail_checking", "accountId": "acct_retail_checking", "userId": "usr_retail", "accountNumber": "3001", "accountType": "Checking", "balance": "900.00"},
+        {"id": "acct_retail_savings", "accountId": "acct_retail_savings", "userId": "usr_retail", "accountNumber": "3002", "accountType": "Savings", "balance": "30000.00"},
     ],
 }
 
@@ -123,11 +128,34 @@ class _Executor:
             return _Result([{"id": "tx_casey_wire", "customer": {"username": "casey"}, "description": "offshore wire", "riskScore": "0.91"}])
         if tool_id == "get_scored_transaction":
             return _Result({"transactionId": arguments["txId"], "accountId": "acct_casey_checking", "riskScore": "0.91"})
+        if tool_id == "get_account_by_number":
+            account = _account_by_number(arguments["accountNumber"])
+            if account is None:
+                raise ToolInvocationError("upstream_not_found", "account-service returned 404")
+            return _Result(account)
         if tool_id == "get_user":
+            user = _user_by_id(arguments["userId"])
+            if user is not None:
+                return _Result({**user, "isLocked": True})
             return _Result({"id": arguments["userId"], "username": "verify-target", "isLocked": True})
         if tool_id == "list_login_audits":
             return _Result({"count": 4, "items": [{"status": "failed"}]})
         raise ToolInvocationError("unknown_tool", tool_id)
+
+
+def _account_by_number(account_number: str) -> dict[str, Any] | None:
+    for accounts in ACCOUNTS.values():
+        for account in accounts:
+            if account.get("accountNumber") == account_number:
+                return account
+    return None
+
+
+def _user_by_id(user_id: str) -> dict[str, Any] | None:
+    for user in USERS.values():
+        if user["id"] == user_id:
+            return user
+    return None
 
 
 def _account(account_id: str) -> dict[str, Any] | None:
