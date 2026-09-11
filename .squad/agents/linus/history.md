@@ -2300,3 +2300,30 @@ different owner. `intent_contract_invalid` has not recurred since the fix.
 
 **Left in the demo tenant:** 12 pending/denied `$35.00 goodwill credit` approvals from the
 L2 test, in a queue of 25. None signed. Worth a sweep before Brian demos from that queue.
+
+## The finding this suite was built to catch (2026-09-11)
+
+`Refund a $35 overdraft fee on retail's checking as goodwill`, unchanged, proposed
+**`direction: "debit"`** with the reason *"Goodwill refund of overdraft fee"*. Thirty-five
+dollars taken OFF the customer instead of given back — and because a debit does not trip
+the `credit-adjustment` escalator, the approval came out **L1, one signer, no escalators
+fired**. The three runs before it were all `credit` → L1 raised to L2, two signers.
+
+So the dual-control guarantee on credits is only as good as the direction the model picks,
+and the model does not always pick it. The record is internally consistent — authority
+applied its policy correctly to a debit — which is exactly why nothing downstream can
+catch this. The card even reads "Take $35.00 off a customer's account", so a banker
+reading carefully would catch it; a banker signing an approval titled "goodwill refund"
+would not.
+
+Assertion order changed to name the cause: direction first, rung second. Asserting the
+rung first reported "expected L2, received L1", which is the symptom. Third time tonight
+the same lesson — the assertion that states the SEMANTIC truth goes before the assertion
+that states the consequence.
+
+**Cloud rates over ~20 runs, post-`5b53da4`:** refusal test solid; read-only about 3 in 5,
+every failure `planner_model_unavailable` ("The answer model could not be reached
+(ChatClientException)"); L2 about 4 in 5, failures split between `objective_unmappable`
+("no proposable action supports posting or refunding a fee directly in this harness") and
+the debit inversion above. None of these are UI defects. All three are model or
+environment non-determinism sitting directly under Brian's demo script.
