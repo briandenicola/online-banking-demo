@@ -530,6 +530,7 @@ class Planner:
         store=None,
         fanout=None,
         action_metadata_descriptions: ActionMetadata | None = None,
+        propose_enabled: bool = True,
     ) -> None:
         self._registry = registry
         self._executor = executor
@@ -556,6 +557,12 @@ class Planner:
         # to EMPTY keeps every existing test on the names-only wire it was written against;
         # the real service loads the file at startup and refuses to start without it.
         self._action_metadata = action_metadata_descriptions or action_metadata.EMPTY
+        # Whether this BUILD offers the propose path. Defaults True here so the library keeps
+        # its behaviour and the acceptance corpus keeps exercising propose — writes come back
+        # one day and that coverage is the record of how they worked. The DEPLOYED default is
+        # the opposite: `Settings.propose_enabled` is False unless COPILOT_PROPOSE_ENABLED is
+        # set, so the service on stage is leashed and an unset env var fails closed.
+        self._propose_enabled = propose_enabled
 
     async def run(self, request: PlannerRequest, stream: RunStream) -> None:
         started = time.monotonic()
@@ -880,6 +887,40 @@ class Planner:
                         },
                     )
                 elif step["kind"] == "propose":
+                    if not self._propose_enabled:
+                        # The read-only leash, layer 2 of 2, at the execution boundary.
+                        #
+                        # Layer 1 stops the MODEL choosing an action. It does not stop a propose
+                        # step existing, because `_plan_steps` builds one from an `action_id` and
+                        # the free-text planner is not its only caller — the scripted prompts
+                        # plan propose steps without consulting the intent model at all. A leash
+                        # that only guarded the model would therefore be a leash with a second
+                        # door, and "structurally unreachable" is the requirement.
+                        #
+                        # So this returns before `_run_propose_step`, which is the single place
+                        # an approval record is created. No authority call, no approval, no
+                        # signature request — provable at the boundary rather than in a branch.
+                        await stream.emit(
+                            "run.error",
+                            {
+                                "code": "forbidden_action",
+                                "message": (
+                                    "This build is read-only and proposes no actions for "
+                                    "approval. The action must be handled through the "
+                                    "appropriate non-harness process."
+                                ),
+                                "recoverable": False,
+                            },
+                        )
+                        await stream.emit(
+                            "step.failed",
+                            {
+                                "stepId": step["id"],
+                                "error": "forbidden_action",
+                                "willRetry": False,
+                            },
+                        )
+                        break
                     if not _proposal_permitted(self._adverse_proposal, record.assessment):
                         # §P6, the seam, at its ONE call site. Default `propose` never lands here.
                         #
@@ -1079,15 +1120,20 @@ class Planner:
                 "Authority offers actions this service cannot describe to the model",
                 action_ids=undescribed,
             )
+        # The read-only leash, layer 1 of 2. Every action moves to `forbidden`, so the model is
+        # never shown a proposable action and cannot pick one. It still sees the full forbidden
+        # list, which is what lets it refuse in policy language — "I won't, and here is where
+        # that authority lives" — rather than reporting the objective as unmappable. That
+        # distinction is the entire stage value of the cut.
         proposable = [
             a
             for a in actions.values()
-            if _is_proposable_action(a, self._registry.tool_ids)
+            if self._propose_enabled and _is_proposable_action(a, self._registry.tool_ids)
         ]
         forbidden = [
             a
             for a in actions.values()
-            if not _is_proposable_action(a, self._registry.tool_ids)
+            if not (self._propose_enabled and _is_proposable_action(a, self._registry.tool_ids))
         ]
 
         selector = self._intent_selector
@@ -1126,7 +1172,9 @@ class Planner:
 
         if decision.kind == "propose":
             action = actions.get(decision.action_id or "")
-            invalid = _validate_action_choice(decision, action, actions, self._registry.tool_ids)
+            invalid = _validate_action_choice(
+                decision, action, actions, self._registry.tool_ids, self._propose_enabled
+            )
             if invalid is not None:
                 added, next_step_number = _insert_steps(
                     steps,
@@ -1852,6 +1900,7 @@ def _validate_action_choice(
     action: _ActionSpec | None,
     actions: dict[str, _ActionSpec],
     known_tool_ids: frozenset[str],
+    propose_enabled: bool = True,
 ) -> dict[str, str] | None:
     action_id = decision.action_id or ""
     if action is None:
@@ -1866,6 +1915,24 @@ def _validate_action_choice(
         return {
             "code": "objective_unmappable",
             "message": f"The objective mapped to {action_id}, which is not a known authority action.",
+        }
+    if not propose_enabled:
+        # Checked BEFORE the policy leash below and AFTER the unknown-action branch above, so a
+        # model that picks a real action while this build is read-only gets the designed
+        # refusal, while a model that invents one still gets `objective_unmappable`. Checked
+        # ahead of the evidence branch too: "this build does not do writes" is true regardless
+        # of whether the evidence for a write happens to be gatherable.
+        #
+        # Same code as the policy leash on purpose. A banker does not need to know whether the
+        # boundary came from risk-operations or from a release scope, only that the agent knows
+        # where its authority ends — and the client already renders this code well.
+        return {
+            "code": "forbidden_action",
+            "message": (
+                f"{action.action_id} is outside the Copilot proposal leash: this build is "
+                "read-only and proposes no actions for approval. It must be handled through "
+                "the appropriate non-harness process."
+            ),
         }
     if not action.agent_may_propose or action.base_rung == "L3":
         return {

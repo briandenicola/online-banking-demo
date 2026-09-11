@@ -340,7 +340,7 @@ def _live_action_metadata() -> ActionMetadata:
     return action_metadata.EMPTY
 
 
-async def _run_live_prompt(prompt: str, live_models) -> _LiveRun:
+async def _run_live_prompt(prompt: str, live_models, *, propose_enabled: bool = True) -> _LiveRun:
     if prompt in PROMPTS.values():
         _assert_prompt_is_in_demo_doc(prompt)
     selector, answerer = live_models
@@ -359,6 +359,7 @@ async def _run_live_prompt(prompt: str, live_models) -> _LiveRun:
         answerer=answerer,
         store=store,
         action_metadata_descriptions=_live_action_metadata(),
+        propose_enabled=propose_enabled,
     )
     runs = RunStreamRegistry(InMemoryTraceSink(), replay_window=500)
     stream = runs.create("run_live", "sess_demo")
@@ -669,3 +670,70 @@ async def test_live_refusal_outcomes_are_named_failures_not_empty_success(
     refusals = [a for a in run.store.artifacts if a.kind == "refusal"]
     assert len(refusals) == 1, f"{prompt}: expected one durable refusal record, got {[a.kind for a in run.store.artifacts]}"
     assert run.error_code in refusals[0].content, f"{prompt}: the durable record does not name the reason code"
+
+
+# ==========================================================================================
+# The read-only leash, against the real model.
+#
+# Write actions were cut from the demo, so the SHIPPED configuration is `propose_enabled=False`.
+# Everything above this line measures `propose_enabled=True`, which is no longer what the cloud
+# runs — so without these two, the live gate would be measuring a build we do not deploy.
+#
+# The offline leash tests prove the catalogue and the execution boundary. They cannot prove the
+# thing that actually worried me: an empty PROPOSABLE ACTIONS list is the underspecified action
+# side that made this model confabulate before, and a model that responds to it by refusing
+# READ objectives would take the demo spine down with the scope cut. That is a prompt-level
+# effect and only a real model can settle it.
+# ==========================================================================================
+
+
+#: The read-only warm-up prompts, and the write prompts, by PROMPTS key.
+#:
+#: "score" is excluded: Danny cut it, and it refuses for reasons of its own.
+#:
+#: "compare" is excluded, and the exclusion is evidence-backed rather than convenient. It is the
+#: two-customer comparison — an independently known-failing prompt, already xfailed above — and
+#: measured on the live model it fails with the SAME code, `subject_not_found`, with the leash
+#: OFF (16.9s run) and ON (52.9s run). Identical failure either side, so it carries no signal
+#: about the leash and would only import a known failure into a leash test. It is excluded here,
+#: NOT marked xfail here: an xfail in this file would swallow a genuine leash regression on this
+#: prompt, which is the opposite of what these tests are for.
+LEASH_READ_KEYS = ("summary", "offshore")
+LEASH_WRITE_KEYS = ("retail_refund", "dana_credit", "casey_savings", "retail_large")
+
+
+@pytest.mark.parametrize("key", LEASH_READ_KEYS)
+async def test_live_read_objectives_still_answer_with_the_leash_on(key, live_models):
+    """The demo spine, under the configuration the demo actually ships.
+
+    Asserted on the run reaching an answer, never on wording — the model is non-deterministic
+    and the invariant is that the read path is untouched by a leash on the write path.
+    """
+    run = await _run_live_prompt(PROMPTS[key], live_models, propose_enabled=False)
+    run.report()
+
+    await _assert_read_only_run_answered(run)
+
+
+@pytest.mark.parametrize("key", LEASH_WRITE_KEYS)
+async def test_live_write_objectives_refuse_as_forbidden_with_the_leash_on(key, live_models):
+    """The stage claim: the agent knows where its authority ends and says so in policy language.
+
+    `objective_unmappable` would be a FAILURE here even though it also refuses — that is the
+    model reporting a guess about the catalogue as a fact about the bank, which is the
+    confabulation this planner has produced repeatedly. The distinction between "I won\'t" and
+    "I can\'t find anything that does that" is the entire value of routing the cut through the
+    designed refusal rather than letting it fall out as an absence.
+
+    Note this asserts no approval was created FIRST. A wrong refusal code is a bad story; an
+    admitted approval is money moving in a build that claims it cannot.
+    """
+    run = await _run_live_prompt(PROMPTS[key], live_models, propose_enabled=False)
+    run.report()
+
+    assert run.authority.propose_calls == [], "the leash admitted an approval"
+    assert run.proposal is None, "the leash emitted an approval frame"
+    assert run.error_code == "forbidden_action", (
+        f"{PROMPTS[key]!r} refused with {run.error_code!r}, not forbidden_action — "
+        f"message={run.error_message!r}"
+    )

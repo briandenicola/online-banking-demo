@@ -52,6 +52,24 @@ DEFAULT_ACTION_METADATA_PATH = "/app/config/copilot-actions.yaml"
 #: the harness models the full tool surface. See tests/test_live_harness_fidelity.py.
 ACTION_METADATA_ENABLED_ENV = "COPILOT_ACTION_METADATA_ENABLED"
 
+#: Whether this build offers the propose path at all. Unset means NO.
+#:
+#: Write actions were cut from the demo scope: the propose path has never completed end-to-end
+#: in the cloud, so it ships disabled rather than half-proven. A scope cut that lives only in
+#: the demo script is not a scope cut — if a banker types a write objective on stage, or an
+#: attendee asks them to, the planner would otherwise still walk the propose path and reach
+#: the money-path defects behind it.
+#:
+#: This is deliberately NOT `agentMayPropose` in `config/authority-policy.yaml`. That file is
+#: risk-operations' statement about what the agent is PERMITTED to do; this flag is our
+#: statement about what this BUILD OFFERS. Two different claims, kept in two different files,
+#: so neither is mistaken for the other when writes come back.
+#:
+#: Note the polarity: absence means leashed. Every other flag here reads "off unless asked",
+#: and so does this one — but here "off" is the safe state, so a forgotten env var in a new
+#: environment fails closed rather than quietly re-arming money movement.
+PROPOSE_ENABLED_ENV = "COPILOT_PROPOSE_ENABLED"
+
 #: Env prefixes searched, in order, when resolving a logical upstream service name to a base URL.
 _DOWNSTREAM_ENV_PATTERNS = (
     "DOWNSTREAM__{raw}",
@@ -170,6 +188,7 @@ class Settings:
     role_hierarchy_path: str
     harness_limits_path: str
     action_metadata_path: str
+    propose_enabled: bool
     authority_service_url: str | None
     cosmos_endpoint: str | None
     cosmos_database: str
@@ -248,6 +267,7 @@ def load_settings() -> Settings:
         action_metadata_path=os.getenv(
             "COPILOT_ACTION_METADATA_PATH", ""
         ).strip() or DEFAULT_ACTION_METADATA_PATH,
+        propose_enabled=_env_flag(PROPOSE_ENABLED_ENV),
         authority_service_url=(os.getenv("AUTHORITY_SERVICE_URL", "").strip().rstrip("/") or None),
         cosmos_endpoint=os.getenv("COSMOS_DB_ENDPOINT", "").strip() or None,
         cosmos_database=env_with_legacy("COPILOT_DATABASE", "COSMOS_DB_DATABASE", "BankingDemo"),
