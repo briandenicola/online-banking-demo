@@ -442,6 +442,74 @@ async def test_demo_compare_prompt_leaves_no_cross_subject_value_in_the_facts_ma
 # suffixed key in `gathered` silently grants re-reads of tools already held (fails OPEN, quietly).
 
 
+async def test_a_read_plan_may_omit_ids_the_banker_never_said_and_the_server_fills_them():
+    """The defect the live gate caught in the cloud on `Summarise casey's accounts`.
+
+    The banker typed "casey". `list_customer_accounts` requires `userId`, an internal id that
+    does not exist until the directory lookup runs — and the model is asked for its arguments
+    BEFORE that lookup. So the model had exactly two moves: omit the id and fail the contract,
+    or put the username in the id field. We asked it an impossible question.
+
+    Ids are resolved server-side and injected into the read step. The model supplies the words
+    the banker used; the planner supplies the identifier.
+    """
+    prompt = PROMPTS["summary"]
+    _assert_prompt_is_in_demo_doc(prompt)
+
+    frames, _authority, _store = await _run_prompt(
+        prompt,
+        IntentDecision(
+            kind="read",
+            read_plan=({"toolId": "list_customer_accounts", "arguments": {}},),
+            answer_goal="Summarise casey's accounts and recent activity.",
+            subject_hints={"customer": "casey"},
+        ),
+    )
+
+    assert _terminal(frames) == "completed", f"{prompt}: {_error_code(frames)}"
+    calls = [f["payload"] for f in frames if f["kind"] == "tool.started"]
+    assert [c["args"] for c in calls] == [{"userId": "usr_casey"}], f"{prompt}: called with {calls!r}"
+
+
+async def test_a_username_smuggled_into_an_id_field_is_replaced_by_the_resolved_id():
+    """Danny §3.1: hints are strings to MATCH, never identifiers to USE.
+
+    This was the quieter half of the same defect and the more dangerous one. A model that put
+    "casey" in `userId` passed schema validation — the manifest pattern happily accepts a
+    username — and the harness then called the account service with it verbatim. The run
+    reported `completed`. Nothing anywhere said an identifier had been taken from the model.
+    """
+    prompt = PROMPTS["summary"]
+
+    frames, _authority, _store = await _run_prompt(
+        prompt,
+        IntentDecision(
+            kind="read",
+            read_plan=({"toolId": "list_customer_accounts", "arguments": {"userId": "casey"}},),
+            answer_goal="Summarise casey's accounts and recent activity.",
+            subject_hints={"customer": "casey"},
+        ),
+    )
+
+    calls = [f["payload"]["args"] for f in frames if f["kind"] == "tool.started"]
+    assert calls == [{"userId": "usr_casey"}], f"{prompt}: the model's own id was used: {calls!r}"
+
+
+async def test_a_read_plan_with_no_hint_to_resolve_is_left_exactly_as_the_model_planned_it():
+    """The injection must not become a silent rewriter of arguments nobody resolved."""
+    prompt = PROMPTS["compare"]
+
+    frames, _authority, _store = await _run_prompt(prompt, _COMPARE_READ_PLAN)
+
+    calls = [f["payload"]["args"] for f in frames if f["kind"] == "tool.started"]
+    assert calls == [
+        {"username": "dana"},
+        {"username": "casey"},
+        {"accountId": "acct_dana_checking"},
+        {"accountId": "acct_casey_checking"},
+    ], f"{prompt}: arguments were rewritten: {calls!r}"
+
+
 @pytest.mark.parametrize(
     ("name", "decision", "required_tool"),
     [
@@ -506,6 +574,18 @@ async def test_a_propose_run_binds_later_reads_from_the_payloads_subject_not_a_t
     payload = authority.propose_calls[0]["payload"]
     assert request.facts["accountId"] == payload["accountId"]
     assert request.facts["amount"] == payload["amount"]
+
+
+def test_the_rejected_argument_log_states_the_shape_and_never_the_values():
+    """The refusal named the tool and not the offending shape, which made the cloud failure
+    undiagnosable from logs. The diagnostic must not become a disclosure channel: an argument
+    value on a read tool is a customer identifier, or the words a banker typed about one."""
+    from app.planner.loop import _argument_shape
+
+    shape = _argument_shape({"userId": "usr_casey", "limit": 5, "flags": ["a"], "note": None, "deep": {"x": 1}})
+
+    assert shape == {"userId": "string", "limit": "number", "flags": "array", "note": "null", "deep": "object"}
+    assert "usr_casey" not in str(shape)
 
 
 def test_evidence_keys_are_bare_first_then_the_next_ordinal():

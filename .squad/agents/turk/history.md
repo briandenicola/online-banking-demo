@@ -3347,3 +3347,44 @@ I deliberately did **not** chase an integration test for `already_gathered` unde
 The old code kept only Casey and left Dana in facts. Full live run: 9 passed, 1 failed (the known `retail_large` proposal flake), 1 xfailed, 1 xpassed — the xpass being the comparison itself, on a run where the model planned both history reads.
 
 **Still open, and honestly so.** The comparison prompt stays non-strict xfail because of a *model-planning* gap, not a harness one: the model plans the two customer lookups and then no history reads, because a read plan is chosen in **one shot** and it does not yet hold the account ids the history tool needs. It cannot read to resolve and then read again. That is the single-shot read-plan gap already handed to Danny, and it is now the only thing standing between this prompt and green.
+
+### 2026-09-10 (evening) — the live gate fired in the cloud on the very first demo prompt, and the model was not at fault
+
+Brian deployed and ran `Summarise casey's accounts and recent activity`. It refused: `intent_contract_invalid`, *"The planner model returned invalid arguments for `list_customer_accounts`."* He read it as a design bug rather than a bad model response and asked me to confirm before changing anything. He was right, and the reality was worse than his reading.
+
+**The diagnosis, reproduced rather than inferred.** `list_customer_accounts` declares `required: [userId]`, `additionalProperties: false`. The banker typed "casey". The model is asked for the tool's arguments **before** the directory lookup that turns "casey" into `usr_casey` exists. So the model had exactly two moves, and I ran both:
+
+```
+omits userId (the honest move)  -> terminal=failed  code=intent_contract_invalid
+puts the USERNAME in userId     -> terminal=completed, tool called with {'userId': 'casey'}
+```
+
+**Key Learning — the failure Brian saw was the SAFE one.** The second is the quieter and far worse outcome: the manifest's pattern happily accepts a username, so it validates, and the harness then calls the account service with the banker's word used verbatim as an internal identifier. The run reports `completed` and answers from an empty account list. Nothing anywhere says an identifier was taken from the model. That is Danny's §3.1 — *hints are strings to match, never identifiers to use* — broken silently on the read branch, which is exactly the branch his §3.2 names as the unguarded one. We had a 50/50 coin flip between a loud refusal and a silent wrong answer.
+
+**The fix is server-side and needs no model compliance.** The resolver already resolved `casey` → `usr_casey` on this very run; the resolution was simply thrown away, because `ReferenceResolver` writes into `payload_draft` and nothing ever put it into the read plan. Now the planner injects resolved ids into each read step before validation, and the resolved id **wins** over anything the model supplied for that field — a model-supplied id is not a value to fall back on, it is a value to discard.
+
+**Key Learning — a prompt edit has blast radius well outside its own paragraph, and I have the measurement now.** My first instinct was to fix the contract by telling the model to omit ids. It worked for the target prompt — 6/6 live — so I nearly shipped it. Then the full live suite went from 1 failure to 3. A controlled A/B, same two tests, same model, same session:
+
+| `intent_model.py` | `unlock` + `nobody-here` |
+|---|---|
+| HEAD (untouched) | **4 / 4 passed** |
+| my read-paragraph edit | **0 / 4 passed** |
+
+Adding read-planning guidance pulled the *unlock* prompt from `propose` to `read` — a routing change, in a paragraph that never mentions routing. I reverted the prompt to HEAD entirely and kept the server-side fix, which needed no prompt change to work: **the summary prompt then passed 6/6 anyway**, because the server no longer depends on which of the two impossible options the model picks. Nobody on this team had measured prompt blast radius before. The lesson is not "that wording was bad" — it is that a prompt is a shared global, and tuning it for one prompt is a change to all thirty-one.
+
+**Key Learning — a green test can hide the exact defect it names.** My own live suite passed `Summarise casey's accounts` while the identical prompt refused in the cloud. It asserted "completed, evidence gathered, answer produced" — all true of a run that called `list_customer_accounts(userId="casey")`, got nothing back, and answered from nothing. The assertion was about the *shape* of the run and not about *whose* data it read. Added `_assert_no_identifier_came_from_the_model`, checked against what was actually **called** rather than what was planned — the plan looked fine; the damage was in the argument handed to the tool.
+
+**The refusal is now diagnosable.** It named the tool and not the offending shape, so the cloud failure could not be diagnosed from logs at all. The rejected argument shape is now logged as **keys and JSON types only** — never values, because on a read tool a value is a customer identifier or the words a banker typed about a customer, and Danny's non-disclosure constraint binds here as it does on an ambiguity refusal. It reads:
+
+```
+Read step rejected: arguments failed the tool schema
+  tool_id=list_customer_accounts missing_required=['userId'] required=['userId']
+  supplied={'nope': 'number', 'extra': 'object'} unexpected=['nope', 'extra'] validator=required
+```
+
+**Counts.** Offline 449 → **453 passed**, 12 deselected, 0 xfailed, still hermetic. Live: the cloud-failing prompt now passes 6/6.
+
+**Two things I did not fix, and why.**
+
+1. **A model-supplied id with no hints still passes through.** Closing that means refusing every model-supplied identifier on the read branch — Danny's §3.2 — and it would cancel his ruling to *build* the two-customer comparison, whose account ids come from the model. His call, not mine. My live assertion catches the username-as-id case only; a *fabricated* id would pass it, and I have said so in the docstring rather than letting the assertion imply more than it checks.
+2. **Write-prompt routing is unstable today, and it is not mine.** The live suite showed 3 balance-adjustment failures where it had shown 1 earlier. I A/B'd it — 5 failures in 12 runs with my change, 6 in 12 at HEAD — so the instability is the model's, not the fix's. The model routes `Credit dana $120…` and `Adjust retail's savings by $26,000` to `read` some of the time. That is a demo risk for 9/14 and Brian should know before he stands in front of anyone: the *action* choice for write prompts is currently a coin flip weighted in our favour, not a certainty.

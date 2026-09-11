@@ -42,6 +42,7 @@ from conftest import judging_assessor, shipped_assessment_limits
 # Imported, not copied: if Brian changes a demo prompt, both suites change with it.
 from test_demo_prompt_acceptance import (
     PROMPTS,
+    USERS,
     _assert_prompt_is_in_demo_doc,
     _Authority,
     _Executor,
@@ -271,6 +272,15 @@ class _LiveRun:
         return _terminal(self.frames)
 
     @property
+    def tool_calls(self) -> list[dict[str, Any]]:
+        """What was actually CALLED, which is not the same as what was planned.
+
+        Asserting on the plan would have missed the cloud defect entirely: the plan looked
+        well-formed, and the damage was in the argument the tool was handed.
+        """
+        return [frame["payload"] for frame in self.frames if frame["kind"] == "tool.started"]
+
+    @property
     def proposed_payload(self) -> dict[str, Any]:
         assert self.authority.propose_calls, f"{self.prompt}: nothing was proposed; error={self.error_code}"
         return self.authority.propose_calls[0]["payload"]
@@ -382,6 +392,35 @@ def _assert_subject_and_route(run: _LiveRun, *, kind: str) -> None:
 # --------------------------------------------------------------------- read-only objectives ----
 
 
+def _assert_no_identifier_came_from_the_model(run: _LiveRun) -> None:
+    """Danny §3.1, checked against what was actually CALLED, not against what was planned.
+
+    This assertion did not exist, and its absence is why this suite was green on
+    `Summarise casey's accounts` while the same prompt refused in the cloud. The model has two
+    ways to answer an impossible question — omit the id, or put the banker's word in the id
+    field — and the old assertions accepted the second. A run that called
+    `list_customer_accounts(userId="casey")` gathered an empty account list for a customer that
+    does not exist by that id, answered from it, and reported `completed`.
+
+    **What this does NOT catch, stated so nobody reads it as more than it is:** it compares
+    against known usernames, so a *fabricated* id — one that resembles nothing in the directory
+    — passes. Closing that means refusing every model-supplied identifier on the read branch,
+    which is Danny's §3.2 and would cancel his ruling to build the two-customer comparison,
+    since that plan's account ids come from the model. Filed, not fixed here.
+    """
+    usernames = {name.casefold() for name in USERS}
+    for call in run.tool_calls:
+        for field_name in ("userId", "accountId"):
+            value = call["args"].get(field_name)
+            if value is None:
+                continue
+            assert str(value).casefold() not in usernames, (
+                f"{run.prompt}: {call['name']} was called with {field_name}={value!r} — that is the "
+                "word the banker typed, used verbatim as an internal identifier. Ids are resolved "
+                "server-side; a hint is a string to match, never an identifier to use."
+            )
+
+
 async def _assert_read_only_run_answered(run: _LiveRun) -> None:
     _assert_subject_and_route(run, kind="read")
     assert run.authority.propose_calls == [], f"{run.prompt}: a read-only objective must not create an approval"
@@ -390,10 +429,20 @@ async def _assert_read_only_run_answered(run: _LiveRun) -> None:
     evidence = [a for a in run.store.artifacts if a.kind == "evidence_bundle"]
     assert evidence and evidence[0].content, f"{run.prompt}: no evidence was gathered"
     assert any(a.kind == "answer" for a in run.store.artifacts), f"{run.prompt}: missing answer artifact"
+    _assert_no_identifier_came_from_the_model(run)
 
 
 async def test_live_account_summary_prompt_answers_from_evidence_and_never_proposes(live_models):
-    await _assert_read_only_run_answered(await _run_live_prompt(PROMPTS["summary"], live_models))
+    """The first line under Brian's read-only warm-up heading, and the one that broke in the cloud.
+
+    It refused there with `intent_contract_invalid` while this suite was green, because the
+    model is asked for `userId` before the directory lookup that produces it exists. The run
+    must now complete AND every identifier in every tool call must be one the server resolved.
+    """
+    run = await _run_live_prompt(PROMPTS["summary"], live_models)
+    await _assert_read_only_run_answered(run)
+    called = {call["name"] for call in run.tool_calls}
+    assert called, f"{PROMPTS['summary']}: no tools were called, so nothing was summarised"
 
 
 @pytest.mark.xfail(

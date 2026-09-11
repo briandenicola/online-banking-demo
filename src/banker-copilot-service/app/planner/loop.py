@@ -982,6 +982,21 @@ class Planner:
             return added, next_step_number, [], False
 
         if decision.kind == "read":
+            # The defect the live gate caught in the cloud. The banker types "casey"; the read
+            # tool requires `userId`, an internal identifier that does not exist until the
+            # directory lookup runs — and the model is asked for the tool's arguments BEFORE
+            # that lookup. So the model had two moves and both were wrong: omit the id and fail
+            # the contract (`intent_contract_invalid`, what Brian saw), or put the username in
+            # the id field, which passes schema validation because the manifest pattern accepts
+            # a username, and is then used VERBATIM against the account service. The second is
+            # the quieter and worse one: the run reports `completed` and nothing anywhere says
+            # an identifier was taken from the model.
+            #
+            # Danny §3.1 — hints are strings to match, never identifiers to use — and §3.2, the
+            # read branch is the unguarded one. So the resolved id WINS over anything the model
+            # supplied for that field, rather than merely filling a gap: a model-supplied id is
+            # not a value to fall back on, it is a value to discard.
+            decision = _with_resolved_ids(decision, resolution, self._registry)
             validated = _validate_read_plan(decision, self._registry, request.session.capabilities)
             if validated is not None:
                 added, next_step_number = _insert_steps(
@@ -1462,6 +1477,53 @@ def _looks_like_id(value: str) -> bool:
     )
 
 
+#: The identifier fields the reference resolver produces, and the only ones the planner will
+#: ever write into a read step's arguments. Everything else in a read plan is the model's.
+_RESOLVED_ID_FIELDS = ("userId", "accountId")
+
+
+def _with_resolved_ids(
+    decision: IntentDecision, resolution: _ReferenceResolution, registry: ToolRegistry
+) -> IntentDecision:
+    """Put the SERVER's identifiers into the read plan, in place of the model's.
+
+    Only declared parameters of the tool are written, and only the two fields the resolver
+    actually produced by reading the live directory. A tool that does not declare ``userId``
+    does not get one; a run where nothing was resolved is returned untouched, so a read plan
+    that named its own concrete ids is left exactly as the model planned it.
+    """
+    resolved = {
+        field_name: (decision.payload_draft or {}).get(field_name)
+        for field_name in _RESOLVED_ID_FIELDS
+    }
+    resolved = {k: v for k, v in resolved.items() if v}
+    if not resolved or not resolution.evidence:
+        return decision
+
+    plan = []
+    for item in decision.read_plan:
+        arguments = dict(item.get("arguments") or {})
+        tool = registry.get(str(item.get("toolId", "")).strip())
+        declared = set(((tool.parameters if tool else None) or {}).get("properties") or {})
+        for field_name, value in resolved.items():
+            if field_name in declared:
+                arguments[field_name] = value
+        plan.append({**item, "arguments": arguments})
+    return replace(decision, read_plan=tuple(plan))
+
+
+def _argument_shape(arguments: Mapping[str, Any]) -> dict[str, str]:
+    """Keys and JSON types ONLY — never values.
+
+    This exists because the refusal named the tool and not the offending shape, which made the
+    cloud failure undiagnosable from logs. It must not become a disclosure channel: an argument
+    value on a read tool is a customer identifier or the text a banker typed about a customer,
+    and Danny's non-disclosure constraint binds here exactly as it does on an ambiguity refusal.
+    """
+    types = {dict: "object", list: "array", str: "string", bool: "boolean", int: "number", float: "number"}
+    return {str(key): types.get(type(value), "null" if value is None else "unknown") for key, value in arguments.items()}
+
+
 def _refusal(code: str, message: str) -> IntentDecision:
     return IntentDecision(kind="refuse", reason_code=code, message=message)
 
@@ -1479,6 +1541,11 @@ def _validate_read_plan(
                 "message": f"The objective asked for evidence this harness cannot gather: {tool_id}.",
             }
         if not isinstance(item.get("arguments"), dict):
+            logger.warning(
+                "Read step rejected: no arguments object",
+                tool_id=tool_id,
+                argument_type=type(item.get("arguments")).__name__,
+            )
             return {
                 "code": INTENT_CONTRACT_INVALID,
                 "message": "The planner model returned a read step without an arguments object.",
@@ -1490,7 +1557,22 @@ def _validate_read_plan(
             }
         try:
             jsonschema.validate(instance=item["arguments"], schema=tool.parameters)
-        except jsonschema.ValidationError:
+        except jsonschema.ValidationError as exc:
+            schema = tool.parameters or {}
+            required = list(schema.get("required") or [])
+            supplied = _argument_shape(item["arguments"])
+            logger.warning(
+                # Keys and types only. The failing VALUE is never logged: on a read tool it is a
+                # customer identifier or the words a banker typed about a customer.
+                "Read step rejected: arguments failed the tool schema",
+                tool_id=tool_id,
+                supplied=supplied,
+                required=required,
+                missing_required=[name for name in required if name not in supplied],
+                unexpected=[name for name in supplied if name not in (schema.get("properties") or {})],
+                validator=exc.validator,
+                schema_path="/".join(str(part) for part in exc.absolute_schema_path),
+            )
             return {
                 "code": INTENT_CONTRACT_INVALID,
                 "message": f"The planner model returned invalid arguments for {tool_id}.",
