@@ -2200,3 +2200,65 @@ fixtures, never by deleting assertions.
 **Verification:** `tests/e2e/specs/stream-lifecycle.spec.ts` with `STREAM_MODE=completed-run` measures stream requests before/after fix: 15 requests in 12s before, 5 requests after.
 
 **Key Learning:** Signing gates depend on stream liveness as a freshness oracle. If the client cannot hold a stream open, it must not sign. A gate-weakening workaround trades correctness for demo convenience — do not do it.
+
+## Phase 11 — a Playwright suite against the DEPLOYED surface (2026-09-10)
+
+`tests/e2e/cloud.config.ts` + `tests/e2e/cloud/`. The first config here that leaves
+localhost. Everything below was learned by probing `onlinebankingdemo.bjdazure.tech`, not
+by reading the design docs; where the two disagreed the host won.
+
+**The gate is a THROW, not a skip.** `run-outcomes.spec.ts` uses `test.skip` correctly —
+the other mode genuinely cannot run. It would be wrong here: a skipped collection exits 0
+with "0 failed", which reads as a pass, and that exact failure mode cost us the evening.
+Unset `BANKER_COPILOT_CLOUD_E2E` → exit 1, no browser starts, no "passed" line anywhere in
+the output. Verified, not assumed. The throw is duplicated at spec-module scope because a
+spec can be reached by another config.
+
+**Separation verified by counting, not by reading.** `playwright.config.ts` globs
+`./specs` with a `testIgnore` of only two files — a cloud spec dropped in `specs/` would
+have been silently collected by the offline suite and made CI network-dependent. Hence
+`tests/e2e/cloud/`. `--list` across all five existing configs: 0 cloud specs collected,
+495/52/4/2/4 tests, unchanged.
+
+**Findings on the deployed surface.**
+1. The approvals path in the brief, `/api/approvals?scope=all`, answers **200 with the
+   SPA's index.html** via the history fallback. A successful non-JSON response is worse
+   than a 404. Authority is at `/api/authority/approvals`.
+2. **Nothing links a run to its approval in the UI.** The harness auto-selects the first
+   pending signable approval on mount and deliberately never re-points the dock, so after
+   a successful propose the dock still shows an unrelated queue item. Queue rows carry no
+   id. I dock by clicking rows until the card's `payloadHashShort` chip matches the record
+   authority returned — positive identification, loud failure if no row yields it.
+3. **"No approval dock" is not assertable in the cloud, and asserting it would be a lie.**
+   The dock is fed by the queue, not by the run, and a live tenant always has open items.
+   What the requirement means is that the run PROPOSED nothing, so the assertion is an
+   authority delta against a pre-run snapshot. Documented in the test rather than faked
+   with an intercepted empty queue — that would only test the fake.
+4. **The approval dock is a CHILD of the `Artifacts and approvals` region.** My first
+   answer assertions read `canvas.innerText()` and were contaminated by the docked card:
+   a strict-mode violation on `Cited evidence` exposed it, and the length and no-JSON
+   assertions would otherwise have been satisfied by the CARD, not the answer. Subtract
+   the dock text.
+5. **`proposed` → `pending` is a real transition and polling catches both.** Asserting
+   `pending` lost a race it had no business running. `TaskQueuePane` already groups both
+   as open; the invariant is "open and awaiting people", not the label in that instant.
+6. **A red test that does not say what the system did instead is nearly worthless.** The
+   first L2 failure was "expected 1, received 0" after 4.1 minutes and cost another full
+   run to diagnose. Both waits now watch for a refusal and fail carrying its code.
+
+**Non-disclosure assertion, corrected by running it.** Built from the dataset, it first
+failed on `banker` — because the refusal copy reads "Nothing matched the reference for
+this banker", which is the READER's own role, not a customer. Scoped to `retail: true`
+identities. Also asserted the candidate list is non-empty, so the loop cannot pass
+vacuously.
+
+**What the cloud actually does, over ~9 runs.** Approval and refusal: solid. Read-only:
+about 3 in 4. Two distinct refusals observed on the SAME prompt that passes otherwise —
+`planner_model_unavailable` at "Answer from evidence", and `intent_contract_invalid`
+whose message is *"The answer model cited evidence this run did not gather:
+['188470c5…', …]"*. So the contract failure Brian hit is citation validation: the answer
+model cites raw record GUIDs while the run's evidence keys are `lookup_customer`,
+`list_customer_accounts`, `resolved_subject`. Not a userId problem. Handed to Turk.
+
+**No retries in this config, on purpose.** A retry would hide precisely the intermittent
+cloud faults the suite exists to surface.

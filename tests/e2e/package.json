@@ -9,6 +9,7 @@
     "test:firefox": "playwright test --project=firefox",
     "test:smoke": "npx playwright test --project=smoke",
     "test:debug": "playwright test --debug",
+    "test:cloud": "playwright test --config cloud.config.ts",
     "test:ui": "playwright test --ui",
     "report": "playwright show-report"
   },
