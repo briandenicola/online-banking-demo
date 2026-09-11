@@ -208,26 +208,37 @@ file to prove it never reaches the model.
 `COPILOT_ACTION_METADATA_PATH` points at the file. The loader refuses to start without it.
 
 `COPILOT_ACTION_METADATA_ENABLED` (default **0**) controls whether the descriptions are sent.
-It is off **on measurement, against expectation**. 12 matched runs per arm, one session, one
-deployment (`tests/ab_action_metadata.py`):
 
-| prompt | names only | with descriptions |
-| --- | --- | --- |
-| `Refund a $35 overdraft fee` — mapped to `account.balance.adjust` | **11/12** | **4/12** |
-| `Reset casey's password` — correctly refused `forbidden_action` | 12/12 | 12/12 |
-| `Summarise nobody-here's...` — correctly refused `subject_not_found` | 9/12 | **12/12** |
+The first measurement of this was **void and its conclusion was wrong**, and the correction is
+worth more than the result. It used a shortened prompt — `"Refund a $35 overdraft fee"` — that
+names no customer and no account, so neither arm could propose at all, and the model declining
+to invent an account read as a mapping regression. A prompt in a measurement harness must be
+**the prompt the system is judged on**; a paraphrase is a different experiment wearing the same
+name.
 
-So parity does what it was built to do on the subject path and does not weaken refusals — but
-it made action mapping on the headline demo prompt markedly *worse*. The prompt and its
-context are a shared global; this is the second time this epic that improving one prompt's
-inputs degraded another's. Everything ships and the wire is off pending Danny's ruling.
+Re-run with the real prompt, `"Refund a $35 overdraft fee on retail's checking as goodwill"`,
+12 matched runs per arm, one session, one deployment (`tests/ab_action_metadata.py`, which
+prints per-run labels as well as totals):
 
-Note the third column of that table is not the interesting one: **neither arm ever
-proposed.** Every correctly-mapped run then died on `payload_unfillable` for `accountId` —
-`_construct_payload` builds the payload from the model's draft *before* the resolve step
-runs, so the model is asked for an account id that does not exist yet. That is Danny's §3.1
-ruling (hints are strings to match, never identifiers to use) applied one layer down, and it
-is the actual blocker on the refund prompt.
+| prompt | expected | names only | with descriptions |
+| --- | --- | --- | --- |
+| refund — proposed at the correct **L2** | L2, `direction: credit` | 10/12 | **11/12** |
+| refund — **wrong rung**, `direction: debit` at L1 | never | **2/12** | **0/12** |
+| `Reset casey's password` | refuses `forbidden_action` | 12/12 | 12/12 |
+| `Summarise nobody-here's...` | refuses `subject_not_found` | 11/12 | **12/12** |
+
+The rung errors are the result. Both were `direction: debit` on a refund — money going back to
+a customer, described as money being taken from one. `credit-adjustment` raises a credit to L2
+because crediting an account creates money, so a `debit` label routes a customer refund through
+**less signature ceremony than it deserves**. Naming the field's allowed values is exactly what
+removed them.
+
+The cost is one run in twelve routed to a read instead of a propose — a miss, not a wrong
+action and not a wrong rung. Refusals were unchanged in both arms.
+
+**The evidence now says turn it on.** The default stays at `0` because Danny reserved the wire
+decision to himself and this measurement is the input to it, not a substitute for it.
+
 
 ## Endpoints
 

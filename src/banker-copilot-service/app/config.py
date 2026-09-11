@@ -30,15 +30,19 @@ DEFAULT_HARNESS_LIMITS_PATH = "/app/config/harness-limits.yaml"
 DEFAULT_ACTION_METADATA_PATH = "/app/config/copilot-actions.yaml"
 #: Whether the descriptions in that file are actually SENT to the intent model.
 #:
-#: Default OFF, on measured evidence and against expectation. Parity was built to stop the
-#: model confabulating that the bank cannot act, and it does fix that on the subject-lookup
-#: path (`nobody-here`: 9/12 -> 12/12 correct refusals, n=12 matched, one session). But on
-#: the headline refund prompt it REGRESSED action mapping from 11/12 to 4/12. Shipping it
-#: on would trade a defect Brian has seen for a worse one on the prompt he demos.
+#: Default OFF pending Danny's ruling, NOT because the evidence is against it.
 #:
-#: So the file, the loader, the drift check and the boundary tests all ship; only the wire
-#: is off, and flipping this one variable runs the experiment again. Danny rules on whether
-#: it goes on.
+#: The first A/B said descriptions regressed action mapping 11/12 -> 4/12. That experiment was
+#: void: it used a shortened prompt naming no customer and no account, so neither arm could
+#: propose and the model correctly declining to invent an account read as a regression.
+#:
+#: Re-measured against the prompt the system is actually judged on ("...on retail's checking as
+#: goodwill"), 12 matched runs per arm: correct-L2 proposes 10/12 -> 11/12, wrong-rung L1
+#: proposes 2/12 -> 0/12, unknown-customer refusals 11/12 -> 12/12, forbidden-action refusals
+#: unchanged at 12/12. Both wrong-rung runs labelled a refund `direction: debit`, which routes a
+#: customer refund below the dual-control rung that crediting money requires.
+#:
+#: So the evidence says ON. The flag stays at 0 only because Danny reserved the wire decision.
 ACTION_METADATA_ENABLED_ENV = "COPILOT_ACTION_METADATA_ENABLED"
 
 #: Env prefixes searched, in order, when resolving a logical upstream service name to a base URL.

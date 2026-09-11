@@ -3540,3 +3540,79 @@ The temptation to supply a reason was strong and the reason would have been inve
   model actually reads rot untested — the same gap one level up that the live suite exists
   to close.
 - Offline suite 470 → **485 passed**, hermetic.
+
+## 2026-09-11 (later) — Cross-customer money movement, and an A/B I got backwards
+
+### The defect
+
+Danny found it by disproving my own bug report. `loop.py:328-336` checked a model-supplied
+`accountId` for **existence only** — `if account is None` was the entire check. So the banker
+says casey, the model supplies Dana's account id, `get_account` returns 200, and a $35 credit
+reaches two signers against Dana. `hashFields` carries no `userId`, so nothing in the signed
+preimage contradicts the banker's own sentence.
+
+I reproduced it before touching anything:
+`payload={'accountId': 'acct_dana_checking', 'amount': '35.00', 'direction': 'credit', ...}`
+
+Sixth instance of our recurring shape, and the first that ends in money rather than in a wrong
+answer. Fixed by **derivation, not verification**: list the resolved customer's accounts and
+match inside that set, so an account they do not own is never a candidate. The safe pattern was
+already twenty lines below in the `accountType` branch.
+
+### Lessons
+
+- **Two hypotheses that predict the same symptom cannot be separated by reading.** I reported
+  "`_construct_payload` runs before resolve". It does not — resolve is `:1021`, propose `:1104`,
+  and the resolved ids already win by assignment. Danny separated it in one step by *running*
+  the planner. I had the same harness and reasoned instead. This is now twice in one session
+  that running beat reading.
+- **A collection must never use "empty" to mean "failed".** Deriving needs
+  `list_customer_accounts`, and `_invoke` returns `None` for both "not registered" and "call
+  failed" — neither of which means the customer has no accounts. Collapsing them would tell a
+  banker an account is not their customer's *because a service was down*. Third instance this
+  session after `_required_evidence` and the empty catalogue. I think that is the general rule.
+- **Assert the property, not a proxy.** My banker-language test scanned `repr(frames)` and
+  failed on the transport's own `payload` envelope key. Scanning the actual message strings is
+  both stricter and correct. Linus has a whole decision doc with this title; now I see why.
+- **Derivation beats a check even when the check is one line.** `get_account` already returns
+  `userId`, so an `if` would have closed the reported defect. But a check depends on the field
+  being present, surviving projection, being named the same on both services, and being
+  compared right — and every one of those failing silently restores money reaching the wrong
+  customer. Derivation has no such failure mode.
+
+### The A/B I got backwards
+
+I reported that action descriptions regressed refund mapping 11/12 → 4/12 and shipped the wire
+off "on measured evidence, against expectation". I was pleased with the rigour.
+
+**The experiment was void.** It measured `"Refund a $35 overdraft fee"` — no customer, no
+account — while the prompt the system is judged on is `"...on retail's checking as goodwill"`.
+With nothing to resolve, neither arm could propose, and the model correctly declining to invent
+an account came out of my counter as a mapping regression.
+
+Re-run against the real prompt, 12 matched runs per arm:
+
+| | names only | with descriptions |
+| --- | --- | --- |
+| refund at correct L2 | 10/12 | **11/12** |
+| refund at **wrong rung** (`direction: debit`, L1) | **2/12** | **0/12** |
+| `nobody-here` refused correctly | 11/12 | **12/12** |
+| forbidden action refused | 12/12 | 12/12 |
+
+Descriptions are better on every axis. Both wrong-rung runs labelled a refund `direction:
+debit` — money going back to a customer described as money taken from one — routing it below
+the dual-control rung crediting money requires. That is precisely the rung error Brian named.
+
+**The lesson is bigger than the number.** A careful experiment on the wrong input is not a
+conservative error. It produced a confident recommendation in the *opposite* direction, with a
+process rigorous enough that nobody including me questioned the result. Check that the input is
+the thing the system is judged on, before trusting any measurement made on it.
+
+### Mechanical
+
+- Offline 485 → **499 passed**, hermetic. 14 new tests in
+  `tests/test_account_ownership_binding.py`.
+- Filed for Linus: `runOutcome.ts` has no copy for the new `subject_lookup_unavailable`, so the
+  server message is suppressed — same gap as `authority_catalogue_unavailable`.
+- `subjectResolution` now rides the approval frame (display only, beside `payload` never inside
+  it) so the card can say what the id resolved from and to. Rendering is Linus's.

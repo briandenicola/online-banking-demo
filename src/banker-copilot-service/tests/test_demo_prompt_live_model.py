@@ -322,9 +322,10 @@ class _LiveRun:
 #: cloud does not run would be proving the wrong thing. That mistake has already been made
 #: once here, with a hardcoded 60s timeout against a service shipping 30s.
 #:
-#: Set to "1" to re-run the parity experiment: 12 matched runs per arm showed action
-#: mapping on the refund prompt fall from 11/12 to 4/12 with descriptions on, while the
-#: `nobody-here` refusal rose from 9/12 to 12/12.
+#: Set to "1" to re-run the parity experiment. Measured against the real demo prompt, 12
+#: matched runs per arm: wrong-rung proposes 2/12 -> 0/12, unknown-customer refusals 11/12 ->
+#: 12/12, forbidden-action refusals unchanged. The earlier 11/12 -> 4/12 "regression" came
+#: from a shortened prompt that named no account and is void.
 LIVE_ACTION_METADATA_ENV = "BANKER_COPILOT_LIVE_ACTION_METADATA"
 
 

@@ -106,8 +106,8 @@ spec:
         - name: COPILOT_ACTION_METADATA_PATH
           value: "/app/config/copilot-actions.yaml"
         # Loaded and validated at startup either way; this controls only whether the
-        # descriptions reach the model. Off by measurement, not by caution — see
-        # app/config.py and .squad/decisions/inbox/turk-action-metadata-parity.md.
+        # descriptions reach the model. Off pending Danny's wire ruling; the measurement
+        # against the real demo prompt favours ON — see app/config.py.
         - name: COPILOT_ACTION_METADATA_ENABLED
           value: "0"
         # The SHARED role model, not the copy baked into this image.

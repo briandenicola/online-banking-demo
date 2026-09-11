@@ -341,10 +341,10 @@ services:
       - JWT_JWKS_URI=${JWT_JWKS_URI:-http://user-service:8080/.well-known/jwks.json}
       - JWT_AUDIENCE=banking-demo/copilot
       - TOOL_MANIFEST_PATH=/app/config/copilot-tools.yaml
-      # Whether config/copilot-actions.yaml is SENT to the intent model. Default off on
-      # measured evidence: with descriptions on, action mapping for the refund prompt fell
-      # from 11/12 to 4/12 across matched live runs, while the unknown-customer refusal
-      # rose from 9/12 to 12/12. Set to 1 to re-run the experiment.
+      # Whether config/copilot-actions.yaml is SENT to the intent model. Off pending Danny's
+      # ruling, not because the evidence is against it: measured against the real demo prompt,
+      # descriptions took wrong-rung proposes from 2/12 to 0/12 and unknown-customer refusals
+      # from 11/12 to 12/12. Set to 1 to re-run the experiment.
       - COPILOT_ACTION_METADATA_ENABLED=0
       - ROLE_HIERARCHY_PATH=/app/config/role-hierarchy.yaml
       # The sole write path. Everything below it is read-only.
