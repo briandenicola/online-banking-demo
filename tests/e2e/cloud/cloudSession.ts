@@ -279,3 +279,74 @@ export async function selectApprovalByHash(page: Page, hashShort: string): Promi
       `${count} row(s). Authority holds the approval; the queue pane did not surface it.`
   );
 }
+
+/**
+ * The subject non-disclosure check, as a pure function over the rendered text.
+ *
+ * Extracted from the spec so BOTH directions can be proven without a live
+ * deployment: that it catches a refusal genuinely carrying a candidate name, and
+ * that it does not fire on an infrastructure message that merely contains a
+ * number. An assertion that has only ever been seen to pass is not a control.
+ *
+ * WHAT THIS REPLACED, and why. The check used to be
+ * `expect(text).not.toMatch(/\d/)` with the note "a digit in a refusal is a
+ * count, and a count is a disclosure". It failed a cloud run on the `30` in "The
+ * planner model did not answer within 30s" — a model timeout reported as a
+ * customer-data disclosure. Being a proxy, it could not tell a match count from
+ * a timeout, an amount or a date, so its red was uninformative; and it passed
+ * only because the other refusals happened to be worded without digits, so its
+ * green was luck. That is the anti-pattern Danny named: non-disclosure holding
+ * because someone wrote careful strings is not a control.
+ *
+ * Throws on violation, in the voice of the assertion that failed.
+ */
+export function assertSubjectNonDisclosure(
+  text: string,
+  code: string | undefined,
+  clientCopy: { title: string; what: string; next: string } | undefined
+): void {
+  // 1. No candidate identifier, whatever the code. This is the property the
+  //    ruling is actually about and it holds for every refusal.
+  const names = candidateNames();
+  expect(
+    names.length,
+    'an empty candidate list would make the loop below pass without checking anything'
+  ).toBeGreaterThan(4);
+  for (const name of names) {
+    expect(text.toLowerCase(), `the refusal must not name ${name}`).not.toContain(
+      name.toLowerCase()
+    );
+  }
+
+  // 2. No count of matching records. A count discloses without naming anything:
+  //    "3 customers matched" answers "does a customer like this exist?". Matched
+  //    as the PROPERTY — a number quantifying records — not as "has a digit".
+  expect(text, 'a count of matching records is a disclosure even without a name').not.toMatch(
+    /\b\d+\s+(customer|user|account|record|match|result|candidate)s?\b/i
+  );
+
+  // 3. For the codes the ruling covers, the strong form. `TracePane` drops the
+  //    server's message entirely for these, so the notice should contain nothing
+  //    but copy this repo authored. Subtract ours; any residue is server text
+  //    that reached the screen, which is the only channel candidate detail could
+  //    travel on. Exact, and independent of anyone's wording.
+  if (!clientCopy) return;
+  const ours = [
+    'Refused —',
+    clientCopy.title,
+    clientCopy.what,
+    clientCopy.next,
+    'Nothing was signed and nothing was executed',
+    'No tools were called.',
+    code || '',
+  ].filter(Boolean);
+  let residue = text;
+  for (const part of ours) residue = residue.split(part).join(' ');
+  residue = residue.replace(/[·.\s]+/g, ' ').trim();
+  expect(
+    residue,
+    'a non-disclosing refusal must render only the client\u2019s own copy; anything else is ' +
+      'server-authored text reaching the screen, which is the channel a candidate name would ' +
+      'travel on'
+  ).toBe('');
+}

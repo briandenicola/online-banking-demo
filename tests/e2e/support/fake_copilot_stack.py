@@ -103,10 +103,74 @@ _ANSWER_RUN_FRAMES = [
      "payload": {"status": "completed", "durationMs": 7400, "finalSeq": 7}},
 ]
 
+#: A GENUINE LEAK, and it is not hypothetical. `reasonCode` has no enum, so a
+#: model can return a code outside `NON_DISCLOSING` while still putting candidate
+#: names and a match count in its message — Danny's open gap. `objective_unmappable`
+#: is disclosing, so `TracePane` renders that message verbatim and the names reach
+#: the screen. This is the case the assertion has to catch.
+_LEAKY_REFUSAL_FRAMES = [
+    {"kind": "run.started", "seq": 1, "runId": "run_leak1",
+     "payload": {"objective": "Summarise that customer's accounts",
+                 "title": "Summarise that customer's accounts"}},
+    {"kind": "step.started", "seq": 2, "runId": "run_leak1",
+     "payload": {"stepId": "s1", "index": 1, "title": "Interpret objective"}},
+    {"kind": "run.error", "seq": 3, "runId": "run_leak1",
+     "payload": {"code": "objective_unmappable",
+                 "message": "3 customers matched that description: casey (Casey Mbeki), "
+                            "dana (Dana Kowalski) and retail (Rita Alvarez).",
+                 "recoverable": False}},
+    {"kind": "step.failed", "seq": 4, "runId": "run_leak1",
+     "payload": {"stepId": "s1", "error": "objective_unmappable", "willRetry": False}},
+    {"kind": "run.done", "seq": 5, "runId": "run_leak1",
+     "payload": {"status": "failed", "durationMs": 900, "finalSeq": 5}},
+]
+
+#: The SAME leaking server message under a non-disclosing code. `TracePane`
+#: suppresses it, so the assertion must pass — and pass because nothing leaked,
+#: not because nobody tried to leak.
+_SUPPRESSED_REFUSAL_FRAMES = [
+    {"kind": "run.started", "seq": 1, "runId": "run_sup1",
+     "payload": {"objective": "Summarise that customer's accounts",
+                 "title": "Summarise that customer's accounts"}},
+    {"kind": "step.started", "seq": 2, "runId": "run_sup1",
+     "payload": {"stepId": "s1", "index": 1, "title": "Interpret objective"}},
+    {"kind": "run.error", "seq": 3, "runId": "run_sup1",
+     "payload": {"code": "subject_not_found",
+                 "message": "3 customers matched that description: casey (Casey Mbeki), "
+                            "dana (Dana Kowalski) and retail (Rita Alvarez).",
+                 "recoverable": False}},
+    {"kind": "step.failed", "seq": 4, "runId": "run_sup1",
+     "payload": {"stepId": "s1", "error": "subject_not_found", "willRetry": False}},
+    {"kind": "run.done", "seq": 5, "runId": "run_sup1",
+     "payload": {"status": "failed", "durationMs": 900, "finalSeq": 5}},
+]
+
+#: The infrastructure refusal that broke the old `/\d/` assertion: the `30` in
+#: "within 30s" was read as a disclosed count.
+_MODEL_UNAVAILABLE_FRAMES = [
+    {"kind": "run.started", "seq": 1, "runId": "run_mu1",
+     "payload": {"objective": "Summarise that customer's accounts",
+                 "title": "Summarise that customer's accounts"}},
+    {"kind": "step.started", "seq": 2, "runId": "run_mu1",
+     "payload": {"stepId": "s1", "index": 1, "title": "Interpret objective"}},
+    {"kind": "run.error", "seq": 3, "runId": "run_mu1",
+     "payload": {"code": "planner_model_unavailable",
+                 "message": "The planner model did not answer within 30s, so no objective "
+                            "was interpreted.",
+                 "recoverable": False}},
+    {"kind": "step.failed", "seq": 4, "runId": "run_mu1",
+     "payload": {"stepId": "s1", "error": "planner_model_unavailable", "willRetry": False}},
+    {"kind": "run.done", "seq": 5, "runId": "run_mu1",
+     "payload": {"status": "failed", "durationMs": 30100, "finalSeq": 5}},
+]
+
 _REPLAY_MODES = {
     "completed-run": _COMPLETED_RUN_FRAMES,
     "refused-run": _REFUSED_RUN_FRAMES,
     "answer-run": _ANSWER_RUN_FRAMES,
+    "leaky-refusal": _LEAKY_REFUSAL_FRAMES,
+    "suppressed-refusal": _SUPPRESSED_REFUSAL_FRAMES,
+    "model-unavailable": _MODEL_UNAVAILABLE_FRAMES,
 }
 
 

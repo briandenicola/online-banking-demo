@@ -43,6 +43,7 @@ import {
   tracePane,
   waitForAnswer,
   waitForNewApprovals,
+  assertSubjectNonDisclosure,
   NOTHING_TO_SIGN,
 } from './cloudSession';
 // The UI module that ENFORCES the ruling, imported rather than mirrored. A
@@ -211,8 +212,8 @@ test.describe('banker copilot, deployed', () => {
     await openCopilot(page, token, 'banker');
 
     // A customer reference that resolves to nothing. Deliberately digit-free, so
-    // that the no-digits assertion below is about what the SURFACE chose to say
-    // and not about the objective being echoed back.
+    // that a leak of the echoed objective cannot be confused with a leak of a
+    // matched record.
     await submitObjective(page, "Summarise nonexistent-customer-zqx's accounts and recent activity");
 
     const notice = refusalNotice(page);
@@ -253,63 +254,18 @@ test.describe('banker copilot, deployed', () => {
     );
 
     // NON-DISCLOSURE — Danny's ruling, and checked BEFORE anything about which
-    // code this is. A refusal that names its candidates turns the error channel
-    // into the customer-search API we deliberately declined to build.
-    const names = candidateNames();
-    expect(
-      names.length,
-      'an empty candidate list would make the loop below pass without checking anything'
-    ).toBeGreaterThan(4);
-    for (const name of names) {
-      expect(text.toLowerCase(), `the refusal must not name ${name}`).not.toContain(
-        name.toLowerCase()
-      );
-    }
-
-    // A COUNT still answers "does a customer like this exist?", so it is a
-    // disclosure even with no name attached. Asserted as the PROPERTY — a number
-    // quantifying records — rather than as the old proxy of "contains a digit",
-    // which cannot tell a match count from a timeout, a currency amount or a
-    // date, and so fired on "within 30s".
-    expect(
+    // code this is. The check lives in `assertSubjectNonDisclosure` so that both
+    // of its directions can be proven against rendered output without a live
+    // deployment; see `specs/refusal-disclosure-assertion.spec.ts`, which shows
+    // it catching a real leak and ignoring a real timeout.
+    //
+    // `refusalCopy` and `isNonDisclosing` come from the UI module that ENFORCES
+    // the ruling, so the test cannot drift from the control it is checking.
+    assertSubjectNonDisclosure(
       text,
-      'a count of matching records is a disclosure even without a name'
-    ).not.toMatch(/\b\d+\s+(customer|user|account|record|match|result|candidate)s?\b/i);
-
-    // THE ACTUAL CONTROL, for the codes the ruling covers.
-    //
-    // `TracePane` drops the server's message entirely for these codes, so the
-    // rendered notice should consist of NOTHING BUT the client's own copy. That
-    // makes the property exactly checkable: subtract the strings this repo
-    // authored and any residue is server-authored text that reached the screen —
-    // the only channel through which candidate detail could arrive.
-    //
-    // This fails for the right reason (residue appears the moment the guard is
-    // removed) and passes for the right reason (no dependence on how carefully
-    // anyone worded a message). `refusalCopy` and `isNonDisclosing` are imported
-    // from the UI module that enforces it, so the test cannot drift from the
-    // control it is checking.
-    if (isNonDisclosing(code)) {
-      const copy = refusalCopy(code);
-      const ours = [
-        'Refused —',
-        copy.title,
-        copy.what,
-        copy.next,
-        'Nothing was signed and nothing was executed',
-        'No tools were called.',
-        code as string,
-      ];
-      let residue = text;
-      for (const part of ours) residue = residue.split(part).join(' ');
-      residue = residue.replace(/[·.\s]+/g, ' ').trim();
-      expect(
-        residue,
-        'a non-disclosing refusal must render only the client\u2019s own copy; anything else is ' +
-          'server-authored text reaching the screen, which is the channel a candidate name ' +
-          'would travel on'
-      ).toBe('');
-    }
+      code,
+      isNonDisclosing(code) ? refusalCopy(code) : undefined
+    );
 
     const created = (await listApprovals(request, token)).filter((a) => !before.has(a.id));
     expect(created.map((a) => a.id), 'a refused run must create no approval').toEqual([]);
