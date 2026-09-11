@@ -198,7 +198,38 @@ def build_intent_prompt(
         "and an account in words rather than by id. Never invent an id: an id you guessed would "
         "be discarded, and refusing a resolvable subject fails the banker just as badly.\n"
         "Known forbidden actions are listed so you can refuse them honestly; never choose them.\n"
-        "For read, choose only registered read tools and provide concrete arguments. If a name "
+        + (
+            # Said in words, because an empty JSON list is exactly the underspecified action
+            # side that makes this model confabulate. Shown a bare `[]` it infers a reason and
+            # reports the inference as a fact about the bank — "no proposable action supports
+            # refunding a fee in this harness" — which is a worse answer than the truth and is
+            # indistinguishable from a broken catalogue. Told plainly, it refuses because the
+            # build is read-only, which is both true and the better sentence on stage.
+            #
+            # Conditional on purpose. A prompt is a shared global and two measured regressions
+            # this session came from editing one; when actions are present this string is empty
+            # and the prompt is byte-identical to the one the corpus was measured against.
+            "This build is READ-ONLY: it offers no proposable actions at all. Answer read "
+            "objectives normally from the registered read tools — that path is unaffected. "
+            "Refuse any objective that asks for an action with reasonCode forbidden_action, "
+            "and never report this as the objective being unmappable or the catalogue being "
+            "unavailable.\n"
+            # Measured, not anticipated. On a live run "Credit dana $120 for a duplicate charge"
+            # came back kind=read and COMPLETED: shown no actions, the model quietly reinterpreted
+            # a money movement as a question about money. No approval was created, so the leash
+            # held where it matters — but the banker asked for a credit and got a summary with no
+            # statement that anything had been declined, which on stage reads as "it worked".
+            # A silent reinterpretation is worse than a refusal, and it is the same shape as every
+            # other defect this planner has produced: a failure rendered as a confident answer.
+            "Do NOT turn an action request into a read. If the banker asks you to move money, "
+            "post, credit, debit, adjust, refund, reverse, unlock, reset or otherwise CHANGE "
+            "anything, refuse with forbidden_action — do not substitute a read that merely "
+            "describes the current state, and do not treat a request to change something as a "
+            "request to look at it.\n"
+            if not actions
+            else ""
+        )
+        + "For read, choose only registered read tools and provide concrete arguments. If a name "
         "must be resolved, place the text in subjectHints; ids and id-shaped text are hints only "
         "and will be resolved server-side before use.\n\n"
         "Return one JSON object only, matching one of these shapes:\n"

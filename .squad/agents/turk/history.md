@@ -3677,3 +3677,65 @@ catalogue? If I cannot answer all three with evidence, the number is not worth p
 
 I stopped making a wire recommendation rather than making a third one. That is the only honest
 position from this data.
+
+## 2026-09-11 (later) — The read-only leash, and a refusal that wasn't one
+
+Brian cut write actions from the demo. The propose path never completed end-to-end in the
+cloud, so it ships disabled rather than half-proven. My job was to make the cut structural.
+
+### Two doors, not one
+
+The obvious leash is at the catalogue: show the model no proposable actions. That is necessary
+and it is not sufficient, because `_plan_steps` builds a propose step from an `action_id` with
+no model involved at all — the scripted prompts never consult the intent model. A leash on the
+model alone is a leash with a second door.
+
+So: layer 1 at the catalogue split, layer 2 immediately before `_run_propose_step`, which is
+the single place an approval record is created.
+
+I proved both bite rather than assuming it, and the result was worth having. Disabling layer 2
+failed the scripted test **with a real approval reaching authority** — the second door was open,
+not theoretical. Disabling layer 1 failed only the boundary test that reads back what the model
+was handed; every outcome test still passed, because layer 2 caught the run and emitted the same
+code. That is defence in depth working, and it is also a warning: **outcome assertions cannot
+distinguish "never offered" from "offered and caught downstream", and only the first is the
+leash the scope cut claims.** Hence the boundary test.
+
+### The finding I did not go looking for
+
+`Credit dana $120 for a duplicate charge` came back from the live model as **kind=read,
+terminal=completed**. No approval — the leash held where money is concerned. But the banker
+asked for a credit and got a summary, with nothing saying anything had been declined.
+
+Shown an empty action list, the model quietly reinterpreted a money movement as a question
+about money. That is worse than a refusal and it is the **seventh** instance of this session's
+recurring shape: a failure rendered as a confident answer. It would have read on stage as "it
+worked".
+
+An empty JSON list is exactly the underspecified action side Danny proved makes this model
+confabulate. So the prompt now says it in words — read-only, refuse actions, and explicitly
+**do not turn an action request into a read**. Conditional on the action list being empty, so
+the leash-off prompt is byte-identical to the one the corpus was baselined against; there is a
+test pinning that, because a prompt is a shared global and I have been burned by editing one
+twice.
+
+Measured after: **12/12 write prompts refused with `forbidden_action` across 3 runs.** Repeated,
+not once — that was the whole lesson from the metadata A/B.
+
+### On refusal codes as a deliverable
+
+`objective_unmappable` and `forbidden_action` both refuse, and they are not interchangeable.
+"I can't find anything that does that" is the model reporting a guess about the catalogue as a
+fact about the bank. "I won't, and here is where that authority lives" is the agent knowing
+where its authority ends. The second is the demo. Asserting the *code* rather than the fact of
+refusal is what makes that difference testable.
+
+### Honest notes
+
+- `compare` is excluded from the live leash reads, with evidence: it fails with the identical
+  `subject_not_found` leash on and off. Excluded rather than xfailed **here**, because an xfail
+  in this file would swallow a genuine leash regression on that prompt.
+- `offshore` failed once in the full live gate with `subject_not_found`, then passed 4/4 on
+  re-run. Flake, not regression — but recorded rather than quietly re-run until green.
+- The account-ownership work is stopped, not abandoned: committed at `7fb7d05`, behind a path
+  the leash now makes unreachable. It matters the day writes come back.

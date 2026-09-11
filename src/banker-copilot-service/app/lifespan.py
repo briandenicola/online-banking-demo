@@ -235,6 +235,7 @@ async def lifespan(app: FastAPI):
         store=app.state.session_store,
         fanout=app.state.fanout,
         action_metadata_descriptions=action_descriptions,
+        propose_enabled=settings.propose_enabled,
     )
 
     app.state.adverse_proposal_mode = adverse_proposal_mode()

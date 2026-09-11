@@ -346,6 +346,9 @@ services:
       # descriptions took wrong-rung proposes from 2/12 to 0/12 and unknown-customer refusals
       # from 11/12 to 12/12. Set to 1 to re-run the experiment.
       - COPILOT_ACTION_METADATA_ENABLED=0
+      # The read-only leash; matches deploy/kustomize/base/configmap.yaml. 0 = propose no
+      # actions for approval. A write objective gets the designed forbidden_action refusal.
+      - COPILOT_PROPOSE_ENABLED=0
       - ROLE_HIERARCHY_PATH=/app/config/role-hierarchy.yaml
       # The sole write path. Everything below it is read-only.
       - AUTHORITY_SERVICE_URL=http://authority-service:8080

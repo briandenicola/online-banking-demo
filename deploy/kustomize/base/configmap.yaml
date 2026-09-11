@@ -48,6 +48,22 @@ data:
   COPILOT_SSE_REPLAY_WINDOW: "500"
   COPILOT_SESSION_TTL_SECONDS: "3600"
   COPILOT_PLANNER_MAX_ITERATIONS: "12"
+
+  # The read-only leash. "0" means the Copilot proposes no actions for approval.
+  #
+  # Write actions were cut from the demo scope: the propose path never completed end-to-end in
+  # the cloud, so it ships disabled rather than half-proven. Set here rather than in the
+  # Deployment because a scope decision belongs in the one object every environment reads, and
+  # because a knob nobody can turn is not a knob.
+  #
+  # A write objective still reaches the model, and still gets the DESIGNED refusal —
+  # forbidden_action, in policy language — not "objective unmappable" and not a catalogue
+  # error. The agent saying where its authority ends is the demo, not a degraded path.
+  #
+  # Setting this to "1" re-arms money movement. Do not do it to make a test pass: the propose
+  # path has open cross-customer binding work behind it (see
+  # .squad/decisions/inbox/turk-account-ownership-binding.md).
+  COPILOT_PROPOSE_ENABLED: "0"
   COPILOT_UPSTREAM_TIMEOUT_MS: "8000"
   # Per-CALL ceiling on a model round trip, not a per-run one. This was four hardcoded
   # 30.0 literals in the service, and two of three cloud runs died on them. It is here
