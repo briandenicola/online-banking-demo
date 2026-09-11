@@ -4,10 +4,20 @@ const isCI = !!process.env.CI;
 
 export default defineConfig({
   testDir: './specs',
-  // Layout verification runs against a locally-served static build on its own
-  // port (tests/e2e/layout.config.ts), not against the deployed BASE_URL this
-  // config targets. Collecting it here would fail the shared suite.
-  testIgnore: ['**/layout-copilot.spec.ts', '**/stream-lifecycle.spec.ts'],
+  // These run against a locally-served static build plus a hand-started fake
+  // stack, each on its own port and its own config, not against the deployed
+  // BASE_URL this config targets. Collecting them here fails the shared suite
+  // with ECONNREFUSED.
+  //   layout-copilot           -> layout.config.ts        (8099)
+  //   stream-lifecycle         -> stream.config.ts        (8098)
+  //   run-outcomes             -> outcomes.config.ts      (8097, STREAM_MODE)
+  //   refusal-disclosure-*     -> disclosure.config.ts    (8096, STREAM_MODE)
+  testIgnore: [
+    '**/layout-copilot.spec.ts',
+    '**/stream-lifecycle.spec.ts',
+    '**/run-outcomes.spec.ts',
+    '**/refusal-disclosure-assertion.spec.ts',
+  ],
   fullyParallel: true,
   forbidOnly: isCI,
   retries: isCI ? 1 : 0,
