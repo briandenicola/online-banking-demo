@@ -419,23 +419,35 @@ async def test_live_flagged_wire_prompt_answers_from_evidence_and_never_proposes
 @pytest.mark.xfail(
     strict=False,
     reason=(
-        "Known gap, Danny is ruling separately: the read artifact is keyed by tool id, so two "
-        "calls to the same history tool overwrite each other. A live model may also plan only "
-        "one call, which fails the same assertion for a different reason — hence strict=False."
+        "The planner-side overwrite is FIXED and this run proves it live: the bundle comes back "
+        "with `lookup_customer` (dana) AND `lookup_customer#2` (casey), each labelled with its "
+        "own subject, where the old code kept only the last.\n"
+        "What remains is not the harness. The model plans the two customer lookups and then no "
+        "history reads at all, because a read plan is chosen in ONE shot and it does not yet "
+        "hold the account ids the history tool needs — it cannot read to resolve and then read "
+        "again. That is the single-shot read-plan gap already handed to Danny, and it is why "
+        "this is strict=False: it passes when the model happens to guess the account ids."
     ),
 )
 async def test_live_compare_prompt_needs_multi_subject_evidence(live_models):
     prompt = PROMPTS["compare"]
     run = await _run_live_prompt(prompt, live_models)
+    run.report()
 
     evidence = next(a.content for a in run.store.artifacts if a.kind == "evidence_bundle")
-    account_history_ids = [
-        data.get("accountId")
-        for key, data in evidence.items()
-        if key == "list_account_transactions" and isinstance(data, Mapping)
-    ]
+    account_history_ids = sorted(
+        entry["data"]["accountId"]
+        for entry in evidence.values()
+        if isinstance(entry, Mapping)
+        and entry.get("toolId") == "list_account_transactions"
+        and isinstance(entry.get("data"), Mapping)
+        and entry["data"].get("accountId")
+    )
     assert run.terminal == "completed", f"{prompt}: {run.error_code}"
-    assert sorted(account_history_ids) == ["acct_casey_checking", "acct_dana_checking"], f"{prompt}: received {evidence!r}"
+    assert len(account_history_ids) == len(set(account_history_ids)), (
+        f"{prompt}: the same ledger was gathered twice: {account_history_ids}"
+    )
+    assert account_history_ids == ["acct_casey_checking", "acct_dana_checking"], f"{prompt}: received {evidence!r}"
 
 
 # ------------------------------------------------------------------------ write objectives ----
@@ -516,19 +528,27 @@ async def test_live_unlock_prompt_picks_the_unlock_action_and_the_named_user(liv
     assert run.terminal == "completed", f"{prompt}: {run.error_code}"
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "Known gap, Danny is ruling separately: the exact sentence gives no transaction id and "
-        "no target score, and no resolver maps 'offshore wire' to a scored transaction. If this "
-        "XPASSes on a live run, the model INVENTED both fields — that is a finding, not a win."
-    ),
-)
-async def test_live_score_override_exact_sentence_still_cannot_be_constructed(live_models):
+async def test_live_score_override_exact_sentence_refuses_without_reaching_authority(live_models):
+    """Danny's ruling B4: this utterance is CUT, and the refusal is the thing to prove.
+
+    The stubbed suite pins the exact code (`payload_unfillable`) because it controls the
+    decision. Live, the model may instead refuse at the intent boundary, and either is correct.
+    The invariant that must hold on every run is the one that matters: a sentence naming a
+    transaction the harness cannot resolve must NOT produce a proposal. An approval here would
+    mean the model invented a transaction id, a target score, or both, and put a money-affecting
+    risk override in front of a human on the strength of it.
+    """
     prompt = PROMPTS["score"]
     run = await _run_live_prompt(prompt, live_models)
+    run.report()
 
-    assert run.authority.propose_calls, f"{prompt}: received refusal {run.error_code}"
+    assert run.authority.propose_calls == [], (
+        f"{prompt}: the model INVENTED the missing fields and reached authority: "
+        f"{run.authority.propose_calls[0]['payload']!r}"
+    )
+    assert run.proposal is None, f"{prompt}: unexpected approval"
+    assert run.terminal == "failed", f"{prompt}: must not report success"
+    assert run.error_code, f"{prompt}: refused with no named code"
 
 
 # ------------------------------------------------------------------------------- refusals ----

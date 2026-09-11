@@ -452,6 +452,9 @@ class Planner:
             await stream.emit("plan.proposed", {"version": 1, "steps": steps})
 
             evidence: dict[str, Any] = {}
+            #: Written on the same statement as the accumulator entry it describes, so the two
+            #: cannot drift. Keyed by the SAME per-invocation key; carries no evidence of its own.
+            evidence_meta: dict[str, dict[str, Any]] = {}
             record = _AssessmentRecord(required_evidence_tool_ids=tuple(evidence_tools))
             # The plan is now a MUTABLE list walked by position, because the assess step may
             # insert discretionary reads into it (§P5.2). They are inserted as ORDINARY tool
@@ -572,7 +575,7 @@ class Planner:
                     )
                     break
                 elif step["kind"] == "tool":
-                    ok = await self._run_tool_step(request, stream, step, evidence)
+                    ok = await self._run_tool_step(request, stream, step, evidence, evidence_meta)
                     if not ok and step.get("discretionary"):
                         # A discretionary read that fails does NOT fail the run. It was never
                         # required, so the plan is no worse off than if the model had not asked.
@@ -607,7 +610,7 @@ class Planner:
                         )
                         break
                 elif step["kind"] == "assess":
-                    granted = await self._run_assess_step(request, stream, step, evidence, record)
+                    granted = await self._run_assess_step(request, stream, step, evidence, evidence_meta, record)
                     if granted:
                         added, next_step_number = _insert_discretionary_steps(
                             steps, position, granted, next_step_number
@@ -649,7 +652,7 @@ class Planner:
                         session_id=request.session.id,
                         kind="evidence_bundle",
                         title="Evidence gathered",
-                        content=evidence,
+                        content=_evidence_bundle(evidence, evidence_meta),
                     )
                     artifact_ids.append(artifact.id)
                     # Persist BEFORE emitting. An artifact the banker can see in the stream but
@@ -757,7 +760,7 @@ class Planner:
                             },
                         )
                         break
-                    result = await self._run_propose_step(request, stream, evidence, record)
+                    result = await self._run_propose_step(request, stream, evidence, evidence_meta, record)
                     if not result.admitted:
                         # This step exists for one reason: to put an approval in front of a
                         # human. It produced none, so it did not do its job, and emitting
@@ -987,6 +990,7 @@ class Planner:
                     [*resolve_step, _step(next_step_number, "Refuse objective", "refusal", **validated)],
                 )
                 return added, next_step_number, [], False
+            multi_subject = _read_plan_spans_two_subjects(decision.read_plan)
             planned = [
                 _step(
                     next_step_number + offset,
@@ -994,6 +998,7 @@ class Planner:
                     "tool",
                     toolId=item["toolId"],
                     arguments=dict(item.get("arguments") or {}),
+                    mergeFacts=not multi_subject,
                 )
                 for offset, item in enumerate(decision.read_plan)
             ]
@@ -1070,6 +1075,7 @@ class Planner:
         stream: RunStream,
         step: dict[str, Any],
         evidence: dict[str, Any],
+        evidence_meta: dict[str, dict[str, Any]],
     ) -> bool:
         tool_id = step["toolId"]
         tool = self._registry.get(tool_id)
@@ -1104,10 +1110,24 @@ class Planner:
             )
             return False
 
-        evidence[tool_id] = result.data
-        if isinstance(result.data, Mapping):
-            for key, value in result.data.items():
-                request.facts.setdefault(str(key), value)
+        key = _evidence_key(evidence, tool_id)
+        evidence[key] = result.data
+        evidence_meta[key] = {
+            "toolId": tool_id,
+            "arguments": dict(arguments),
+            "subject": _subject_of(arguments),
+        }
+        # Danny's ruling §A3. `facts` binds the arguments of later tool calls and travels to
+        # authority on the proposal body, and it merged FIRST-writer-wins — so on a run that
+        # read two customers the first customer's identifiers occupied the keys and the second
+        # customer's were dropped silently. That is a path to an approval that names one
+        # customer and carries another's ids, with no model involved: the harness does it to
+        # itself. A multi-subject run now populates no facts from tool results at all, which is
+        # safe because read-plan validation already requires every read step to carry explicit
+        # arguments. Single-subject runs — every propose path, by construction — are unchanged.
+        if step.get("mergeFacts", True) and isinstance(result.data, Mapping):
+            for fact_key, value in result.data.items():
+                request.facts.setdefault(str(fact_key), value)
         await stream.emit(
             "tool.completed",
             {
@@ -1125,6 +1145,7 @@ class Planner:
         stream: RunStream,
         step: dict[str, Any],
         evidence: dict[str, Any],
+        evidence_meta: dict[str, dict[str, Any]],
         record: _AssessmentRecord,
     ) -> tuple[str, ...]:
         """Ask the primary to JUDGE the evidence, and decide which extra reads it may have.
@@ -1154,7 +1175,10 @@ class Planner:
         )
         granted, refused = additional_evidence(
             assessment.requested_evidence,
-            gathered=evidence.keys(),
+            # PROJECTED tool ids, never the raw accumulator keys. If a suffixed key ever reached
+            # this argument, `already_gathered` would stop matching and the ceiling would
+            # silently grant re-reads of tools it already holds — failing OPEN, and quietly.
+            gathered=_evidence_for_authority(evidence, evidence_meta).keys(),
             known_tool_ids=self._registry.tool_ids,
             bindable_tool_ids=bindable,
             # On the last permitted pass the budget is not consulted for granting, because there
@@ -1207,6 +1231,7 @@ class Planner:
         request: PlannerRequest,
         stream: RunStream,
         evidence: dict[str, Any],
+        evidence_meta: dict[str, dict[str, Any]],
         record: _AssessmentRecord,
     ) -> ProposeStepResult:
         """Propose the action for human signature.
@@ -1222,7 +1247,7 @@ class Planner:
                 {
                     "actionId": request.action_id,
                     "payload": request.payload,
-                    "evidence": evidence,
+                    "evidence": _evidence_for_authority(evidence, evidence_meta),
                     "facts": request.facts,
                     # The primary's OWN judgement, and the harness's own observations about how
                     # it was reached. This used to be `{"summary": request.objective}` — the
@@ -1609,11 +1634,112 @@ def _set_mapping_path(root: dict[str, Any], dotted: str, value: Any) -> None:
 
 
 def _facts_from_payload(existing: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    """First-writer-wins, and here that is correct: a payload belongs to ONE action.
+
+    The identically-shaped merge over *tool results* was not correct — see
+    :func:`_read_plan_spans_two_subjects` — but a proposal has a single subject by
+    construction, so nothing can be shadowed by another customer's value on this path.
+    """
     facts = dict(existing or {})
     for key, value in payload.items():
         if key not in facts:
             facts[key] = value
     return facts
+
+
+#: Argument names that say WHOSE evidence a call gathered. Used for exactly two things:
+#: labelling a bundle entry with its subject, and deciding whether a read plan spans more
+#: than one subject. Deliberately an explicit list rather than an inference, because the
+#: inference would be a judgement and this judgement decides whether one customer's
+#: identifiers can be carried into another customer's approval.
+_SUBJECT_ARGUMENT_KEYS = ("userId", "accountId", "customerId", "username", "accountNumber", "txId")
+
+
+def _evidence_key(evidence: Mapping[str, Any], tool_id: str) -> str:
+    """Bare tool id for the first invocation, next ordinal on collision: ``X``, ``X#2``, ``X#3``.
+
+    Suffix-on-collision rather than suffix-always is the whole point: every run that exists
+    today gathers each tool once, so its trace, its evidence bundle and the citations a model
+    produced against it all stay byte-identical. Only the run that actually reads two subjects
+    sees a new key, and it is a key a human can read on the card.
+    """
+    if tool_id not in evidence:
+        return tool_id
+    ordinal = 2
+    while f"{tool_id}#{ordinal}" in evidence:
+        ordinal += 1
+    return f"{tool_id}#{ordinal}"
+
+
+def _subject_of(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: arguments[key] for key in _SUBJECT_ARGUMENT_KEYS if key in arguments}
+
+
+def _read_plan_spans_two_subjects(read_plan: Sequence[Mapping[str, Any]]) -> bool:
+    """Does this read plan touch more than one customer or account?
+
+    Two independent trips, because either alone leaves a hole. A repeated tool id catches
+    ``lookup_customer(dana)`` then ``lookup_customer(casey)`` even though the two calls share
+    no argument VALUE shape we could compare; distinct values under one subject argument
+    catches two ledger reads that happen to use different tools.
+
+    It cannot catch a plan that names one subject by username and another by account id
+    without resolving them first, and resolution is not available at plan time. That residual
+    is why this gates a MERGE and not a read: the cost of a false negative is the old bug, so
+    the rule errs toward declaring a plan multi-subject.
+    """
+    tool_ids = [str(item.get("toolId", "")) for item in read_plan]
+    if len(tool_ids) != len(set(tool_ids)):
+        return True
+    seen: dict[str, set[str]] = {}
+    for item in read_plan:
+        for key, value in (item.get("arguments") or {}).items():
+            if key in _SUBJECT_ARGUMENT_KEYS:
+                seen.setdefault(key, set()).add(str(value))
+    return any(len(values) > 1 for values in seen.values())
+
+
+def _evidence_for_authority(
+    evidence: Mapping[str, Any], meta: Mapping[str, Mapping[str, Any]]
+) -> dict[str, Any]:
+    """Project the accumulator back onto POLICY EVIDENCE IDS for anything outside this service.
+
+    Danny's ruling A2 draws the boundary here. Inside, the accumulator may key per invocation.
+    Outside — the ``evidence`` object on the authority proposal, and the ``gathered`` set the
+    evidence ceiling matches ``already_gathered`` against — the keys stay bare tool ids and the
+    values stay the tool's raw result. For every run that exists today this returns a dict equal
+    to the accumulator, because every key is already a bare tool id gathered once.
+
+    Where a tool WAS gathered twice, the **first** invocation is the one that travels. That is a
+    decision and not an accident: the propose path cannot produce duplicates today (required
+    evidence is one call per tool id), so this is the fail-closed default for a shape that only
+    a future propose plan could reach.
+
+    Keys with no metadata — the reference resolver's ``resolved_subject`` / ``resolved_account``
+    records — are not tool results and pass through untouched, exactly as they do today.
+    """
+    projected: dict[str, Any] = {}
+    for key, value in evidence.items():
+        tool_id = str(meta[key]["toolId"]) if key in meta else key
+        if tool_id not in projected:
+            projected[tool_id] = value
+    return projected
+
+
+def _evidence_bundle(
+    evidence: Mapping[str, Any], meta: Mapping[str, Mapping[str, Any]]
+) -> dict[str, Any]:
+    """The artifact a human reads: the key disambiguates, the entry explains.
+
+    A card showing two transaction histories under two keys, with nothing saying which is
+    Dana's, is a worse artifact than one history. So each tool entry states the tool it came
+    from, the arguments it was called with, and the subject those arguments name.
+    """
+    return {
+        key: ({**meta[key], "data": value} if key in meta else value)
+        for key, value in evidence.items()
+    }
+
 
 
 DISCRETIONARY_STEP_TITLE = "Additional check (agent's choice): {tool_id}"

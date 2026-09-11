@@ -231,7 +231,17 @@ class _Session:
     capabilities = ["risk.read", "identity.read", "customer-directory.read", "accounts.read", "transactions.read"]
 
 
-async def _run_prompt(prompt: str, decision: IntentDecision, answerer=None) -> tuple[list[dict[str, Any]], _Authority, _Store]:
+async def _run_prompt(
+    prompt: str,
+    decision: IntentDecision,
+    answerer=None,
+    request: PlannerRequest | None = None,
+) -> tuple[list[dict[str, Any]], _Authority, _Store]:
+    """Run one prompt. Pass ``request`` to inspect the facts map the run leaves behind.
+
+    ``facts`` is not decoration — it binds later tool arguments and it travels to authority on
+    the proposal body — so a test that cannot see it cannot prove what the run carried.
+    """
     authority = _Authority()
     store = _Store()
 
@@ -253,7 +263,8 @@ async def _run_prompt(prompt: str, decision: IntentDecision, answerer=None) -> t
     runs = RunStreamRegistry(InMemoryTraceSink(), replay_window=500)
     stream = runs.create("run_demo", "sess_demo")
     await planner.run(
-        PlannerRequest(
+        request
+        or PlannerRequest(
             session=_Session(),
             run_id="run_demo",
             objective=prompt,
@@ -265,6 +276,26 @@ async def _run_prompt(prompt: str, decision: IntentDecision, answerer=None) -> t
         stream,
     )
     return runs.sink._frames["run_demo"], authority, store  # type: ignore[attr-defined]
+
+
+def _blank_request(prompt: str) -> PlannerRequest:
+    return PlannerRequest(
+        session=_Session(),
+        run_id="run_demo",
+        objective=prompt,
+        action_id=None,
+        payload={},
+        facts={},
+        bearer_token="token",
+    )
+
+
+def _flatten(value: Any) -> list[str]:
+    if isinstance(value, Mapping):
+        return [s for v in value.values() for s in _flatten(v)]
+    if isinstance(value, (list, tuple)):
+        return [s for v in value for s in _flatten(v)]
+    return [str(value)]
 
 
 async def _answerer_requiring_evidence(objective: str, answer_goal: str, evidence: Mapping[str, Any]) -> EvidenceAnswer:
@@ -329,32 +360,195 @@ async def test_demo_read_only_prompt_answers_with_evidence_and_no_approval(name:
     assert any(a.kind == "answer" for a in store.artifacts), f"{prompt}: missing answer artifact"
 
 
-@pytest.mark.xfail(strict=True, reason="The read artifact is keyed by tool id, so two calls to the same lookup/history tool overwrite each other.")
-async def test_demo_compare_prompt_needs_multi_subject_evidence_not_duplicate_tool_key_overwrite():
+_COMPARE_READ_PLAN = IntentDecision(
+    kind="read",
+    read_plan=(
+        {"toolId": "lookup_customer", "arguments": {"username": "dana"}},
+        {"toolId": "lookup_customer", "arguments": {"username": "casey"}},
+        {"toolId": "list_account_transactions", "arguments": {"accountId": "acct_dana_checking"}},
+        {"toolId": "list_account_transactions", "arguments": {"accountId": "acct_casey_checking"}},
+    ),
+    answer_goal="Compare Dana and Casey checking histories.",
+)
+
+
+async def test_demo_compare_prompt_keeps_both_subjects_and_says_which_is_which():
+    """Danny's ruling A5/A6: two invocations of one tool must both survive, self-describing.
+
+    The bundle key disambiguates; the entry explains. Two histories side by side with no
+    subject labels is a worse artifact than one history, because the banker cannot tell whose
+    is whose and has no way to find out.
+    """
     prompt = PROMPTS["compare"]
     _assert_prompt_is_in_demo_doc(prompt)
 
-    frames, _authority, store = await _run_prompt(
+    frames, authority, store = await _run_prompt(prompt, _COMPARE_READ_PLAN)
+
+    assert _terminal(frames) == "completed", f"{prompt}: {_error_code(frames)}"
+    assert authority.propose_calls == [], f"{prompt}: a comparison must not create an approval"
+
+    evidence = next(a.content for a in store.artifacts if a.kind == "evidence_bundle")
+    histories = {
+        key: entry for key, entry in evidence.items()
+        if isinstance(entry, Mapping) and entry.get("toolId") == "list_account_transactions"
+    }
+    assert len(histories) == 2, f"{prompt}: one ledger overwrote the other: {sorted(evidence)}"
+    assert sorted(e["data"]["accountId"] for e in histories.values()) == [
+        "acct_casey_checking",
+        "acct_dana_checking",
+    ], f"{prompt}: received {evidence!r}"
+
+    # Bare-first, ordinal-suffix-on-collision. Every single-invocation run in this file keeps
+    # its existing key, so no trace, citation or artifact moves for a run that exists today.
+    assert "list_account_transactions" in histories
+    assert "list_account_transactions#2" in histories
+    assert "list_account_transactions#1" not in evidence
+
+    for key, entry in histories.items():
+        assert entry["arguments"], f"{key}: entry does not say what it was called with"
+        assert entry["subject"] == {"accountId": entry["data"]["accountId"]}, (
+            f"{key}: entry does not say whose evidence it is"
+        )
+
+
+async def test_demo_compare_prompt_leaves_no_cross_subject_value_in_the_facts_map():
+    """Danny §A3, the half of the bug nobody was looking at.
+
+    `facts` is not decoration: it binds tool arguments the plan did not supply, and it is sent
+    to authority on the proposal body. It merged FIRST-writer-wins, so on a two-customer run
+    the first customer's identifiers occupied the keys and the second customer's were dropped
+    on the floor — a path to an approval that names one customer and carries another's ids.
+    """
+    prompt = PROMPTS["compare"]
+    request = _blank_request(prompt)
+
+    frames, _authority, _store = await _run_prompt(prompt, _COMPARE_READ_PLAN, request=request)
+
+    assert _terminal(frames) == "completed", f"{prompt}: {_error_code(frames)}"
+    carried = _flatten(request.facts)
+    for identifier in ("dana", "casey", "usr_dana", "usr_casey", "acct_dana_checking", "acct_casey_checking"):
+        assert identifier not in carried, (
+            f"{prompt}: facts carried {identifier!r} out of a two-subject run: {request.facts!r}"
+        )
+
+
+# ------------------------------------------------------- the boundary the keys must not cross ----
+#
+# Danny's ruling §A2. Inside the planner the evidence accumulator may key per invocation. The
+# map that LEAVES this service — the `evidence` object on the authority proposal, and the
+# `gathered` set the evidence ceiling matches `already_gathered` against — stays keyed by policy
+# evidence id, which is the bare tool id, carrying the tool's raw result. A suffixed key on the
+# wire is `evidence_incomplete` at authority (fails closed, loudly, on every propose run); a
+# suffixed key in `gathered` silently grants re-reads of tools already held (fails OPEN, quietly).
+
+
+@pytest.mark.parametrize(
+    ("name", "decision", "required_tool"),
+    [
+        (
+            "retail_refund",
+            IntentDecision(
+                kind="propose",
+                action_id="account.balance.adjust",
+                subject_hints={"customer": "retail", "accountType": "Checking"},
+                payload_draft={"amount": "35", "direction": "credit", "reason": "Goodwill overdraft fee refund."},
+            ),
+            "get_account",
+        ),
+        (
+            "unlock",
+            IntentDecision(
+                kind="propose",
+                action_id="user.unlock",
+                subject_hints={"customer": "verify-target"},
+                payload_draft={"reason": "Lockout caused by a stale saved password."},
+            ),
+            "get_user",
+        ),
+    ],
+)
+async def test_authority_sees_bare_tool_ids_carrying_raw_tool_results(
+    name: str, decision: IntentDecision, required_tool: str
+):
+    _frames, authority, _store = await _run_prompt(PROMPTS[name], decision)
+
+    assert authority.propose_calls, f"{name}: no proposal was made"
+    evidence = authority.propose_calls[0]["evidence"]
+    assert all("#" not in key for key in evidence), f"{name}: per-invocation key reached authority: {sorted(evidence)}"
+    # Raw result, not the self-describing bundle entry the CARD gets. A wrapped value would pass
+    # `EvidenceComplete`'s key lookup and then fail its requiredFields check on every run.
+    assert "data" not in evidence[required_tool], f"{name}: authority received a wrapped entry"
+
+
+async def test_a_propose_run_binds_later_reads_from_the_payloads_subject_not_a_tools():
+    """Why the facts guard is scoped to multi-subject READ plans and not switched on everywhere.
+
+    `_bind_arguments` layers facts OVER the payload, so a fact could in principle steer a later
+    read at a different subject. On a propose path it cannot: facts are seeded from the payload
+    before any tool runs, and the merge is first-writer-wins, so a tool result can ADD keys but
+    can never displace the subject the human is being asked to sign for. This pins that, because
+    if either half of it changed the default would quietly become unsafe.
+    """
+    prompt = PROMPTS["retail_refund"]
+    request = _blank_request(prompt)
+
+    _frames, authority, _store = await _run_prompt(
         prompt,
         IntentDecision(
-            kind="read",
-            read_plan=(
-                {"toolId": "lookup_customer", "arguments": {"username": "dana"}},
-                {"toolId": "lookup_customer", "arguments": {"username": "casey"}},
-                {"toolId": "list_account_transactions", "arguments": {"accountId": "acct_dana_checking"}},
-                {"toolId": "list_account_transactions", "arguments": {"accountId": "acct_casey_checking"}},
-            ),
-            answer_goal="Compare Dana and Casey checking histories.",
+            kind="propose",
+            action_id="account.balance.adjust",
+            subject_hints={"customer": "retail", "accountType": "Checking"},
+            payload_draft={"amount": "35", "direction": "credit", "reason": "Goodwill overdraft fee refund."},
         ),
+        request=request,
     )
-    evidence = next(a.content for a in store.artifacts if a.kind == "evidence_bundle")
-    account_history_ids = [
-        data.get("accountId")
-        for key, data in evidence.items()
-        if key == "list_account_transactions" and isinstance(data, Mapping)
-    ]
-    assert _terminal(frames) == "completed", f"{prompt}: {_error_code(frames)}"
-    assert sorted(account_history_ids) == ["acct_casey_checking", "acct_dana_checking"], f"{prompt}: received {evidence!r}"
+
+    payload = authority.propose_calls[0]["payload"]
+    assert request.facts["accountId"] == payload["accountId"]
+    assert request.facts["amount"] == payload["amount"]
+
+
+def test_evidence_keys_are_bare_first_then_the_next_ordinal():
+    from app.planner.loop import _evidence_key
+
+    evidence: dict[str, Any] = {}
+    for expected in ("t", "t#2", "t#3"):
+        key = _evidence_key(evidence, "t")
+        assert key == expected
+        evidence[key] = {}
+
+
+def test_authority_projection_carries_the_first_invocation_of_a_repeated_tool():
+    from app.planner.loop import _evidence_for_authority
+
+    evidence = {"t": {"n": 1}, "t#2": {"n": 2}, "resolved_subject": {"basis": "lookup"}}
+    meta = {"t": {"toolId": "t"}, "t#2": {"toolId": "t"}}
+
+    assert _evidence_for_authority(evidence, meta) == {"t": {"n": 1}, "resolved_subject": {"basis": "lookup"}}
+
+
+def test_a_single_subject_read_plan_still_merges_facts():
+    """The guard must not be a blanket switch-off — most runs depend on this merge."""
+    from app.planner.loop import _read_plan_spans_two_subjects
+
+    assert not _read_plan_spans_two_subjects(
+        [
+            {"toolId": "lookup_customer", "arguments": {"username": "casey"}},
+            {"toolId": "list_account_transactions", "arguments": {"accountId": "acct_casey_checking"}},
+        ]
+    )
+    assert _read_plan_spans_two_subjects(
+        [
+            {"toolId": "lookup_customer", "arguments": {"username": "dana"}},
+            {"toolId": "lookup_customer", "arguments": {"username": "casey"}},
+        ]
+    )
+    assert _read_plan_spans_two_subjects(
+        [
+            {"toolId": "get_account", "arguments": {"accountId": "acct_dana_checking"}},
+            {"toolId": "list_account_transactions", "arguments": {"accountId": "acct_casey_checking"}},
+        ]
+    )
 
 
 @pytest.mark.parametrize(
@@ -502,8 +696,23 @@ async def test_demo_score_override_prompt_rejects_too_deep_model_score():
     assert _terminal(frames) == "failed"
 
 
-@pytest.mark.xfail(strict=True, reason="The exact sentence gives no transaction id and no target score; no resolver maps 'offshore wire' to a scored transaction.")
-async def test_demo_score_override_exact_sentence_cannot_yet_be_constructed_without_model_guessing_missing_fields():
+async def test_demo_score_override_exact_sentence_refuses_payload_unfillable():
+    """Danny's ruling B4: the utterance is CUT from the bar, and the refusal is the test.
+
+    The sentence gives no transaction id, and the only list tool in the risk plane returns
+    `FlaggedTransaction`, which carries neither a `userId` nor a `description` — so nothing the
+    harness can reach can be matched on "offshore wire" at all. Resolving it would mean a new
+    subject-scoped read capability in the risk plane, and a model choosing which transaction a
+    money-affecting action applies to, which §1.4 forbids outright.
+
+    Half of the old xfail's reason was also stale: the missing *target score* was solved and
+    shipped — the two tests above propose `0.30` in band and refuse `0.10` below the floor.
+
+    So the behaviour today is already correct and only the assertion was wrong. The prompt stays
+    in the demo doc, marked as a refusal case, and this test pins the honest triple: terminal
+    `failed`, a NAMED code, and no authority call. A refusal that reached authority, or one that
+    reported success with an empty bundle, would both fail here.
+    """
     prompt = PROMPTS["score"]
     _assert_prompt_is_in_demo_doc(prompt)
 
@@ -519,7 +728,9 @@ async def test_demo_score_override_exact_sentence_cannot_yet_be_constructed_with
         ),
     )
 
-    assert authority.propose_calls, f"{prompt}: received refusal {_error_code(frames)}"
+    assert _terminal(frames) == "failed", f"{prompt}: must not report success"
+    assert _error_code(frames) == "payload_unfillable", f"{prompt}: got {_error_code(frames)}"
+    assert authority.propose_calls == [], f"{prompt}: an unfillable payload must never reach authority"
 
 
 @pytest.mark.parametrize(

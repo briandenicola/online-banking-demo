@@ -3303,3 +3303,47 @@ Fixed in the `refusal` step handler: a `kind="refusal"` artifact titled **"Why t
 **For Linus, not changed by me:** `src/ui-app/src/components/copilot/types.ts:563` declares `ArtifactKind` as a closed union that does not include `'refusal'`. Nothing breaks at runtime — the canvas dispatches on shape, and a string body already renders as prose — but the type and the wire now disagree by one member. His file, his call, and I did not touch UI code.
 
 **Scope note:** I fixed refusals only. The `answer.failed` path (model unavailable, contract invalid) also ends a run with a `run.error` and no durable record. That is an operational failure rather than a stated decision, so it is arguably a different thing, but the banker's experience after a pod roll is identical. Flagged, not fixed.
+
+### 2026-09-10 (later again) — the wrong-customer carry in the facts map, and evidence keys that stop overwriting each other
+
+Danny found a correctness bug that outranked everything left in my queue, and Brian verified it before sending it to me. I verified it a third way: I wrote the test first and watched it fail with the bug's own output.
+
+```
+facts carried 'dana' out of a two-subject run:
+  {'query': 'dana', 'count': 1, 'matches': [{'id': 'usr_dana', ...}],
+   'accountId': 'acct_dana_checking', 'items': [...]}
+```
+
+That is a run that read *both* Dana and Casey, leaving a facts map that names only Dana. `facts` binds the arguments of later tool calls and it travels to authority on the proposal body, so the failure mode is an approval that names one customer and carries another's identifiers — with **no model involved**. `evidence_ceiling.py` opens by naming this hazard as something a *model* might do; here the harness did it to itself, with a `setdefault`.
+
+**Key Learning — two collections merging by opposite rules is a bug waiting for a second subject.** Three lines apart: `evidence[tool_id] = result.data` (last writer wins) and `request.facts.setdefault(...)` (FIRST writer wins). Either rule alone is defensible. Together they guarantee that on a two-subject run the two collections disagree about who the subject is, and they disagree silently. Neither line looks wrong on its own, which is why this sat unnoticed — the bug is in the *relationship*, and no test that reads one collection can see it.
+
+**What I did.**
+
+- **Evidence keys: bare-first, next ordinal on collision** — `X`, then `X#2`, `X#3`. Suffix-on-collision rather than suffix-always is the whole point: every run that exists today gathers each tool once and keeps byte-identical keys in its trace, its artifact and any citation a model produced against it. Only a genuinely two-subject run sees a new key, and it is one a human can read off the card.
+- **Entries self-describe.** The key disambiguates, the entry explains: `toolId`, the `arguments` it was called with, and the `subject` those arguments name. Two ledgers side by side with no labels is a worse artifact than one ledger.
+- **Facts: a multi-subject read plan populates no facts from tool results at all.** Danny ruled this rather than suggested it. It is safe because read-plan validation already requires every read step to carry explicit arguments. Multi-subject is detected two independent ways — a repeated tool id, or one subject argument holding two distinct values — because either alone leaves a hole.
+- **The projection at the boundary.** Everything leaving this service — the `evidence` object on the authority proposal, and the `gathered` set the ceiling matches `already_gathered` against — goes through one function that maps back to bare tool ids and raw results.
+
+**Key Learning — the boundary claim is the one that needed evidence, so I got some.** "The wire bytes are unchanged" is exactly the kind of claim that is comfortable to assert and expensive to be wrong about: a suffixed key on the authority proposal is `evidence_incomplete` on *every* propose run, and a suffixed key in `gathered` silently grants re-reads of tools already held — fails **open**, and quietly. So I dumped `propose_calls[0]["evidence"]` for two propose prompts, checked out HEAD's `loop.py`, dumped again, and diffed. Identical. Then I pinned it with tests, because a diff I ran once protects nobody.
+
+I deliberately did **not** chase an integration test for `already_gathered` under duplicate keys. Duplicates are a read-plan-only phenomenon today (required evidence is one call per tool id, and the assess step does not run on read plans), so no reachable path produces one. Saying that plainly is better than building a test that constructs an unreachable state and calling it coverage.
+
+**Key Learning — `_bind_arguments` layers facts OVER the payload, and that is only safe by accident of ordering.** A fact could in principle steer a later read at a different subject. On a propose path it cannot, because facts are seeded from the payload *before* any tool runs and the merge is first-wins, so a tool result can add keys but never displace the subject a human is signing for. That is load-bearing and was untested, so it is tested now. It is also why the guard is scoped to read plans rather than switched on everywhere: first-wins is the *protection* on the propose path and the *bug* on a multi-subject read path, and the difference is which one seeded the map.
+
+**Both xfails are gone, and both because Danny ruled — not because I papered over them.**
+- Prompt A (two-customer comparison): **built**. The canonicalization blocker we all assumed was there does not exist — evidence is not an input to the approval hash preimage. One xfail became two passing tests.
+- Prompt B ("lower its risk score"): **cut as an utterance, kept as a capability.** Danny ran it rather than predicting it: terminal `failed`, code `payload_unfillable`, zero authority calls. The behaviour was already correct and only the assertion was wrong. It is now a passing test pinning that triple, and the demo doc marks the prompt as a refusal case with the reason, so nobody re-opens it in three weeks. I confirmed the predicted code matches reality rather than trusting the write-up.
+
+**Counts.** Default suite **438 passed / 2 xfailed → 449 passed / 0 xfailed**, 12 deselected, still hermetic and offline.
+
+**Live, against real gpt-5.4-mini — the fix is proven, not asserted.** The bundle comes back:
+
+```
+'lookup_customer':   {toolId: lookup_customer, subject: {username: dana},  data: {...usr_dana...}}
+'lookup_customer#2': {toolId: lookup_customer, subject: {username: casey}, data: {...usr_casey...}}
+```
+
+The old code kept only Casey and left Dana in facts. Full live run: 9 passed, 1 failed (the known `retail_large` proposal flake), 1 xfailed, 1 xpassed — the xpass being the comparison itself, on a run where the model planned both history reads.
+
+**Still open, and honestly so.** The comparison prompt stays non-strict xfail because of a *model-planning* gap, not a harness one: the model plans the two customer lookups and then no history reads, because a read plan is chosen in **one shot** and it does not yet hold the account ids the history tool needs. It cannot read to resolve and then read again. That is the single-shot read-plan gap already handed to Danny, and it is now the only thing standing between this prompt and green.

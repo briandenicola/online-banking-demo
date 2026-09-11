@@ -34,3 +34,18 @@ money, which is always dual-control. They sat under an "L1 — one signer" headi
 ## Score override
 
 - `Casey's offshore wire is legitimate — she notified us in advance. Lower its risk score.`
+
+  **This one refuses, on purpose.** Terminal `failed`, code `payload_unfillable`, and nothing
+  reaches authority. The sentence names the transaction by description, and no tool the copilot
+  holds can turn "offshore wire" into a transaction id: the only list tool in the risk plane
+  returns records carrying neither a customer nor a description. Making it work would mean a new
+  subject-scoped read capability in the risk plane, plus a model choosing which transaction a
+  money-affecting action applies to — which the resolver rules forbid outright.
+
+  The capability itself is not missing and is demonstrated elsewhere: the agent proposes a bounded
+  new score, two humans sign it, and a reduction below the floor escalates and is refused. What is
+  missing is only this *phrasing*. Select the flagged case first, then act on it — which is how a
+  banker overriding a risk score should be working anyway.
+
+  Ruled by Danny, 2026-09-10. Pinned by
+  `test_demo_score_override_exact_sentence_refuses_payload_unfillable`.
