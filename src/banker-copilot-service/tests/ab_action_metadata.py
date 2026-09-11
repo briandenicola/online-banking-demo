@@ -34,6 +34,11 @@ REFUND = "Refund a $35 overdraft fee on retail's checking as goodwill"
 #: The refusal-path prompts matter MORE than the refund one here. Richer descriptions bias
 #: the model toward proposing, so the risk of this change is that an honest refusal turns
 #: into a confident propose — a far worse regression than the one being fixed.
+#: The prompt the live gate fails on, and the one Danny flagged as still unexplained. The
+#: cloud refused it with `objective_unmappable`; so does the local live gate, which means the
+#: failure IS reproducible off-cluster — worth measuring at matched N rather than noting once.
+UNEXPLAINED = "Adjust retail's savings by $26,000"
+
 REFUSALS = [
     "Reset casey's password",
     "Summarise nobody-here's accounts and recent activity",
@@ -107,7 +112,7 @@ def _print_runs(title: str, labels: dict[str, list[str]]) -> None:
 
 async def main() -> None:
     runs = int(sys.argv[1]) if len(sys.argv) > 1 else 12
-    prompts = [REFUND, *REFUSALS]
+    prompts = [REFUND, UNEXPLAINED, *REFUSALS]
 
     before, before_labels = await _arm(prompts, runs, metadata=False)
     after, after_labels = await _arm(prompts, runs, metadata=True)

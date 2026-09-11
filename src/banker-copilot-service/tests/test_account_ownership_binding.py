@@ -131,7 +131,18 @@ async def test_the_same_id_supplied_as_an_account_id_hint_is_refused_too():
 
 
 async def test_an_account_number_belonging_to_another_customer_is_refused():
-    """`get_account_by_number` had the identical shape — existence checked, ownership not."""
+    """`get_account_by_number` had the identical shape — existence checked, ownership not.
+
+    This test was **vacuous when first written**: `get_account_by_number` was missing from the
+    fake registry, so `_invoke` returned None and the run refused because the tool did not
+    exist, not because ownership failed. It passed before the fix and after it, and it would
+    have gone on passing if the account-number branch had been left entirely unguarded.
+
+    That is the exact failure this whole epic keeps finding, produced by me, inside the
+    negative control for a money-movement defect. The companion test below is the guard: it
+    proves the tool is reachable and a number the customer DOES own resolves through it, so a
+    refusal here can only be about ownership.
+    """
     frames, authority, _store = await _run_prompt(
         PROMPT,
         _credit(customer="casey", accountNumber="2001"),
@@ -139,6 +150,22 @@ async def test_an_account_number_belonging_to_another_customer_is_refused():
 
     assert authority.propose_calls == [], "the account-number branch still escaped the customer"
     assert _error_code(frames) == "subject_not_found"
+
+
+async def test_an_account_number_the_named_customer_does_own_resolves():
+    """The non-vacuity guard for the test above.
+
+    Without this, a refusal proves nothing: "the tool is missing" and "the account is not
+    theirs" are indistinguishable from the outside, and only one of them is the property under
+    test.
+    """
+    frames, authority, _store = await _run_prompt(
+        PROMPT,
+        _credit(customer="casey", accountNumber="1001"),
+    )
+
+    assert _terminal(frames) == "completed", f"refused: {_error_code(frames)}"
+    assert authority.propose_calls[0]["payload"]["accountId"] == "acct_casey_checking"
 
 
 async def test_an_account_id_the_named_customer_does_own_still_proposes():

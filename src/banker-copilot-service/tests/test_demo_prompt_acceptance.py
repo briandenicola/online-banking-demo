@@ -66,6 +66,7 @@ class _Registry:
             "lookup_customer": _Tool("lookup_customer", ("username",), "customer-directory.read"),
             "list_customer_accounts": _Tool("list_customer_accounts", ("userId",), "accounts.read"),
             "get_account": _Tool("get_account", ("accountId",), "accounts.read"),
+            "get_account_by_number": _Tool("get_account_by_number", ("accountNumber",), "accounts.read"),
             "list_account_transactions": _Tool("list_account_transactions", ("accountId",), "transactions.read"),
             "list_flagged_transactions": _Tool("list_flagged_transactions", (), "risk.read"),
             "get_scored_transaction": _Tool("get_scored_transaction", ("txId",), "risk.read"),

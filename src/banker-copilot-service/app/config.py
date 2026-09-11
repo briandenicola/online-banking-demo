@@ -42,7 +42,14 @@ DEFAULT_ACTION_METADATA_PATH = "/app/config/copilot-actions.yaml"
 #: unchanged at 12/12. Both wrong-rung runs labelled a refund `direction: debit`, which routes a
 #: customer refund below the dual-control rung that crediting money requires.
 #:
-#: So the evidence says ON. The flag stays at 0 only because Danny reserved the wire decision.
+#: A third run then overturned THAT too: registering one more read tool in the live harness
+#: (`get_account_by_number`, which production has always had) moved the refund prompt from 7/12
+#: to 2/12 propose, reproduced. The harness models 9 of production's 15 tools, so every live
+#: number was measured against a smaller bank than a banker uses.
+#:
+#: Three runs, three answers, and the third found a confound larger than the effect. The flag
+#: stays at 0 — the arm actually flown in the cloud — and no recommendation is available until
+#: the harness models the full tool surface. See tests/test_live_harness_fidelity.py.
 ACTION_METADATA_ENABLED_ENV = "COPILOT_ACTION_METADATA_ENABLED"
 
 #: Env prefixes searched, in order, when resolving a logical upstream service name to a base URL.

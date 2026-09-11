@@ -236,8 +236,20 @@ removed them.
 The cost is one run in twelve routed to a read instead of a propose — a miss, not a wrong
 action and not a wrong rung. Refusals were unchanged in both arms.
 
-**The evidence now says turn it on.** The default stays at `0` because Danny reserved the wire
-decision to himself and this measurement is the input to it, not a substitute for it.
+**Then a third run overturned that too, and this time the cause is structural.** Registering
+one more read tool in the live harness — `get_account_by_number`, which the real manifest has
+always carried and the harness simply never modelled — moved the refund prompt from **7/12 to
+2/12** propose, reproduced across matched n=12 runs in one session.
+
+So the model's action mapping is sensitive to the **read** surface, not only to the prompt and
+the action catalogue. And the live harness registers **9 of the 15 tools** the deployed service
+does, which means every live number in this file was measured against a smaller bank than a
+banker uses. `tests/test_live_harness_fidelity.py` pins the gap so it cannot widen silently.
+
+**No wire recommendation is available from this data.** Three runs gave three answers and the
+third identified a confound large enough to swamp the effect being measured. The flag stays at
+`0` — the arm we have actually flown in the cloud — until the harness models the full tool
+surface and the measurement is re-baselined. That is a decision about evidence, not a patch.
 
 
 ## Endpoints

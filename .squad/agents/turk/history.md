@@ -3616,3 +3616,64 @@ the thing the system is judged on, before trusting any measurement made on it.
   server message is suppressed — same gap as `authority_catalogue_unavailable`.
 - `subjectResolution` now rides the approval frame (display only, beside `payload` never inside
   it) so the card can say what the id resolved from and to. Rendering is Linus's.
+
+## 2026-09-11 (later still) — The harness models 60% of the bank, and it changes the answer
+
+Two corrections to my own work in one day, and the second is worse than the first.
+
+### A vacuous test, inside the negative control for a money defect
+
+`test_an_account_number_belonging_to_another_customer_is_refused` passed **before** my fix and
+after it. `get_account_by_number` was not in the fake registry, so `_invoke` returned None and
+the run refused because the tool did not exist — not because ownership failed. It would have
+gone on passing with the account-number branch completely unguarded.
+
+I noticed it pass early ("interesting, I'll re-verify later") and did not re-verify. The whole
+session is about green suites proving nothing, and I produced one inside the negative control
+for cross-customer money movement. There is now a companion test proving a number the customer
+DOES own resolves, so a refusal can only be about ownership, and I proved the pair bites by
+reverting the branch and watching it fail.
+
+**Lesson: when a test passes before the fix, stop. That is not a small anomaly to revisit.**
+
+### Registering one read tool moved the live result 3.5x
+
+Fixing that meant adding `get_account_by_number` to the registry. The next live A/B then looked
+nothing like the previous one: refund propose 11/12 → 2/12.
+
+I did not assume session noise. Controlled it: same prompt, same n, same session, registry
+entry present → 2/12; removed → 7/12. **Reproduced.** One read tool.
+
+The registry is a shared global with the same blast radius as the prompt. I already knew the
+prompt was (4/4 → 0/4) and the action catalogue was; the *read tool list* is the third, and it
+is the one I changed casually while fixing a test.
+
+### The finding that matters
+
+The live harness registers **9 of the 15 tools** in `config/copilot-tools.yaml`. Six are
+unmodelled. So every live-model number I have produced this session — including both A/B
+results I reported with confidence — was measured against a tool surface 40% smaller than
+production.
+
+That is the likeliest candidate yet for the local/cloud divergence Danny has been carrying as
+unexplained. I am not claiming it as the cause; I am claiming it is a confound large enough
+that nothing measured through this harness can be compared with the cloud until it is closed.
+
+`tests/test_live_harness_fidelity.py` pins the gap with an equality check, not a subset check,
+so it cannot widen silently. Closing it needs executor fixtures for six tools and a re-baseline
+of every live number — evidence work, not a patch.
+
+### On flip-flopping
+
+I have now reported three different answers on the same wire question: off, on, and no
+recommendation. The first two were each delivered with a clean matched-N experiment behind
+them. Both were wrong, for different reasons, and neither error was carelessness in *running*
+the experiment — they were errors in what the experiment was run against. A shortened prompt
+the first time; a harness missing 40% of the tools the second.
+
+**The rigour I keep applying is downstream of an input I keep not checking.** Before the next
+measurement: does the harness match production in prompt, in tool surface, and in action
+catalogue? If I cannot answer all three with evidence, the number is not worth producing.
+
+I stopped making a wire recommendation rather than making a third one. That is the only honest
+position from this data.
