@@ -52,6 +52,9 @@ ROLE_HIERARCHY_PATH = REPO_ROOT / "src" / "user-service" / "config" / "role-hier
 #: boot the harness against the artifact that deploys, so a drift in the shipped bounds fails
 #: a test rather than passing against a fixture that quietly agrees with itself.
 HARNESS_LIMITS_PATH = REPO_ROOT / "config" / "harness-limits.yaml"
+#: The REAL descriptions the deployed service ships, not a fixture. A fixture here would
+#: let the file the model actually reads rot untested.
+ACTION_METADATA_PATH = REPO_ROOT / "config" / "copilot-actions.yaml"
 
 #: #334: the RS256 test keypair and the canonical audiences live in one place for every
 #: service's suite. Imported rather than restated so a token this file mints is a token the
@@ -85,6 +88,7 @@ def _base_env(monkeypatch):
     monkeypatch.delenv("TOOL_MANIFEST_PATH", raising=False)
     monkeypatch.setenv("ROLE_HIERARCHY_PATH", str(ROLE_HIERARCHY_PATH))
     monkeypatch.setenv("COPILOT_HARNESS_LIMITS_PATH", str(HARNESS_LIMITS_PATH))
+    monkeypatch.setenv("COPILOT_ACTION_METADATA_PATH", str(ACTION_METADATA_PATH))
     monkeypatch.delenv("HARNESS_LIMITS_PATH", raising=False)
     monkeypatch.delenv("COSMOS_DB_ENDPOINT", raising=False)
     # #334 lesson: a test's outcome must never depend on ambient env. An inherited

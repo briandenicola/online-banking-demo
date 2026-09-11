@@ -37,7 +37,7 @@ from typing import Any, Mapping, NoReturn
 
 import pytest
 
-from conftest import judging_assessor, shipped_assessment_limits
+from conftest import ACTION_METADATA_PATH, judging_assessor, shipped_assessment_limits
 
 # Imported, not copied: if Brian changes a demo prompt, both suites change with it.
 from test_demo_prompt_acceptance import (
@@ -55,6 +55,8 @@ from test_demo_prompt_acceptance import (
 )
 
 from app.events.bus import InMemoryTraceSink, RunStreamRegistry
+from app.planner import action_metadata
+from app.planner.action_metadata import ActionMetadata, load_action_metadata
 from app.planner.intent_model import PLANNER_MODEL_UNAVAILABLE, IntentDecision
 from app.planner.loop import Planner, PlannerRequest
 
@@ -315,6 +317,28 @@ class _LiveRun:
         )
 
 
+#: Mirrors the service's own `COPILOT_ACTION_METADATA_ENABLED`, and defaults OFF for the
+#: same reason: the deployed default is off, and a live suite that ran a configuration the
+#: cloud does not run would be proving the wrong thing. That mistake has already been made
+#: once here, with a hardcoded 60s timeout against a service shipping 30s.
+#:
+#: Set to "1" to re-run the parity experiment: 12 matched runs per arm showed action
+#: mapping on the refund prompt fall from 11/12 to 4/12 with descriptions on, while the
+#: `nobody-here` refusal rose from 9/12 to 12/12.
+LIVE_ACTION_METADATA_ENV = "BANKER_COPILOT_LIVE_ACTION_METADATA"
+
+
+def _live_action_metadata() -> ActionMetadata:
+    """The metadata the DEPLOYED service sends — which today is none.
+
+    The file itself is still loaded and validated by the offline suite; what this controls
+    is only whether it reaches the model.
+    """
+    if os.getenv(LIVE_ACTION_METADATA_ENV, "").strip() == "1":
+        return load_action_metadata(ACTION_METADATA_PATH)
+    return action_metadata.EMPTY
+
+
 async def _run_live_prompt(prompt: str, live_models) -> _LiveRun:
     if prompt in PROMPTS.values():
         _assert_prompt_is_in_demo_doc(prompt)
@@ -333,6 +357,7 @@ async def _run_live_prompt(prompt: str, live_models) -> _LiveRun:
         intent_selector=capture,
         answerer=answerer,
         store=store,
+        action_metadata_descriptions=_live_action_metadata(),
     )
     runs = RunStreamRegistry(InMemoryTraceSink(), replay_window=500)
     stream = runs.create("run_live", "sess_demo")

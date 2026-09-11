@@ -188,6 +188,47 @@ time. This exists because a live run failed with `ChatClientException` wrapping
 own request timeout, not ours and not the endpoint being down, so raising our number would not
 have saved that run.
 
+### Action descriptions: built, measured, and off
+
+Read tools reach the intent model with prose and a full JSON Schema. Actions reach it as
+names only — an id, a display name, a rung, and three lists of field *names*. So the model
+has to bridge "Refund a $35 overdraft fee" to the four words "Post a balance adjustment"
+unaided, and guess that `direction` takes `credit` or `debit` — the field Brian's ruling
+turns on, since crediting an account is always L2. When it cannot bridge it, it does not say
+it is unsure; it reports its guess as a fact: *"no proposable action supports posting or
+refunding a fee directly in this harness."*
+
+`config/copilot-actions.yaml` closes that gap: prose and field descriptions for all 13
+actions, including the 5 forbidden ones, so the model can decline them **by name** rather
+than claim they do not exist. It is **description, never permission** — authority-service's
+catalogue remains the only source of which actions exist and which may be proposed, and
+`tests/test_action_metadata_boundary.py` drives a real run with an invented action in the
+file to prove it never reaches the model.
+
+`COPILOT_ACTION_METADATA_PATH` points at the file. The loader refuses to start without it.
+
+`COPILOT_ACTION_METADATA_ENABLED` (default **0**) controls whether the descriptions are sent.
+It is off **on measurement, against expectation**. 12 matched runs per arm, one session, one
+deployment (`tests/ab_action_metadata.py`):
+
+| prompt | names only | with descriptions |
+| --- | --- | --- |
+| `Refund a $35 overdraft fee` — mapped to `account.balance.adjust` | **11/12** | **4/12** |
+| `Reset casey's password` — correctly refused `forbidden_action` | 12/12 | 12/12 |
+| `Summarise nobody-here's...` — correctly refused `subject_not_found` | 9/12 | **12/12** |
+
+So parity does what it was built to do on the subject path and does not weaken refusals — but
+it made action mapping on the headline demo prompt markedly *worse*. The prompt and its
+context are a shared global; this is the second time this epic that improving one prompt's
+inputs degraded another's. Everything ships and the wire is off pending Danny's ruling.
+
+Note the third column of that table is not the interesting one: **neither arm ever
+proposed.** Every correctly-mapped run then died on `payload_unfillable` for `accountId` —
+`_construct_payload` builds the payload from the model's draft *before* the resolve step
+runs, so the model is asked for an account id that does not exist yet. That is Danny's §3.1
+ruling (hints are strings to match, never identifiers to use) applied one layer down, and it
+is the actual blocker on the refund prompt.
+
 ## Endpoints
 
 ```

@@ -8,6 +8,7 @@ undefined affordances looks like a control and is not one.
 from __future__ import annotations
 
 import asyncio
+import os
 
 import httpx
 import structlog
@@ -15,6 +16,7 @@ from fastapi import FastAPI
 
 from app.auth import assert_token_configuration, verify_role_hierarchy
 from app.config import (
+    ACTION_METADATA_ENABLED_ENV,
     ConfigurationError,
     SERVICE_NAME,
     allow_inmemory_on_cosmos_failure,
@@ -22,6 +24,8 @@ from app.config import (
     load_settings,
 )
 from app.events.bus import CosmosTraceSink, InMemoryTraceSink, RunStreamRegistry
+from app.planner import action_metadata
+from app.planner.action_metadata import load_action_metadata
 from app.planner.fanout import FanOutEngine, deterministic_decider
 from app.planner.intent_model import (
     FoundryEvidenceAnswerer,
@@ -205,6 +209,20 @@ async def lifespan(app: FastAPI):
     app.state.intent_selector = intent_selector
     app.state.evidence_answerer = answerer
 
+    # Loaded here, at startup, and a hard error if it is missing. Names-only is not a
+    # degraded mode anyone notices: it is a model telling a banker the bank cannot do
+    # something it can, about one run in three, with nothing in the logs to say why.
+    # Loaded unconditionally — a malformed file is a startup error even when the wire is
+    # off, so the flag can be flipped without discovering the file rotted months ago.
+    action_descriptions = load_action_metadata(settings.action_metadata_path)
+    if os.getenv(ACTION_METADATA_ENABLED_ENV, "").strip().lower() not in {"1", "true", "yes"}:
+        logger.info(
+            "Action descriptions loaded but NOT sent to the intent model",
+            reason="measured regression on action mapping; see COPILOT_ACTION_METADATA_ENABLED",
+            described_actions=len(action_descriptions.descriptions),
+        )
+        action_descriptions = action_metadata.EMPTY
+
     app.state.planner = Planner(
         registry=registry,
         executor=app.state.executor,
@@ -216,6 +234,7 @@ async def lifespan(app: FastAPI):
         answerer=answerer,
         store=app.state.session_store,
         fanout=app.state.fanout,
+        action_metadata_descriptions=action_descriptions,
     )
 
     app.state.adverse_proposal_mode = adverse_proposal_mode()

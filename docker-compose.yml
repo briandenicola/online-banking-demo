@@ -341,6 +341,11 @@ services:
       - JWT_JWKS_URI=${JWT_JWKS_URI:-http://user-service:8080/.well-known/jwks.json}
       - JWT_AUDIENCE=banking-demo/copilot
       - TOOL_MANIFEST_PATH=/app/config/copilot-tools.yaml
+      # Whether config/copilot-actions.yaml is SENT to the intent model. Default off on
+      # measured evidence: with descriptions on, action mapping for the refund prompt fell
+      # from 11/12 to 4/12 across matched live runs, while the unknown-customer refusal
+      # rose from 9/12 to 12/12. Set to 1 to re-run the experiment.
+      - COPILOT_ACTION_METADATA_ENABLED=0
       - ROLE_HIERARCHY_PATH=/app/config/role-hierarchy.yaml
       # The sole write path. Everything below it is read-only.
       - AUTHORITY_SERVICE_URL=http://authority-service:8080
@@ -395,6 +400,10 @@ services:
       # restart to re-tune. Read-only: a harness that could rewrite its own limits could grant
       # itself unbounded fan-out.
       - ./config/harness-limits.yaml:/app/config/harness-limits.yaml:ro
+      # Prose and field descriptions for the actions the model may propose. DESCRIPTION
+      # only — authority-service's catalogue remains the sole authority on which actions
+      # exist and which may be proposed. Read-only for the same reason as the manifest.
+      - ./config/copilot-actions.yaml:/app/config/copilot-actions.yaml:ro
       # user-service owns this file; the harness reads it and may not diverge
       # from it. Same mount authority-service takes, from the same source path —
       # three services, one role model, no copies.

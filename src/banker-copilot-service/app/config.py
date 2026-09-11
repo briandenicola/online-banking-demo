@@ -25,6 +25,21 @@ SERVICE_NAME = "banker-copilot-service"
 DEFAULT_MANIFEST_PATH = "/app/config/copilot-tools.yaml"
 DEFAULT_ROLE_HIERARCHY_PATH = "/app/config/role-hierarchy.yaml"
 DEFAULT_HARNESS_LIMITS_PATH = "/app/config/harness-limits.yaml"
+#: Model-facing action descriptions. Ours, not the policy file's — see
+#: `app/planner/action_metadata.py` and Danny's ruling of 2026-09-11.
+DEFAULT_ACTION_METADATA_PATH = "/app/config/copilot-actions.yaml"
+#: Whether the descriptions in that file are actually SENT to the intent model.
+#:
+#: Default OFF, on measured evidence and against expectation. Parity was built to stop the
+#: model confabulating that the bank cannot act, and it does fix that on the subject-lookup
+#: path (`nobody-here`: 9/12 -> 12/12 correct refusals, n=12 matched, one session). But on
+#: the headline refund prompt it REGRESSED action mapping from 11/12 to 4/12. Shipping it
+#: on would trade a defect Brian has seen for a worse one on the prompt he demos.
+#:
+#: So the file, the loader, the drift check and the boundary tests all ship; only the wire
+#: is off, and flipping this one variable runs the experiment again. Danny rules on whether
+#: it goes on.
+ACTION_METADATA_ENABLED_ENV = "COPILOT_ACTION_METADATA_ENABLED"
 
 #: Env prefixes searched, in order, when resolving a logical upstream service name to a base URL.
 _DOWNSTREAM_ENV_PATTERNS = (
@@ -143,6 +158,7 @@ class Settings:
     manifest_path: str
     role_hierarchy_path: str
     harness_limits_path: str
+    action_metadata_path: str
     authority_service_url: str | None
     cosmos_endpoint: str | None
     cosmos_database: str
@@ -218,6 +234,9 @@ def load_settings() -> Settings:
         harness_limits_path=env_with_legacy(
             "COPILOT_HARNESS_LIMITS_PATH", "HARNESS_LIMITS_PATH", DEFAULT_HARNESS_LIMITS_PATH
         ),
+        action_metadata_path=os.getenv(
+            "COPILOT_ACTION_METADATA_PATH", ""
+        ).strip() or DEFAULT_ACTION_METADATA_PATH,
         authority_service_url=(os.getenv("AUTHORITY_SERVICE_URL", "").strip().rstrip("/") or None),
         cosmos_endpoint=os.getenv("COSMOS_DB_ENDPOINT", "").strip() or None,
         cosmos_database=env_with_legacy("COPILOT_DATABASE", "COSMOS_DB_DATABASE", "BankingDemo"),

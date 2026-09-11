@@ -100,6 +100,16 @@ spec:
         # fail-closes if the file is missing or invalid.
         - name: COPILOT_HARNESS_LIMITS_PATH
           value: "/app/config/harness-limits.yaml"
+        # Model-facing action descriptions. Baked in like the manifest; the loader refuses
+        # to start without it, because names-only degradation is invisible from outside —
+        # it surfaces as the model telling a banker the bank cannot act.
+        - name: COPILOT_ACTION_METADATA_PATH
+          value: "/app/config/copilot-actions.yaml"
+        # Loaded and validated at startup either way; this controls only whether the
+        # descriptions reach the model. Off by measurement, not by caution — see
+        # app/config.py and .squad/decisions/inbox/turk-action-metadata-parity.md.
+        - name: COPILOT_ACTION_METADATA_ENABLED
+          value: "0"
         # The SHARED role model, not the copy baked into this image.
         # Identical treatment to authority-service and user-service: one
         # ConfigMap object mounted into every pod that derives banking authority

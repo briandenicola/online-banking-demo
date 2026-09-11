@@ -43,6 +43,8 @@ from app.planner.evidence_ceiling import (
     RefusedEvidenceRequest,
     additional_evidence,
 )
+from app.planner import action_metadata
+from app.planner.action_metadata import ActionMetadata
 from app.planner.limits import AssessmentLimits
 from app.planner.intent_model import (
     EvidenceAnswer,
@@ -411,6 +413,7 @@ class Planner:
         reference_resolver: ReferenceResolver | None = None,
         store=None,
         fanout=None,
+        action_metadata_descriptions: ActionMetadata | None = None,
     ) -> None:
         self._registry = registry
         self._executor = executor
@@ -431,6 +434,12 @@ class Planner:
         # test that never reaches L2) is unchanged; when present, an L2 proposal triggers
         # the ONE mandatory fan-out — the blind independent second opinion (§6.2/§6.4).
         self._fanout = fanout
+        # Descriptive only. It cannot add an action, make one proposable or change a rung —
+        # the catalogue fetched from authority-service remains the sole authority on the
+        # action SET, and this is a dict lookup by an id that catalogue produced. Defaulting
+        # to EMPTY keeps every existing test on the names-only wire it was written against;
+        # the real service loads the file at startup and refuses to start without it.
+        self._action_metadata = action_metadata_descriptions or action_metadata.EMPTY
 
     async def run(self, request: PlannerRequest, stream: RunStream) -> None:
         started = time.monotonic()
@@ -944,6 +953,16 @@ class Planner:
                 ],
             )
             return added, next_step_number, [], False
+        # Drift between risk-operations' policy file and our descriptions, checked against
+        # the LIVE catalogue because that is the only place the drift is visible. An action
+        # added to the policy and not described here reaches the model as a bare name, which
+        # is the condition that made it tell a banker the bank could not act.
+        undescribed = self._action_metadata.missing_from(set(actions))
+        if undescribed and self._action_metadata is not action_metadata.EMPTY:
+            logger.warning(
+                "Authority offers actions this service cannot describe to the model",
+                action_ids=undescribed,
+            )
         proposable = [
             a
             for a in actions.values()
@@ -968,8 +987,8 @@ class Planner:
         else:
             decision = await selector(
                 request.objective,
-                actions=[_action_wire(a) for a in proposable],
-                forbidden_actions=[_action_wire(a) for a in forbidden],
+                actions=[_action_wire(a, self._action_metadata) for a in proposable],
+                forbidden_actions=[_action_wire(a, self._action_metadata) for a in forbidden],
                 read_tools=self._registry.describe() if hasattr(self._registry, "describe") else [],
             )
 
@@ -1497,7 +1516,25 @@ def _action_specs(catalogue: dict[str, Any]) -> dict[str, _ActionSpec]:
     return specs
 
 
-def _action_wire(action: _ActionSpec) -> dict[str, Any]:
+def _action_wire(action: _ActionSpec, metadata: ActionMetadata = action_metadata.EMPTY) -> dict[str, Any]:
+    """What the intent model is told about one action.
+
+    Until 2026-09-11 this was names only: an id, a display name, a rung, and three lists of
+    field NAMES. Read tools have always arrived with prose and a full JSON Schema, so the
+    two halves of the same decision were described to the model with wildly different
+    richness — and the model had to bridge "Refund a $35 overdraft fee" to the four words
+    "Post a balance adjustment" unaided, and guess that `direction` takes credit or debit.
+
+    It did not report that gap as uncertainty. It reported it as a fact about the bank:
+    "no proposable action supports posting or refunding a fee directly in this harness."
+    Measured at 4 failures in 12 live runs of one prompt, with the catalogue present every
+    time. Danny's ruling: the same defect underlies the refusal case, so this is one bug.
+
+    `description` and `fields` come from OUR config and are merged on top of the
+    catalogue's own keys rather than replacing any of them — the fetched values stay
+    authoritative for everything a signature covers. An id we have nothing to say about
+    reaches the model exactly as it did before.
+    """
     wire = {
         "id": action.action_id,
         "displayName": action.display_name,
@@ -1506,6 +1543,20 @@ def _action_wire(action: _ActionSpec) -> dict[str, Any]:
         "hashFields": list(action.hash_fields),
         "moneyFields": list(action.money_fields),
     }
+    # `for_action` is a dict lookup by id and nothing else. An entry here cannot add an
+    # action, make one proposable or change a rung: this function is only ever called with
+    # specs the CATALOGUE produced.
+    described = metadata.for_action(action.action_id)
+    if described.get("description"):
+        wire["description"] = described["description"]
+    if described.get("fields"):
+        # Only fields this action actually signs over. A description for a field the
+        # catalogue does not list would be telling the model about something that cannot
+        # reach the payload.
+        signed = set(action.hash_fields)
+        fields = {name: spec for name, spec in described["fields"].items() if name in signed}
+        if fields:
+            wire["fields"] = fields
     if action.score_override_floor is not None:
         wire["scoreOverrideSignableBand"] = [str(action.score_override_floor), "1.00"]
     return wire

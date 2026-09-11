@@ -3476,3 +3476,67 @@ proxy read timeout below that would turn a slow propose into a broken stream rat
 refusal. `/api/copilot/` already carries `proxy_read_timeout 3600s` in the local gateway, so
 there is headroom. The cloud ingress is not in `deploy/`, so I have NOT verified it — stated
 rather than assumed.
+
+## 2026-09-11 — Action metadata parity: built it, measured it, shipped it off
+
+Danny's diagnosis was correct about the *asymmetry* — read tools reach the intent model with
+prose and a full JSON Schema, actions reached it as names only. I confirmed it in code:
+`ToolRegistry.describe()` sends `description` + full `parameters`; `_action_wire` sent six
+name-only keys. Building parity was the right call.
+
+**It did not do what it was built to do, and the A/B is the only reason I know.** 12 matched
+runs per arm, one session, one process, one deployment:
+
+| prompt | names only | with descriptions |
+| --- | --- | --- |
+| refund → `account.balance.adjust` | **11/12** | **4/12** |
+| password reset → `forbidden_action` | 12/12 | 12/12 |
+| `nobody-here` → `subject_not_found` | 9/12 | **12/12** |
+
+Parity fixed the confabulation on the subject path, did not regress refusals (the risk I was
+warned about hardest), and **regressed action mapping on the headline demo prompt**. So
+`COPILOT_ACTION_METADATA_ENABLED` defaults to 0; everything else ships and is tested.
+
+### Lessons
+
+- **The 4/4 → 0/4 lesson generalises past the prompt text.** I already knew editing
+  `build_intent_prompt` had unpredictable blast radius. I assumed changing only the *data* in
+  `actions` narrowed that. It did not. Anything that reaches the model is a shared global,
+  text or data, and nothing about it can be reasoned about — only measured.
+- **Run both arms in one session or the numbers are not numbers.** My earlier "8/12 propose"
+  figure turned out to be uncomparable — different harness, different day, facts seeded. I
+  nearly wrote a report around it. A baseline you cannot reproduce is not a baseline.
+- **Count the outcome CODE per run, not pass/fail.** The refund prompt is 0/12 in both arms,
+  so a pass/fail counter would have shown "no change" and hidden a 11/12 → 4/12 mapping
+  regression completely. The win and the regression were in different columns.
+- **Design correctness and measured effect are separate claims.** Danny's reasoning was
+  sound, the implementation matches it, and the result is worse. I would have shipped it on
+  the strength of the reasoning.
+
+### The bigger finding, which the A/B surfaced by accident
+
+**Neither arm ever proposed — 0/12 and 0/12.** Every correctly-mapped run then died on
+`payload_unfillable` for `accountId`. `loop.py:1108` builds the payload from the *model's*
+draft, before the resolve step runs. So we ask the model for an account id that does not
+exist yet — the same defect as `casey`/`userId` on the read branch, one layer down on the
+propose branch, and exactly Danny's §3.1 ruling.
+
+No amount of prose about `accountId` can help a model that has never seen the account. The
+refund prompt was never a mapping problem. Filed as queue item #1; not implemented, because
+it moves the ordering of the propose path and that is Danny's boundary.
+
+### Honesty note I want to keep
+
+Offline names-only gives `payload_unfillable` 11/12; Brian saw `objective_unmappable` in the
+cluster. I do not know why they differ and I wrote "unknown" rather than a plausible story.
+The temptation to supply a reason was strong and the reason would have been invented.
+
+### Mechanical
+
+- `config/copilot-actions.yaml` must be mounted in **four** places, and I found this by
+  breaking it: Dockerfile `COPY`, compose volume, k8s env path, and `tests/conftest.py`.
+  Twenty tests errored at once because `Settings` defaulted to the container path.
+- Tests point at the **real shipped file**, not a fixture. A fixture would let the file the
+  model actually reads rot untested — the same gap one level up that the live suite exists
+  to close.
+- Offline suite 470 → **485 passed**, hermetic.
