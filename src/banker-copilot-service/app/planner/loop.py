@@ -56,6 +56,22 @@ logger = structlog.get_logger("banker-copilot-service")
 
 AGENT_ID = "asst_banker_copilot_v1"
 
+#: An outage, not a judgement.
+#:
+#: This path used to report `proposal_refused_by_authority`, whose banker-facing copy reads
+#: "Evidence was gathered and a proposal was constructed, but authority rejected it" —
+#: three statements, none of them true when the catalogue GET failed. Nothing was
+#: gathered, nothing was constructed, and authority never saw anything to refuse. A code
+#: that names the wrong actor sends whoever reads it to the wrong service.
+AUTHORITY_CATALOGUE_UNAVAILABLE = "authority_catalogue_unavailable"
+
+_CATALOGUE_UNAVAILABLE_MESSAGE = (
+    "The authority policy catalogue could not be read, so the Copilot cannot know which "
+    "actions are inside its leash or what evidence they require. Nothing was read, "
+    "nothing was proposed, and nothing was signed. This is a service fault, not a "
+    "judgement about the request."
+)
+
 try:  # pragma: no cover - exercised only where the Foundry extras are installed
     from agent_framework_foundry import FoundryChatClient  # noqa: F401
 
@@ -440,7 +456,19 @@ class Planner:
         try:
             if request.action_id:
                 evidence_tools = await self._required_evidence(request)
-                steps = _plan_steps(evidence_tools, request.action_id)
+                if evidence_tools is None:
+                    evidence_tools = []
+                    steps = [
+                        _step(
+                            1,
+                            "Refuse objective",
+                            "refusal",
+                            code=AUTHORITY_CATALOGUE_UNAVAILABLE,
+                            message=_CATALOGUE_UNAVAILABLE_MESSAGE,
+                        )
+                    ]
+                else:
+                    steps = _plan_steps(evidence_tools, request.action_id)
             else:
                 evidence_tools = []
                 steps = _free_text_initial_steps()
@@ -838,12 +866,31 @@ class Planner:
             },
         )
 
-    async def _required_evidence(self, request: PlannerRequest) -> list[str]:
-        """Ask authority-service what this action requires. Never guess, never cache a copy."""
+    async def _required_evidence(self, request: PlannerRequest) -> list[str] | None:
+        """Ask authority-service what this action requires. Never guess, never cache a copy.
+
+        Returns `None` — distinct from an empty list — when the catalogue could not be
+        read. The two used to be the same value, and that was the bug: "this action
+        requires no evidence" and "nobody could tell me what this action requires" are
+        opposite statements, and collapsing them planned a run with no reads that walked
+        straight to a propose carrying `evidence: {}` and a primary assessment of
+        "proceed, confidence 0.88" over nothing at all.
+
+        Authority would still have rejected that proposal, so this was never a hole in the
+        money path. It was a hole in the TRUTH path: the planner asserted a completeness
+        it had no way to know, and the banker saw an evidence complaint for an outage.
+        """
         if not request.action_id:
             return []
 
         catalogue = await self._authority.policy_catalogue(request.bearer_token)
+        if catalogue.get("available") is False:
+            logger.warning(
+                "Cannot plan a pinned action without the catalogue",
+                action_id=request.action_id,
+                reason=catalogue.get("reason"),
+            )
+            return None
         for action in catalogue.get("actions") or []:
             if action.get("id") == request.action_id:
                 required = action.get("requiredEvidence") or []
@@ -857,6 +904,13 @@ class Planner:
                         missing=unknown,
                     )
                 return [tool_id for tool_id in required if tool_id in self._registry.tool_ids]
+        # An available catalogue that does not carry this action is a different condition
+        # again: authority will reject the proposal by name, which is an accurate answer,
+        # so the run proceeds — but it is logged, because silently requiring no evidence
+        # for an action nobody has heard of is how the case above started.
+        logger.warning(
+            "Action is not in the authority catalogue", action_id=request.action_id
+        )
         return []
 
     async def _run_intent_step(
@@ -873,11 +927,8 @@ class Planner:
         if catalogue.get("available") is False or not actions:
             decision = IntentDecision(
                 kind="failure",
-                reason_code="proposal_refused_by_authority",
-                message=(
-                    "The authority policy catalogue is unavailable, so the planner cannot know "
-                    "which actions are inside the Copilot leash."
-                ),
+                reason_code=AUTHORITY_CATALOGUE_UNAVAILABLE,
+                message=_CATALOGUE_UNAVAILABLE_MESSAGE,
             )
             added, next_step_number = _insert_steps(
                 steps,

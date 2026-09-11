@@ -160,6 +160,34 @@ and only falls back to a cross-partition query when the caller genuinely does no
 `FOUNDRY_PROJECT_ENDPOINT` / `FOUNDRY_MODEL` are the canonical model-access names, matching
 ai-service. `AZURE_AI_PROJECT_ENDPOINT` / `AZURE_AI_MODEL_DEPLOYMENT` are honoured and reported.
 
+### The model timeout is ours, it is per call, and it is one number
+
+`BANKER_COPILOT_MODEL_TIMEOUT_S` (default **60**) is the ceiling on a single model round
+trip. It was four hardcoded `30.0` literals — intent selector, evidence answerer, primary
+assessor, supervisor — which is three chances to diverge and no way to change it in a running
+cluster. A bad value is a startup error rather than a silent fall back to the default, because
+a deployment that meant to raise the ceiling and typo'd it would otherwise go on expiring at
+the old number while its config says it does not.
+
+Read it as **per call**. A free-text run makes several — `intent`, then `answer`, and on a
+propose the `primary` and the `supervisor` — so the wall-clock ceiling for a *run* is a
+multiple of this. That is why an end-to-end read-only run has been observed at 59.8s against a
+"30s" message: the message is accurate about the call it describes and says nothing about the
+run.
+
+Every call now logs `Model call completed` with `phase`, `model`, `timeout_s` and
+`elapsed_ms`, so the next argument about the right value can be settled with cloud numbers.
+Measured on the laptop path (n=13, `gpt-5.4-mini`): `intent` 3.5-8.6s, `answer` 4.9-12.7s. The
+cloud is slower and its per-call figure is still unmeasured.
+
+A **transient** model failure is retried once, inside the same budget, so "did not answer
+within Ns" stays literally true. Only transient failures: an invalid-auth, invalid-request or
+content-filter exception is a verdict about the request and will fail identically the second
+time. This exists because a live run failed with `ChatClientException` wrapping
+`APITimeoutError('Request timed out.')` at **18.6s elapsed inside a 60s budget** — the SDK's
+own request timeout, not ours and not the endpoint being down, so raising our number would not
+have saved that run.
+
 ## Endpoints
 
 ```

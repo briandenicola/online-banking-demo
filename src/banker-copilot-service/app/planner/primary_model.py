@@ -58,13 +58,14 @@ from __future__ import annotations
 
 import asyncio
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
 import structlog
 
-from app.planner.model_call import Attribution, as_chat_messages, extract_json, sha256_text
+from app.planner.model_call import Attribution, as_chat_messages, await_model, extract_json, sha256_text
 from app.planner.verdicts import RECOMMENDATIONS
+from app.config import model_timeout_s
 
 logger = structlog.get_logger("banker-copilot-service")
 
@@ -449,7 +450,9 @@ class FoundryPrimaryAssessor:
 
     endpoint: str
     model: str
-    timeout_s: float = 30.0
+    # The per-call model budget, read from one place. See `app.config.model_timeout_s`:
+    # this is ours, it is per CALL rather than per run, and it used to be a literal here.
+    timeout_s: float = field(default_factory=model_timeout_s)
 
     _client: Any = None
     _credential: Any = None
@@ -481,7 +484,12 @@ class FoundryPrimaryAssessor:
         )
         try:
             client = self._ensure_client()
-            response = await asyncio.wait_for(client.get_response(as_chat_messages(prompt)), timeout=self.timeout_s)
+            response = await await_model(
+                lambda: client.get_response(as_chat_messages(prompt)),
+                timeout_s=self.timeout_s,
+                phase="primary",
+                model=self.model,
+            )
         except asyncio.TimeoutError:
             logger.warning("Primary assessor timed out", timeout_s=self.timeout_s)
             return replace(

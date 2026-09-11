@@ -33,14 +33,14 @@ import asyncio
 import dataclasses
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 import structlog
 
-from app.config import ConfigurationError, env_with_legacy
+from app.config import ConfigurationError, env_with_legacy, model_timeout_s
 from app.planner.fanout import SecondOpinion, SupervisorInput
-from app.planner.model_call import Attribution, as_chat_messages, extract_json, sha256_text
+from app.planner.model_call import Attribution, as_chat_messages, await_model, extract_json, sha256_text
 from app.planner.verdicts import RECOMMENDATIONS
 
 logger = structlog.get_logger("banker-copilot-service")
@@ -257,7 +257,9 @@ class FoundryDecider:
 
     endpoint: str
     model: str
-    timeout_s: float = 30.0
+    # The per-call model budget, read from one place. See `app.config.model_timeout_s`:
+    # this is ours, it is per CALL rather than per run, and it used to be a literal here.
+    timeout_s: float = field(default_factory=model_timeout_s)
 
     _client: Any = None
     _credential: Any = None
@@ -278,7 +280,12 @@ class FoundryDecider:
         prompt = build_prompt(spawn, own_evidence)
         try:
             client = self._ensure_client()
-            response = await asyncio.wait_for(client.get_response(as_chat_messages(prompt)), timeout=self.timeout_s)
+            response = await await_model(
+                lambda: client.get_response(as_chat_messages(prompt)),
+                timeout_s=self.timeout_s,
+                phase="supervisor",
+                model=self.model,
+            )
         except asyncio.TimeoutError:
             logger.warning("Supervisor model timed out", timeout_s=self.timeout_s)
             return _failsafe(f"the model did not answer within {self.timeout_s:g}s")

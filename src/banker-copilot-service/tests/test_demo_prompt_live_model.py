@@ -207,8 +207,12 @@ async def live_models(_live_env):
 
     endpoint, model = _live_config()
     _assert_credential_can_get_a_token()
-    selector = FoundryIntentSelector(endpoint=endpoint, model=model, timeout_s=60.0)
-    answerer = FoundryEvidenceAnswerer(endpoint=endpoint, model=model, timeout_s=60.0)
+    # Deliberately NOT a literal any more. This suite used to hardcode 60.0 while the
+    # service shipped 30.0, so the one place that exercises a real model was proving a
+    # budget the cloud never ran with — and two of three cloud runs then died on the
+    # smaller one. The suite now runs the DEPLOYED number, whatever it is.
+    selector = FoundryIntentSelector(endpoint=endpoint, model=model)
+    answerer = FoundryEvidenceAnswerer(endpoint=endpoint, model=model)
     try:
         yield selector, answerer
     finally:
@@ -564,6 +568,14 @@ async def test_live_balance_adjustment_prompt_picks_the_right_action_subject_amo
         f"{sorted(fired)}. An under-rung approval is the failure this gate exists to catch."
     )
     assert run.terminal == "completed", f"{prompt}: {run.error_code}"
+    # `account.balance.adjust` declares requiredEvidence [get_account,
+    # list_account_transactions]. A propose that reaches authority without both is a proposal
+    # built on proof nobody gathered, and authority would reject it — so this asserts the
+    # reads HAPPENED rather than that the plan said it would do them.
+    called = {call["name"] for call in run.tool_calls}
+    assert {"get_account", "list_account_transactions"} <= called, (
+        f"{prompt}: proposed without the evidence the policy requires; called {sorted(called)}"
+    )
 
 
 async def test_live_unlock_prompt_picks_the_unlock_action_and_the_named_user(live_models):

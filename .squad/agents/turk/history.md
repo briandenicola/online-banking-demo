@@ -3388,3 +3388,77 @@ Read step rejected: arguments failed the tool schema
 
 1. **A model-supplied id with no hints still passes through.** Closing that means refusing every model-supplied identifier on the read branch — Danny's §3.2 — and it would cancel his ruling to *build* the two-customer comparison, whose account ids come from the model. His call, not mine. My live assertion catches the username-as-id case only; a *fabricated* id would pass it, and I have said so in the docstring rather than letting the assertion imply more than it checks.
 2. **Write-prompt routing is unstable today, and it is not mine.** The live suite showed 3 balance-adjustment failures where it had shown 1 earlier. I A/B'd it — 5 failures in 12 runs with my change, 6 in 12 at HEAD — so the instability is the model's, not the fix's. The model routes `Credit dana $120…` and `Adjust retail's savings by $26,000` to `read` some of the time. That is a demo risk for 9/14 and Brian should know before he stands in front of anyone: the *action* choice for write prompts is currently a coin flip weighted in our favour, not a certainty.
+
+## 2026-09-11 — The catalogue fetch, the model budget, and a number for the credit prompt
+
+**Brian's first reading was wrong and I said so first.** He thought an empty catalogue could
+surface to a banker as `objective_unmappable`. It cannot: `_run_intent_step` checks
+`available is False or not actions` before the model is ever consulted. The free-text path
+fails **closed**. Worth noticing which way the error went — he over-estimated the danger on the
+path he was looking at, and the real one was on a path he wasn't.
+
+**The fail-OPEN was one floor down.** `_required_evidence` returned `[]` when the catalogue
+could not be read, and `[]` already meant "this action requires no evidence". Two opposite
+statements, one value. A pinned-action run then planned no reads at all and walked to the
+propose. The test's own output before the fix:
+
+    propose_calls = [{'evidence': {}, 'agentAssessment': {'requiredEvidenceToolIds': [],
+                      'recommendation': 'proceed', 'confidence': 0.88}}]
+
+The primary agent recommended proceeding with confidence 0.88 on nothing. Authority would have
+rejected it, so it was never a hole in the money path — it was a hole in the truth path, and it
+is the same shape as the facts-map bug and the `list_customer_accounts` coin flip.
+
+**Lesson worth keeping: a sentinel that collides with a legitimate value is a bug waiting.**
+`[]` for "none required" and `[]` for "could not ask" is the whole defect. `None` vs `[]` is the
+entire fix. Look for this pattern elsewhere — `{}` for "no facts" vs "no facts *yet*" is the
+same trap.
+
+**A code that names the wrong actor sends you to the wrong service.** The catalogue refusal
+reported `proposal_refused_by_authority`, whose UI copy says evidence was gathered and a
+proposal constructed and authority rejected it. Three statements, none true. Now
+`authority_catalogue_unavailable`. **But** `refusalCopy` falls back for an unknown code with
+`showServerMessage: false`, so the message is suppressed until Linus adds copy — filed, not
+worked around. The reason still survives in the refusal artifact, which is what I added it for
+two rounds ago. Nice to have a durability feature pay for itself.
+
+**The live suite had been proving a budget the cloud never ran with.** Four hardcoded `30.0`
+literals in the service; `timeout_s=60.0` hardcoded in the live suite. So the one place we
+exercise a real model was running 60 while the pods ran 30, and two of three cloud runs then
+died on the smaller number. **Check whether a test pins a different constant than the thing it
+tests.** That divergence is invisible from either side alone. Now one env var, and the suite
+reads the deployed default.
+
+**`ChatClientException` is not the endpoint being down.** Logged it wrapping
+`APITimeoutError('Request timed out.')` at **18.6s elapsed inside a 60s budget** — the SDK's own
+request timeout, one layer below ours and not configurable through `FoundryChatClient`'s
+constructor. Raising our number would not have saved that run. I would have guessed "endpoint
+flaky, raise the timeout" and been wrong; the `elapsed_ms` logging I added an hour earlier is
+the only reason I know. **Measure the layer that failed, not the layer you own.**
+
+Retry is one attempt, **inside** the same `wait_for`, so "did not answer within Ns" stays
+literally true. Auth/invalid-request/content-filter are not retried — verdicts about the
+request fail identically, and a doubled content-filter call is a second copy of customer text
+sent to the model.
+
+**The credit prompt is confabulation, and now I have a rate.** 12 dedicated live runs with the
+catalogue guaranteed present: **8 correct propose (L2, `credit-adjustment` fired), 4
+`objective_unmappable`**; two more full-suite runs routed it to `read`. About one in three
+wrong, matching Brian's one-pass-in-three in the cloud. `_action_wire` sends no `description`,
+which is a plausible cause — and I left it alone, because the fix belongs in the policy file
+Danny owns AND because it is a model-context change. Last round I learned what those cost:
+one paragraph of the intent prompt took an unrelated pair of write prompts from 4/4 to 0/4.
+**The action catalogue is a shared global exactly like the prompt is.**
+
+**Also confirmed for Brian:** `requiredEvidence: [get_account, list_account_transactions]` is
+genuinely performed before the propose — live 3/3, and now pinned offline.
+
+**Test hygiene note that cost me three runs.** A structlog assertion passed alone and failed in
+the full suite, twice, with two different capture strategies — `caplog` and
+`structlog.testing.capture_logs` — because `configure_logging()` sets
+`cache_logger_on_first_use=True` process-wide and whether it has run depends on collection
+order. Swapping the module's `logger` attribute is the only order-independent way. **A test
+whose result depends on file collection order proves nothing in either direction.**
+
+Offline 453 → **470 passed**, 12 deselected, 0 xfailed. 17 new tests; all 6 catalogue tests
+watched failing against the old code first.

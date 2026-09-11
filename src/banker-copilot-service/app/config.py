@@ -52,6 +52,57 @@ def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes"}
 
 
+#: Per-CALL ceiling on a model round trip, not a per-run one.
+#:
+#: This number was four hardcoded `30.0` literals in three files — the intent selector, the
+#: evidence answerer, the supervisor and the primary assessor — which is three chances to
+#: diverge and no way to change it in the cloud without a rebuild. It is ours, not the
+#: platform's: when it fires the banker is told the model "did not answer", which reads like
+#: an endpoint fault for what is actually our own budget expiring.
+#:
+#: Read it as PER CALL. A free-text run makes several (intent, then answer, and on a propose
+#: the primary and the supervisor), so the wall-clock ceiling for a run is a MULTIPLE of
+#: this, which is why an end-to-end read-only run has been observed at 59.8s against a "30s"
+#: message. The message is accurate about the call it describes and says nothing about the
+#: run; nothing in the code claims otherwise, but nothing said so out loud either.
+#:
+#: 60s is not a guess and it is not new. The live-model suite was ALREADY constructing its
+#: selector and answerer with `timeout_s=60.0` while the service shipped 30 — so the one
+#: place we exercise a real model had quietly been proving a budget the cloud never ran
+#: with. Measured latency on the laptop path (n=13, gpt-5.4-mini) is 3.5-8.6s for `intent`
+#: and 4.9-12.7s for `answer`; the cloud is slower than that and its per-call figure is
+#: still UNMEASURED, which is exactly what the new `elapsed_ms` logging exists to settle.
+#: Treat 60 as the interim number that matches the suite, to be revisited against cloud
+#: numbers rather than against this comment.
+MODEL_TIMEOUT_DEFAULT_S = 60.0
+
+#: Canonical env var. One name, one read, four call sites.
+MODEL_TIMEOUT_ENV = "BANKER_COPILOT_MODEL_TIMEOUT_S"
+
+
+def model_timeout_s() -> float:
+    """The per-call model timeout, overridable per environment.
+
+    A bad value is a startup error rather than a silent fallback to the default: a
+    deployment that meant to raise the ceiling and typo'd it would otherwise keep timing
+    out at the old number while its config file says it does not.
+    """
+    raw = os.getenv(MODEL_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return MODEL_TIMEOUT_DEFAULT_S
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ConfigurationError(
+            f"{MODEL_TIMEOUT_ENV} must be a number of seconds, got {raw!r}"
+        ) from exc
+    if value <= 0:
+        raise ConfigurationError(
+            f"{MODEL_TIMEOUT_ENV} must be greater than zero, got {raw!r}"
+        )
+    return value
+
+
 def env_with_legacy(canonical: str, legacy: str, default: str) -> str:
     """Read ``canonical``, accepting ``legacy`` during a rename — but never silently.
 

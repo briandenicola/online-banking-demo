@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
 import jsonschema
 import structlog
 
-from app.planner.model_call import Attribution, as_chat_messages, extract_json, sha256_text
+from app.planner.model_call import Attribution, as_chat_messages, await_model, extract_json, sha256_text
+from app.config import model_timeout_s
 
 logger = structlog.get_logger("banker-copilot-service")
 
@@ -283,7 +284,9 @@ def _dumps(value: Any) -> str:
 class FoundryIntentSelector:
     endpoint: str
     model: str
-    timeout_s: float = 30.0
+    # The per-call model budget, read from one place. See `app.config.model_timeout_s`:
+    # this is ours, it is per CALL rather than per run, and it used to be a literal here.
+    timeout_s: float = field(default_factory=model_timeout_s)
     _client: Any = None
     _credential: Any = None
 
@@ -316,7 +319,12 @@ class FoundryIntentSelector:
             prompt_sha256=sha256_text(prompt),
         )
         try:
-            response = await asyncio.wait_for(self._ensure_client().get_response(as_chat_messages(prompt)), timeout=self.timeout_s)
+            response = await await_model(
+                lambda: self._ensure_client().get_response(as_chat_messages(prompt)),
+                timeout_s=self.timeout_s,
+                phase="intent",
+                model=self.model,
+            )
         except asyncio.TimeoutError:
             return _failure(
                 PLANNER_MODEL_UNAVAILABLE,
@@ -348,7 +356,9 @@ class FoundryIntentSelector:
 class FoundryEvidenceAnswerer:
     endpoint: str
     model: str
-    timeout_s: float = 30.0
+    # The per-call model budget, read from one place. See `app.config.model_timeout_s`:
+    # this is ours, it is per CALL rather than per run, and it used to be a literal here.
+    timeout_s: float = field(default_factory=model_timeout_s)
     _client: Any = None
     _credential: Any = None
 
@@ -374,7 +384,12 @@ class FoundryEvidenceAnswerer:
             prompt_sha256=sha256_text(prompt),
         )
         try:
-            response = await asyncio.wait_for(self._ensure_client().get_response(as_chat_messages(prompt)), timeout=self.timeout_s)
+            response = await await_model(
+                lambda: self._ensure_client().get_response(as_chat_messages(prompt)),
+                timeout_s=self.timeout_s,
+                phase="answer",
+                model=self.model,
+            )
         except asyncio.TimeoutError:
             return EvidenceAnswer(
                 answer="",

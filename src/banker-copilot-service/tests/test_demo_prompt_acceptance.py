@@ -917,3 +917,32 @@ async def test_step_titles_shown_to_a_banker_are_not_developer_vocabulary():
     assert "Check the action is permitted and complete" in titles, titles
     assert "Resolve references" not in titles
     assert "Validate proposed action and payload" not in titles
+
+
+async def test_a_credit_adjustment_gathers_both_required_reads_before_proposing():
+    """`requiredEvidence: [get_account, list_account_transactions]` is a precondition, not a label.
+
+    Brian asked whether the plan actually performs both reads for the refund prompt. It does,
+    and this pins it offline so the answer cannot quietly change: a proposal that reaches
+    authority without the evidence the policy demands is a proposal built on proof nobody
+    gathered. The catalogue fetch that supplies this list is the one that used to fail silently
+    to an empty list — see `test_authority_catalogue_availability.py` — which is exactly how a
+    run could have arrived here with neither read performed and nothing saying so.
+    """
+    prompt = PROMPTS["retail_refund"]
+
+    _frames, authority, _store = await _run_prompt(
+        prompt,
+        IntentDecision(
+            kind="propose",
+            action_id="account.balance.adjust",
+            subject_hints={"customer": "retail", "accountType": "Checking"},
+            payload_draft={"amount": "35", "direction": "credit", "reason": "Goodwill overdraft fee refund."},
+        ),
+    )
+
+    assert authority.propose_calls, f"{prompt}: no proposal was made"
+    gathered = set(authority.propose_calls[0]["evidence"])
+    assert {"get_account", "list_account_transactions"} <= gathered, (
+        f"{prompt}: proposed on {sorted(gathered)}, missing a read the policy requires"
+    )
