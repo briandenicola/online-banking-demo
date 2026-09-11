@@ -2269,3 +2269,20 @@ for four minutes, ~9MB through istio-envoy for one wait. Backed off to 5s. Polli
 the thing under test and must not be the thing that fails. The same run's underlying
 problem was real though: the propose path normally lands in 12-16s and occasionally does
 not land inside 240s at all. Two consecutive re-runs afterwards: 16.2s and 12.7s, both green.
+
+**Second addendum — refusal code drift, and assertion ORDER.** After Turk's identifier
+fix landed, the unknown-customer prompt refused once as `objective_unmappable` instead of
+`subject_not_found`, and my assertion on the code ran BEFORE the non-disclosure checks —
+so the run that drifted told me nothing about whether the copy had leaked. Reordered: the
+named-code check and the whole non-disclosure block run first and hold whatever the code
+is; the subject-code expectation is asserted last, alone. It is not pedantry about naming:
+`TracePane` suppresses the server's message for `subject_not_found` and `ambiguous_subject`
+and for nothing else, so an unresolvable customer refusing as `objective_unmappable` puts
+the server's own sentence back on screen and returns non-disclosure to being a property of
+whoever wrote that sentence. Worth a ruling. Lesson: put the SAFETY assertion before the
+IDENTITY assertion, or a change of identity hides the safety result.
+
+**Also observed:** the whole host went unreachable for ~15 minutes mid-session (curl
+timeouts, then 503 from authority behind a reachable ingress). The suite reported it
+precisely — "Expected 200, Received 503" against the exact URL — rather than as a mystery
+timeout. That is the behaviour I wanted from it.

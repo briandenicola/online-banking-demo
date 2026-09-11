@@ -201,14 +201,14 @@ test.describe('banker copilot, deployed', () => {
     );
     const code = text.match(/·\s*([a-z_]+)\s*$/m)?.[1];
     expect(code, 'the refusal renders its code for the trace').toBeTruthy();
-    expect(['subject_not_found', 'ambiguous_subject']).toContain(code);
 
     await expect(notice).toContainText('Nothing was signed and nothing was executed');
 
-    // NON-DISCLOSURE — Danny's ruling. A refusal that names its candidates turns
-    // the error channel into the customer-search API we deliberately declined to
-    // build, and a COUNT alone still answers "does a customer like this exist?".
-    // Hence: no customer names, and no digits at all.
+    // NON-DISCLOSURE — Danny's ruling, and checked BEFORE anything about which
+    // code this is. A refusal that names its candidates turns the error channel
+    // into the customer-search API we deliberately declined to build, and a
+    // COUNT alone still answers "does a customer like this exist?". Hence: no
+    // customer names, and no digits at all. This holds whatever the code is.
     const names = candidateNames();
     expect(
       names.length,
@@ -223,5 +223,23 @@ test.describe('banker copilot, deployed', () => {
 
     const created = (await listApprovals(request, token)).filter((a) => !before.has(a.id));
     expect(created.map((a) => a.id), 'a refused run must create no approval').toEqual([]);
+
+    // AND the code should be a subject-resolution one, asserted LAST and on its
+    // own so that a change here cannot mask the non-disclosure checks above.
+    //
+    // This is not pedantry about naming. `TracePane` suppresses the server's
+    // message entirely for `subject_not_found` and `ambiguous_subject` and for
+    // nothing else — that suppression is the enforcement of Danny's ruling, and
+    // it is keyed on the code. An unresolvable customer that refuses as
+    // `objective_unmappable` instead passes the server's own sentence straight
+    // through to the screen, so non-disclosure goes back to being a property of
+    // whoever wrote that sentence rather than a control.
+    //
+    // Observed drifting between the two on 2026-09-10: `subject_not_found`
+    // before Turk's identifier fix, `objective_unmappable` after it.
+    expect(
+      ['subject_not_found', 'ambiguous_subject'],
+      'an unresolvable customer is a SUBJECT failure, and only subject codes suppress the server message'
+    ).toContain(code);
   });
 });
