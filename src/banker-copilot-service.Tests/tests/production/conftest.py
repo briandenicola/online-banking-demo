@@ -64,6 +64,27 @@ def _base_env(monkeypatch):
         monkeypatch.setenv(f"DOWNSTREAM__{service}", f"http://{service}:8080")
     monkeypatch.setenv("AUTHORITY_SERVICE_URL", "http://authority-service:8080")
 
+    # The service's own conftest states this; this file's docstring promises not to diverge
+    # from it, and it did. `supervisor_mode()` defaults to `foundry` and aborts when no model
+    # is reachable, so on a runner without Foundry credentials every fixture that builds the
+    # app errored at setup — the suite did not fail, it never ran. Stated rather than left to
+    # inference for the reason the service conftest gives: a suite that obtains the
+    # deterministic decider by accident cannot tell that outcome apart from losing model
+    # access. tests/test_supervisor_model.py owns mode selection itself.
+    monkeypatch.setenv("COPILOT_SUPERVISOR_MODE", "deterministic")
+    # And the planner, for the identical reason — `planner_mode()` defaults to `foundry` and
+    # aborts the same way. Setting only the supervisor fixed the first error and revealed this
+    # one behind it.
+    monkeypatch.setenv("COPILOT_PLANNER_MODE", "deterministic")
+    # Third instance of the same divergence. `DEFAULT_ACTION_METADATA_PATH` is the CONTAINER
+    # path `/app/config/copilot-actions.yaml`, and the loader fail-closes when it is absent —
+    # correct in production, unreachable from a checkout. The service's own conftest points it
+    # at the repo copy; this file did not, so every app-building fixture errored once the two
+    # mode errors above stopped masking it.
+    monkeypatch.setenv(
+        "COPILOT_ACTION_METADATA_PATH", str(REPO_ROOT / "config" / "copilot-actions.yaml")
+    )
+
     # The service caches a JWKS client across calls; a stale one would validate
     # against a previous session's key and quietly decide the outcome.
     from app.auth import reset_key_cache
