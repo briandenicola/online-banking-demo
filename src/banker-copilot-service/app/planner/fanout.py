@@ -553,6 +553,9 @@ class FanOutEngine:
                 "tool.completed",
                 {
                     "toolCallId": f"call_{child_stream.last_seq + 1}",
+                    "name": tool_id,
+                    "toolId": tool_id,
+                    "mode": "plan",
                     "durationMs": 0,
                     "resultSummary": summary,
                 },

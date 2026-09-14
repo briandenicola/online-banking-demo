@@ -43,8 +43,12 @@ EVENT_KINDS: frozenset[str] = frozenset(
         "run.error",
         "run.done",
         "heartbeat",
+        "mode_transition",
     }
 )
+
+RUN_MODES: frozenset[str] = frozenset({"plan", "execute"})
+_TOOL_EVENT_KINDS: frozenset[str] = frozenset({"tool.started", "tool.completed", "tool.failed"})
 
 #: The closed rejection-reason enum (epic §5.1.1 / O9). `denied` is the single terminal
 #: rejection state, so a terminal frame without one of these is unreadable in replay: a policy
@@ -85,6 +89,10 @@ class CopilotEventEnvelope:
             raise EnvelopeError("seq is 1-based and monotonic per run")
         if self.kind == "approval.terminal":
             _validate_terminal(self.payload)
+        elif self.kind == "mode_transition":
+            _validate_mode_transition(self.payload)
+        elif self.kind in _TOOL_EVENT_KINDS:
+            _validate_tool_invocation(self.kind, self.payload)
 
     def to_wire(self) -> dict[str, Any]:
         """The exact object the UI receives in the SSE `data:` field."""
@@ -143,6 +151,26 @@ def _validate_terminal(payload: dict[str, Any]) -> None:
                 "policy-driven void from a banker rejecting the agent — and it would score the "
                 "former as a model regression."
             )
+
+
+def _validate_mode_transition(payload: dict[str, Any]) -> None:
+    if set(payload) != {"from", "to"} or payload.get("from") != "plan" or payload.get("to") != "execute":
+        raise EnvelopeError(
+            "mode_transition payload must be exactly {'from': 'plan', 'to': 'execute'}"
+        )
+
+
+def _validate_tool_invocation(kind: str, payload: dict[str, Any]) -> None:
+    mode = payload.get("mode")
+    if mode not in RUN_MODES:
+        raise EnvelopeError(
+            f"{kind} payload requires mode in {sorted(RUN_MODES)}, got {mode!r}"
+        )
+    tool_id = payload.get("name") or payload.get("toolId")
+    if not isinstance(tool_id, str) or not tool_id.strip():
+        raise EnvelopeError(f"{kind} payload requires a tool identity")
+    if mode == "execute" and tool_id != "propose_action":
+        raise EnvelopeError("only propose_action may have execute mode")
 
 
 def new_event_id() -> str:

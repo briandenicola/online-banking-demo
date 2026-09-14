@@ -90,7 +90,9 @@ records what the system happened to emit rather than what evaluation needs.
 
 - Monotonic `seq` per run, allocated before persistence, so replay ordering is authoritative
   and the client can dedupe and resume.
-- `kind` and `terminalReason` are **closed enums**. An unknown kind raises.
+- `kind`, run mode, and `terminalReason` are **closed enums**. An unknown kind or invalid mode transition raises.
+- Each tool invocation carries its explicit run mode: ordinary manifest reads and both assessment arms are `plan`; the only `execute` invocation is `propose_action`, which still only submits to `authority-service` for human approval.
+- `mode_transition` is emitted exactly once at that proposal boundary, with the normal `runId` and `sessionId`.
 - Persisted to the `copilot-traces` container (PK `/runId`); on sink failure the run
   continues but is marked `trace_degraded` — a degraded trace is reported, never faked.
 - Redaction is applied **at emit**, because persisted traces outlive the session. The

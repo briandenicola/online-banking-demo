@@ -31,6 +31,7 @@ import jsonschema
 import structlog
 
 from app.events.bus import RunStream
+from app.planner.agent_mode import AgentMode
 from app.config import ConfigurationError, env_with_legacy
 from app.stores.sessions import Session, new_artifact
 from app.tools.executor import ToolExecutor, ToolInvocationError
@@ -570,6 +571,7 @@ class Planner:
         # Success is earned, never defaulted. `proposal_expected` is set the moment the plan
         # is known, a few lines below.
         outcome = _RunOutcome(proposal_expected=bool(request.action_id))
+        agent_mode = AgentMode()
 
         await stream.emit(
             "run.started",
@@ -735,7 +737,7 @@ class Planner:
                     )
                     break
                 elif step["kind"] == "tool":
-                    ok = await self._run_tool_step(request, stream, step, evidence, evidence_meta)
+                    ok = await self._run_tool_step(request, stream, step, evidence, evidence_meta, agent_mode)
                     if not ok and step.get("discretionary"):
                         # A discretionary read that fails does NOT fail the run. It was never
                         # required, so the plan is no worse off than if the model had not asked.
@@ -954,7 +956,7 @@ class Planner:
                             },
                         )
                         break
-                    result = await self._run_propose_step(request, stream, evidence, evidence_meta, record)
+                    result = await self._run_propose_step(request, stream, evidence, evidence_meta, record, agent_mode)
                     if not result.admitted:
                         # This step exists for one reason: to put an approval in front of a
                         # human. It produced none, so it did not do its job, and emitting
@@ -1326,6 +1328,7 @@ class Planner:
         step: dict[str, Any],
         evidence: dict[str, Any],
         evidence_meta: dict[str, dict[str, Any]],
+        agent_mode: AgentMode,
     ) -> bool:
         tool_id = step["toolId"]
         tool = self._registry.get(tool_id)
@@ -1341,6 +1344,8 @@ class Planner:
                 "toolCallId": call_id,
                 "stepId": step["id"],
                 "name": tool_id,
+                "toolId": tool_id,
+                "mode": agent_mode.current,
                 "args": arguments,
                 "attempt": 1,
             },
@@ -1353,6 +1358,9 @@ class Planner:
                 "tool.failed",
                 {
                     "toolCallId": call_id,
+                    "name": tool_id,
+                    "toolId": tool_id,
+                    "mode": agent_mode.current,
                     "error": f"{exc.code}: {exc.message}",
                     "attempt": 1,
                     "willRetry": False,
@@ -1382,6 +1390,9 @@ class Planner:
             "tool.completed",
             {
                 "toolCallId": call_id,
+                "name": tool_id,
+                "toolId": tool_id,
+                "mode": agent_mode.current,
                 "durationMs": result.duration_ms,
                 "resultSummary": result.summary(),
                 "result": result.data,
@@ -1483,6 +1494,7 @@ class Planner:
         evidence: dict[str, Any],
         evidence_meta: dict[str, dict[str, Any]],
         record: _AssessmentRecord,
+        agent_mode: AgentMode,
     ) -> ProposeStepResult:
         """Propose the action for human signature.
 
@@ -1492,6 +1504,19 @@ class Planner:
         nothing more — so a refusal was indistinguishable from a run that simply had no L2
         second opinion to gather, and the loop marched on to `step.completed`.
         """
+        await agent_mode.transition_to_execute(stream)
+        call_id = f"call_{stream.last_seq + 1}"
+        await stream.emit(
+            "tool.started",
+            {
+                "toolCallId": call_id,
+                "stepId": "propose_action",
+                "name": "propose_action",
+                "toolId": "propose_action",
+                "mode": agent_mode.current,
+                "attempt": 1,
+            },
+        )
         try:
             outcome = await self._authority.propose(
                 {
@@ -1518,6 +1543,14 @@ class Planner:
                 correlation_id=request.correlation_id,
             )
         except ProposeRejected as exc:
+            await stream.emit(
+                "tool.failed",
+                {
+                    "toolCallId": call_id, "name": "propose_action", "toolId": "propose_action",
+                    "mode": agent_mode.current, "error": f"{exc.code}: {exc.message}",
+                    "attempt": 1, "willRetry": False,
+                },
+            )
             # Refused before it ever left this service: the payload could not be
             # canonicalised. Nothing upstream was consulted and nothing here can repair it.
             await stream.emit(
@@ -1530,6 +1563,13 @@ class Planner:
             recoverable = outcome.status_code == 422
             code = outcome.body.get("error", "propose_refused")
             await stream.emit(
+                "tool.failed",
+                {
+                    "toolCallId": call_id, "name": "propose_action", "toolId": "propose_action",
+                    "mode": agent_mode.current, "error": code, "attempt": 1, "willRetry": False,
+                },
+            )
+            await stream.emit(
                 "run.error",
                 {
                     "code": code,
@@ -1540,6 +1580,14 @@ class Planner:
             return ProposeStepResult(error_code=code, recoverable=recoverable)
 
         body = outcome.body
+        await stream.emit(
+            "tool.completed",
+            {
+                "toolCallId": call_id, "name": "propose_action", "toolId": "propose_action",
+                "mode": agent_mode.current, "durationMs": 0,
+                "resultSummary": "proposal admitted",
+            },
+        )
         # Shipped contract: ApprovalRequiredPayload = { approval: Approval, policyVersion,
         # requiredRung } (ui-app types.ts). The reducer reads `event.payload.approval` — emitting
         # the old `{request: body}` left `p.approval` undefined and threw a TypeError on the FIRST

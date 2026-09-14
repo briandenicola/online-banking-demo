@@ -278,6 +278,29 @@ def test_planner_gathers_evidence_then_proposes_and_streams_the_trace(client, mo
     # Set membership, not a count: names what is missing when this regresses.
     assert {"plan.proposed", "tool.started", "tool.completed", "approval.required"} <= set(kinds)
 
+    tool_frames = [frame for frame in frames if frame["kind"].startswith("tool.")]
+    assert {frame["kind"] for frame in tool_frames} <= {
+        "tool.started",
+        "tool.completed",
+        "tool.failed",
+    }
+    assert tool_frames, "the trace must contain the tool invocations being audited"
+    assert all(frame["payload"].get("mode") in {"plan", "execute"} for frame in tool_frames)
+    assert all(
+        frame["payload"]["mode"] == "plan"
+        or frame["payload"].get("name") == "propose_action"
+        for frame in tool_frames
+    )
+    execute_frames = [frame for frame in tool_frames if frame["payload"]["mode"] == "execute"]
+    assert execute_frames
+    assert all(frame["payload"].get("name") == "propose_action" for frame in execute_frames)
+    transitions = [frame for frame in frames if frame["kind"] == "mode_transition"]
+    assert len(transitions) == 1
+    assert transitions[0]["runId"] == run["runId"]
+    assert transitions[0]["sessionId"] == session["sessionId"]
+    assert transitions[0]["payload"] == {"from": "plan", "to": "execute"}
+    assert transitions[0]["seq"] < min(frame["seq"] for frame in execute_frames)
+
     # seq is gapless from 1.
     assert [frame["seq"] for frame in frames] == list(range(1, len(frames) + 1))
 
@@ -539,7 +562,14 @@ def test_stream_still_answers_409_when_the_cursor_fell_out_of_the_replay_window(
         run = test_client.post(
             f"/api/copilot/sessions/{session['sessionId']}/runs", json={}, headers=_auth(**BANKER)
         ).json()
-        time.sleep(0.2)
+        stream = main_module.app.state.runs.get(run["runId"])
+        assert stream is not None
+        deadline = time.monotonic() + 15
+        while stream.last_seq <= 3 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert stream.last_seq > 2, (
+            "the test must establish a cursor older than the two-frame window"
+        )
 
         response = test_client.get(
             f"/api/copilot/sessions/{session['sessionId']}/stream"
