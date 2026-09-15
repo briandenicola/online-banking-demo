@@ -1,10 +1,19 @@
 {
   "scenario": "flagged-transaction-l1-resolution",
-  "actionId": "transaction.flag.review",
-  "requiredRung": "L1",
-  "terminalStatus": "completed",
-  "labels": [
-    "flagged_transaction",
-    "resolves_l1"
-  ]
+  "expectedToolSequence": [
+    "get_flagged_transaction",
+    "get_account",
+    "list_account_transactions",
+    "propose_action"
+  ],
+  "expectedEvidenceSet": [
+    "get_flagged_transaction",
+    "get_account",
+    "list_account_transactions"
+  ],
+  "expectedEscalationRung": "L1",
+  "groundTruth": {
+    "recommendation": "approve",
+    "rationale": "The flagged transaction, account, and transaction-history checks are all satisfied and consistent. The policy remains at L1, so the action can proceed to one human signer."
+  }
 }

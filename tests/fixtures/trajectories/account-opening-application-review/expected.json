@@ -1,10 +1,17 @@
 {
   "scenario": "account-opening-application-review",
-  "actionId": "account_opening.application.review",
-  "requiredRung": "L1",
-  "terminalStatus": "completed",
-  "labels": [
-    "account_opening",
-    "application_review"
-  ]
+  "expectedToolSequence": [
+    "get_account_application",
+    "get_application_audit",
+    "propose_action"
+  ],
+  "expectedEvidenceSet": [
+    "get_account_application",
+    "get_application_audit"
+  ],
+  "expectedEscalationRung": "L1",
+  "groundTruth": {
+    "recommendation": "approve",
+    "rationale": "The application and audit evidence are complete and consistent. The policy requires only one signer, so the review is an L1 approval."
+  }
 }

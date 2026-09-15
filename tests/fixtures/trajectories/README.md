@@ -1,39 +1,53 @@
-# Banker Copilot golden trajectories
+# Banker Copilot trajectory fixtures
 
-These are static, committed traces from the **banker-copilot-service** only. Each directory has
-`trace.json` (the service's `GET /api/copilot/runs/{runId}/trace` response) and `expected.json`
-(the scenario labels and outcome contract). They are not synthetic examples: `_capture/capture.py`
-drives the real FastAPI application with `TestClient` in-process, a deterministic assessor, and
-in-process downstream doubles, then writes the returned persisted envelopes.
+These five committed fixtures are real responses captured from the FastAPI banker-copilot service by
+`_capture/capture.py` and `TestClient`. Each scenario directory contains the untouched service
+response `trace.json` and a hand-reviewed `expected.json` contract. Do not hand-fabricate or edit a
+`trace.json`; add or change a scenario in the capture script and rerun the capture instead.
 
-Run the invariant check with:
+Run the verifier from the repository root:
 
 ```bash
 python tests/fixtures/trajectories/verify.py
 ```
 
-## Schema and invariants
+## Exact `expected.json` schema
 
-`trace.json` preserves the service response and its envelope frames: top-level `runId`,
-`frameCount`, `traceDegraded`, and `frames`. Every frame carries `id`, `seq`, `runId`,
-`sessionId`, `kind`, `ts`, and object `payload`. Verification requires gapless per-run `seq`,
-monotonic server timestamps, known event kinds, stable tool `traceId`, non-empty tool `spanId`,
-and the current `model.call` deployment/latency/token fields when a model-call frame exists.
-`expected.json` has exactly `scenario`, `actionId`, `requiredRung`, `terminalStatus`, and non-empty
-`labels`.
+The object has exactly these keys:
 
-To add a trajectory, add a scenario to `_capture/capture.py`, capture it through `TestClient`,
-inspect the resulting event kinds, commit both generated JSON files, and run `verify.py`. Do not
-hand-edit or hand-fabricate `trace.json`; regenerate it from the service. Keep volatile IDs and
-server timestamps as captured so the fixture remains evidence of the actual envelope.
+```json
+{
+  "scenario": "scenario-directory-name",
+  "expectedToolSequence": ["tool_name_in_completed-order"],
+  "expectedEvidenceSet": ["required-evidence-tool-id"],
+  "expectedEscalationRung": "L1",
+  "groundTruth": {
+    "recommendation": "approve",
+    "rationale": "One or two policy-semantic sentences."
+  }
+}
+```
 
-## Scope rationale
+`expectedToolSequence` is the ordered list of completed tool names, including the final
+`propose_action`. `expectedEvidenceSet` is the set of required evidence tool IDs, and must be fully
+satisfied in the final `evidence_progress` frame. `expectedEscalationRung` is `L1` or `L2`.
+`groundTruth.recommendation` is `approve`, `deny`, or `escalate`; the verifier requires L1 fixtures
+to use `approve` and L2 fixtures to use `escalate` for this corpus. The rationale must explain the
+policy outcome in one or two sentences.
 
-This corpus is deliberately banker-copilot-only. Issue **#140** was closed `not planned`, while
-**#364** established the escalation-ladder and independent-supervisor trace work that these
-fixtures exercise. Coverage for `chatbot-service` and `ai-service` is deferred: those services
-have different contracts and must not be represented by a copied banker-copilot trace.
+The verifier imports `app.events.envelope` and also checks the full trace response shape, required
+payload fields for every emitted event kind, known kinds, one-run/session identity, gapless and
+monotonic `seq`/server `ts`, per-call tool `traceId`/`spanId`, and `model.call` telemetry. It adds
+scenario assertions for L1/L2 behavior, bounded prompt-injection resistance, and supervisor fanout.
 
-The five scenarios cover an L1 flagged-transaction resolution, an L2 escalation, account-opening
-review, adversarial/prompt-injection resistance, and supervisor fanout with multiple reads and a
-second opinion.
+## Addition workflow and scope
+
+1. Add the scenario to `_capture/capture.py` and its deterministic downstream doubles.
+2. Capture through `TestClient`; commit the returned `trace.json` unchanged.
+3. Add the exact six-key contract above, then run `verify.py`.
+4. Run the full banker-copilot pytest suite before committing.
+
+This corpus records the Banker Copilot boundary: issue **#140 is `not_planned`**, while **#364 is
+the escalation-ladder** and independent-supervisor scope represented by the L2 fixtures. Coverage for
+`chatbot-service` and `ai-service` is deferred; their distinct contracts must not be represented by a
+copied banker-copilot trace.

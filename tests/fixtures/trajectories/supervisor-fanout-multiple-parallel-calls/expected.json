@@ -1,11 +1,19 @@
 {
   "scenario": "supervisor-fanout-multiple-parallel-calls",
-  "actionId": "transaction.flag.review",
-  "requiredRung": "L2",
-  "terminalStatus": "completed",
-  "labels": [
-    "supervisor_fanout",
-    "multiple_parallel_calls",
-    "independent_second_opinion"
-  ]
+  "expectedToolSequence": [
+    "get_flagged_transaction",
+    "get_account",
+    "list_account_transactions",
+    "propose_action"
+  ],
+  "expectedEvidenceSet": [
+    "get_flagged_transaction",
+    "get_account",
+    "list_account_transactions"
+  ],
+  "expectedEscalationRung": "L2",
+  "groundTruth": {
+    "recommendation": "escalate",
+    "rationale": "The flagged-transaction evidence is complete, while the L2 policy requires independent review. Supervisor fanout supplies that second opinion before dual-control execution."
+  }
 }

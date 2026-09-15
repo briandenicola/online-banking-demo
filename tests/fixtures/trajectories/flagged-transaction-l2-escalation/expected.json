@@ -1,11 +1,19 @@
 {
   "scenario": "flagged-transaction-l2-escalation",
-  "actionId": "transaction.flag.review",
-  "requiredRung": "L2",
-  "terminalStatus": "completed",
-  "labels": [
-    "flagged_transaction",
-    "escalates_l2",
-    "dual_control"
-  ]
+  "expectedToolSequence": [
+    "get_flagged_transaction",
+    "get_account",
+    "list_account_transactions",
+    "propose_action"
+  ],
+  "expectedEvidenceSet": [
+    "get_flagged_transaction",
+    "get_account",
+    "list_account_transactions"
+  ],
+  "expectedEscalationRung": "L2",
+  "groundTruth": {
+    "recommendation": "escalate",
+    "rationale": "The required transaction evidence is complete, but the policy raises this action to L2. A second independent supervisor opinion and dual control are therefore required."
+  }
 }
