@@ -42,6 +42,7 @@ UI_CONTRACT_KINDS = frozenset(
         "heartbeat",
         "mode_transition",
         "evidence_compacted",
+        "evidence_progress",
     }
 )
 
@@ -298,3 +299,38 @@ def test_evidence_compacted_payload_is_closed_and_validated():
                 ts=utc_now_iso(),
                 payload=invalid,
             )
+
+
+def test_evidence_progress_keeps_policy_satisfaction_and_model_choice_separate():
+    payload = {
+        "requiredEvidenceToolIds": ["get_account", "get_flagged_transaction"],
+        "satisfiedRequiredEvidenceToolIds": ["get_account"],
+        "discretionaryEvidenceToolIds": ["list_login_audits"],
+    }
+    envelope = CopilotEventEnvelope(
+        id="evt_progress", seq=1, run_id="run_progress", kind="evidence_progress",
+        ts=utc_now_iso(), payload=payload,
+    )
+    assert envelope.payload == payload
+
+
+@pytest.mark.parametrize("payload", [
+    {},
+    {"requiredEvidenceToolIds": [], "satisfiedRequiredEvidenceToolIds": [],
+     "discretionaryEvidenceToolIds": [], "mergedEvidenceToolIds": []},
+    {"requiredEvidenceToolIds": ["get_account"],
+     "satisfiedRequiredEvidenceToolIds": ["unknown"], "discretionaryEvidenceToolIds": []},
+    {"requiredEvidenceToolIds": ["get_account"],
+     "satisfiedRequiredEvidenceToolIds": [], "discretionaryEvidenceToolIds": ["get_account"]},
+    {"requiredEvidenceToolIds": ["get_account", "get_account"],
+     "satisfiedRequiredEvidenceToolIds": [], "discretionaryEvidenceToolIds": []},
+    {"requiredEvidenceToolIds": [" "], "satisfiedRequiredEvidenceToolIds": [],
+     "discretionaryEvidenceToolIds": []},
+    None,
+])
+def test_evidence_progress_rejects_missing_malformed_or_merged_payload(payload):
+    with pytest.raises(EnvelopeError):
+        CopilotEventEnvelope(
+            id="evt_progress", seq=1, run_id="run_progress", kind="evidence_progress",
+            ts=utc_now_iso(), payload=payload,  # type: ignore[arg-type]
+        )
