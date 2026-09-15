@@ -47,9 +47,6 @@
 - Go slog: event-processor uses stdlib slog with JSON handler for structured logging.
 
 ## Learnings
-- Trajectory evaluation should score directly against the raw `trace.json` + `expected.json` contract instead of introducing `azure-ai-evaluation` or a separate service boundary.
-- Persisting trajectory results in Cosmos under `copilot-trajectory-evals` with partition key `/sessionId` matches the session-centric trace structure and keeps eval runs easy to aggregate by session.
-- Default fixture loading should resolve relative to the repo root (`tests/fixtures/trajectories`) with a config override, avoiding hardcoded absolute paths.
 - Azure Managed Redis (Balanced B0) uses port 10000 with TLS, not standard 6379
 - Redis auth is dual-mode: AZURE_CLIENT_ID presence triggers Entra ID token auth (cloud/AKS), absence uses connection string password (local docker-compose)
 - Go event-processor (src/event-processor/main.go) has the reference implementation for dual-mode Redis connection parsing
@@ -502,9 +499,6 @@ This pattern applies to all Python services using the FastAPI DI pattern introdu
 **Outcome:** Python portion of #109 complete. Waiting for Basher to finish .NET services.
 
 ## Learnings
-- Trajectory evaluation should score directly against the raw `trace.json` + `expected.json` contract instead of introducing `azure-ai-evaluation` or a separate service boundary.
-- Persisting trajectory results in Cosmos under `copilot-trajectory-evals` with partition key `/sessionId` matches the session-centric trace structure and keeps eval runs easy to aggregate by session.
-- Default fixture loading should resolve relative to the repo root (`tests/fixtures/trajectories`) with a config override, avoiding hardcoded absolute paths.
 - FastAPI automatically generates OpenAPI 3.1.0 specs at runtime via `app.openapi()` method — no external tools needed
 - OpenAPI generation requires importing the FastAPI app, which triggers all module-level code (logging setup, telemetry init, etc.) — acceptable for offline spec generation
 - Azure AI SDK emits experimental warnings at import time for preview features (MemoryStore, SkillResource) — suppress with PYTHONWARNINGS=ignore if needed
@@ -642,9 +636,6 @@ After: `"Here are your current balances by account, using masked account numbers
 **Deploy:** `task cloud:build:chatbot-service` → `task cloud:deploy` (auto rollout restart per Coordinator integration in Taskfile commit e57d5f0).
 
 ## Learnings
-- Trajectory evaluation should score directly against the raw `trace.json` + `expected.json` contract instead of introducing `azure-ai-evaluation` or a separate service boundary.
-- Persisting trajectory results in Cosmos under `copilot-trajectory-evals` with partition key `/sessionId` matches the session-centric trace structure and keeps eval runs easy to aggregate by session.
-- Default fixture loading should resolve relative to the repo root (`tests/fixtures/trajectories`) with a config override, avoiding hardcoded absolute paths.
 - Always verify the **exact** downstream URL/path against the producing controller before assuming a deeper auth/identity bug. The #117 JWT-forwarding pattern was a tempting hypothesis but a `git grep` of the controller's routes ruled it out in 30 seconds.
 - The chatbot tool error path swallows the HTTP status code into a generic "couldn't retrieve" message visible to users. Worth considering surfacing the status (or at least logging at error not warning) so the next 4xx vs 5xx is faster to triage from logs alone — current logger emits at WARN with the body truncated to 200 chars, which was sufficient here but only because we re-reproduced from the cluster.
 - Cross-service JSON contract drift (`accountType` vs `type`) silently produced empty fields. Defensive `.get(primary, .get(legacy, default))` is the lightweight fix until a shared schema/types story exists. A future improvement would be Pydantic models for inbound data in chatbot tools, mirroring what frontend already enforces.
@@ -692,9 +683,6 @@ EvalItem(
 Note `[request.system_prompt]` (list-wrapped) — `Message`'s `contents` is a `Sequence`, so passing a bare string causes Python to iterate it character-by-character and produce N `TextContent` parts.
 
 ## Learnings
-- Trajectory evaluation should score directly against the raw `trace.json` + `expected.json` contract instead of introducing `azure-ai-evaluation` or a separate service boundary.
-- Persisting trajectory results in Cosmos under `copilot-trajectory-evals` with partition key `/sessionId` matches the session-centric trace structure and keeps eval runs easy to aggregate by session.
-- Default fixture loading should resolve relative to the repo root (`tests/fixtures/trajectories`) with a config override, avoiding hardcoded absolute paths.
 
 - **`agent_framework.Message` API shape:** Construct positionally as `Message(role, contents)` where `role` is `"system"|"user"|"assistant"` (string literal) and `contents` is a **list** of strings / `Content` objects. Do NOT use `Message.system(...)` or `Message.user(...)` — those don't exist. Always wrap a single string in a list, otherwise iteration over the string produces one TextContent per character.
 - **`agent_framework._evaluation.EvalItem` API shape:** `EvalItem(conversation=[...messages...], expected_output=..., tools=..., context=...)`. Not `input=`/`output=`.
@@ -1099,9 +1087,6 @@ All service Dockerfiles used Docker Hub base images (python:3.11-slim, node:20-a
 
 
 ## Learnings
-- Trajectory evaluation should score directly against the raw `trace.json` + `expected.json` contract instead of introducing `azure-ai-evaluation` or a separate service boundary.
-- Persisting trajectory results in Cosmos under `copilot-trajectory-evals` with partition key `/sessionId` matches the session-centric trace structure and keeps eval runs easy to aggregate by session.
-- Default fixture loading should resolve relative to the repo root (`tests/fixtures/trajectories`) with a config override, avoiding hardcoded absolute paths.
 
 ### Azure Linux Base Images
 - Azure Linux base/python:3.12 ships without shadow-utils — use numeric `USER 1001` instead of `useradd`.
@@ -1255,9 +1240,6 @@ All service Dockerfiles used Docker Hub base images (python:3.11-slim, node:20-a
 **Solution:** Kept Azure/AKS untouched, restored the image-baked `src/ui-app/nginx.conf`, mounted a local-only UI nginx override in docker-compose, and set `dns_search: ["."]` on both `gateway` and `ui-app` so Docker containers do not inherit host search domains.
 
 ## Learnings
-- Trajectory evaluation should score directly against the raw `trace.json` + `expected.json` contract instead of introducing `azure-ai-evaluation` or a separate service boundary.
-- Persisting trajectory results in Cosmos under `copilot-trajectory-evals` with partition key `/sessionId` matches the session-centric trace structure and keeps eval runs easy to aggregate by session.
-- Default fixture loading should resolve relative to the repo root (`tests/fixtures/trajectories`) with a config override, avoiding hardcoded absolute paths.
 - Docker Compose containers can inherit host DNS search domains; host `search denicolafamily.com` plus Docker `options ndots:0` can make nginx `resolver` + variable `proxy_pass` resolve a short service name like `user-service` as an external wildcard host, causing misleading backend 404s.
 - Fix the leak locally with `dns_search: ["."]`; if nginx still cannot safely resolve dynamic upstreams, use startup-resolved static upstreams only for services guaranteed to be running.
 - AKS-safe local proxy pattern: never edit image-baked `src/ui-app/nginx.conf` for local `/api/*` proxying; mount a local-only override such as `infrastructure/local/ui-app.nginx.conf` from docker-compose while Azure/AKS continues using Istio ingress routing.
@@ -1389,9 +1371,6 @@ uv pip install --python .venv 'pytest>=8.3,<10.0' && uv run --python .venv pytes
 **Deliverable:** `docs/design/banker-copilot-policy-engine.md` (design only — no service code written).
 
 ### Learnings
-- Trajectory evaluation should score directly against the raw `trace.json` + `expected.json` contract instead of introducing `azure-ai-evaluation` or a separate service boundary.
-- Persisting trajectory results in Cosmos under `copilot-trajectory-evals` with partition key `/sessionId` matches the session-centric trace structure and keeps eval runs easy to aggregate by session.
-- Default fixture loading should resolve relative to the repo root (`tests/fixtures/trajectories`) with a config override, avoiding hardcoded absolute paths.
 
 **Foundry stack in this repo is Python-only, and that decides the language question.**
 Measured, not assumed: `ai-service`, `chatbot-service`, and `account-opening-service` all pin
@@ -1473,9 +1452,6 @@ Brian ruled on Q1 and Danny overruled my §1.3 language recommendation. Both wri
 `docs/design/banker-copilot-policy-engine.md`.
 
 ### Learnings
-- Trajectory evaluation should score directly against the raw `trace.json` + `expected.json` contract instead of introducing `azure-ai-evaluation` or a separate service boundary.
-- Persisting trajectory results in Cosmos under `copilot-trajectory-evals` with partition key `/sessionId` matches the session-centric trace structure and keeps eval runs easy to aggregate by session.
-- Default fixture loading should resolve relative to the repo root (`tests/fixtures/trajectories`) with a config override, avoiding hardcoded absolute paths.
 
 **Version a config artifact by content hash of the RESOLVED config, not the file bytes, and not
 a hand-maintained semver.** This project makes every threshold env-overridable, which means a
@@ -1611,9 +1587,6 @@ One KSA (`banking-workload-identity` → `banking_services` UAMI) for all 11 pod
 ## 2026-09-04 — Final rulings: lifecycle collapse, hash display, denial reasons, self-cosign (amendment)
 
 ### Learnings
-- Trajectory evaluation should score directly against the raw `trace.json` + `expected.json` contract instead of introducing `azure-ai-evaluation` or a separate service boundary.
-- Persisting trajectory results in Cosmos under `copilot-trajectory-evals` with partition key `/sessionId` matches the session-centric trace structure and keeps eval runs easy to aggregate by session.
-- Default fixture loading should resolve relative to the repo root (`tests/fixtures/trajectories`) with a config override, avoiding hardcoded absolute paths.
 
 **Collapsing a redundant state is cheap before the queries exist and expensive after.** `expired`
 carried a distinction `terminalReason` already carried. The fix was nearly free today; once
@@ -1781,9 +1754,6 @@ Plus permanent `payloadHash` display on every approval card. When policy escalat
 ## Session: authority-service Phase 1 implementation (epic #332)
 
 ### Learnings
-- Trajectory evaluation should score directly against the raw `trace.json` + `expected.json` contract instead of introducing `azure-ai-evaluation` or a separate service boundary.
-- Persisting trajectory results in Cosmos under `copilot-trajectory-evals` with partition key `/sessionId` matches the session-centric trace structure and keeps eval runs easy to aggregate by session.
-- Default fixture loading should resolve relative to the repo root (`tests/fixtures/trajectories`) with a config override, avoiding hardcoded absolute paths.
 
 **The service exists and runs.** `src/authority-service/` builds clean (0 warnings, 0 errors) on
 net10.0, 94/94 unit tests pass in `src/authority-service.UnitTests/`, and I ran the real thing
@@ -1863,9 +1833,6 @@ decision note; it will burn the next person on any of our services, not just thi
 ## Session: Danny's schema arbitration applied (epic #332)
 
 ### Learnings
-- Trajectory evaluation should score directly against the raw `trace.json` + `expected.json` contract instead of introducing `azure-ai-evaluation` or a separate service boundary.
-- Persisting trajectory results in Cosmos under `copilot-trajectory-evals` with partition key `/sessionId` matches the session-centric trace structure and keeps eval runs easy to aggregate by session.
-- Default fixture loading should resolve relative to the repo root (`tests/fixtures/trajectories`) with a config override, avoiding hardcoded absolute paths.
 
 **Danny's two removals landed, and the mechanism behind them found three more.** He ruled out
 `execution.signedUnderPolicyVersion` (a second copy of `policy.policyVersion` in the same
