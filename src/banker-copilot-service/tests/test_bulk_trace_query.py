@@ -8,6 +8,8 @@ path through it that can run without a `sessionId` predicate.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -15,6 +17,8 @@ from conftest import judging_assessor, shipped_assessment_limits
 from tests.conftest import make_token
 
 from test_api import BANKER, _auth, client  # noqa: F401 - reused fixture + helpers
+
+_TERMINAL_STATUSES = {"completed", "failed", "awaiting_approval", "denied"}
 
 
 def _start_session_and_run(client: TestClient, objective: str = "x") -> tuple[str, str]:
@@ -25,6 +29,30 @@ def _start_session_and_run(client: TestClient, objective: str = "x") -> tuple[st
         f"/api/copilot/sessions/{session['sessionId']}/runs", json={}, headers=_auth(**BANKER)
     ).json()
     return session["sessionId"], run["runId"]
+
+
+def _start_session_and_wait_for_terminal_run(
+    client: TestClient, objective: str = "x"
+) -> tuple[str, str]:
+    """Like ``_start_session_and_run``, but does not return until the run is done emitting.
+
+    A run executes on a background task (``asyncio.create_task`` in ``sessions.py``), so the
+    frame count for a run is not stable the instant ``POST /runs`` returns — it is stable once
+    the run reaches a terminal status. A caller that needs to snapshot "every frame this run
+    will ever produce" and compare it against a later, filtered snapshot must wait here first,
+    or the two snapshots are racing the same background task rather than comparing a fixed set.
+    """
+    session_id, run_id = _start_session_and_run(client, objective)
+    for _ in range(200):
+        status = client.get(
+            f"/api/copilot/runs/{run_id}", headers=_auth(**BANKER)
+        ).json().get("status")
+        if status in _TERMINAL_STATUSES:
+            break
+        time.sleep(0.01)
+    else:
+        raise AssertionError(f"run {run_id} did not reach a terminal status in time")
+    return session_id, run_id
 
 
 def test_missing_session_id_is_rejected_not_defaulted_to_unscoped(client):
@@ -99,7 +127,7 @@ def test_unknown_kind_is_a_422_not_a_silently_empty_result(client):
 
 
 def test_since_excludes_frames_before_it(client):
-    session_id, _run_id = _start_session_and_run(client)
+    session_id, _run_id = _start_session_and_wait_for_terminal_run(client)
     all_frames = client.get(
         "/api/copilot/traces", params={"sessionId": session_id}, headers=_auth(**BANKER)
     ).json()["frames"]
