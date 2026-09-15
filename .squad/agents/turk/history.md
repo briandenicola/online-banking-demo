@@ -3773,15 +3773,3 @@ caller/environment instruction input, or a shared merge helper. The supervisor's
 comes from blind construction and its narrow `(spawn, own_evidence)` signature; the prompt's
 injection control comes from structural JSON fencing and explicit untrusted-data labels. A future
 customization need must be concrete, bounded, audited, and fail loudly before any seam is added.
-
-## 2026-09-15 — Golden trajectory corpus (#375)
-
-Captured five static banker-copilot trajectories by driving the real FastAPI app through
-`TestClient` in-process with deterministic, in-process downstream doubles. The persisted trace
-endpoint produced the committed `trace.json` files; no trace was hand-fabricated. Scenarios cover
-L1 flagged-transaction resolution, L2 escalation, account-opening review, prompt-injection
-resistance, and L2 supervisor fanout. Added `tests/fixtures/trajectories/verify.py`, which checks
-gapless sequence numbers, monotonic server timestamps, tool trace/span correlation, model-call
-telemetry when present, and expected outcome labels. The service suite passed 580 tests (18
-deselected). Root-level pytest is not the requested command and has pre-existing multi-package
-`tests` import collisions; the required command from `src/banker-copilot-service` is green.
