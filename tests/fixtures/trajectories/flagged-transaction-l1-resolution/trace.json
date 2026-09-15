@@ -1,0 +1,690 @@
+{
+  "runId": "run_d0a32f09385f4856",
+  "frameCount": 32,
+  "traceDegraded": false,
+  "frames": [
+    {
+      "id": "evt_3337a95e2d024c54a9ae",
+      "seq": 1,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "run.started",
+      "ts": "2026-09-15T19:41:53.927776Z",
+      "payload": {
+        "taskId": "run_d0a32f09385f4856",
+        "title": "Review flagged transaction tx_l1 and clear it after checking the account.",
+        "intent": "Review flagged transaction tx_l1 and clear it after checking the account.",
+        "actor": {
+          "id": "usr_demo",
+          "username": "banker@example.com"
+        },
+        "startedAt": "2026-09-15T19:41:53.927765Z"
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_21359f82cd0f4dc0bf3d",
+      "seq": 2,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "plan.proposed",
+      "ts": "2026-09-15T19:41:53.927818Z",
+      "payload": {
+        "version": 1,
+        "steps": [
+          {
+            "id": "step_1",
+            "index": 0,
+            "title": "Gather evidence: get_flagged_transaction",
+            "status": "pending",
+            "kind": "tool",
+            "toolId": "get_flagged_transaction"
+          },
+          {
+            "id": "step_2",
+            "index": 1,
+            "title": "Gather evidence: get_account",
+            "status": "pending",
+            "kind": "tool",
+            "toolId": "get_account"
+          },
+          {
+            "id": "step_3",
+            "index": 2,
+            "title": "Gather evidence: list_account_transactions",
+            "status": "pending",
+            "kind": "tool",
+            "toolId": "list_account_transactions"
+          },
+          {
+            "id": "step_4",
+            "index": 3,
+            "title": "Assess the evidence",
+            "status": "pending",
+            "kind": "assess"
+          },
+          {
+            "id": "step_5",
+            "index": 4,
+            "title": "Assemble evidence bundle",
+            "status": "pending",
+            "kind": "artifact"
+          },
+          {
+            "id": "step_6",
+            "index": 5,
+            "title": "Propose transaction.flag.review for human signature",
+            "status": "pending",
+            "kind": "propose"
+          }
+        ]
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_776bcefb9e594277a6dd",
+      "seq": 3,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "step.started",
+      "ts": "2026-09-15T19:41:53.927842Z",
+      "payload": {
+        "stepId": "step_1",
+        "index": 0,
+        "title": "Gather evidence: get_flagged_transaction"
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_8a524dd42f8b4597a877",
+      "seq": 4,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "tool.started",
+      "ts": "2026-09-15T19:41:53.927863Z",
+      "payload": {
+        "toolCallId": "call_4",
+        "stepId": "step_1",
+        "name": "get_flagged_transaction",
+        "toolId": "get_flagged_transaction",
+        "mode": "plan",
+        "args": {
+          "txId": "tx_l1"
+        },
+        "attempt": 1,
+        "traceId": "trace_flagged-transaction-l1-resolution",
+        "spanId": "span_2f57715c1b88458694b7"
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_bb1d8ea52d7c499eba24",
+      "seq": 5,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "sensitive_read_recorded",
+      "ts": "2026-09-15T19:41:53.927887Z",
+      "payload": {
+        "toolId": "get_flagged_transaction",
+        "scope": "session",
+        "context": {
+          "argumentKeys": [
+            "txId"
+          ]
+        }
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_47f54e7b30ad4837abd4",
+      "seq": 6,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "tool.completed",
+      "ts": "2026-09-15T19:41:53.927920Z",
+      "payload": {
+        "toolCallId": "call_4",
+        "name": "get_flagged_transaction",
+        "toolId": "get_flagged_transaction",
+        "mode": "plan",
+        "durationMs": 1,
+        "resultSummary": "object with amount, id, status",
+        "result": {
+          "id": "tx_demo",
+          "status": "flagged",
+          "amount": 1250
+        },
+        "traceId": "trace_flagged-transaction-l1-resolution",
+        "spanId": "span_2f57715c1b88458694b7"
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_9fd1539fa63e4d8f89e5",
+      "seq": 7,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "evidence_progress",
+      "ts": "2026-09-15T19:41:53.927931Z",
+      "payload": {
+        "requiredEvidenceToolIds": [
+          "get_flagged_transaction",
+          "get_account",
+          "list_account_transactions"
+        ],
+        "satisfiedRequiredEvidenceToolIds": [
+          "get_flagged_transaction"
+        ],
+        "discretionaryEvidenceToolIds": []
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_f4bfb976053947a092e0",
+      "seq": 8,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "step.completed",
+      "ts": "2026-09-15T19:41:53.927944Z",
+      "payload": {
+        "stepId": "step_1",
+        "durationMs": 0
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_93c47d497e5d4901ab0d",
+      "seq": 9,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "step.started",
+      "ts": "2026-09-15T19:41:53.927950Z",
+      "payload": {
+        "stepId": "step_2",
+        "index": 1,
+        "title": "Gather evidence: get_account"
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_fbc6e02f756748aea5aa",
+      "seq": 10,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "tool.started",
+      "ts": "2026-09-15T19:41:53.927961Z",
+      "payload": {
+        "toolCallId": "call_10",
+        "stepId": "step_2",
+        "name": "get_account",
+        "toolId": "get_account",
+        "mode": "plan",
+        "args": {
+          "accountId": "acc_1"
+        },
+        "attempt": 1,
+        "traceId": "trace_flagged-transaction-l1-resolution",
+        "spanId": "span_a8d30989c4cc4554bec1"
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_e495a5f5278341508424",
+      "seq": 11,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "tool.completed",
+      "ts": "2026-09-15T19:41:53.927973Z",
+      "payload": {
+        "toolCallId": "call_10",
+        "name": "get_account",
+        "toolId": "get_account",
+        "mode": "plan",
+        "durationMs": 1,
+        "resultSummary": "object with id, ownerId, status",
+        "result": {
+          "id": "acc_1",
+          "status": "open",
+          "ownerId": "usr_demo"
+        },
+        "traceId": "trace_flagged-transaction-l1-resolution",
+        "spanId": "span_a8d30989c4cc4554bec1"
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_8eefa080b8024a7199f6",
+      "seq": 12,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "evidence_progress",
+      "ts": "2026-09-15T19:41:53.927981Z",
+      "payload": {
+        "requiredEvidenceToolIds": [
+          "get_flagged_transaction",
+          "get_account",
+          "list_account_transactions"
+        ],
+        "satisfiedRequiredEvidenceToolIds": [
+          "get_account",
+          "get_flagged_transaction"
+        ],
+        "discretionaryEvidenceToolIds": []
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_da00444d265f485c8ebd",
+      "seq": 13,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "step.completed",
+      "ts": "2026-09-15T19:41:53.927992Z",
+      "payload": {
+        "stepId": "step_2",
+        "durationMs": 0
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_f1d08a93009d40fc9d88",
+      "seq": 14,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "step.started",
+      "ts": "2026-09-15T19:41:53.927997Z",
+      "payload": {
+        "stepId": "step_3",
+        "index": 2,
+        "title": "Gather evidence: list_account_transactions"
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_1a091c0e6e2e409cbf6a",
+      "seq": 15,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "tool.started",
+      "ts": "2026-09-15T19:41:53.928010Z",
+      "payload": {
+        "toolCallId": "call_15",
+        "stepId": "step_3",
+        "name": "list_account_transactions",
+        "toolId": "list_account_transactions",
+        "mode": "plan",
+        "args": {
+          "accountId": "acc_1"
+        },
+        "attempt": 1,
+        "traceId": "trace_flagged-transaction-l1-resolution",
+        "spanId": "span_79159cb838f44953b800"
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_12d549835e1d445bb8e8",
+      "seq": 16,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "sensitive_read_recorded",
+      "ts": "2026-09-15T19:41:53.928021Z",
+      "payload": {
+        "toolId": "list_account_transactions",
+        "scope": "session",
+        "context": {
+          "argumentKeys": [
+            "accountId"
+          ]
+        }
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_9d41879a21264d41bcc3",
+      "seq": 17,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "tool.completed",
+      "ts": "2026-09-15T19:41:53.928035Z",
+      "payload": {
+        "toolCallId": "call_15",
+        "name": "list_account_transactions",
+        "toolId": "list_account_transactions",
+        "mode": "plan",
+        "durationMs": 1,
+        "resultSummary": "1 record(s)",
+        "result": [
+          {
+            "id": "tx_old",
+            "amount": 100,
+            "status": "posted"
+          }
+        ],
+        "traceId": "trace_flagged-transaction-l1-resolution",
+        "spanId": "span_79159cb838f44953b800"
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_44d58fed6f7f4e368e8f",
+      "seq": 18,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "evidence_progress",
+      "ts": "2026-09-15T19:41:53.928044Z",
+      "payload": {
+        "requiredEvidenceToolIds": [
+          "get_flagged_transaction",
+          "get_account",
+          "list_account_transactions"
+        ],
+        "satisfiedRequiredEvidenceToolIds": [
+          "get_account",
+          "get_flagged_transaction",
+          "list_account_transactions"
+        ],
+        "discretionaryEvidenceToolIds": []
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_d35aa36b46d644ceb9dd",
+      "seq": 19,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "step.completed",
+      "ts": "2026-09-15T19:41:53.928054Z",
+      "payload": {
+        "stepId": "step_3",
+        "durationMs": 0
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_9ff5db3b79d14b8c96f2",
+      "seq": 20,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "step.started",
+      "ts": "2026-09-15T19:41:53.928060Z",
+      "payload": {
+        "stepId": "step_4",
+        "index": 3,
+        "title": "Assess the evidence"
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_e09c499ec3b140b990b7",
+      "seq": 21,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "step.completed",
+      "ts": "2026-09-15T19:41:53.928255Z",
+      "payload": {
+        "stepId": "step_4",
+        "durationMs": 0,
+        "summary": "Primary assessment: proceed",
+        "rawReply": "{\"verdict\": \"proceed\", \"confidence\": 0.93, \"rationale\": \"The required evidence was gathered and is consistent with the requested review.\", \"keyFactors\": [{\"label\": \"required evidence gathered\", \"citedEvidenceIds\": [\"get_account\", \"get_flagged_transaction\", \"list_account_transactions\"]}], \"unverified\": [], \"requestedEvidence\": []}",
+        "assessmentPass": 1
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_f8a939154fb14d388b3d",
+      "seq": 22,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "step.completed",
+      "ts": "2026-09-15T19:41:53.928269Z",
+      "payload": {
+        "stepId": "step_4",
+        "durationMs": 0
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_5a9b15dd045148e386ae",
+      "seq": 23,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "step.started",
+      "ts": "2026-09-15T19:41:53.928276Z",
+      "payload": {
+        "stepId": "step_5",
+        "index": 4,
+        "title": "Assemble evidence bundle"
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_2959a0aa7d204d92b345",
+      "seq": 24,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "artifact.created",
+      "ts": "2026-09-15T19:41:53.928303Z",
+      "payload": {
+        "artifactId": "art_a2e3ec14410848da",
+        "kind": "evidence_bundle",
+        "title": "Evidence gathered",
+        "revision": 1,
+        "content": {
+          "get_flagged_transaction": {
+            "toolId": "get_flagged_transaction",
+            "arguments": {
+              "txId": "tx_l1"
+            },
+            "subject": {
+              "txId": "tx_l1"
+            },
+            "data": {
+              "id": "tx_demo",
+              "status": "flagged",
+              "amount": 1250
+            }
+          },
+          "get_account": {
+            "toolId": "get_account",
+            "arguments": {
+              "accountId": "acc_1"
+            },
+            "subject": {
+              "accountId": "acc_1"
+            },
+            "data": {
+              "id": "acc_1",
+              "status": "open",
+              "ownerId": "usr_demo"
+            }
+          },
+          "list_account_transactions": {
+            "toolId": "list_account_transactions",
+            "arguments": {
+              "accountId": "acc_1"
+            },
+            "subject": {
+              "accountId": "acc_1"
+            },
+            "data": [
+              {
+                "id": "tx_old",
+                "amount": 100,
+                "status": "posted"
+              }
+            ]
+          }
+        }
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_291d82428ee4457cad37",
+      "seq": 25,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "step.completed",
+      "ts": "2026-09-15T19:41:53.928310Z",
+      "payload": {
+        "stepId": "step_5",
+        "durationMs": 0
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_1c9458ba5a38469a963d",
+      "seq": 26,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "step.started",
+      "ts": "2026-09-15T19:41:53.928316Z",
+      "payload": {
+        "stepId": "step_6",
+        "index": 5,
+        "title": "Propose transaction.flag.review for human signature"
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_7b26b2090eb444d19858",
+      "seq": 27,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "mode_transition",
+      "ts": "2026-09-15T19:41:53.928325Z",
+      "payload": {
+        "from": "plan",
+        "to": "execute"
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_8411a91f97514485b300",
+      "seq": 28,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "tool.started",
+      "ts": "2026-09-15T19:41:53.928333Z",
+      "payload": {
+        "toolCallId": "call_28",
+        "stepId": "propose_action",
+        "name": "propose_action",
+        "toolId": "propose_action",
+        "mode": "execute",
+        "attempt": 1,
+        "traceId": "trace_flagged-transaction-l1-resolution",
+        "spanId": "span_313ba4eee33a44059059"
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_48e728389dbf4d3c81c9",
+      "seq": 29,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "tool.completed",
+      "ts": "2026-09-15T19:41:53.928360Z",
+      "payload": {
+        "toolCallId": "call_28",
+        "name": "propose_action",
+        "toolId": "propose_action",
+        "mode": "execute",
+        "durationMs": 0,
+        "resultSummary": "proposal admitted",
+        "traceId": "trace_flagged-transaction-l1-resolution",
+        "spanId": "span_313ba4eee33a44059059"
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_eb005d05e91647e78532",
+      "seq": 30,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "approval.required",
+      "ts": "2026-09-15T19:41:53.928376Z",
+      "payload": {
+        "approval": {
+          "id": "apr_transaction_flag_review",
+          "status": "pending",
+          "actionId": "transaction.flag.review",
+          "sessionId": "sess_be8276947c224110",
+          "requiredRung": "L1",
+          "baseRung": "L1",
+          "requiredSigners": 1,
+          "signaturesCollected": 0,
+          "payload": {
+            "transactionId": "tx_l1",
+            "accountId": "acc_1",
+            "amount": 1250,
+            "decision": "cleared",
+            "note": "reviewed"
+          },
+          "evidence": {
+            "get_flagged_transaction": {
+              "id": "tx_demo",
+              "status": "flagged",
+              "amount": 1250
+            },
+            "get_account": {
+              "id": "acc_1",
+              "status": "open",
+              "ownerId": "usr_demo"
+            },
+            "list_account_transactions": [
+              {
+                "id": "tx_old",
+                "amount": 100,
+                "status": "posted"
+              }
+            ]
+          },
+          "agentAssessment": {
+            "agentName": "Primary agent",
+            "evidenceToolIds": [
+              "get_account",
+              "get_flagged_transaction",
+              "list_account_transactions"
+            ],
+            "requiredEvidenceToolIds": [
+              "get_flagged_transaction",
+              "get_account",
+              "list_account_transactions"
+            ],
+            "discretionaryEvidenceToolIds": [],
+            "refusedEvidenceRequests": [],
+            "assessmentIterations": 1,
+            "converged": true,
+            "rationale": "The required evidence was gathered and is consistent with the requested review.",
+            "recommendation": "proceed",
+            "confidence": 0.93,
+            "keyFactors": [
+              {
+                "label": "required evidence gathered",
+                "citedEvidenceIds": [
+                  "get_account",
+                  "get_flagged_transaction",
+                  "list_account_transactions"
+                ]
+              }
+            ],
+            "citedEvidenceIds": [
+              "get_account",
+              "get_flagged_transaction",
+              "list_account_transactions"
+            ],
+            "mode": "scripted",
+            "modelDeployment": "trajectory-capture",
+            "promptSha256": "sha256:e90dce49384aa9827e438cb41e2d07d3c9f40b0faca977679dda028e4775e845",
+            "responseSha256": "sha256:0e73829b58bab699c0e6356d13d65039d3358da8aae8ce8c81c43b262f752e89",
+            "verdict": "PROCEED"
+          },
+          "policyVersion": "trajectory-capture-v1",
+          "firedEscalators": []
+        },
+        "policyVersion": "trajectory-capture-v1",
+        "requiredRung": "L1"
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_f7059d5fa3ba4450860c",
+      "seq": 31,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "step.completed",
+      "ts": "2026-09-15T19:41:53.928389Z",
+      "payload": {
+        "stepId": "step_6",
+        "durationMs": 0
+      },
+      "sessionId": "sess_be8276947c224110"
+    },
+    {
+      "id": "evt_bfdf2692718849ad8ed8",
+      "seq": 32,
+      "runId": "run_d0a32f09385f4856",
+      "kind": "run.done",
+      "ts": "2026-09-15T19:41:53.928396Z",
+      "payload": {
+        "status": "completed",
+        "durationMs": 0,
+        "finalArtifactIds": [
+          "art_a2e3ec14410848da"
+        ],
+        "finalSeq": 32
+      },
+      "sessionId": "sess_be8276947c224110"
+    }
+  ]
+}
