@@ -1358,3 +1358,9 @@ The 8-hour approval TTL override means no seeded approval reaches expiry inside 
 2. run a separate pass with these 9 env keys removed and the pod restarted.
 
 Marked as an affirmative observation for the audit trail — you may find it useful when planning next measurement phase.
+
+## 2026-09-15 — issue #370 instruction-merging QA
+
+Read the banker-copilot service README, complete primary_model.py and supervisor_model.py, related planner/fan-out/supervisor tests, pyproject configuration, and the BackgroundAgentsProvider decision record. The full service suite passed: `pytest -q` => 545 passed, 18 deselected, 2 warnings in 29.76s. No Turk feature code was present for post-change review; only an unrelated modified Turk history file was visible.
+
+Key learning: the fixed primary/supervisor instruction constants are safety contract surface, not generic prompt copy. No customization seam is warranted absent a concrete owner/use case. If a safety-first merge helper is later introduced, the decisive deterministic test must use hostile customization and prove the immutable action anchoring, untrusted-data boundary, adverse-action semantics, output contract, fail-closed guidance, and role-specific asymmetry survive in the actual client-bound prompt; prompt appearance alone is insufficient and live model behavior cannot replace the structural test.

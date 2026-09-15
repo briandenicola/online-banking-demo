@@ -3541,3 +3541,8 @@ real defect signs money to the wrong customer. Written to
   so the two readings are indistinguishable. Don't revert, don't enable, keep the flag at 0, re-run
   with the real prompt. **"I cannot tell, and here is the one artefact that would tell us" is a
   ruling.** Guessing to look decisive is not.
+- **Instruction text can be architecture.** In a model-backed safety path, untrusted-data
+  handling, action anchoring, adverse-action semantics, structured output, and role asymmetry are
+  load-bearing contract elements. Before exposing customization, identify the actual owner and
+  deployment need; absent both, keep the fixed preamble structurally first and preserve fencing
+  and structural injection tests rather than adding a decorative seam.

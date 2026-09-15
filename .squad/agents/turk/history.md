@@ -3758,3 +3758,18 @@ Also verified rather than assumed, since I had written a new banker-facing sente
 actually reaches the banker instead of being replaced by client copy; and the ConfigMap's
 `metadata.name` really is `banking-demo-config`, the Deployment's `envFrom` target. Either one
 wrong and the flag would have been set somewhere nothing reads.
+
+## 2026-09-15 — Instruction-merging spike (#370)
+
+Inspected the banker-copilot README, both planner model modules, prompt builders, and focused
+primary/supervisor tests. The fixed instruction constants contain load-bearing safety contracts
+(untrusted-data handling, action anchoring, adverse-action semantics, structured output, and the
+primary/supervisor asymmetry) plus situational role wording. Neither category is a deployment
+variable today: execution mode, model endpoint/deployment, and timeout already have explicit
+configuration seams outside the prompt.
+
+Ruling: keep both constants separate and byte-stable. Do not add a decorative toggle, arbitrary
+caller/environment instruction input, or a shared merge helper. The supervisor's independence
+comes from blind construction and its narrow `(spawn, own_evidence)` signature; the prompt's
+injection control comes from structural JSON fencing and explicit untrusted-data labels. A future
+customization need must be concrete, bounded, audited, and fail loudly before any seam is added.
