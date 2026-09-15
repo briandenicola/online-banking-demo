@@ -93,6 +93,7 @@ records what the system happened to emit rather than what evaluation needs.
 - `kind`, run mode, and `terminalReason` are **closed enums**. An unknown kind or invalid mode transition raises.
 - Each tool invocation carries its explicit run mode: ordinary manifest reads and both assessment arms are `plan`; the only `execute` invocation is `propose_action`, which still only submits to `authority-service` for human approval.
 - `mode_transition` is emitted exactly once at that proposal boundary, with the normal `runId` and `sessionId`.
+- `evidence_compacted` is emitted whenever a model-facing evidence payload is reduced, carrying the compacted ids and deterministic token estimates; it never removes an evidence id.
 - Persisted to the `copilot-traces` container (PK `/runId`); on sink failure the run
   continues but is marked `trace_degraded` — a degraded trace is reported, never faked.
 - Redaction is applied **at emit**, because persisted traces outlive the session. The
@@ -123,6 +124,7 @@ No IPs, CIDRs, thresholds or dollar amounts in code. All of it is config.
 | `COSMOS_DB_ENDPOINT` | Unset → in-memory stores, logged as such. |
 | `COPILOT_SESSIONS_CONTAINER`, `COPILOT_ARTIFACTS_CONTAINER`, `COPILOT_TRACES_CONTAINER` | Container names, config-driven so a rename happens once. |
 | `COPILOT_SSE_HEARTBEAT_SECONDS`, `COPILOT_SSE_REPLAY_WINDOW`, `COPILOT_SESSION_TTL_SECONDS`, `COPILOT_PLANNER_MAX_ITERATIONS`, `COPILOT_UPSTREAM_TIMEOUT_MS` | Runtime bounds. |
+| `COPILOT_MAX_EVIDENCE_TOKENS` | Maximum estimated evidence tokens handed to each model prompt; defaults to 64000. Invalid values refuse startup. |
 | `AZURE_AI_PROJECT_ENDPOINT`, `AZURE_AI_MODEL_DEPLOYMENT` | Planner model. Absent → deterministic planner, logged. |
 
 Retired keys are **rejected at load**, not ignored (`ConfigurationError`). A silently-ignored

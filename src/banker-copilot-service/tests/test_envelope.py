@@ -41,6 +41,7 @@ UI_CONTRACT_KINDS = frozenset(
         "run.done",
         "heartbeat",
         "mode_transition",
+        "evidence_compacted",
     }
 )
 
@@ -262,3 +263,38 @@ def test_tool_invocation_requires_mode_and_execute_is_reserved_for_proposal():
             ts=utc_now_iso(),
             payload={"name": "get_account", "mode": "execute"},
         )
+
+
+def test_evidence_compacted_payload_is_closed_and_validated():
+    payload = {
+        "compactedIds": ["get_transactions"],
+        "originalTokensEstimate": 100,
+        "compactedTokensEstimate": 20,
+    }
+    envelope = CopilotEventEnvelope(
+        id="evt_compact",
+        seq=1,
+        run_id="run_compact",
+        kind="evidence_compacted",
+        ts=utc_now_iso(),
+        payload=payload,
+    )
+    assert envelope.to_wire()["payload"] == payload
+
+    malformed = (
+        {"compactedIds": [], "originalTokensEstimate": 1},
+        {"compactedIds": ["x"], "originalTokensEstimate": -1, "compactedTokensEstimate": 0},
+        {"compactedIds": [], "originalTokensEstimate": 1, "compactedTokensEstimate": 0},
+        {"compactedIds": ["x"], "originalTokensEstimate": 1, "compactedTokensEstimate": 2},
+        {"compactedIds": [1], "originalTokensEstimate": 1, "compactedTokensEstimate": 0},
+    )
+    for invalid in malformed:
+        with pytest.raises(EnvelopeError):
+            CopilotEventEnvelope(
+                id="evt_compact",
+                seq=1,
+                run_id="run_compact",
+                kind="evidence_compacted",
+                ts=utc_now_iso(),
+                payload=invalid,
+            )

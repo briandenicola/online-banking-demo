@@ -38,6 +38,7 @@ from app.tools.executor import ToolExecutor, ToolInvocationError
 from app.tools.propose import AuthorityClient, ProposeRejected
 from app.tools.registry import ToolRegistry
 from app.planner.approval_view import primary_proposal_assessment, primary_wire_assessment
+from app.planner.evidence_compaction import compact_evidence
 from app.planner.evidence_ceiling import (
     ITERATIONS_EXHAUSTED,
     READ_REFUSED_403,
@@ -532,6 +533,7 @@ class Planner:
         fanout=None,
         action_metadata_descriptions: ActionMetadata | None = None,
         propose_enabled: bool = True,
+        max_evidence_tokens: int = 64000,
     ) -> None:
         self._registry = registry
         self._executor = executor
@@ -564,6 +566,7 @@ class Planner:
         # the opposite: `Settings.propose_enabled` is False unless COPILOT_PROPOSE_ENABLED is
         # set, so the service on stage is leashed and an unset env var fails closed.
         self._propose_enabled = propose_enabled
+        self._max_evidence_tokens = max_evidence_tokens
 
     async def run(self, request: PlannerRequest, stream: RunStream) -> None:
         started = time.monotonic()
@@ -1420,8 +1423,18 @@ class Planner:
         defect (§P5.1). The only edge stage 1 does not traverse is the executor invoking an extra
         tool — and the executor is traversed on every run anyway by the required evidence.
         """
+        prompt_evidence, compaction = compact_evidence(evidence, self._max_evidence_tokens)
+        if compaction.compacted_ids:
+            await stream.emit(
+                "evidence_compacted",
+                {
+                    "compactedIds": list(compaction.compacted_ids),
+                    "originalTokensEstimate": compaction.original_tokens_estimate,
+                    "compactedTokensEstimate": compaction.compacted_tokens_estimate,
+                },
+            )
         assessment = await self._assessor(
-            request.objective, request.action_id, request.payload, evidence
+            request.objective, request.action_id, request.payload, prompt_evidence
         )
         record.iterations += 1
         record.assessment = assessment

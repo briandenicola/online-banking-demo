@@ -185,6 +185,7 @@ async def lifespan(app: FastAPI):
         runs=app.state.runs,
         limits=fanout_limits,
         decider=decider,
+        max_evidence_tokens=settings.max_evidence_tokens,
     )
 
     # The PRIMARY's assessor, by the same declared-mode rule as the supervisor's decider. In
@@ -236,6 +237,7 @@ async def lifespan(app: FastAPI):
         fanout=app.state.fanout,
         action_metadata_descriptions=action_descriptions,
         propose_enabled=settings.propose_enabled,
+        max_evidence_tokens=settings.max_evidence_tokens,
     )
 
     app.state.adverse_proposal_mode = adverse_proposal_mode()

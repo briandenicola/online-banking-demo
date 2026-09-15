@@ -42,6 +42,7 @@ import structlog
 
 from app.events.bus import RunStream, RunStreamRegistry
 from app.planner.limits import FanoutLimits
+from app.planner.evidence_compaction import compact_evidence
 from app.planner.model_call import Attribution
 from app.planner.verdicts import AGREE, NOT_COMPARABLE, compare_verdicts, is_verdict
 from app.planner.approval_view import (
@@ -439,12 +440,14 @@ class FanOutEngine:
         runs: RunStreamRegistry,
         limits: FanoutLimits,
         decider: Decider = deterministic_decider,
+        max_evidence_tokens: int = 64000,
     ) -> None:
         self._registry = registry
         self._executor = executor
         self._runs = runs
         self._limits = limits
         self._decider = decider
+        self._max_evidence_tokens = max_evidence_tokens
 
     async def run_second_opinion(
         self,
@@ -569,7 +572,28 @@ class FanOutEngine:
             tool_budget=self._limits.per_subagent_tool_budget,
             on_read=_on_read,
         )
-        supervisor = SupervisorAgent(reader=reader, decider=self._decider)
+
+        async def compacting_decider(
+            supervisor_input: SupervisorInput, own_evidence: Mapping[str, Any]
+        ) -> SecondOpinion:
+            prompt_evidence, compaction = compact_evidence(
+                own_evidence, self._max_evidence_tokens
+            )
+            if compaction.compacted_ids:
+                await stream.emit(
+                    "evidence_compacted",
+                    {
+                        "compactedIds": list(compaction.compacted_ids),
+                        "originalTokensEstimate": compaction.original_tokens_estimate,
+                        "compactedTokensEstimate": compaction.compacted_tokens_estimate,
+                    },
+                )
+            opinion = self._decider(supervisor_input, prompt_evidence)
+            if inspect.isawaitable(opinion):
+                opinion = await opinion
+            return opinion
+
+        supervisor = SupervisorAgent(reader=reader, decider=compacting_decider)
 
         # (2) The supervisor works from its OWN reads, under the wall-clock ceiling.
         try:

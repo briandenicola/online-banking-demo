@@ -92,6 +92,13 @@ def _env_int(name: str, default: int) -> int:
         raise ConfigurationError(f"{name} must be an integer, got {raw!r}") from exc
 
 
+def _env_positive_int(name: str, default: int) -> int:
+    value = _env_int(name, default)
+    if value <= 0:
+        raise ConfigurationError(f"{name} must be greater than zero, got {value!r}")
+    return value
+
+
 def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes"}
 
@@ -199,6 +206,7 @@ class Settings:
     sse_replay_window: int
     session_ttl_seconds: int
     planner_max_iterations: int
+    max_evidence_tokens: int
     upstream_timeout_ms_default: int
     downstream: dict[str, str] = field(default_factory=dict)
 
@@ -280,6 +288,7 @@ def load_settings() -> Settings:
         sse_replay_window=_env_int("COPILOT_SSE_REPLAY_WINDOW", 500),
         session_ttl_seconds=_env_int("COPILOT_SESSION_TTL_SECONDS", 3600),
         planner_max_iterations=_env_int("COPILOT_PLANNER_MAX_ITERATIONS", 12),
+        max_evidence_tokens=_env_positive_int("COPILOT_MAX_EVIDENCE_TOKENS", 64000),
         upstream_timeout_ms_default=_env_int("COPILOT_UPSTREAM_TIMEOUT_MS", 8000),
         downstream=_collect_downstream(),
     )

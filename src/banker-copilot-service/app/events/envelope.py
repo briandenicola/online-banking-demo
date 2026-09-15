@@ -44,6 +44,7 @@ EVENT_KINDS: frozenset[str] = frozenset(
         "run.done",
         "heartbeat",
         "mode_transition",
+        "evidence_compacted",
     }
 )
 
@@ -91,6 +92,8 @@ class CopilotEventEnvelope:
             _validate_terminal(self.payload)
         elif self.kind == "mode_transition":
             _validate_mode_transition(self.payload)
+        elif self.kind == "evidence_compacted":
+            _validate_evidence_compacted(self.payload)
         elif self.kind in _TOOL_EVENT_KINDS:
             _validate_tool_invocation(self.kind, self.payload)
 
@@ -159,6 +162,26 @@ def _validate_mode_transition(payload: dict[str, Any]) -> None:
             "mode_transition payload must be exactly {'from': 'plan', 'to': 'execute'}"
         )
 
+
+def _validate_evidence_compacted(payload: dict[str, Any]) -> None:
+    if set(payload) != {"compactedIds", "originalTokensEstimate", "compactedTokensEstimate"}:
+        raise EnvelopeError(
+            "evidence_compacted payload must be exactly {'compactedIds', "
+            "'originalTokensEstimate', 'compactedTokensEstimate'}"
+        )
+    ids = payload["compactedIds"]
+    if (
+        not isinstance(ids, list)
+        or not ids
+        or any(not isinstance(item, str) or not item for item in ids)
+    ):
+        raise EnvelopeError("evidence_compacted compactedIds must be a non-empty list of non-empty strings")
+    for field in ("originalTokensEstimate", "compactedTokensEstimate"):
+        value = payload[field]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise EnvelopeError(f"evidence_compacted {field} must be a non-negative integer")
+    if payload["compactedTokensEstimate"] > payload["originalTokensEstimate"]:
+        raise EnvelopeError("evidence_compacted compacted estimate cannot exceed original estimate")
 
 def _validate_tool_invocation(kind: str, payload: dict[str, Any]) -> None:
     mode = payload.get("mode")
