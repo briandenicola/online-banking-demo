@@ -1,0 +1,11 @@
+{
+  "scenario": "flagged-transaction-l2-escalation",
+  "actionId": "transaction.flag.review",
+  "requiredRung": "L2",
+  "terminalStatus": "completed",
+  "labels": [
+    "flagged_transaction",
+    "escalates_l2",
+    "dual_control"
+  ]
+}

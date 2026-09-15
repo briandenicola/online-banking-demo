@@ -1,0 +1,11 @@
+{
+  "scenario": "supervisor-fanout-multiple-parallel-calls",
+  "actionId": "transaction.flag.review",
+  "requiredRung": "L2",
+  "terminalStatus": "completed",
+  "labels": [
+    "supervisor_fanout",
+    "multiple_parallel_calls",
+    "independent_second_opinion"
+  ]
+}

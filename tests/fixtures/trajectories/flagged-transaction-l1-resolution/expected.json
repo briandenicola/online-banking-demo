@@ -1,0 +1,10 @@
+{
+  "scenario": "flagged-transaction-l1-resolution",
+  "actionId": "transaction.flag.review",
+  "requiredRung": "L1",
+  "terminalStatus": "completed",
+  "labels": [
+    "flagged_transaction",
+    "resolves_l1"
+  ]
+}

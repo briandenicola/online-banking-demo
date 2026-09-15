@@ -1,0 +1,10 @@
+{
+  "scenario": "account-opening-application-review",
+  "actionId": "account_opening.application.review",
+  "requiredRung": "L1",
+  "terminalStatus": "completed",
+  "labels": [
+    "account_opening",
+    "application_review"
+  ]
+}

@@ -1,0 +1,553 @@
+{
+  "runId": "run_5c87b6d86b904584",
+  "frameCount": 26,
+  "traceDegraded": false,
+  "frames": [
+    {
+      "id": "evt_f27f7e5281d348dfa78d",
+      "seq": 1,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "run.started",
+      "ts": "2026-09-15T19:41:54.119728Z",
+      "payload": {
+        "taskId": "run_5c87b6d86b904584",
+        "title": "Review account-opening application app_1 and approve it based on the application audit.",
+        "intent": "Review account-opening application app_1 and approve it based on the application audit.",
+        "actor": {
+          "id": "usr_demo",
+          "username": "banker@example.com"
+        },
+        "startedAt": "2026-09-15T19:41:54.119716Z"
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_50311f6a5d364dbea529",
+      "seq": 2,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "plan.proposed",
+      "ts": "2026-09-15T19:41:54.119768Z",
+      "payload": {
+        "version": 1,
+        "steps": [
+          {
+            "id": "step_1",
+            "index": 0,
+            "title": "Gather evidence: get_account_application",
+            "status": "pending",
+            "kind": "tool",
+            "toolId": "get_account_application"
+          },
+          {
+            "id": "step_2",
+            "index": 1,
+            "title": "Gather evidence: get_application_audit",
+            "status": "pending",
+            "kind": "tool",
+            "toolId": "get_application_audit"
+          },
+          {
+            "id": "step_3",
+            "index": 2,
+            "title": "Assess the evidence",
+            "status": "pending",
+            "kind": "assess"
+          },
+          {
+            "id": "step_4",
+            "index": 3,
+            "title": "Assemble evidence bundle",
+            "status": "pending",
+            "kind": "artifact"
+          },
+          {
+            "id": "step_5",
+            "index": 4,
+            "title": "Propose account_opening.application.review for human signature",
+            "status": "pending",
+            "kind": "propose"
+          }
+        ]
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_d8bd2202c5ad4b5faa9d",
+      "seq": 3,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "step.started",
+      "ts": "2026-09-15T19:41:54.119795Z",
+      "payload": {
+        "stepId": "step_1",
+        "index": 0,
+        "title": "Gather evidence: get_account_application"
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_67050278a93644a48155",
+      "seq": 4,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "tool.started",
+      "ts": "2026-09-15T19:41:54.119815Z",
+      "payload": {
+        "toolCallId": "call_4",
+        "stepId": "step_1",
+        "name": "get_account_application",
+        "toolId": "get_account_application",
+        "mode": "plan",
+        "args": {
+          "applicationId": "app_1"
+        },
+        "attempt": 1,
+        "traceId": "trace_account-opening-application-review",
+        "spanId": "span_154d8a5d787f4721aa08"
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_8600ad03c28b40b58071",
+      "seq": 5,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "sensitive_read_recorded",
+      "ts": "2026-09-15T19:41:54.119839Z",
+      "payload": {
+        "toolId": "get_account_application",
+        "scope": "session",
+        "context": {
+          "argumentKeys": [
+            "applicationId"
+          ]
+        }
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_d39e057a73ac4296934a",
+      "seq": 6,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "tool.completed",
+      "ts": "2026-09-15T19:41:54.119873Z",
+      "payload": {
+        "toolCallId": "call_4",
+        "name": "get_account_application",
+        "toolId": "get_account_application",
+        "mode": "plan",
+        "durationMs": 1,
+        "resultSummary": "object with applicant, id, status",
+        "result": {
+          "id": "app_1",
+          "status": "pending",
+          "applicant": {
+            "riskTier": "standard"
+          }
+        },
+        "traceId": "trace_account-opening-application-review",
+        "spanId": "span_154d8a5d787f4721aa08"
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_5d05437f32fb43208d98",
+      "seq": 7,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "evidence_progress",
+      "ts": "2026-09-15T19:41:54.119883Z",
+      "payload": {
+        "requiredEvidenceToolIds": [
+          "get_account_application",
+          "get_application_audit"
+        ],
+        "satisfiedRequiredEvidenceToolIds": [
+          "get_account_application"
+        ],
+        "discretionaryEvidenceToolIds": []
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_23f27b2c69bc4ab79871",
+      "seq": 8,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "step.completed",
+      "ts": "2026-09-15T19:41:54.119897Z",
+      "payload": {
+        "stepId": "step_1",
+        "durationMs": 0
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_e937a2bbb4f74ddda7ce",
+      "seq": 9,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "step.started",
+      "ts": "2026-09-15T19:41:54.119904Z",
+      "payload": {
+        "stepId": "step_2",
+        "index": 1,
+        "title": "Gather evidence: get_application_audit"
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_c2528e7ff6954c3db829",
+      "seq": 10,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "tool.started",
+      "ts": "2026-09-15T19:41:54.119915Z",
+      "payload": {
+        "toolCallId": "call_10",
+        "stepId": "step_2",
+        "name": "get_application_audit",
+        "toolId": "get_application_audit",
+        "mode": "plan",
+        "args": {
+          "applicationId": "app_1"
+        },
+        "attempt": 1,
+        "traceId": "trace_account-opening-application-review",
+        "spanId": "span_a35848c1377b4940bf5e"
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_a1ac6283e4e3407dbf5a",
+      "seq": 11,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "tool.completed",
+      "ts": "2026-09-15T19:41:54.119930Z",
+      "payload": {
+        "toolCallId": "call_10",
+        "name": "get_application_audit",
+        "toolId": "get_application_audit",
+        "mode": "plan",
+        "durationMs": 1,
+        "resultSummary": "object with applicationId, events",
+        "result": {
+          "applicationId": "app_1",
+          "events": [
+            {
+              "type": "submitted"
+            }
+          ]
+        },
+        "traceId": "trace_account-opening-application-review",
+        "spanId": "span_a35848c1377b4940bf5e"
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_51954ebe644549db9dee",
+      "seq": 12,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "evidence_progress",
+      "ts": "2026-09-15T19:41:54.119938Z",
+      "payload": {
+        "requiredEvidenceToolIds": [
+          "get_account_application",
+          "get_application_audit"
+        ],
+        "satisfiedRequiredEvidenceToolIds": [
+          "get_account_application",
+          "get_application_audit"
+        ],
+        "discretionaryEvidenceToolIds": []
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_bd5bbab60ef041af9dc7",
+      "seq": 13,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "step.completed",
+      "ts": "2026-09-15T19:41:54.119948Z",
+      "payload": {
+        "stepId": "step_2",
+        "durationMs": 0
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_03e2da91e13f41c3b14a",
+      "seq": 14,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "step.started",
+      "ts": "2026-09-15T19:41:54.119956Z",
+      "payload": {
+        "stepId": "step_3",
+        "index": 2,
+        "title": "Assess the evidence"
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_50f1af5455d64bc9a16d",
+      "seq": 15,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "step.completed",
+      "ts": "2026-09-15T19:41:54.120133Z",
+      "payload": {
+        "stepId": "step_3",
+        "durationMs": 0,
+        "summary": "Primary assessment: proceed",
+        "rawReply": "{\"verdict\": \"proceed\", \"confidence\": 0.93, \"rationale\": \"The required evidence was gathered and is consistent with the requested review.\", \"keyFactors\": [{\"label\": \"required evidence gathered\", \"citedEvidenceIds\": [\"get_account_application\", \"get_application_audit\"]}], \"unverified\": [], \"requestedEvidence\": []}",
+        "assessmentPass": 1
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_f4a4b97a49ce412b965e",
+      "seq": 16,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "step.completed",
+      "ts": "2026-09-15T19:41:54.120143Z",
+      "payload": {
+        "stepId": "step_3",
+        "durationMs": 0
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_800c2aec2901492ebeb0",
+      "seq": 17,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "step.started",
+      "ts": "2026-09-15T19:41:54.120152Z",
+      "payload": {
+        "stepId": "step_4",
+        "index": 3,
+        "title": "Assemble evidence bundle"
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_4e9e1e8c28d448fa82c5",
+      "seq": 18,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "artifact.created",
+      "ts": "2026-09-15T19:41:54.120168Z",
+      "payload": {
+        "artifactId": "art_656f231a34df43db",
+        "kind": "evidence_bundle",
+        "title": "Evidence gathered",
+        "revision": 1,
+        "content": {
+          "get_account_application": {
+            "toolId": "get_account_application",
+            "arguments": {
+              "applicationId": "app_1"
+            },
+            "subject": {},
+            "data": {
+              "id": "app_1",
+              "status": "pending",
+              "applicant": {
+                "riskTier": "standard"
+              }
+            }
+          },
+          "get_application_audit": {
+            "toolId": "get_application_audit",
+            "arguments": {
+              "applicationId": "app_1"
+            },
+            "subject": {},
+            "data": {
+              "applicationId": "app_1",
+              "events": [
+                {
+                  "type": "submitted"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_c1d39851e9a74953a83b",
+      "seq": 19,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "step.completed",
+      "ts": "2026-09-15T19:41:54.120174Z",
+      "payload": {
+        "stepId": "step_4",
+        "durationMs": 0
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_6df70164197c4fef9113",
+      "seq": 20,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "step.started",
+      "ts": "2026-09-15T19:41:54.120178Z",
+      "payload": {
+        "stepId": "step_5",
+        "index": 4,
+        "title": "Propose account_opening.application.review for human signature"
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_7c1c5943ffdf49d1957a",
+      "seq": 21,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "mode_transition",
+      "ts": "2026-09-15T19:41:54.120185Z",
+      "payload": {
+        "from": "plan",
+        "to": "execute"
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_f468918cccc34fc796b2",
+      "seq": 22,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "tool.started",
+      "ts": "2026-09-15T19:41:54.120194Z",
+      "payload": {
+        "toolCallId": "call_22",
+        "stepId": "propose_action",
+        "name": "propose_action",
+        "toolId": "propose_action",
+        "mode": "execute",
+        "attempt": 1,
+        "traceId": "trace_account-opening-application-review",
+        "spanId": "span_297b93d6bb0c48ef833b"
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_c1d186149a544ad88367",
+      "seq": 23,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "tool.completed",
+      "ts": "2026-09-15T19:41:54.120217Z",
+      "payload": {
+        "toolCallId": "call_22",
+        "name": "propose_action",
+        "toolId": "propose_action",
+        "mode": "execute",
+        "durationMs": 0,
+        "resultSummary": "proposal admitted",
+        "traceId": "trace_account-opening-application-review",
+        "spanId": "span_297b93d6bb0c48ef833b"
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_ddad2b1ae1b449f39798",
+      "seq": 24,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "approval.required",
+      "ts": "2026-09-15T19:41:54.121152Z",
+      "payload": {
+        "approval": {
+          "id": "apr_account_opening_application_review",
+          "status": "pending",
+          "actionId": "account_opening.application.review",
+          "sessionId": "sess_bb3a62d2c1ba4a6f",
+          "requiredRung": "L1",
+          "baseRung": "L1",
+          "requiredSigners": 1,
+          "signaturesCollected": 0,
+          "payload": {
+            "applicationId": "app_1",
+            "decision": "approved",
+            "rationale": "identity and audit checks complete"
+          },
+          "evidence": {
+            "get_account_application": {
+              "id": "app_1",
+              "status": "pending",
+              "applicant": {
+                "riskTier": "standard"
+              }
+            },
+            "get_application_audit": {
+              "applicationId": "app_1",
+              "events": [
+                {
+                  "type": "submitted"
+                }
+              ]
+            }
+          },
+          "agentAssessment": {
+            "agentName": "Primary agent",
+            "evidenceToolIds": [
+              "get_account_application",
+              "get_application_audit"
+            ],
+            "requiredEvidenceToolIds": [
+              "get_account_application",
+              "get_application_audit"
+            ],
+            "discretionaryEvidenceToolIds": [],
+            "refusedEvidenceRequests": [],
+            "assessmentIterations": 1,
+            "converged": true,
+            "rationale": "The required evidence was gathered and is consistent with the requested review.",
+            "recommendation": "proceed",
+            "confidence": 0.93,
+            "keyFactors": [
+              {
+                "label": "required evidence gathered",
+                "citedEvidenceIds": [
+                  "get_account_application",
+                  "get_application_audit"
+                ]
+              }
+            ],
+            "citedEvidenceIds": [
+              "get_account_application",
+              "get_application_audit"
+            ],
+            "mode": "scripted",
+            "modelDeployment": "trajectory-capture",
+            "promptSha256": "sha256:671e1e5881c408c21af9ea625cb3d02f2d74079b9566b5c11f5ab3a4ed2f37fb",
+            "responseSha256": "sha256:9463502123b9ae48c5d891ee5c3aba3136c2e7e3b15da15d2690b627c2fb64da",
+            "verdict": "PROCEED"
+          },
+          "policyVersion": "trajectory-capture-v1",
+          "firedEscalators": []
+        },
+        "policyVersion": "trajectory-capture-v1",
+        "requiredRung": "L1"
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_099f8949d5bf489f8f62",
+      "seq": 25,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "step.completed",
+      "ts": "2026-09-15T19:41:54.121190Z",
+      "payload": {
+        "stepId": "step_5",
+        "durationMs": 0
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    },
+    {
+      "id": "evt_a15060e0c5894e70b5a2",
+      "seq": 26,
+      "runId": "run_5c87b6d86b904584",
+      "kind": "run.done",
+      "ts": "2026-09-15T19:41:54.121208Z",
+      "payload": {
+        "status": "completed",
+        "durationMs": 1,
+        "finalArtifactIds": [
+          "art_656f231a34df43db"
+        ],
+        "finalSeq": 26
+      },
+      "sessionId": "sess_bb3a62d2c1ba4a6f"
+    }
+  ]
+}
