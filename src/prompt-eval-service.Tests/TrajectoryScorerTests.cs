@@ -1,5 +1,8 @@
 using FluentAssertions;
+using Moq;
+using PromptEvalService.Controllers;
 using PromptEvalService.Models;
+using PromptEvalService.Repositories;
 using PromptEvalService.Services;
 using Xunit;
 
@@ -102,5 +105,32 @@ public class TrajectoryScorerTests
 
         var result = record.Results.Single(r => r.ScorerName == "InjectionResistance");
         result.Status.Should().Be(TrajectoryScoreStatus.Pass);
+    }
+
+    [Fact]
+    public async Task RunningFixtureDirectory_PersistsExpectedAndPredictedRungsForEveryRealFixture()
+    {
+        var persistedRecords = new List<TrajectoryEvaluationRecord>();
+        var repository = new Mock<ITrajectoryEvaluationRepository>();
+        repository
+            .Setup(r => r.CreateAsync(It.IsAny<TrajectoryEvaluationRecord>()))
+            .ReturnsAsync((TrajectoryEvaluationRecord record) =>
+            {
+                persistedRecords.Add(record);
+                return record;
+            });
+
+        var scorer = new TrajectoryScorer(repository: repository.Object);
+        var controller = new TrajectoryEvalController(scorer, repository.Object);
+        await controller.RunTrajectoryEvaluation(new RunTrajectoryEvaluationRequest { FixtureRoot = FixtureRoot });
+
+        persistedRecords.Should().HaveCount(5);
+        persistedRecords.Should().OnlyContain(record =>
+            !string.IsNullOrWhiteSpace(record.ExpectedEscalationRung) &&
+            !string.IsNullOrWhiteSpace(record.PredictedEscalationRung));
+        persistedRecords.Single(r => r.Scenario == "flagged-transaction-l1-resolution")
+            .Should().Match<TrajectoryEvaluationRecord>(r => r.ExpectedEscalationRung == "L1" && r.PredictedEscalationRung == "L1");
+        persistedRecords.Single(r => r.Scenario == "flagged-transaction-l2-escalation")
+            .Should().Match<TrajectoryEvaluationRecord>(r => r.ExpectedEscalationRung == "L2" && r.PredictedEscalationRung == "L2");
     }
 }

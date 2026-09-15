@@ -27,8 +27,7 @@ public class TrajectoryEvalController : ControllerBase
     {
         var fixtureRoot = string.IsNullOrWhiteSpace(request?.FixtureRoot) ? null : request.FixtureRoot;
         var result = await _trajectoryScorer.ScoreFixtureDirectoryAsync(fixtureRoot);
-        var saved = await _trajectoryEvaluationRepository.CreateAsync(result);
-        return Accepted(saved);
+        return Accepted(result);
     }
 
     [HttpGet("confusion-matrix")]

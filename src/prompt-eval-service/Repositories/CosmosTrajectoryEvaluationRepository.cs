@@ -48,8 +48,8 @@ public class CosmosTrajectoryEvaluationRepository : ITrajectoryEvaluationReposit
         var correctPredictions = 0;
         foreach (var record in records)
         {
-            var expected = NormalizeRung(record.ExpectedEscalationRung ?? "L1");
-            var predicted = NormalizeRung(record.PredictedEscalationRung ?? "L1");
+            var expected = NormalizeRung(record.ExpectedEscalationRung, nameof(record.ExpectedEscalationRung), record);
+            var predicted = NormalizeRung(record.PredictedEscalationRung, nameof(record.PredictedEscalationRung), record);
             matrix[expected][predicted] += 1;
 
             if (expected == predicted)
@@ -67,11 +67,18 @@ public class CosmosTrajectoryEvaluationRepository : ITrajectoryEvaluationReposit
         };
     }
 
-    private static string NormalizeRung(string rung)
+    private static string NormalizeRung(string? rung, string fieldName, TrajectoryEvaluationRecord record)
     {
-        var normalized = (rung ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(rung))
+        {
+            throw new InvalidOperationException(
+                $"Trajectory evaluation record '{record.Id}' for scenario '{record.Scenario}' has no {fieldName}.");
+        }
+
+        var normalized = rung.Trim();
         if (string.Equals(normalized, "L1", StringComparison.OrdinalIgnoreCase)) return "L1";
         if (string.Equals(normalized, "L2", StringComparison.OrdinalIgnoreCase)) return "L2";
-        return normalized.ToUpperInvariant();
+        throw new InvalidOperationException(
+            $"Trajectory evaluation record '{record.Id}' for scenario '{record.Scenario}' has invalid {fieldName} '{rung}'.");
     }
 }
