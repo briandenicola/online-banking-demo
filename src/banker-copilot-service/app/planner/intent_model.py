@@ -11,13 +11,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
 import jsonschema
 import structlog
 
-from app.planner.model_call import Attribution, as_chat_messages, await_model, extract_json, sha256_text
+from app.planner.model_call import (
+    Attribution,
+    ModelCallTelemetry,
+    as_chat_messages,
+    await_model,
+    extract_json,
+    sha256_text,
+    usage_token_counts,
+)
 from app.config import model_timeout_s
 
 logger = structlog.get_logger("banker-copilot-service")
@@ -63,6 +72,11 @@ class EvidenceAnswer:
     failure_message: str = ""
     attribution: Attribution | None = None
     raw_reply: str = ""
+    #: Epic §8.0 row 5 — cost/regression attribution for this round trip. Populated for both
+    #: a successful answer and a failed one: a timed-out or refused call still cost wall-clock
+    #: time, and dropping that observation on failure would undercount exactly the calls most
+    #: worth attributing.
+    model_call: ModelCallTelemetry | None = None
 
     @property
     def failed(self) -> bool:
@@ -307,6 +321,11 @@ def parse_evidence_answer(text: str, gathered_evidence_ids: Sequence[str]) -> Ev
     )
 
 
+def _elapsed_ms(started: float) -> int:
+    """Wall-clock cost of one model round trip, for the `model.call` trace frame (§8.0)."""
+    return int((time.monotonic() - started) * 1000)
+
+
 def _dumps(value: Any) -> str:
     return json.dumps(value, indent=2, sort_keys=True, default=str)
 
@@ -414,6 +433,7 @@ class FoundryEvidenceAnswerer:
             model_deployment=self.model,
             prompt_sha256=sha256_text(prompt),
         )
+        started = time.monotonic()
         try:
             response = await await_model(
                 lambda: self._ensure_client().get_response(as_chat_messages(prompt)),
@@ -427,6 +447,9 @@ class FoundryEvidenceAnswerer:
                 failure_code=PLANNER_MODEL_UNAVAILABLE,
                 failure_message=f"The answer model did not answer within {self.timeout_s:g}s.",
                 attribution=attribution,
+                model_call=ModelCallTelemetry(
+                    model_deployment=self.model, latency_ms=_elapsed_ms(started)
+                ),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Evidence answer call failed", error=type(exc).__name__, detail=str(exc)[:200])
@@ -435,14 +458,25 @@ class FoundryEvidenceAnswerer:
                 failure_code=PLANNER_MODEL_UNAVAILABLE,
                 failure_message=f"The answer model could not be reached ({type(exc).__name__}).",
                 attribution=attribution,
+                model_call=ModelCallTelemetry(
+                    model_deployment=self.model, latency_ms=_elapsed_ms(started)
+                ),
             )
 
+        latency_ms = _elapsed_ms(started)
+        prompt_tokens, completion_tokens = usage_token_counts(response)
         text = getattr(response, "text", None) or str(response)
         answer = parse_evidence_answer(text, sorted(evidence.keys()))
         return replace(
             answer,
             attribution=replace(attribution, response_sha256=sha256_text(text)),
             raw_reply=text,
+            model_call=ModelCallTelemetry(
+                model_deployment=self.model,
+                latency_ms=latency_ms,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            ),
         )
 
     async def aclose(self) -> None:

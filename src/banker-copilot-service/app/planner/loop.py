@@ -31,6 +31,7 @@ import jsonschema
 import structlog
 
 from app.events.bus import RunStream
+from app.events.envelope import new_span_id, new_trace_id
 from app.planner.agent_mode import AgentMode
 from app.config import ConfigurationError, env_with_legacy
 from app.stores.sessions import Session, new_artifact
@@ -575,6 +576,15 @@ class Planner:
 
     async def run(self, request: PlannerRequest, stream: RunStream) -> None:
         started = time.monotonic()
+        # §8.0: tool/model frames need a stable traceId for the whole run so an eval consumer
+        # can correlate every tool call and model round trip in this run with the same OTEL
+        # trace across services. A client-supplied X-Correlation-ID is preferred (it is the
+        # value already forwarded to authority-service, see `_run_propose_step`); one is
+        # generated here, using the same id convention as the rest of the event schema, only
+        # when the caller sent none — and fixed for the run's lifetime rather than re-rolled
+        # per frame.
+        if not request.correlation_id:
+            request.correlation_id = new_trace_id()
         artifact_ids: list[str] = []
         # Success is earned, never defaulted. `proposal_expected` is set the moment the plan
         # is known, a few lines below.
@@ -856,6 +866,10 @@ class Planner:
                         )
                     else:
                         answer = await self._answerer(request.objective, step["answerGoal"], evidence)
+                    if answer.model_call is not None:
+                        # §8.0 row 5: cost/regression attribution for the evidence-answer round
+                        # trip, win or lose — a failed call still spent wall-clock time.
+                        await stream.emit("model.call", answer.model_call.to_wire())
                     if answer.failed:
                         await stream.emit(
                             "run.error",
@@ -1349,6 +1363,10 @@ class Planner:
 
         arguments = dict(step.get("arguments") or _bind_arguments(tool.parameters, request))
         call_id = f"call_{stream.last_seq + 1}"
+        # §8.0: traceId is the run's stable correlator (PlannerRequest.correlation_id, set at
+        # `run()` entry); spanId is fresh per tool call and shared by this call's
+        # started/completed/failed frames so an eval consumer can join all three as one span.
+        span_id = new_span_id()
 
         await stream.emit(
             "tool.started",
@@ -1360,6 +1378,8 @@ class Planner:
                 "mode": agent_mode.current,
                 "args": arguments,
                 "attempt": 1,
+                "traceId": request.correlation_id or request.run_id,
+                "spanId": span_id,
             },
         )
 
@@ -1386,6 +1406,8 @@ class Planner:
                     "error": f"{exc.code}: {exc.message}",
                     "attempt": 1,
                     "willRetry": False,
+                    "traceId": request.correlation_id or request.run_id,
+                    "spanId": span_id,
                 },
             )
             return False
@@ -1418,6 +1440,8 @@ class Planner:
                 "durationMs": result.duration_ms,
                 "resultSummary": result.summary(),
                 "result": result.data,
+                "traceId": request.correlation_id or request.run_id,
+                "spanId": span_id,
             },
         )
         return True
@@ -1566,6 +1590,8 @@ class Planner:
         """
         await agent_mode.transition_to_execute(stream)
         call_id = f"call_{stream.last_seq + 1}"
+        # §8.0: shared by this call's started/completed/failed frames, same as `_run_tool_step`.
+        span_id = new_span_id()
         await stream.emit(
             "tool.started",
             {
@@ -1575,6 +1601,8 @@ class Planner:
                 "toolId": "propose_action",
                 "mode": agent_mode.current,
                 "attempt": 1,
+                "traceId": request.correlation_id or request.run_id,
+                "spanId": span_id,
             },
         )
         try:
@@ -1609,6 +1637,7 @@ class Planner:
                     "toolCallId": call_id, "name": "propose_action", "toolId": "propose_action",
                     "mode": agent_mode.current, "error": f"{exc.code}: {exc.message}",
                     "attempt": 1, "willRetry": False,
+                    "traceId": request.correlation_id or request.run_id, "spanId": span_id,
                 },
             )
             # Refused before it ever left this service: the payload could not be
@@ -1627,6 +1656,7 @@ class Planner:
                 {
                     "toolCallId": call_id, "name": "propose_action", "toolId": "propose_action",
                     "mode": agent_mode.current, "error": code, "attempt": 1, "willRetry": False,
+                    "traceId": request.correlation_id or request.run_id, "spanId": span_id,
                 },
             )
             await stream.emit(
@@ -1646,6 +1676,7 @@ class Planner:
                 "toolCallId": call_id, "name": "propose_action", "toolId": "propose_action",
                 "mode": agent_mode.current, "durationMs": 0,
                 "resultSummary": "proposal admitted",
+                "traceId": request.correlation_id or request.run_id, "spanId": span_id,
             },
         )
         # Shipped contract: ApprovalRequiredPayload = { approval: Approval, policyVersion,

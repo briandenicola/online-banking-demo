@@ -44,6 +44,7 @@ UI_CONTRACT_KINDS = frozenset(
         "evidence_compacted",
         "evidence_progress",
         "sensitive_read_recorded",
+        "model.call",
     }
 )
 
@@ -155,7 +156,16 @@ def test_every_emitted_frame_is_persisted_as_emitted():
         registry = RunStreamRegistry(sink, replay_window=100)
         stream = registry.create("run_p", "sess_p")
         await stream.emit("run.started", {"intent": "x"})
-        await stream.emit("tool.started", {"name": "get_account", "toolId": "get_account", "mode": "plan"})
+        await stream.emit(
+            "tool.started",
+            {
+                "name": "get_account",
+                "toolId": "get_account",
+                "mode": "plan",
+                "traceId": "trace_x",
+                "spanId": "span_x",
+            },
+        )
         await stream.emit("run.done", {"status": "completed", "finalSeq": 3})
         return await sink.read_run("run_p")
 
@@ -174,7 +184,14 @@ def test_persisted_frame_is_a_superset_of_the_wire_frame():
         run_id="run_x",
         kind="tool.completed",
         ts=utc_now_iso(),
-        payload={"toolCallId": "call_1", "name": "get_account", "mode": "plan", "durationMs": 12},
+        payload={
+            "toolCallId": "call_1",
+            "name": "get_account",
+            "mode": "plan",
+            "durationMs": 12,
+            "traceId": "trace_x",
+            "spanId": "span_x",
+        },
         session_id="sess_x",
     )
     wire = envelope.to_wire()
@@ -264,6 +281,74 @@ def test_tool_invocation_requires_mode_and_execute_is_reserved_for_proposal():
             kind="tool.started",
             ts=utc_now_iso(),
             payload={"name": "get_account", "mode": "execute"},
+        )
+
+
+def test_tool_invocation_requires_trace_id_and_span_id():
+    """§8.0: eval needs to correlate an agent's tool-call decision with the OTEL span across
+    services, which is unreadable if either id can be silently absent."""
+    base_payload = {"name": "get_account", "mode": "plan"}
+    with pytest.raises(EnvelopeError, match="traceId"):
+        CopilotEventEnvelope(
+            id="evt_tool", seq=1, run_id="run_tool", kind="tool.started", ts=utc_now_iso(),
+            payload=dict(base_payload, spanId="span_1"),
+        )
+    with pytest.raises(EnvelopeError, match="spanId"):
+        CopilotEventEnvelope(
+            id="evt_tool", seq=1, run_id="run_tool", kind="tool.completed", ts=utc_now_iso(),
+            payload=dict(base_payload, traceId="trace_1"),
+        )
+    # Present and non-empty on all three tool frame kinds is accepted.
+    for kind in ("tool.started", "tool.completed", "tool.failed"):
+        CopilotEventEnvelope(
+            id="evt_tool", seq=1, run_id="run_tool", kind=kind, ts=utc_now_iso(),
+            payload=dict(base_payload, traceId="trace_1", spanId="span_1"),
+        )
+
+
+def test_model_call_requires_deployment_and_latency():
+    with pytest.raises(EnvelopeError, match="modelDeployment"):
+        CopilotEventEnvelope(
+            id="evt_m", seq=1, run_id="run_m", kind="model.call", ts=utc_now_iso(),
+            payload={"latencyMs": 120},
+        )
+    with pytest.raises(EnvelopeError, match="latencyMs"):
+        CopilotEventEnvelope(
+            id="evt_m", seq=1, run_id="run_m", kind="model.call", ts=utc_now_iso(),
+            payload={"modelDeployment": "gpt-4o"},
+        )
+    with pytest.raises(EnvelopeError, match="non-negative"):
+        CopilotEventEnvelope(
+            id="evt_m", seq=1, run_id="run_m", kind="model.call", ts=utc_now_iso(),
+            payload={"modelDeployment": "gpt-4o", "latencyMs": -1},
+        )
+
+
+def test_model_call_token_counts_are_optional_but_must_be_non_negative_when_present():
+    # Absent entirely — the SDK response carried no usage data. Accepted.
+    CopilotEventEnvelope(
+        id="evt_m", seq=1, run_id="run_m", kind="model.call", ts=utc_now_iso(),
+        payload={"modelDeployment": "gpt-4o", "latencyMs": 250},
+    )
+    # Present and valid.
+    CopilotEventEnvelope(
+        id="evt_m", seq=1, run_id="run_m", kind="model.call", ts=utc_now_iso(),
+        payload={
+            "modelDeployment": "gpt-4o",
+            "latencyMs": 250,
+            "promptTokens": 500,
+            "completionTokens": 40,
+        },
+    )
+    with pytest.raises(EnvelopeError, match="promptTokens"):
+        CopilotEventEnvelope(
+            id="evt_m", seq=1, run_id="run_m", kind="model.call", ts=utc_now_iso(),
+            payload={"modelDeployment": "gpt-4o", "latencyMs": 250, "promptTokens": -5},
+        )
+    with pytest.raises(EnvelopeError, match="completionTokens"):
+        CopilotEventEnvelope(
+            id="evt_m", seq=1, run_id="run_m", kind="model.call", ts=utc_now_iso(),
+            payload={"modelDeployment": "gpt-4o", "latencyMs": 250, "completionTokens": -1},
         )
 
 

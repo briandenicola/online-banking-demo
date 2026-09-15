@@ -41,9 +41,10 @@ from typing import Any, Awaitable, Callable, Mapping, Protocol, Sequence
 import structlog
 
 from app.events.bus import RunStream, RunStreamRegistry
+from app.events.envelope import new_span_id
 from app.planner.limits import FanoutLimits
 from app.planner.evidence_compaction import compact_evidence
-from app.planner.model_call import Attribution
+from app.planner.model_call import Attribution, ModelCallTelemetry
 from app.planner.verdicts import AGREE, NOT_COMPARABLE, compare_verdicts, is_verdict
 from app.planner.approval_view import (
     primary_wire_assessment,
@@ -223,6 +224,9 @@ class SecondOpinion:
     #: primary's, which is the residual correlation §P1.2e requires be disclosed rather than
     #: papered over. Optional so a test decider need not supply one.
     attribution: "Attribution | None" = None
+    #: Cost/latency facts for this round trip (epic §8.0 row 5). Optional for the same reason
+    #: as ``attribution``: a scripted/deterministic decider makes no model call at all.
+    model_call: "ModelCallTelemetry | None" = None
 
     def to_wire(self) -> dict[str, Any]:
         return {
@@ -561,6 +565,11 @@ class FanOutEngine:
                     "mode": "plan",
                     "durationMs": 0,
                     "resultSummary": summary,
+                    # §8.0: same run traceId as the parent's tool frames, so an eval consumer
+                    # can join the supervisor's independent reads with the same run's OTEL
+                    # trace; a fresh spanId per read, since this is its own round trip.
+                    "traceId": getattr(request, "correlation_id", None) or request.run_id,
+                    "spanId": new_span_id(),
                 },
             )
 
@@ -616,6 +625,12 @@ class FanOutEngine:
                 {"status": "failed", "durationMs": 0, "finalArtifactIds": [], "finalSeq": child_stream.last_seq + 1},
             )
             return None
+
+        if opinion.model_call is not None:
+            # §8.0 row 5: cost/regression attribution for the supervisor's second-opinion
+            # round trip. On the CHILD stream — it is the supervisor's own round trip, same
+            # home as its `tool.completed` reads above.
+            await child_stream.emit("model.call", opinion.model_call.to_wire())
 
         # (3) Agreement is COMPUTED by comparison, never read off the supervisor.
         #     §6.4(6): disagreement is first-class and does not gate proceeding.

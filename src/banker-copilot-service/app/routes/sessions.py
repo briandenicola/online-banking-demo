@@ -12,10 +12,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -28,7 +29,7 @@ from app.dependencies import (
     get_runs,
     get_session_store,
 )
-from app.events.envelope import CopilotEventEnvelope, utc_now_iso
+from app.events.envelope import EVENT_KINDS, CopilotEventEnvelope, utc_now_iso
 from app.planner.loop import AGENT_ID, PlannerRequest
 from app.stores.sessions import new_run, new_session
 from app.tools.propose import PROPOSE_TOOL_SCHEMA, ProposeRejected
@@ -238,6 +239,45 @@ async def get_run_trace(
         "traceDegraded": run.trace_degraded,
         "frames": frames,
     }
+
+
+@router.get("/traces")
+async def list_traces(
+    sessionId: str = Query(..., min_length=1),
+    since: str | None = Query(default=None),
+    kind: str | None = Query(default=None),
+    user: UserContext = Depends(require_banker),
+    store=Depends(get_session_store),
+    runs=Depends(get_runs),
+):
+    """Bulk trace fetch across every run in a session — the offline eval read path (#333).
+
+    ``GET /runs/{id}/trace`` answers "replay this one run"; eval needs "pull every run
+    matching a filter" (epic #374), which this exists for. ``sessionId`` is REQUIRED, never
+    optional: the same ownership check as every other route in this file
+    (``_load_owned_session``) is scoped to a session, so a query with no session at all would
+    have nothing to check ownership against — an unscoped query here is a cross-banker data
+    leak, not merely an inefficiency.
+    """
+    await _load_owned_session(store, sessionId, user)
+
+    if since is not None:
+        # A malformed `since` must fail loudly, not silently match everything (an empty/garbage
+        # string compares as "before every real timestamp" and a bulk-fetch client would read
+        # that as "no runs happened", never as "the filter was wrong").
+        try:
+            datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail=f"'since' must be an ISO 8601 timestamp, got {since!r}",
+            )
+
+    if kind is not None and kind not in EVENT_KINDS:
+        raise HTTPException(status_code=422, detail=f"Unknown event kind {kind!r}")
+
+    frames = await runs.sink.query_session(sessionId, since=since, kind=kind)
+    return {"sessionId": sessionId, "frameCount": len(frames), "frames": frames}
 
 
 @router.get("/runs/{run_id}/artifacts")

@@ -95,6 +95,8 @@ records what the system happened to emit rather than what evaluation needs.
 - `mode_transition` is emitted exactly once at that proposal boundary, with the normal `runId` and `sessionId`.
 - `evidence_compacted` is emitted whenever a model-facing evidence payload is reduced, carrying the compacted ids and deterministic token estimates; it never removes an evidence id.
 - `evidence_progress` is emitted after a completed required evidence call changes the server-derived satisfied set. Its required/control ids, satisfied required ids, and discretionary/model-choice ids remain separate, and identical snapshots are never duplicated.
+- Every `tool.started` / `tool.completed` / `tool.failed` payload carries `traceId` and `spanId`. `traceId` is `PlannerRequest.correlation_id` (from the inbound `X-Correlation-ID`, or a generated `trace_...` id when the caller sent none) so a trace can be joined back to the request that caused it; `spanId` is one fresh `span_...` id per tool round trip, shared by that call's started/completed/failed frames and distinct from any other call's.
+- `model.call` is a closed-enum frame emitted for the planner's evidence-answer model call and the supervisor's second-opinion model call — the two calls the eval harness prices and audits. Payload: `modelDeployment` (string), `latencyMs` (non-negative), and `promptTokens`/`completionTokens` (non-negative ints when the SDK reports usage, omitted entirely rather than faked as `0` when it does not). Emitted on both success and failure/timeout paths, since a call that timed out still cost wall-clock time.
 - Persisted to the `copilot-traces` container (PK `/runId`); on sink failure the run
   continues but is marked `trace_degraded` — a degraded trace is reported, never faked.
 - Redaction is applied **at emit**, because persisted traces outlive the session. The
@@ -270,7 +272,16 @@ POST /api/copilot/sessions/{id}/propose
 GET  /api/copilot/sessions/{id}/stream       # SSE
 GET  /api/copilot/runs/{id}
 GET  /api/copilot/runs/{id}/trace            # replay
+GET  /api/copilot/traces                     # bulk query, ?sessionId=&since=&kind=
 ```
+
+`GET /api/copilot/traces` is the bulk counterpart to `/runs/{id}/trace`, for offline eval
+(#333) pulling frames across every run in a session rather than one run at a time.
+`sessionId` is required — there is no code path that reaches the sink without it. `since`
+(ISO 8601) and `kind` (must be one of the closed `EVENT_KINDS`) are optional filters; a
+malformed `since` or unknown `kind` is a `422`, never a silently-empty or silently-unscoped
+result. Same auth/ownership check as every other route: session not found or not owned by
+the caller is a `404`.
 
 ## Running
 

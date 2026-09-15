@@ -33,6 +33,7 @@ import asyncio
 import dataclasses
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -40,7 +41,15 @@ import structlog
 
 from app.config import ConfigurationError, env_with_legacy, model_timeout_s
 from app.planner.fanout import SecondOpinion, SupervisorInput
-from app.planner.model_call import Attribution, as_chat_messages, await_model, extract_json, sha256_text
+from app.planner.model_call import (
+    Attribution,
+    ModelCallTelemetry,
+    as_chat_messages,
+    await_model,
+    extract_json,
+    sha256_text,
+    usage_token_counts,
+)
 from app.planner.verdicts import RECOMMENDATIONS
 
 logger = structlog.get_logger("banker-copilot-service")
@@ -172,6 +181,11 @@ def build_prompt(spawn: SupervisorInput, own_evidence: Mapping[str, Any]) -> str
     )
 
 
+def _elapsed_ms(started: float) -> int:
+    """Wall-clock cost of one model round trip, for the `model.call` trace frame (§8.0)."""
+    return int((time.monotonic() - started) * 1000)
+
+
 def _extract_json(text: str) -> dict[str, Any] | None:
     """The shared reader, re-exported under this module's historical private name.
 
@@ -183,12 +197,14 @@ def _extract_json(text: str) -> dict[str, Any] | None:
     return extract_json(text)
 
 
-def _failsafe(reason: str) -> SecondOpinion:
+def _failsafe(reason: str, *, model_call: "ModelCallTelemetry | None" = None) -> SecondOpinion:
     """The opinion returned whenever the model could not be reached, understood, or trusted.
 
     It is a real ``hold`` with the reason stated in the counter-argument, not a neutral
     placeholder — a human reading the card learns that the second opinion is missing and
-    why, instead of seeing a confident verdict that no model produced.
+    why, instead of seeing a confident verdict that no model produced. ``model_call`` is
+    threaded through so a timed-out or unreachable call is still attributed a cost (§8.0
+    row 5) rather than disappearing from the eval's ledger the moment it fails.
     """
     return SecondOpinion(
         recommendation=FAILSAFE_RECOMMENDATION,
@@ -200,6 +216,7 @@ def _failsafe(reason: str) -> SecondOpinion:
             "reads are the only basis for this action — which is the single dependency "
             "the second opinion exists to remove. Treat this as unreviewed."
         ),
+        model_call=model_call,
     )
 
 
@@ -278,6 +295,7 @@ class FoundryDecider:
 
     async def __call__(self, spawn: SupervisorInput, own_evidence: Mapping[str, Any]) -> SecondOpinion:
         prompt = build_prompt(spawn, own_evidence)
+        started = time.monotonic()
         try:
             client = self._ensure_client()
             response = await await_model(
@@ -288,15 +306,23 @@ class FoundryDecider:
             )
         except asyncio.TimeoutError:
             logger.warning("Supervisor model timed out", timeout_s=self.timeout_s)
-            return _failsafe(f"the model did not answer within {self.timeout_s:g}s")
+            return _failsafe(
+                f"the model did not answer within {self.timeout_s:g}s",
+                model_call=ModelCallTelemetry(model_deployment=self.model, latency_ms=_elapsed_ms(started)),
+            )
         except Exception as exc:  # noqa: BLE001 - every outward failure must fail closed
             # Broad on purpose. Content-filter refusals, throttling, transport faults and
             # authorization failures arrive as different exception types from different
             # layers, and the correct response to all of them is identical: withhold.
             # Narrowing this would let a new SDK error type become an approval.
             logger.warning("Supervisor model call failed", error=type(exc).__name__, detail=str(exc)[:200])
-            return _failsafe(f"the model call failed ({type(exc).__name__})")
+            return _failsafe(
+                f"the model call failed ({type(exc).__name__})",
+                model_call=ModelCallTelemetry(model_deployment=self.model, latency_ms=_elapsed_ms(started)),
+            )
 
+        latency_ms = _elapsed_ms(started)
+        prompt_tokens, completion_tokens = usage_token_counts(response)
         text = getattr(response, "text", None) or str(response)
         opinion = parse_second_opinion(text)
         opinion = dataclasses.replace(
@@ -306,6 +332,12 @@ class FoundryDecider:
                 model_deployment=self.model,
                 prompt_sha256=sha256_text(prompt),
                 response_sha256=sha256_text(text),
+            ),
+            model_call=ModelCallTelemetry(
+                model_deployment=self.model,
+                latency_ms=latency_ms,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
             ),
         )
         logger.info(
