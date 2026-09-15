@@ -37,6 +37,7 @@ from app.stores.sessions import Session, new_artifact
 from app.tools.executor import ToolExecutor, ToolInvocationError
 from app.tools.propose import AuthorityClient, ProposeRejected
 from app.tools.registry import ToolRegistry
+from app.tools.standing_approval import StandingReadApprovalLedger
 from app.planner.approval_view import primary_proposal_assessment, primary_wire_assessment
 from app.planner.evidence_compaction import compact_evidence
 from app.planner.evidence_ceiling import (
@@ -536,6 +537,7 @@ class Planner:
         action_metadata_descriptions: ActionMetadata | None = None,
         propose_enabled: bool = True,
         max_evidence_tokens: int = 64000,
+        standing_read_approvals: StandingReadApprovalLedger | None = None,
     ) -> None:
         self._registry = registry
         self._executor = executor
@@ -569,6 +571,7 @@ class Planner:
         # set, so the service on stage is leashed and an unset env var fails closed.
         self._propose_enabled = propose_enabled
         self._max_evidence_tokens = max_evidence_tokens
+        self._standing_read_approvals = standing_read_approvals or StandingReadApprovalLedger()
 
     async def run(self, request: PlannerRequest, stream: RunStream) -> None:
         started = time.monotonic()
@@ -1359,6 +1362,16 @@ class Planner:
                 "attempt": 1,
             },
         )
+
+        if getattr(tool, "sensitive", False) and await self._standing_read_approvals.record_first(request.session, tool_id):
+            await stream.emit(
+                "sensitive_read_recorded",
+                {
+                    "toolId": tool_id,
+                    "scope": "session",
+                    "context": {"argumentKeys": sorted(arguments)},
+                },
+            )
 
         try:
             result = await self._executor.invoke(tool_id, arguments, request.bearer_token)

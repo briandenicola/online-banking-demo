@@ -45,6 +45,7 @@ def _manifest_document(pattern: str | None = _ANCHORED) -> dict:
                     "additionalProperties": False,
                 },
                 "capabilityScope": "transactions.read",
+                "sensitive": False,
                 "redaction": [],
             }
         ],

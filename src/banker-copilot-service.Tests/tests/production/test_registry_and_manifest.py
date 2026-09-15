@@ -151,6 +151,7 @@ def test_the_startup_assertion_catches_a_write_tool_that_bypassed_the_loader(doc
         target=ToolTarget(service="ai-service", method="PUT", path="/api/admin/x", timeout_ms=1000),
         parameters={"type": "object", "additionalProperties": False},
         capability_scope="risk.read",
+        sensitive=False,
     )
     registry = ToolRegistry(
         manifest=type(manifest)(

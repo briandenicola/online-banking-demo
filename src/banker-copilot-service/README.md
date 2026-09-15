@@ -363,3 +363,22 @@ an unanchored expression matches a traversal substring and looks correct on revi
 Substitution additionally percent-encodes with `safe=""` and rejects segment breakers outright, and
 `ToolExecutor.invoke()` re-checks the read-method allowlist at the point of action. The declared
 path is the tool's capability scope; if an argument can leave it, the scope is advisory.
+
+
+## Sensitive read standing approval
+
+The tool manifest is the single source of sensitive classification: every entry must declare
+`sensitive: true` or `sensitive: false`; omission, malformed values, and unknown manifest keys fail
+startup rather than defaulting to safe. Classification is narrower than "bank data": mark a tool
+sensitive only for direct PII/redaction signals (SSN, DOB, IP), bulk or historical customer records,
+or security/audit-relevant login data. Routine single transaction/account/transfer metadata and
+bounded identity-directory resolution stay non-sensitive under their normal read gates. The planner
+records a non-interactive standing approval audit event on the **first invocation of each sensitive
+tool per live session**; later runs in that session
+are suppressed while the read itself remains subject to the normal read-only manifest and executor
+gates. Entries are purged when `Session.expires_at` is reached, so an expired session cannot suppress
+a later audit. The ledger also caps the number of tracked sessions (`max_sessions`, default
+10,000); once full, the entry with the earliest expiry is evicted deterministically, bounding
+memory even if the process runs idle with no further calls to trigger purge. The `sensitive_read_recorded` event contains only the tool id and argument names, never
+argument values or raw response data. This ledger is owned by banker-copilot-service and never
+consults or modifies authority-service.
