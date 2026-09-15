@@ -94,6 +94,7 @@ records what the system happened to emit rather than what evaluation needs.
 - Each tool invocation carries its explicit run mode: ordinary manifest reads and both assessment arms are `plan`; the only `execute` invocation is `propose_action`, which still only submits to `authority-service` for human approval.
 - `mode_transition` is emitted exactly once at that proposal boundary, with the normal `runId` and `sessionId`.
 - `evidence_compacted` is emitted whenever a model-facing evidence payload is reduced, carrying the compacted ids and deterministic token estimates; it never removes an evidence id.
+- `evidence_progress` is emitted after a completed required evidence call changes the server-derived satisfied set. Its required/control ids, satisfied required ids, and discretionary/model-choice ids remain separate, and identical snapshots are never duplicated.
 - Persisted to the `copilot-traces` container (PK `/runId`); on sink failure the run
   continues but is marked `trace_degraded` — a degraded trace is reported, never faked.
 - Redaction is applied **at emit**, because persisted traces outlive the session. The

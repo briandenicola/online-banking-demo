@@ -253,6 +253,8 @@ class _AssessmentRecord:
     #: looking like a working one, which is the defect class this feature keeps producing.
     #: It starts False and is EARNED, in the same spirit as `_RunOutcome.status`.
     converged: bool = False
+    #: Last server-derived required-evidence satisfaction snapshot that was emitted.
+    last_emitted_satisfied_required_evidence_tool_ids: frozenset[str] = frozenset()
     assessment: PrimaryAssessment = field(
         default_factory=lambda: unavailable(
             "primary_never_assessed",
@@ -758,6 +760,10 @@ class Planner:
                             },
                         )
                         continue
+                    if ok and not step.get("discretionary"):
+                        await self._emit_evidence_progress_if_changed(
+                            stream, evidence_meta, record
+                        )
                     if not ok:
                         # Belt and braces: a tool step only exists when the run has an
                         # `action_id`, so the plan also contains a propose step this break
@@ -1402,6 +1408,34 @@ class Planner:
             },
         )
         return True
+
+    async def _emit_evidence_progress_if_changed(
+        self,
+        stream: RunStream,
+        evidence_meta: Mapping[str, Mapping[str, Any]],
+        record: _AssessmentRecord,
+    ) -> None:
+        """Emit only after a completed required read changes the server observation.
+
+        The model can request discretionary reads, but it cannot mark required evidence satisfied;
+        this set comes solely from successful executor results and the authority-derived record.
+        """
+        satisfied = frozenset(
+            meta["toolId"]
+            for meta in evidence_meta.values()
+            if meta.get("toolId") in record.required_evidence_tool_ids
+        )
+        if satisfied == record.last_emitted_satisfied_required_evidence_tool_ids:
+            return
+        record.last_emitted_satisfied_required_evidence_tool_ids = satisfied
+        await stream.emit(
+            "evidence_progress",
+            {
+                "requiredEvidenceToolIds": list(record.required_evidence_tool_ids),
+                "satisfiedRequiredEvidenceToolIds": sorted(satisfied),
+                "discretionaryEvidenceToolIds": list(record.discretionary_evidence_tool_ids),
+            },
+        )
 
     async def _run_assess_step(
         self,
