@@ -57,6 +57,7 @@ async def readyz(request: Request):
         "storeMode": store_mode,
         "credentialMode": settings.credential_mode,
         "plannerMode": getattr(state, "planner_mode", "unknown"),
+        "maxEvidenceTokens": settings.max_evidence_tokens,
         "authorityConfigured": bool(settings.authority_service_url),
         # Deployed config still using a superseded env var name. Empty is the healthy state.
         # Reported rather than logged once at startup, so a stale ConfigMap is visible to

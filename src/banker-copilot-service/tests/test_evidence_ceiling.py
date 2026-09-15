@@ -186,6 +186,32 @@ def _assessment(authority: _Authority) -> dict:
     return authority.proposed[-1]["agentAssessment"]
 
 
+@pytest.mark.asyncio
+async def test_required_evidence_progress_emits_on_server_set_changes_without_duplicates():
+    frames, _authority, _executor = await _run(
+        judging_assessor(),
+        STAGE_TWO,
+        required=("get_flagged_transaction", "list_account_transactions"),
+    )
+    progress = [frame for frame in frames if frame["kind"] == "evidence_progress"]
+
+    assert [frame["payload"] for frame in progress] == [
+        {
+            "requiredEvidenceToolIds": ["get_flagged_transaction", "list_account_transactions"],
+            "satisfiedRequiredEvidenceToolIds": ["get_flagged_transaction"],
+            "discretionaryEvidenceToolIds": [],
+        },
+        {
+            "requiredEvidenceToolIds": ["get_flagged_transaction", "list_account_transactions"],
+            "satisfiedRequiredEvidenceToolIds": [
+                "get_flagged_transaction", "list_account_transactions"
+            ],
+            "discretionaryEvidenceToolIds": [],
+        },
+    ]
+    assert len(progress) == len({str(frame["payload"]) for frame in progress})
+
+
 # ------------------------------------------------ §P5.1 the byte-identical prompt claim ----
 
 

@@ -43,8 +43,14 @@ EVENT_KINDS: frozenset[str] = frozenset(
         "run.error",
         "run.done",
         "heartbeat",
+        "mode_transition",
+        "evidence_compacted",
+        "evidence_progress",
     }
 )
+
+RUN_MODES: frozenset[str] = frozenset({"plan", "execute"})
+_TOOL_EVENT_KINDS: frozenset[str] = frozenset({"tool.started", "tool.completed", "tool.failed"})
 
 #: The closed rejection-reason enum (epic §5.1.1 / O9). `denied` is the single terminal
 #: rejection state, so a terminal frame without one of these is unreadable in replay: a policy
@@ -85,6 +91,14 @@ class CopilotEventEnvelope:
             raise EnvelopeError("seq is 1-based and monotonic per run")
         if self.kind == "approval.terminal":
             _validate_terminal(self.payload)
+        elif self.kind == "mode_transition":
+            _validate_mode_transition(self.payload)
+        elif self.kind == "evidence_compacted":
+            _validate_evidence_compacted(self.payload)
+        elif self.kind == "evidence_progress":
+            _validate_evidence_progress(self.payload)
+        elif self.kind in _TOOL_EVENT_KINDS:
+            _validate_tool_invocation(self.kind, self.payload)
 
     def to_wire(self) -> dict[str, Any]:
         """The exact object the UI receives in the SSE `data:` field."""
@@ -143,6 +157,95 @@ def _validate_terminal(payload: dict[str, Any]) -> None:
                 "policy-driven void from a banker rejecting the agent — and it would score the "
                 "former as a model regression."
             )
+
+
+def _validate_mode_transition(payload: dict[str, Any]) -> None:
+    if set(payload) != {"from", "to"} or payload.get("from") != "plan" or payload.get("to") != "execute":
+        raise EnvelopeError(
+            "mode_transition payload must be exactly {'from': 'plan', 'to': 'execute'}"
+        )
+
+
+def _validate_evidence_compacted(payload: dict[str, Any]) -> None:
+    if set(payload) != {"compactedIds", "originalTokensEstimate", "compactedTokensEstimate"}:
+        raise EnvelopeError(
+            "evidence_compacted payload must be exactly {'compactedIds', "
+            "'originalTokensEstimate', 'compactedTokensEstimate'}"
+        )
+    ids = payload["compactedIds"]
+    if (
+        not isinstance(ids, list)
+        or not ids
+        or any(not isinstance(item, str) or not item for item in ids)
+    ):
+        raise EnvelopeError("evidence_compacted compactedIds must be a non-empty list of non-empty strings")
+    for field in ("originalTokensEstimate", "compactedTokensEstimate"):
+        value = payload[field]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise EnvelopeError(f"evidence_compacted {field} must be a non-negative integer")
+    if payload["compactedTokensEstimate"] > payload["originalTokensEstimate"]:
+        raise EnvelopeError("evidence_compacted compacted estimate cannot exceed original estimate")
+
+def _validate_evidence_progress(payload: dict[str, Any]) -> None:
+    """Validate the server observation without allowing policy and model choices to blur.
+
+    Required ids are the authority-derived control; discretionary ids are the model-derived
+    choice. Keeping all three sets explicit makes a replay tell those facts apart.
+    """
+    if not isinstance(payload, dict):
+        raise EnvelopeError("evidence_progress payload must be an object")
+
+    expected = {
+        "requiredEvidenceToolIds",
+        "satisfiedRequiredEvidenceToolIds",
+        "discretionaryEvidenceToolIds",
+    }
+    if set(payload) != expected:
+        raise EnvelopeError(
+            "evidence_progress payload must be exactly "
+            "{'requiredEvidenceToolIds', 'satisfiedRequiredEvidenceToolIds', "
+            "'discretionaryEvidenceToolIds'}; required and discretionary ids cannot be merged"
+        )
+
+    values: dict[str, list[str]] = {}
+    for field in expected:
+        value = payload[field]
+        if (
+            not isinstance(value, list)
+            or any(not isinstance(item, str) or not item.strip() for item in value)
+            or len(set(value)) != len(value)
+        ):
+            raise EnvelopeError(
+                f"evidence_progress {field} must be a list of unique non-empty strings"
+            )
+        values[field] = value
+
+    required = set(values["requiredEvidenceToolIds"])
+    satisfied = set(values["satisfiedRequiredEvidenceToolIds"])
+    discretionary = set(values["discretionaryEvidenceToolIds"])
+    if not satisfied <= required:
+        raise EnvelopeError(
+            "evidence_progress satisfiedRequiredEvidenceToolIds must be a subset of "
+            "requiredEvidenceToolIds"
+        )
+    if required & discretionary:
+        raise EnvelopeError(
+            "evidence_progress requiredEvidenceToolIds and discretionaryEvidenceToolIds "
+            "must remain disjoint"
+        )
+
+
+def _validate_tool_invocation(kind: str, payload: dict[str, Any]) -> None:
+    mode = payload.get("mode")
+    if mode not in RUN_MODES:
+        raise EnvelopeError(
+            f"{kind} payload requires mode in {sorted(RUN_MODES)}, got {mode!r}"
+        )
+    tool_id = payload.get("name") or payload.get("toolId")
+    if not isinstance(tool_id, str) or not tool_id.strip():
+        raise EnvelopeError(f"{kind} payload requires a tool identity")
+    if mode == "execute" and tool_id != "propose_action":
+        raise EnvelopeError("only propose_action may have execute mode")
 
 
 def new_event_id() -> str:

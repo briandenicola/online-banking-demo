@@ -31,12 +31,14 @@ import jsonschema
 import structlog
 
 from app.events.bus import RunStream
+from app.planner.agent_mode import AgentMode
 from app.config import ConfigurationError, env_with_legacy
 from app.stores.sessions import Session, new_artifact
 from app.tools.executor import ToolExecutor, ToolInvocationError
 from app.tools.propose import AuthorityClient, ProposeRejected
 from app.tools.registry import ToolRegistry
 from app.planner.approval_view import primary_proposal_assessment, primary_wire_assessment
+from app.planner.evidence_compaction import compact_evidence
 from app.planner.evidence_ceiling import (
     ITERATIONS_EXHAUSTED,
     READ_REFUSED_403,
@@ -251,6 +253,8 @@ class _AssessmentRecord:
     #: looking like a working one, which is the defect class this feature keeps producing.
     #: It starts False and is EARNED, in the same spirit as `_RunOutcome.status`.
     converged: bool = False
+    #: Last server-derived required-evidence satisfaction snapshot that was emitted.
+    last_emitted_satisfied_required_evidence_tool_ids: frozenset[str] = frozenset()
     assessment: PrimaryAssessment = field(
         default_factory=lambda: unavailable(
             "primary_never_assessed",
@@ -531,6 +535,7 @@ class Planner:
         fanout=None,
         action_metadata_descriptions: ActionMetadata | None = None,
         propose_enabled: bool = True,
+        max_evidence_tokens: int = 64000,
     ) -> None:
         self._registry = registry
         self._executor = executor
@@ -563,6 +568,7 @@ class Planner:
         # the opposite: `Settings.propose_enabled` is False unless COPILOT_PROPOSE_ENABLED is
         # set, so the service on stage is leashed and an unset env var fails closed.
         self._propose_enabled = propose_enabled
+        self._max_evidence_tokens = max_evidence_tokens
 
     async def run(self, request: PlannerRequest, stream: RunStream) -> None:
         started = time.monotonic()
@@ -570,6 +576,7 @@ class Planner:
         # Success is earned, never defaulted. `proposal_expected` is set the moment the plan
         # is known, a few lines below.
         outcome = _RunOutcome(proposal_expected=bool(request.action_id))
+        agent_mode = AgentMode()
 
         await stream.emit(
             "run.started",
@@ -735,7 +742,7 @@ class Planner:
                     )
                     break
                 elif step["kind"] == "tool":
-                    ok = await self._run_tool_step(request, stream, step, evidence, evidence_meta)
+                    ok = await self._run_tool_step(request, stream, step, evidence, evidence_meta, agent_mode)
                     if not ok and step.get("discretionary"):
                         # A discretionary read that fails does NOT fail the run. It was never
                         # required, so the plan is no worse off than if the model had not asked.
@@ -753,6 +760,10 @@ class Planner:
                             },
                         )
                         continue
+                    if ok and not step.get("discretionary"):
+                        await self._emit_evidence_progress_if_changed(
+                            stream, evidence_meta, record
+                        )
                     if not ok:
                         # Belt and braces: a tool step only exists when the run has an
                         # `action_id`, so the plan also contains a propose step this break
@@ -954,7 +965,7 @@ class Planner:
                             },
                         )
                         break
-                    result = await self._run_propose_step(request, stream, evidence, evidence_meta, record)
+                    result = await self._run_propose_step(request, stream, evidence, evidence_meta, record, agent_mode)
                     if not result.admitted:
                         # This step exists for one reason: to put an approval in front of a
                         # human. It produced none, so it did not do its job, and emitting
@@ -1326,6 +1337,7 @@ class Planner:
         step: dict[str, Any],
         evidence: dict[str, Any],
         evidence_meta: dict[str, dict[str, Any]],
+        agent_mode: AgentMode,
     ) -> bool:
         tool_id = step["toolId"]
         tool = self._registry.get(tool_id)
@@ -1341,6 +1353,8 @@ class Planner:
                 "toolCallId": call_id,
                 "stepId": step["id"],
                 "name": tool_id,
+                "toolId": tool_id,
+                "mode": agent_mode.current,
                 "args": arguments,
                 "attempt": 1,
             },
@@ -1353,6 +1367,9 @@ class Planner:
                 "tool.failed",
                 {
                     "toolCallId": call_id,
+                    "name": tool_id,
+                    "toolId": tool_id,
+                    "mode": agent_mode.current,
                     "error": f"{exc.code}: {exc.message}",
                     "attempt": 1,
                     "willRetry": False,
@@ -1382,12 +1399,43 @@ class Planner:
             "tool.completed",
             {
                 "toolCallId": call_id,
+                "name": tool_id,
+                "toolId": tool_id,
+                "mode": agent_mode.current,
                 "durationMs": result.duration_ms,
                 "resultSummary": result.summary(),
                 "result": result.data,
             },
         )
         return True
+
+    async def _emit_evidence_progress_if_changed(
+        self,
+        stream: RunStream,
+        evidence_meta: Mapping[str, Mapping[str, Any]],
+        record: _AssessmentRecord,
+    ) -> None:
+        """Emit only after a completed required read changes the server observation.
+
+        The model can request discretionary reads, but it cannot mark required evidence satisfied;
+        this set comes solely from successful executor results and the authority-derived record.
+        """
+        satisfied = frozenset(
+            meta["toolId"]
+            for meta in evidence_meta.values()
+            if meta.get("toolId") in record.required_evidence_tool_ids
+        )
+        if satisfied == record.last_emitted_satisfied_required_evidence_tool_ids:
+            return
+        record.last_emitted_satisfied_required_evidence_tool_ids = satisfied
+        await stream.emit(
+            "evidence_progress",
+            {
+                "requiredEvidenceToolIds": list(record.required_evidence_tool_ids),
+                "satisfiedRequiredEvidenceToolIds": sorted(satisfied),
+                "discretionaryEvidenceToolIds": list(record.discretionary_evidence_tool_ids),
+            },
+        )
 
     async def _run_assess_step(
         self,
@@ -1409,8 +1457,18 @@ class Planner:
         defect (§P5.1). The only edge stage 1 does not traverse is the executor invoking an extra
         tool — and the executor is traversed on every run anyway by the required evidence.
         """
+        prompt_evidence, compaction = compact_evidence(evidence, self._max_evidence_tokens)
+        if compaction.compacted_ids:
+            await stream.emit(
+                "evidence_compacted",
+                {
+                    "compactedIds": list(compaction.compacted_ids),
+                    "originalTokensEstimate": compaction.original_tokens_estimate,
+                    "compactedTokensEstimate": compaction.compacted_tokens_estimate,
+                },
+            )
         assessment = await self._assessor(
-            request.objective, request.action_id, request.payload, evidence
+            request.objective, request.action_id, request.payload, prompt_evidence
         )
         record.iterations += 1
         record.assessment = assessment
@@ -1483,6 +1541,7 @@ class Planner:
         evidence: dict[str, Any],
         evidence_meta: dict[str, dict[str, Any]],
         record: _AssessmentRecord,
+        agent_mode: AgentMode,
     ) -> ProposeStepResult:
         """Propose the action for human signature.
 
@@ -1492,6 +1551,19 @@ class Planner:
         nothing more — so a refusal was indistinguishable from a run that simply had no L2
         second opinion to gather, and the loop marched on to `step.completed`.
         """
+        await agent_mode.transition_to_execute(stream)
+        call_id = f"call_{stream.last_seq + 1}"
+        await stream.emit(
+            "tool.started",
+            {
+                "toolCallId": call_id,
+                "stepId": "propose_action",
+                "name": "propose_action",
+                "toolId": "propose_action",
+                "mode": agent_mode.current,
+                "attempt": 1,
+            },
+        )
         try:
             outcome = await self._authority.propose(
                 {
@@ -1518,6 +1590,14 @@ class Planner:
                 correlation_id=request.correlation_id,
             )
         except ProposeRejected as exc:
+            await stream.emit(
+                "tool.failed",
+                {
+                    "toolCallId": call_id, "name": "propose_action", "toolId": "propose_action",
+                    "mode": agent_mode.current, "error": f"{exc.code}: {exc.message}",
+                    "attempt": 1, "willRetry": False,
+                },
+            )
             # Refused before it ever left this service: the payload could not be
             # canonicalised. Nothing upstream was consulted and nothing here can repair it.
             await stream.emit(
@@ -1530,6 +1610,13 @@ class Planner:
             recoverable = outcome.status_code == 422
             code = outcome.body.get("error", "propose_refused")
             await stream.emit(
+                "tool.failed",
+                {
+                    "toolCallId": call_id, "name": "propose_action", "toolId": "propose_action",
+                    "mode": agent_mode.current, "error": code, "attempt": 1, "willRetry": False,
+                },
+            )
+            await stream.emit(
                 "run.error",
                 {
                     "code": code,
@@ -1540,6 +1627,14 @@ class Planner:
             return ProposeStepResult(error_code=code, recoverable=recoverable)
 
         body = outcome.body
+        await stream.emit(
+            "tool.completed",
+            {
+                "toolCallId": call_id, "name": "propose_action", "toolId": "propose_action",
+                "mode": agent_mode.current, "durationMs": 0,
+                "resultSummary": "proposal admitted",
+            },
+        )
         # Shipped contract: ApprovalRequiredPayload = { approval: Approval, policyVersion,
         # requiredRung } (ui-app types.ts). The reducer reads `event.payload.approval` — emitting
         # the old `{request: body}` left `p.approval` undefined and threw a TypeError on the FIRST

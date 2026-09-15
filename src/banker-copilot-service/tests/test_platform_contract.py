@@ -270,3 +270,10 @@ async def test_in_memory_store_scopes_a_run_to_its_session_like_cosmos_does():
 
     assert await store.get_run(run.id, session.id) is not None
     assert await store.get_run(run.id, "sess_someone_else") is None
+
+
+@pytest.mark.parametrize("raw", ["not-an-integer", "0", "-1"])
+def test_invalid_evidence_budget_is_a_startup_failure(monkeypatch, raw):
+    monkeypatch.setenv("COPILOT_MAX_EVIDENCE_TOKENS", raw)
+    with pytest.raises(ConfigurationError, match="COPILOT_MAX_EVIDENCE_TOKENS"):
+        load_settings()

@@ -40,6 +40,9 @@ UI_CONTRACT_KINDS = frozenset(
         "run.error",
         "run.done",
         "heartbeat",
+        "mode_transition",
+        "evidence_compacted",
+        "evidence_progress",
     }
 )
 
@@ -151,7 +154,7 @@ def test_every_emitted_frame_is_persisted_as_emitted():
         registry = RunStreamRegistry(sink, replay_window=100)
         stream = registry.create("run_p", "sess_p")
         await stream.emit("run.started", {"intent": "x"})
-        await stream.emit("tool.started", {"name": "get_account"})
+        await stream.emit("tool.started", {"name": "get_account", "toolId": "get_account", "mode": "plan"})
         await stream.emit("run.done", {"status": "completed", "finalSeq": 3})
         return await sink.read_run("run_p")
 
@@ -170,7 +173,7 @@ def test_persisted_frame_is_a_superset_of_the_wire_frame():
         run_id="run_x",
         kind="tool.completed",
         ts=utc_now_iso(),
-        payload={"toolCallId": "call_1", "durationMs": 12},
+        payload={"toolCallId": "call_1", "name": "get_account", "mode": "plan", "durationMs": 12},
         session_id="sess_x",
     )
     wire = envelope.to_wire()
@@ -212,3 +215,122 @@ def test_replay_window_shortfall_is_detected_rather_than_papered_over():
     stale, fresh = asyncio.run(scenario())
     assert stale is False
     assert fresh is True
+
+
+def test_mode_transition_is_closed_and_exactly_shaped():
+    envelope = CopilotEventEnvelope(
+        id="evt_mode",
+        seq=1,
+        run_id="run_mode",
+        session_id="sess_mode",
+        kind="mode_transition",
+        ts=utc_now_iso(),
+        payload={"from": "plan", "to": "execute"},
+    )
+    assert envelope.to_wire()["payload"] == {"from": "plan", "to": "execute"}
+
+    for payload in (
+        {"from": "execute", "to": "plan"},
+        {"from": "plan", "to": "execute", "extra": True},
+        {"from": "plan", "to": "foundry"},
+    ):
+        with pytest.raises(EnvelopeError):
+            CopilotEventEnvelope(
+                id="evt_mode",
+                seq=1,
+                run_id="run_mode",
+                kind="mode_transition",
+                ts=utc_now_iso(),
+                payload=payload,
+            )
+
+
+def test_tool_invocation_requires_mode_and_execute_is_reserved_for_proposal():
+    with pytest.raises(EnvelopeError, match="requires mode"):
+        CopilotEventEnvelope(
+            id="evt_tool",
+            seq=1,
+            run_id="run_tool",
+            kind="tool.started",
+            ts=utc_now_iso(),
+            payload={"name": "get_account"},
+        )
+    with pytest.raises(EnvelopeError, match="only propose_action"):
+        CopilotEventEnvelope(
+            id="evt_tool",
+            seq=1,
+            run_id="run_tool",
+            kind="tool.started",
+            ts=utc_now_iso(),
+            payload={"name": "get_account", "mode": "execute"},
+        )
+
+
+def test_evidence_compacted_payload_is_closed_and_validated():
+    payload = {
+        "compactedIds": ["get_transactions"],
+        "originalTokensEstimate": 100,
+        "compactedTokensEstimate": 20,
+    }
+    envelope = CopilotEventEnvelope(
+        id="evt_compact",
+        seq=1,
+        run_id="run_compact",
+        kind="evidence_compacted",
+        ts=utc_now_iso(),
+        payload=payload,
+    )
+    assert envelope.to_wire()["payload"] == payload
+
+    malformed = (
+        {"compactedIds": [], "originalTokensEstimate": 1},
+        {"compactedIds": ["x"], "originalTokensEstimate": -1, "compactedTokensEstimate": 0},
+        {"compactedIds": [], "originalTokensEstimate": 1, "compactedTokensEstimate": 0},
+        {"compactedIds": ["x"], "originalTokensEstimate": 1, "compactedTokensEstimate": 2},
+        {"compactedIds": [1], "originalTokensEstimate": 1, "compactedTokensEstimate": 0},
+    )
+    for invalid in malformed:
+        with pytest.raises(EnvelopeError):
+            CopilotEventEnvelope(
+                id="evt_compact",
+                seq=1,
+                run_id="run_compact",
+                kind="evidence_compacted",
+                ts=utc_now_iso(),
+                payload=invalid,
+            )
+
+
+def test_evidence_progress_keeps_policy_satisfaction_and_model_choice_separate():
+    payload = {
+        "requiredEvidenceToolIds": ["get_account", "get_flagged_transaction"],
+        "satisfiedRequiredEvidenceToolIds": ["get_account"],
+        "discretionaryEvidenceToolIds": ["list_login_audits"],
+    }
+    envelope = CopilotEventEnvelope(
+        id="evt_progress", seq=1, run_id="run_progress", kind="evidence_progress",
+        ts=utc_now_iso(), payload=payload,
+    )
+    assert envelope.payload == payload
+
+
+@pytest.mark.parametrize("payload", [
+    {},
+    {"requiredEvidenceToolIds": [], "satisfiedRequiredEvidenceToolIds": [],
+     "discretionaryEvidenceToolIds": [], "mergedEvidenceToolIds": []},
+    {"requiredEvidenceToolIds": ["get_account"],
+     "satisfiedRequiredEvidenceToolIds": ["unknown"], "discretionaryEvidenceToolIds": []},
+    {"requiredEvidenceToolIds": ["get_account"],
+     "satisfiedRequiredEvidenceToolIds": [], "discretionaryEvidenceToolIds": ["get_account"]},
+    {"requiredEvidenceToolIds": ["get_account", "get_account"],
+     "satisfiedRequiredEvidenceToolIds": [], "discretionaryEvidenceToolIds": []},
+    {"requiredEvidenceToolIds": [" "], "satisfiedRequiredEvidenceToolIds": [],
+     "discretionaryEvidenceToolIds": []},
+    None,
+])
+def test_evidence_progress_rejects_missing_malformed_or_merged_payload(payload):
+    with pytest.raises(EnvelopeError):
+        CopilotEventEnvelope(
+            id="evt_progress", seq=1, run_id="run_progress", kind="evidence_progress",
+            ts=utc_now_iso(), payload=payload,  # type: ignore[arg-type]
+        )

@@ -199,9 +199,10 @@ async def _emit_envelopes() -> list[dict[str, Any]]:
 
     frames = runs.sink._frames.get("run_demo", [])  # type: ignore[attr-defined]
     wanted = {"approval.required", "approval.updated"}
-    # Strip volatile envelope fields; keep everything the UI consumes.
+    # Strip volatile envelope fields; approval sequence numbers are intentionally not frozen
+    # here because the trace now includes explicit mode and proposal-invocation frames.
     return [
-        {k: v for k, v in f.items() if k not in ("id", "ts")}
+        {k: v for k, v in f.items() if k not in ("id", "ts", "seq")}
         for f in frames
         if f["kind"] in wanted
     ]
@@ -217,6 +218,7 @@ async def test_backend_emits_the_golden_wire_envelopes():
 
     # A missing golden THROWS — a contract nobody has run is not a contract (epic lesson).
     golden = json.loads(GOLDEN_PATH.read_text())
+    golden = [{k: v for k, v in frame.items() if k != "seq"} for frame in golden]
 
     assert envelopes == golden, (
         "backend-emitted envelopes drifted from the committed golden at "
