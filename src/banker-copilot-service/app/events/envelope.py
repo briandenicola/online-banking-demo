@@ -43,6 +43,7 @@ EVENT_KINDS: frozenset[str] = frozenset(
         "run.error",
         "run.done",
         "heartbeat",
+        "model.call",
         "mode_transition",
         "evidence_compacted",
         "evidence_progress",
@@ -102,6 +103,8 @@ class CopilotEventEnvelope:
             _validate_sensitive_read_recorded(self.payload)
         elif self.kind in _TOOL_EVENT_KINDS:
             _validate_tool_invocation(self.kind, self.payload)
+        elif self.kind == "model.call":
+            _validate_model_call(self.payload)
 
     def to_wire(self) -> dict[str, Any]:
         """The exact object the UI receives in the SSE `data:` field."""
@@ -263,6 +266,41 @@ def _validate_sensitive_read_recorded(payload: dict[str, Any]) -> None:
         raise EnvelopeError("sensitive_read_recorded argumentKeys must be sorted unique strings")
 
 
+def _validate_model_call(payload: dict[str, Any]) -> None:
+    """Validate the model-call telemetry frame (epic §8.0 row 5).
+
+    ``modelDeployment`` and ``latencyMs`` are mandatory: every round trip has a deployment
+    it was made against and a wall-clock cost, win or lose. ``promptTokens``/
+    ``completionTokens`` are optional and, when present, must be non-negative integers —
+    some SDK responses carry no usage data at all, and a frame that omits them is honest
+    about that gap. A frame that fabricated a ``0`` would not be.
+    """
+    if not isinstance(payload, dict):
+        raise EnvelopeError("model.call payload must be an object")
+
+    allowed = {"modelDeployment", "promptTokens", "completionTokens", "latencyMs"}
+    if not set(payload) <= allowed or not {"modelDeployment", "latencyMs"} <= set(payload):
+        raise EnvelopeError(
+            "model.call payload must contain 'modelDeployment' and 'latencyMs', and may only "
+            f"otherwise contain {sorted(allowed - {'modelDeployment', 'latencyMs'})}"
+        )
+
+    deployment = payload["modelDeployment"]
+    if not isinstance(deployment, str) or not deployment.strip():
+        raise EnvelopeError("model.call modelDeployment must be a non-empty string")
+
+    latency = payload["latencyMs"]
+    if not isinstance(latency, int) or isinstance(latency, bool) or latency < 0:
+        raise EnvelopeError("model.call latencyMs must be a non-negative integer")
+
+    for field in ("promptTokens", "completionTokens"):
+        if field not in payload:
+            continue
+        value = payload[field]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise EnvelopeError(f"model.call {field} must be a non-negative integer when present")
+
+
 def _validate_tool_invocation(kind: str, payload: dict[str, Any]) -> None:
     mode = payload.get("mode")
     if mode not in RUN_MODES:
@@ -274,7 +312,36 @@ def _validate_tool_invocation(kind: str, payload: dict[str, Any]) -> None:
         raise EnvelopeError(f"{kind} payload requires a tool identity")
     if mode == "execute" and tool_id != "propose_action":
         raise EnvelopeError("only propose_action may have execute mode")
+    # §8.0: "traceId/spanId on tool frames ... to correlate an agent's tool-call decision
+    # with the underlying OTEL span across services." Mandatory rather than optional — an
+    # eval consumer cannot tell "this run predates the field" from "this frame lost it" if
+    # it is allowed to be silently absent on some frames and present on others.
+    for correlation_field in ("traceId", "spanId"):
+        value = payload.get(correlation_field)
+        if not isinstance(value, str) or not value.strip():
+            raise EnvelopeError(f"{kind} payload requires a non-empty {correlation_field}")
 
 
 def new_event_id() -> str:
     return f"evt_{uuid.uuid4().hex[:20]}"
+
+
+def new_span_id() -> str:
+    """A fresh identifier for one tool round trip. Same convention as ``new_event_id`` —
+
+    a fixed prefix over a truncated uuid4 hex — so a reader can tell an event id from a span
+    id by shape alone, and both are generated the same way rather than inventing a second
+    scheme.
+    """
+    return f"span_{uuid.uuid4().hex[:20]}"
+
+
+def new_trace_id() -> str:
+    """Fallback traceId for a run whose caller sent no ``X-Correlation-ID``.
+
+    Same convention as ``new_event_id``/``new_span_id``. The planner prefers the caller's
+    own correlation id (``PlannerRequest.correlation_id``) so a run is correlatable with the
+    request that started it; this exists only for the case where the caller supplied none,
+    so every tool frame still gets a stable, non-empty traceId for the run's lifetime.
+    """
+    return f"trace_{uuid.uuid4().hex[:20]}"

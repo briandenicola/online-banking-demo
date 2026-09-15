@@ -18,7 +18,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Mapping
 
 import structlog
 
@@ -99,6 +99,58 @@ class Attribution:
         if self.response_sha256:
             wire["responseSha256"] = self.response_sha256
         return wire
+
+
+@dataclass(frozen=True)
+class ModelCallTelemetry:
+    """Cost/latency facts for one model round trip — the ``model.call`` trace frame (epic
+
+    §8.0 row 5: "Model, deployment, token counts on model-call frames" is needed for
+    cost/regression attribution per run. Deliberately separate from ``Attribution``:
+    ``Attribution`` answers "who said this, on which bytes" for an approval record; this
+    answers "what did the round trip cost", for offline eval. Conflating them would put
+    latency and token counts on every approval body that carries an attribution, which is
+    not what any consumer of that wire shape asked for.
+
+    ``prompt_tokens``/``completion_tokens`` are ``None`` — never a fabricated ``0`` — when
+    the SDK response carries no usage data at all, which does happen (see
+    ``usage_token_counts``). A silent zero would read as "this call cost nothing," which is
+    a claim we have no basis for.
+    """
+
+    model_deployment: str
+    latency_ms: int
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
+    def to_wire(self) -> dict[str, Any]:
+        wire: dict[str, Any] = {
+            "modelDeployment": self.model_deployment,
+            "latencyMs": self.latency_ms,
+        }
+        if self.prompt_tokens is not None:
+            wire["promptTokens"] = self.prompt_tokens
+        if self.completion_tokens is not None:
+            wire["completionTokens"] = self.completion_tokens
+        return wire
+
+
+def usage_token_counts(response: Any) -> tuple[int | None, int | None]:
+    """Pull ``(prompt_tokens, completion_tokens)`` off an Agent Framework response.
+
+    Some responses carry no ``usage_details`` at all — not every transport/SDK path
+    populates it — so this returns ``(None, None)`` rather than raising or guessing a
+    count. A ``model.call`` frame missing token counts is honest about the SDK's own gap;
+    a fabricated ``0`` would not be.
+    """
+    usage = getattr(response, "usage_details", None)
+    if not isinstance(usage, Mapping):
+        return None, None
+
+    def _int_or_none(value: Any) -> int | None:
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    return _int_or_none(usage.get("input_token_count")), _int_or_none(usage.get("output_token_count"))
 
 
 async def await_model(
@@ -222,4 +274,12 @@ def _elapsed_ms(started: float) -> int:
     return int((time.monotonic() - started) * 1000)
 
 
-__all__ = ["as_chat_messages", "await_model", "extract_json", "sha256_text", "Attribution"]
+__all__ = [
+    "as_chat_messages",
+    "await_model",
+    "extract_json",
+    "sha256_text",
+    "Attribution",
+    "ModelCallTelemetry",
+    "usage_token_counts",
+]

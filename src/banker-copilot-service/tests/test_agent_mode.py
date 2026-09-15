@@ -29,11 +29,17 @@ async def test_emitted_invocations_reserve_execute_for_propose_action():
     stream = RunStreamRegistry(InMemoryTraceSink(), replay_window=20).create("run_2", "session_2")
     await stream.emit(
         "tool.started",
-        {"toolCallId": "call_read", "name": "get_account", "toolId": "get_account", "mode": "plan"},
+        {
+            "toolCallId": "call_read", "name": "get_account", "toolId": "get_account",
+            "mode": "plan", "traceId": "trace_1", "spanId": "span_1",
+        },
     )
     await stream.emit(
         "tool.started",
-        {"toolCallId": "call_propose", "name": "propose_action", "toolId": "propose_action", "mode": "execute"},
+        {
+            "toolCallId": "call_propose", "name": "propose_action", "toolId": "propose_action",
+            "mode": "execute", "traceId": "trace_1", "spanId": "span_2",
+        },
     )
 
     invocations = [event for event in stream._recent if event.kind == "tool.started"]

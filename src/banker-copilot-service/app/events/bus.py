@@ -28,6 +28,10 @@ class TraceSink(Protocol):
 
     async def read_run(self, run_id: str) -> list[dict[str, Any]]: ...
 
+    async def query_session(
+        self, session_id: str, *, since: str | None = None, kind: str | None = None
+    ) -> list[dict[str, Any]]: ...
+
 
 class InMemoryTraceSink:
     """Local-dev and test sink. Same interface, same ordering guarantees, no durability."""
@@ -40,6 +44,19 @@ class InMemoryTraceSink:
 
     async def read_run(self, run_id: str) -> list[dict[str, Any]]:
         return list(self._frames.get(run_id, []))
+
+    async def query_session(
+        self, session_id: str, *, since: str | None = None, kind: str | None = None
+    ) -> list[dict[str, Any]]:
+        frames = [
+            frame
+            for run_frames in self._frames.values()
+            for frame in run_frames
+            if frame.get("sessionId") == session_id
+            and (since is None or frame.get("ts", "") >= since)
+            and (kind is None or frame.get("kind") == kind)
+        ]
+        return sorted(frames, key=lambda frame: frame.get("ts", ""))
 
 
 class CosmosTraceSink:
@@ -59,6 +76,39 @@ class CosmosTraceSink:
                     query="SELECT * FROM c WHERE c.runId = @runId ORDER BY c.seq",
                     parameters=[{"name": "@runId", "value": run_id}],
                     partition_key=run_id,
+                )
+            )
+
+        return await asyncio.to_thread(_query)
+
+    async def query_session(
+        self, session_id: str, *, since: str | None = None, kind: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Every frame for a session, across every run in it — the eval bulk-fetch path (#333).
+
+        Deliberately mandatory ``sessionId``: the `(sessionId, ts)` composite index
+        (`infra/cloud/cosmos.tf`) exists for exactly this shape, and a query with no
+        ``sessionId`` predicate at all would be an unscoped, unbounded scan of the whole
+        container — every session's every run — which is not a mistake this endpoint may make.
+        ``runId`` is the partition key, not ``sessionId``, so this is cross-partition by
+        construction, same as the existing cross-run queries in `stores/sessions.py`.
+        """
+        clauses = ["c.sessionId = @sessionId"]
+        parameters: list[dict[str, Any]] = [{"name": "@sessionId", "value": session_id}]
+        if since is not None:
+            clauses.append("c.ts >= @since")
+            parameters.append({"name": "@since", "value": since})
+        if kind is not None:
+            clauses.append("c.kind = @kind")
+            parameters.append({"name": "@kind", "value": kind})
+        query = f"SELECT * FROM c WHERE {' AND '.join(clauses)} ORDER BY c.ts ASC"
+
+        def _query() -> list[dict[str, Any]]:
+            return list(
+                self._container.query_items(
+                    query=query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True,
                 )
             )
 
