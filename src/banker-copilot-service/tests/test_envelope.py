@@ -43,6 +43,7 @@ UI_CONTRACT_KINDS = frozenset(
         "mode_transition",
         "evidence_compacted",
         "evidence_progress",
+        "sensitive_read_recorded",
     }
 )
 

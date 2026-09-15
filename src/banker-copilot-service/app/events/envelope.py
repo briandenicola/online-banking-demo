@@ -46,6 +46,7 @@ EVENT_KINDS: frozenset[str] = frozenset(
         "mode_transition",
         "evidence_compacted",
         "evidence_progress",
+        "sensitive_read_recorded",
     }
 )
 
@@ -97,6 +98,8 @@ class CopilotEventEnvelope:
             _validate_evidence_compacted(self.payload)
         elif self.kind == "evidence_progress":
             _validate_evidence_progress(self.payload)
+        elif self.kind == "sensitive_read_recorded":
+            _validate_sensitive_read_recorded(self.payload)
         elif self.kind in _TOOL_EVENT_KINDS:
             _validate_tool_invocation(self.kind, self.payload)
 
@@ -233,6 +236,31 @@ def _validate_evidence_progress(payload: dict[str, Any]) -> None:
             "evidence_progress requiredEvidenceToolIds and discretionaryEvidenceToolIds "
             "must remain disjoint"
         )
+
+
+def _validate_sensitive_read_recorded(payload: dict[str, Any]) -> None:
+    """Validate the session standing-approval audit frame without carrying argument values."""
+    if not isinstance(payload, dict):
+        raise EnvelopeError("sensitive_read_recorded payload must be an object")
+    if set(payload) != {"toolId", "scope", "context"}:
+        raise EnvelopeError(
+            "sensitive_read_recorded payload must be exactly {'toolId', 'scope', 'context'}"
+        )
+    tool_id = payload["toolId"]
+    if not isinstance(tool_id, str) or not tool_id.strip():
+        raise EnvelopeError("sensitive_read_recorded toolId must be a non-empty string")
+    if payload["scope"] != "session":
+        raise EnvelopeError("sensitive_read_recorded scope must be 'session'")
+    context = payload["context"]
+    if not isinstance(context, dict) or set(context) != {"argumentKeys"}:
+        raise EnvelopeError("sensitive_read_recorded context must contain only argumentKeys")
+    keys = context["argumentKeys"]
+    if (
+        not isinstance(keys, list)
+        or any(not isinstance(item, str) or not item.strip() for item in keys)
+        or keys != sorted(set(keys))
+    ):
+        raise EnvelopeError("sensitive_read_recorded argumentKeys must be sorted unique strings")
 
 
 def _validate_tool_invocation(kind: str, payload: dict[str, Any]) -> None:

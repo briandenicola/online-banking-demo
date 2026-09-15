@@ -57,6 +57,7 @@ _ALLOWED_TOOL_KEYS = frozenset(
         "capabilityScope",
         "redaction",
         "evidenceProjection",
+        "sensitive",
     }
 )
 _ALLOWED_TARGET_KEYS = frozenset({"service", "method", "path", "timeoutMs"})
@@ -120,6 +121,7 @@ class ReadTool:
     target: ToolTarget
     parameters: dict[str, Any]
     capability_scope: str
+    sensitive: bool
     redaction: tuple[str, ...] = ()
     evidence_projection: tuple[ProjectionRule, ...] = ()
 
@@ -345,6 +347,18 @@ def _parse_tool(raw: Any, index: int) -> ReadTool:
             "matches nothing looks exactly like one that worked."
         ) from exc
 
+    if "sensitive" not in entry:
+        raise ManifestError(
+            f"tool {tool_id!r} must declare 'sensitive' explicitly. Every manifest entry "
+            "requires an audited classification; refusing to default to safe."
+        )
+    sensitive = entry["sensitive"]
+    if not isinstance(sensitive, bool):
+        raise ManifestError(
+            f"tool {tool_id!r} 'sensitive' must be a boolean; refusing to guess at a "
+            "sensitive-data classification"
+        )
+
     projection: tuple[ProjectionRule, ...] = ()
     if "evidenceProjection" in entry:
         try:
@@ -363,6 +377,7 @@ def _parse_tool(raw: Any, index: int) -> ReadTool:
         capability_scope=capability_scope,
         redaction=tuple(redaction),
         evidence_projection=projection,
+        sensitive=sensitive,
     )
 
 

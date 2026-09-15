@@ -42,6 +42,7 @@ from app.tools.executor import ToolExecutor
 from app.tools.manifest import load_manifest
 from app.tools.propose import AuthorityClient
 from app.tools.registry import build_registry
+from app.tools.standing_approval import StandingReadApprovalLedger
 
 logger = structlog.get_logger(SERVICE_NAME)
 
@@ -224,6 +225,7 @@ async def lifespan(app: FastAPI):
         )
         action_descriptions = action_metadata.EMPTY
 
+    app.state.standing_read_approvals = StandingReadApprovalLedger()
     app.state.planner = Planner(
         registry=registry,
         executor=app.state.executor,
@@ -238,6 +240,7 @@ async def lifespan(app: FastAPI):
         action_metadata_descriptions=action_descriptions,
         propose_enabled=settings.propose_enabled,
         max_evidence_tokens=settings.max_evidence_tokens,
+        standing_read_approvals=app.state.standing_read_approvals,
     )
 
     app.state.adverse_proposal_mode = adverse_proposal_mode()

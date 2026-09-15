@@ -233,6 +233,7 @@ def _manifest(projection):
                     "additionalProperties": False,
                 },
                 "capabilityScope": "accounts.read",
+                "sensitive": False,
                 "redaction": [],
                 "evidenceProjection": projection,
             }

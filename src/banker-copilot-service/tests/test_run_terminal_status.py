@@ -184,6 +184,7 @@ class _Store:
 
 class _Session:
     id = "sess_1"
+    expires_at = "2099-01-01T00:00:00Z"
     context: dict[str, Any] = {}
     actor_id = "usr_banker_44"
     actor_username = "banker@example.com"

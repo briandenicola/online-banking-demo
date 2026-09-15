@@ -22,6 +22,11 @@
 #   - rung / policyRef    → config/authority-policy.yaml
 #   - upstream base URLs  → DOWNSTREAM__<service> environment configuration
 #
+# Sensitive classification is deliberately narrower than "bank data": set sensitive=true
+# only when a tool directly exposes PII/redaction signals (SSN, DOB, IP), bulk or
+# historical customer records, or security/audit-relevant login data. Routine single
+# transaction/account/transfer metadata and bounded identity-directory resolution stay false.
+#
 # The paths below were taken from the real controllers and routers, not from the
 # epic's worked example. Where the two disagree, reality won — see
 # src/banker-copilot-service/README.md for the three divergences found.
@@ -49,6 +54,7 @@ tools:
       required: []
       additionalProperties: false
     capabilityScope: risk.read
+    sensitive: true
     redaction:
       - $[*].customer.ssn
       - $[*].customer.dateOfBirth
@@ -73,6 +79,7 @@ tools:
       required: [txId]
       additionalProperties: false
     capabilityScope: risk.read
+    sensitive: true
     redaction:
       - $.customer.ssn
       - $.customer.dateOfBirth
@@ -98,6 +105,7 @@ tools:
       required: [txId]
       additionalProperties: false
     capabilityScope: risk.read
+    sensitive: true
     redaction:
       - $.customer.ssn
       - $.customer.dateOfBirth
@@ -121,6 +129,7 @@ tools:
       required: [transactionId]
       additionalProperties: false
     capabilityScope: transactions.read
+    sensitive: false
     redaction: []
 
   - toolId: list_account_transactions
@@ -142,6 +151,7 @@ tools:
       required: [accountId]
       additionalProperties: false
     capabilityScope: transactions.read
+    sensitive: true
     redaction: []
     # The upstream returns a bare array, which asserts nothing about whose transactions these
     # are. `accountId` is not in the response and never will be — it exists only in the bound
@@ -171,6 +181,7 @@ tools:
       required: [accountId]
       additionalProperties: false
     capabilityScope: accounts.read
+    sensitive: false
     redaction: []
     # The response already carries `balance`; only the identity needs naming. `id` on an account
     # response IS the account id — the rename adds specificity and discards nothing.
@@ -196,6 +207,7 @@ tools:
       required: [userId]
       additionalProperties: false
     capabilityScope: accounts.read
+    sensitive: false
     redaction: []
     evidenceProjection:
       userId: { bind: $args.userId }
@@ -219,6 +231,7 @@ tools:
       required: [accountNumber]
       additionalProperties: false
     capabilityScope: accounts.read
+    sensitive: false
     redaction: []
     evidenceProjection:
       accountId: { rename: id }
@@ -244,6 +257,7 @@ tools:
       required: [transferId]
       additionalProperties: false
     capabilityScope: transfers.read
+    sensitive: false
     redaction: []
 
   # ------------------------------------------------------------ identity ----
@@ -265,6 +279,7 @@ tools:
       required: [userId]
       additionalProperties: false
     capabilityScope: identity.read
+    sensitive: false
     redaction:
       - $.email
 
@@ -288,6 +303,7 @@ tools:
       required: [username]
       additionalProperties: false
     capabilityScope: customer-directory.read
+    sensitive: false
     redaction: []
 
   - toolId: list_login_audits
@@ -311,6 +327,7 @@ tools:
       required: []
       additionalProperties: false
     capabilityScope: identity.read
+    sensitive: true
     redaction:
       - $[*].ipAddress
 
@@ -331,6 +348,7 @@ tools:
       required: []
       additionalProperties: false
     capabilityScope: onboarding.read
+    sensitive: true
     redaction:
       - $[*].formData.ssn
       - $[*].formData.dateOfBirth
@@ -355,6 +373,7 @@ tools:
       required: [applicationId]
       additionalProperties: false
     capabilityScope: onboarding.read
+    sensitive: true
     redaction:
       - $.formData.ssn
       - $.formData.dateOfBirth
@@ -379,4 +398,5 @@ tools:
       required: [applicationId]
       additionalProperties: false
     capabilityScope: onboarding.read
+    sensitive: false
     redaction: []

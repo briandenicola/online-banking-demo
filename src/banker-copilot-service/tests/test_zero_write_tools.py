@@ -85,6 +85,7 @@ def test_manifest_refuses_a_write_method(raw_manifest, method):
                 "additionalProperties": False,
             },
             "capabilityScope": "risk.read",
+            "sensitive": False,
             "redaction": [],
         }
     )
@@ -279,6 +280,15 @@ EXPECTED_TOOL_IDS = frozenset(
         "get_application_audit",
     }
 )
+
+
+def test_shipped_manifest_declares_sensitive_boolean_for_every_tool(raw_manifest):
+    values = {tool["toolId"]: tool.get("sensitive") for tool in raw_manifest["tools"]}
+
+    assert set(values) == EXPECTED_TOOL_IDS
+    assert all(isinstance(value, bool) for value in values.values())
+    assert any(values.values())
+    assert not all(values.values())
 
 
 def test_shipped_manifest_registers_exactly_the_expected_tools(registry: ToolRegistry):

@@ -129,6 +129,7 @@ class _Store:
 @dataclass
 class _Session:
     id: str = "sess_1"
+    expires_at = "2099-01-01T00:00:00Z"
     context: dict[str, Any] = None  # type: ignore[assignment]
     actor_id: str = "usr_banker_1"
     actor_username: str = "banker@example.com"
