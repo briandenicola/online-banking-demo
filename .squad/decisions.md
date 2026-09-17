@@ -8972,3 +8972,66 @@ These are separate issues because correctness computation and durable workflow e
 ## Exclusions
 
 This decision does not select a production credit bureau, implement customer-facing loan UI, validate pricing/model risk beyond POL-001..010, or provide regulatory/legal certification.
+
+---
+
+### 2026-09-17T15:32:52-05:00: User directive
+**By:** Brian Denicola (via Copilot)
+**What:** While work is running, provide a concise progress update at least every 10 minutes describing what is being worked on.
+**Why:** User request — captured for team memory
+
+---
+
+---
+date: 2026-09-17
+author: Danny (Lead/Architect)
+status: approved
+component: authority-service/loan-decision-control
+issue: 382
+plan: https://github.com/briandenicola/online-banking-demo/issues/382#issuecomment-5721225362
+---
+
+# #382 implementation plan and approved product decisions
+
+Brian approved the implementation decisions below for the authoritative loan decision-control
+foundation:
+
+1. **`policy_definition=ratification_first`** — create and review the normative POL-001..010
+   decision table before implementing executable rules. Provisional or incomplete rules remain
+   fail-closed and cannot produce an approvable decision.
+2. **`snapshot_storage=full_synthetic_snapshot`** — persist the complete canonical synthetic-data
+   snapshot plus source, evidence, snapshot, policy-result, action, and approval-binding digests.
+3. **`mismatch_behavior=new_proposal`** — any material reconciliation mismatch invalidates the
+   current approval and requires a new proposal. The system never refreshes or rewrites the
+   approval in place.
+4. **`execution_gate=disabled_until_383`** — #382 implements and proves the execution
+   reconciliation seam but does not enable loan execution. #383 must first provide durable
+   workflow state, optimistic concurrency, single-use approval semantics, semantic idempotency,
+   and recovery rails.
+
+## Architecture and quality ruling
+
+The deterministic POL oracle, canonical snapshot construction, and reconciliation coordinator
+belong in the .NET 10 `authority-service`, isolated from the Python model runtime. The future loan
+service owns raw authoritative records, not authorization-grade truth. Banker Copilot,
+supervisor opinions, and trajectory scoring remain diagnostic consumers and may never override or
+offset a failed safety control.
+
+The implementation plan incorporates Livingston's verification requirements:
+
+- independently authored normative vectors and a test-only reference interpreter separated from
+  production helpers;
+- a hostile authoritative-source simulator covering pagination, ETags/versions, stale and
+  contradictory data, wrong subject/document/action bindings, replay, and TOCTOU;
+- explicit Applied/Reached/Killed proof and 100% kill of enumerated safety mutants;
+- zero downstream calls after any failed reconciliation;
+- contract, unit, integration, and replay coverage across authority-service,
+  banker-copilot-service, trajectory fixtures, and prompt-eval-service;
+- oracle-bound trajectory labels carrying policy version, source manifest/digests,
+  snapshot/result/action hashes, and independently reviewed expected outcomes.
+
+The canonical, dependency-ordered implementation plan is the issue comment linked in the front
+matter. Recommended first slice is its phases A-C: ratified policy-contract scaffolding,
+independent normative corpus/reference interpreter, and canonical snapshot plus hostile-source
+simulation. That slice remains dormant and does not modify approval admission or enable loan
+execution.

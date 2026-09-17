@@ -3546,3 +3546,16 @@ real defect signs money to the wrong customer. Written to
   load-bearing contract elements. Before exposing customization, identify the actual owner and
   deployment need; absent both, keep the fixed preamble structurally first and preserve fencing
   and structural injection tests rather than adding a decorative seam.
+
+## 2026-09-17 — #382 approved implementation plan
+
+Published the canonical #382 implementation plan at
+https://github.com/briandenicola/online-banking-demo/issues/382#issuecomment-5721225362.
+Brian approved ratification-first POL rules, persistence of the full canonical synthetic snapshot,
+invalidation and reproposal on every material mismatch, and execution disabled until #383.
+
+Livingston's independent reference oracle, hostile authoritative-source simulator, mutation
+Applied/Reached/Killed proof, anti-vacuity requirements, fixture provenance, and zero-downstream-call
+failure checks are acceptance criteria for the plan. The first recommended slice remains dormant:
+policy-contract scaffolding, independent normative corpus/interpreter, and canonical snapshot plus
+hostile-source simulation.

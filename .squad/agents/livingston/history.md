@@ -1364,3 +1364,17 @@ Marked as an affirmative observation for the audit trail — you may find it use
 Read the banker-copilot service README, complete primary_model.py and supervisor_model.py, related planner/fan-out/supervisor tests, pyproject configuration, and the BackgroundAgentsProvider decision record. The full service suite passed: `pytest -q` => 545 passed, 18 deselected, 2 warnings in 29.76s. No Turk feature code was present for post-change review; only an unrelated modified Turk history file was visible.
 
 Key learning: the fixed primary/supervisor instruction constants are safety contract surface, not generic prompt copy. No customization seam is warranted absent a concrete owner/use case. If a safety-first merge helper is later introduced, the decisive deterministic test must use hostile customization and prove the immutable action anchoring, untrusted-data boundary, adverse-action semantics, output contract, fail-closed guidance, and role-specific asymmetry survive in the actual client-bound prompt; prompt appearance alone is insufficient and live model behavior cannot replace the structural test.
+
+## 2026-09-17 — #382 authoritative correctness acceptance strategy
+
+Defined the verification strategy incorporated into Danny's approved #382 implementation plan:
+independently authored normative vectors and a test-only reference interpreter separated from
+production helpers; hostile authoritative-source behavior across pagination, versions/ETags,
+staleness, contradictions, wrong bindings, replay, and TOCTOU; explicit Applied/Reached/Killed
+mutation proof with 100% kill of enumerated safety mutants; anti-vacuity checks; complete fixture
+provenance; and zero downstream calls after every failed reconciliation.
+
+Trajectory fixtures are not authoritative labels unless bound to the ratified policy version,
+source manifest/digests, canonical snapshot/result/action hashes, and independently reviewed
+expected outcomes. Model or supervisor agreement remains diagnostic and cannot offset a failed
+safety control.
