@@ -8907,3 +8907,68 @@ Read prompts: 8/8 across 4 runs, plus one `offshore` flake in a fifth.
 The cross-customer account-binding fix (`7fb7d05`) is now behind an unreachable path. It is
 committed, not abandoned, and `turk-account-ownership-binding.md` still stands. **Setting
 `COPILOT_PROPOSE_ENABLED=1` re-arms money movement**, and should not be done to make a test pass.
+
+---
+
+---
+date: 2026-09-15
+author: Turk (Backend Dev)
+status: proposed
+issue: 370
+---
+
+# Proposal: keep instruction constants separate and fixed
+
+The instruction-merging spike found no current customization need. Keep the primary and supervisor constants separate because they express intentionally different review questions and contain load-bearing safety contracts. Do not add a configurable toggle, arbitrary caller or environment instruction input, or a shared merge helper. Existing prompt builders already provide the correct seams for banker-owned situational data and structurally prevent primary output from reaching the supervisor.
+
+The full decision record is in `.squad/decisions/records/instruction-merging-spike.md`. No code or README changes are proposed.
+
+---
+
+### 2026-09-17T15:24:35-05:00: User directive
+**By:** Brian Denicola (via Copilot)
+**What:** Every issue in the revised loan correctness and trajectory-evaluation backlog must update and align documentation with the current technology stack, implemented code, and feature set.
+**Why:** User request — captured for team memory
+
+---
+
+# Loan decisions require an independent deterministic correctness foundation
+
+**Status:** Accepted
+**Date:** 2026-09-17
+**Owner:** Danny (Lead/Architect)
+**Backlog:** #333, #376-#383
+
+## Decision
+
+Loan trajectory evaluation will not treat an agent recommendation, supervisor agreement, LLM grader, or hand-authored trajectory label as an authorization-grade correctness oracle.
+
+The project will implement:
+
+1. **#382 — authoritative loan decision-control foundation**
+   - deterministic, versioned POL-001..010 rules outside every LLM;
+   - canonical authoritative applicant/application/source/document/action snapshot;
+   - stable decision and reason codes;
+   - source versions, evidence and action digests, freshness, completeness/pagination, contradiction, and TOCTOU controls;
+   - independent recomputation and exact reconciliation before approval and execution, failing closed;
+   - mutation/property testing and independently authored expected outcomes.
+
+2. **#383 — durable loan-origination workflow rails**
+   - explicit durable state transitions and aggregate versions;
+   - optimistic concurrency, payload-specific approval TTLs, and single-use approval semantics;
+   - semantic idempotency with request/result hashes;
+   - atomic audit/integration publication and crash/partial-failure recovery.
+
+These are separate issues because correctness computation and durable workflow execution are independently reviewable controls. #382 defines truth and reconciliation; #383 controls when and exactly once that truth may cause a state change.
+
+## Consequences
+
+- #376/#381 remain the generic structural trajectory scorer, with an additive seam for authoritative loan-oracle fields.
+- Merged #379 and #380 remain valid; they require additive loan-specific trace and corpus extensions.
+- Loan-specific #377 CI gates depend on #382 and the corpus extension. Approval/execution safety claims also depend on #383.
+- #378 may visualize authoritative loan results and workflow state but must not calculate or reinterpret correctness.
+- All loan approval and execution paths fail closed on missing, stale, incomplete, contradictory, unbound, changed, or unreconciled evidence/action data.
+
+## Exclusions
+
+This decision does not select a production credit bureau, implement customer-facing loan UI, validate pricing/model risk beyond POL-001..010, or provide regulatory/legal certification.
