@@ -185,9 +185,12 @@ describe('DocumentUpload', () => {
         await waitFor(() => {
           expect(mockUploadDocuments).toHaveBeenCalledWith(
             'app-1',
-            expect.any(Array),
-            expect.any(String)
+            file,
+            'photo_id'
           );
+        });
+        await waitFor(() => {
+          expect(onUploadComplete).toHaveBeenCalled();
         });
       }
     });
