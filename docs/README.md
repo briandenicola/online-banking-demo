@@ -13,6 +13,7 @@ Follow these guides in order for the best experience:
 | 3 | [Azure Deployment](deployment-azure.md) | Deploy to AKS with Terraform, Istio, and KeyVault CSI |
 | 4 | [Azure Authentication](azure-auth.md) | How Entra ID workload identity and DefaultAzureCredential work |
 | 5 | [Testing](testing.md) | E2E testing with Playwright — setup, running, and writing tests |
+| 6 | [Agent Architecture](agent-architecture.md) | The AI agents, the Banker Copilot harness, tools, authority policy, and every flow |
 
 ## 🏗️ Architecture at a Glance
 
