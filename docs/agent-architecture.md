@@ -316,7 +316,7 @@ flowchart LR
     H -->|transport| E6[upstream_error]
     H -->|status >= 400| E7[upstream_status]
     H --> I[decode JSON<br/>non-JSON -> raw]
-    I --> J[REDACT<br/>JSONPath -> '[redacted]']
+    I --> J["REDACT<br/>JSONPath -> redacted"]
     J --> K[PROJECT<br/>rename / bind / count / collect]
     K -->|fails| E8[evidence_projection_failed]
     K --> L[ToolResult<br/>tool_id, status, data, elapsed_ms]
@@ -757,7 +757,7 @@ sequenceDiagram
         RS->>SINK: persist frame
         alt persistence fails
             SINK-->>RS: trace_degraded = true
-            Note over RS: run marked &lt;terminal&gt;_degraded<br/>frame STILL delivered live
+            Note over RS: run marked terminal-status _degraded<br/>frame STILL delivered live
         end
         RS->>RS: append to bounded replay deque (500)
         RS-->>UI: data: envelope\nid: seq
@@ -765,7 +765,7 @@ sequenceDiagram
 
     RS-->>UI: run.done -> close, None sentinel to subscribers
 
-    Note over UI,API: Reconnect: Last-Event-ID / ?lastSeq=<br/>drop seq &lt;= lastSeq, buffer out-of-order,<br/>409 resync_required -> GET /runs/{id}/trace
+    Note over UI,API: Reconnect: Last-Event-ID / ?lastSeq=<br/>drop seq at or below lastSeq, buffer out-of-order,<br/>409 resync_required -> GET /runs/{id}/trace
 ```
 
 Properties:
@@ -828,7 +828,7 @@ sequenceDiagram
     PL->>PL: validate against JSON Schema oneOf
     PL->>RR: resolve subjectHints
     RR->>EX: lookup_customer(username="dana")
-    RR->>EX: list_customer_accounts(userId=&lt;resolved&gt;)
+    RR->>EX: list_customer_accounts(userId=resolved-id)
     RR-->>PL: concrete userId + accountId
     Note over PL,RR: Model-supplied ids are HINTS ONLY.<br/>Id-shaped text is always re-resolved server-side.
     PL->>PL: plan.revised (+ read steps)
