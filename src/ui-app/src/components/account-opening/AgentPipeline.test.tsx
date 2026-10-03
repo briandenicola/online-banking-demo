@@ -45,6 +45,8 @@ const renderPipeline = (stages: AgentStage[]) => {
   return render(<AgentPipeline stages={stages} />);
 };
 
+const getStageLabel = (name: string) => screen.getAllByText(name)[0];
+
 describe('AgentPipeline', () => {
   describe('Stage rendering', () => {
     test('renders all 4 agent stages', () => {
@@ -52,7 +54,7 @@ describe('AgentPipeline', () => {
       renderPipeline(stages);
 
       STAGE_NAMES.forEach((name) => {
-        expect(screen.getByText(name)).toBeInTheDocument();
+        expect(getStageLabel(name)).toBeInTheDocument();
       });
     });
 
@@ -60,7 +62,7 @@ describe('AgentPipeline', () => {
       const stages = createStages();
       renderPipeline(stages);
 
-      const stageElements = STAGE_NAMES.map((name) => screen.getByText(name));
+      const stageElements = STAGE_NAMES.map(getStageLabel);
 
       // Verify DOM order: each stage should appear before the next
       for (let i = 0; i < stageElements.length - 1; i++) {
@@ -80,7 +82,7 @@ describe('AgentPipeline', () => {
       // All stages should be in pending state initially
       // Look for grey/pending visual indicators or aria labels
       STAGE_NAMES.forEach((name) => {
-        const stageEl = screen.getByText(name).closest('[class*="step"], [role="listitem"], li, div');
+        const stageEl = getStageLabel(name).closest('[class*="step"], [role="listitem"], li, div');
         expect(stageEl).toBeTruthy();
       });
     });
@@ -92,9 +94,9 @@ describe('AgentPipeline', () => {
       renderPipeline(stages);
 
       // The active stage should have a visual indicator (spinner, blue color, etc.)
-      expect(screen.getByText('Document Extraction')).toBeInTheDocument();
+      expect(getStageLabel('Document Extraction')).toBeInTheDocument();
       // Look for loading indicator near the active stage
-      const container = screen.getByText('Document Extraction').closest('[class*="step"], [role="listitem"], li, div');
+      const container = getStageLabel('Document Extraction').closest('[class*="step"], [role="listitem"], li, div');
       expect(container).toBeTruthy();
     });
 
@@ -105,7 +107,7 @@ describe('AgentPipeline', () => {
       });
       renderPipeline(stages);
 
-      expect(screen.getByText('Document Extraction')).toBeInTheDocument();
+      expect(getStageLabel('Document Extraction')).toBeInTheDocument();
     });
 
     test('shows failed state for failed stages', () => {
@@ -115,7 +117,7 @@ describe('AgentPipeline', () => {
       });
       renderPipeline(stages);
 
-      expect(screen.getByText('Identity Verification')).toBeInTheDocument();
+      expect(getStageLabel('Identity Verification')).toBeInTheDocument();
     });
 
     test('shows mixed states across stages', () => {
@@ -129,7 +131,7 @@ describe('AgentPipeline', () => {
 
       // All stages should render
       STAGE_NAMES.forEach((name) => {
-        expect(screen.getByText(name)).toBeInTheDocument();
+        expect(getStageLabel(name)).toBeInTheDocument();
       });
     });
   });
@@ -182,7 +184,7 @@ describe('AgentPipeline', () => {
       renderPipeline(stages);
 
       // Click on the stage or expand button to see reasoning
-      const stageEl = screen.getByText('Document Extraction');
+      const stageEl = getStageLabel('Document Extraction');
       fireEvent.click(stageEl);
 
       expect(
@@ -200,7 +202,7 @@ describe('AgentPipeline', () => {
       });
       renderPipeline(stages);
 
-      const stageEl = screen.getByText('Identity Verification');
+      const stageEl = getStageLabel('Identity Verification');
       fireEvent.click(stageEl);
 
       expect(
@@ -218,7 +220,7 @@ describe('AgentPipeline', () => {
       });
       renderPipeline(stages);
 
-      const stageEl = screen.getByText('Document Extraction');
+      const stageEl = getStageLabel('Document Extraction');
 
       // Expand
       fireEvent.click(stageEl);
@@ -241,7 +243,7 @@ describe('AgentPipeline', () => {
       renderPipeline(stages);
 
       STAGE_NAMES.forEach((name) => {
-        expect(screen.getByText(name)).toBeInTheDocument();
+        expect(getStageLabel(name)).toBeInTheDocument();
       });
     });
 
@@ -258,7 +260,7 @@ describe('AgentPipeline', () => {
       renderPipeline(stages);
 
       STAGE_NAMES.forEach((name) => {
-        expect(screen.getByText(name)).toBeInTheDocument();
+        expect(getStageLabel(name)).toBeInTheDocument();
       });
     });
   });
