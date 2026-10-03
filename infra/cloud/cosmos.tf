@@ -105,6 +105,17 @@ resource "azurerm_cosmosdb_sql_container" "account_applications" {
   partition_key_paths = ["/id"]
 }
 
+# Session-scoped trajectory scores for banker-copilot evaluation replays.
+# Partition key /sessionId keeps all scored frames for one run and its supervisor fan-out
+# in one logical partition, matching the session-shaped trace documents we replay.
+resource "azurerm_cosmosdb_sql_container" "copilot_trajectory_evals" {
+  name                = "copilot-trajectory-evals"
+  resource_group_name = azurerm_resource_group.this.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  database_name       = azurerm_cosmosdb_sql_database.banking.name
+  partition_key_paths = ["/sessionId"]
+}
+
 #############################################
 # BANKER COPILOT — authority / approval store (epic #332, Phase 1)
 #

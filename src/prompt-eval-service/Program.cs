@@ -112,6 +112,8 @@ builder.Services.AddSingleton(async sp =>
         config["CosmosDb:TemplatesContainerName"] ?? "PromptTemplates", "/userId");
     await database.CreateContainerIfNotExistsAsync(
         config["CosmosDb:RunsContainerName"] ?? "EvaluationRuns", "/userId");
+    await database.CreateContainerIfNotExistsAsync(
+        config["CosmosDb:TrajectoryEvaluationsContainerName"] ?? "copilot-trajectory-evals", "/sessionId");
 
     return database;
 });
@@ -119,6 +121,7 @@ builder.Services.AddSingleton(async sp =>
 // Repositories
 builder.Services.AddScoped<IPromptTemplateRepository, CosmosPromptTemplateRepository>();
 builder.Services.AddScoped<IEvaluationRunRepository, CosmosEvaluationRunRepository>();
+builder.Services.AddScoped<ITrajectoryEvaluationRepository, CosmosTrajectoryEvaluationRepository>();
 
 // Background evaluation queue
 builder.Services.AddSingleton<EvaluationQueue>();
@@ -126,6 +129,7 @@ builder.Services.AddHostedService<EvaluationBackgroundService>();
 
 // Services
 builder.Services.AddScoped<IPromptTemplateService, PromptTemplateService>();
+builder.Services.AddScoped<ITrajectoryScorer, TrajectoryScorer>();
 builder.Services.AddScoped<IEvaluationService, EvaluationService>();
 
 var app = builder.Build();

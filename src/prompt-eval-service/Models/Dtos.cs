@@ -87,6 +87,11 @@ public class ComparisonResponse
     public ScoreDeltas Deltas { get; set; } = new();
 }
 
+public class RunTrajectoryEvaluationRequest
+{
+    public string? FixtureRoot { get; set; }
+}
+
 public class ScoreDeltas
 {
     public double Coherence { get; set; }
