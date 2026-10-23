@@ -8,6 +8,7 @@ How to decide who handles what.
 |-----------|----------|----------|
 | Architecture, design, scope | Danny | Project structure, service boundaries, decisions |
 | .NET services, Python services, APIs, DB | Turk | Backend bugs, API quality, service patterns |
+| Deterministic controls, policy engines, reconciliation | Reuben / Virgil | Authority gates, canonicalization, source binding, independent control logic |
 | Terraform, AKS, gateway, identity, event-processor | Rusty | Infra, workload identity, JWT audiences, Go audit consumer |
 | React UI, components, frontend | Linus | UI quality, component structure, accessibility |
 | Code review | Danny | Review PRs, check quality, suggest improvements |

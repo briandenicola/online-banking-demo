@@ -17,6 +17,48 @@ whether the approval is still valid at the moment of execution. It owns three th
 3. **The execution gate** — nothing reaches a downstream service without being re-evaluated
    against the *current* policy first.
 
+## Dormant loan decision-control foundation (#382)
+
+Generic authority escalation answers **which humans must sign**. It does not establish whether
+an underwriting verdict is correct. The first dormant #382 slice adds a separate, model-free
+foundation under `LoanDecision/`:
+
+- `config/loan-underwriting-policy.yaml` inventories exactly POL-001..POL-010 as
+  `PROVISIONAL / UNDEFINED / BLOCKED`;
+- the loader fails closed on inventory/schema drift, and the provider always reports
+  `POLICY_DEFINITION_UNRESOLVED` when asked for an executable policy;
+- `ILoanAuthoritativeSource` is the only snapshot retrieval seam. The builder derives source
+  enumeration, pagination completeness, and canonical evidence from its records; the registered
+  production provider is deliberately unconfigured and fails closed until a loan service exists;
+- strict Newtonsoft contracts define the versioned request/snapshot, bindings, completeness,
+  freshness, contradictions, normalized facts, rule/oracle results, and reconciliation result;
+- domain-separated SHA-256 helpers cover evidence, snapshot, policy result, action, and approval
+  binding; and the canonical snapshot builder rejects malformed, incomplete, stale,
+  contradictory, cross-record, or cross-revision evidence. Source, document, and evidence
+  record/version/ETag bindings are exact, and the source is re-enumerated at the decision boundary
+  to detect TOCTOU changes.
+
+Every required wire member is marked required for Newtonsoft deserialization. The loan-only
+serializer rejects unexpected members; closed enum converters reject integer and undefined
+values; supported schema versions are checked before use.
+Completeness requires exactly one terminated, non-repeating pagination proof per known source,
+positive page counts, non-negative record counts, and counts equal to bound evidence. Evidence
+that names a document must name the same source as that document. Normalized fact values use
+strict invariant forms (`INTEGER`, decimal without grouping/exponent, lowercase boolean, and
+`yyyy-MM-dd` date), and nested evidence-ID sets are sorted before hashing.
+
+The unit-test project contains a separately authored provisional-policy reference interpreter and
+a deterministic hostile-source simulator. These remain test-only and do not define underwriting
+predicates.
+
+This is intentionally not connected to `ApprovalService`, signing, controllers, tools, or the
+action broker. The pre-existing generic `loan.decision.record` catalogue entry remains unchanged
+and inert without its downstream service; it describes authority escalation only and is not an
+underwriting oracle. The new core cannot produce an underwriting approval, conditional approval,
+or decline. Ratified predicates, thresholds, source precedence, and condition vocabulary are
+still required before an evaluator can exist. Durable execution remains separately blocked on
+#383.
+
 ## Technology Stack
 
 - .NET 10 (C#), ASP.NET Core Web API
@@ -111,6 +153,7 @@ payload hash, timestamp, and nonce.
 | Key | Meaning |
 |-----|---------|
 | `POLICY_FILE_PATH` | Path to the policy YAML. Baked into the image at `/app/config/authority-policy.yaml`; mount over it to change the ladder without a rebuild. |
+| `LOAN_UNDERWRITING_POLICY_FILE_PATH` | Path to the dormant ratification-first POL-001..010 inventory. Missing or invalid fails startup; a valid provisional file still cannot produce a decision. |
 | `Approval__SigningKey` | HMAC key for approval signatures. **Must differ from `Jwt__Key`** — the service refuses to start otherwise, so a leaked bearer token cannot forge a signature. |
 | `Approval__SweepIntervalSeconds`, `Approval__SweepBatchSize`, `Approval__RetentionSeconds` | Expiry sweeper. |
 | `Denial__Reason*` | Denial reason quality bounds (min length, max length, distinct characters, repeated-unit detection, minimum letters). |

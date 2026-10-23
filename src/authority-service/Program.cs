@@ -4,6 +4,8 @@ using Azure.Identity;
 using Banking.Observability;
 using AuthorityService;
 using AuthorityService.Policy;
+using AuthorityService.LoanDecision.Policy;
+using AuthorityService.LoanDecision.Snapshots;
 using AuthorityService.Repositories;
 using AuthorityService.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -77,6 +79,10 @@ var resolvedPolicy = PolicyLoader.FromConfiguration(builder.Configuration).LoadF
 
 builder.Services.AddSingleton<IPolicyProvider>(_ => new PolicyProvider(resolvedPolicy));
 builder.Services.AddSingleton<IPolicyEvaluator, PolicyEvaluator>();
+builder.Services.AddDormantLoanDecisionPolicy(builder.Configuration);
+builder.Services.AddSingleton<LoanSnapshotValidator>();
+builder.Services.AddSingleton<ILoanAuthoritativeSource, UnconfiguredLoanAuthoritativeSource>();
+builder.Services.AddSingleton<LoanSnapshotBuilder>();
 builder.Services.AddSingleton<ISignatureService, HmacSignatureService>();
 builder.Services.AddSingleton<IDenialReasonValidator, DenialReasonValidator>();
 builder.Services.AddSingleton<ActorContextFactory>();

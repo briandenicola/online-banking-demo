@@ -103,6 +103,23 @@ emit structured, replayable traces from day one.** See §8.0.
 two-session L2 demo, and the trace-schema requirement are all decided. See
 `.squad/decisions/inbox/danny-banker-copilot-decisions-ratified.md`.
 
+### Current loan-control rollout boundary (2026-09-17)
+
+The repository still has no loan-origination service or executable loan workflow. The current
+#382 implementation is a dormant foundation inside the existing .NET 10/Newtonsoft
+`authority-service`: a fail-closed provisional POL-001..POL-010 inventory, an explicit
+`ILoanAuthoritativeSource` with an unconfigured production provider, deterministic page
+enumeration, versioned canonical snapshot/result/reconciliation contracts, exact
+record/revision/ETag validation, strict loan JSON, TOCTOU checks, and domain-separated digests.
+
+This is separate from the generic rung engine. Rungs decide required human authority; the future
+loan oracle will decide underwriting correctness after product policy is ratified. The Python
+`banker-copilot-service` remains a non-authoritative model/diagnostic client and cannot calculate
+either result. This slice adds no loan proposal, signature, endpoint, broker call, or execution
+path; the pre-existing generic authority-catalogue entry remains unchanged and is not a
+correctness oracle. #383 must supply durable workflow, concurrency, single-use approval,
+idempotency, and recovery rails before execution can be considered.
+
 ---
 
 ## 1. Problem statement & demo narrative

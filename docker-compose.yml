@@ -286,6 +286,7 @@ services:
       # they match.
       - Approval__SigningKey=${AUTHORITY_SIGNING_KEY:-LocalDevAuthorityApprovalSigningKey-NotTheJwtKey}
       - POLICY_FILE_PATH=/app/config/authority-policy.yaml
+      - LOAN_UNDERWRITING_POLICY_FILE_PATH=/app/config/loan-underwriting-policy.yaml
       - ROLE_HIERARCHY_PATH=/app/config/role-hierarchy.yaml
       - Redis__ConnectionString=redis:6379
       # Out-of-band supervisor notification sinks (epic §5.6). Config-driven; redis-stream is
@@ -308,6 +309,7 @@ services:
     volumes:
       # Edit config/authority-policy.yaml locally and restart to change the ladder.
       - ./config/authority-policy.yaml:/app/config/authority-policy.yaml:ro
+      - ./config/loan-underwriting-policy.yaml:/app/config/loan-underwriting-policy.yaml:ro
       # user-service owns this file; authority-service reads it and may not diverge from it.
       - ./src/user-service/config/role-hierarchy.yaml:/app/config/role-hierarchy.yaml:ro
     depends_on:

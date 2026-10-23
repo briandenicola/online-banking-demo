@@ -34,7 +34,9 @@ COPY --from=build /app/publish .
 # closed at startup if the file is missing or invalid — a bad mount is a crash loop, not a
 # silently permissive ladder.
 COPY config/authority-policy.yaml /app/config/authority-policy.yaml
+COPY config/loan-underwriting-policy.yaml /app/config/loan-underwriting-policy.yaml
 ENV POLICY_FILE_PATH=/app/config/authority-policy.yaml
+ENV LOAN_UNDERWRITING_POLICY_FILE_PATH=/app/config/loan-underwriting-policy.yaml
 
 # user-service's RATIFIED role hierarchy, baked in read-only. This service consumes the ladder
 # and never restates it: the policy file names signer roles, the hierarchy says what they are

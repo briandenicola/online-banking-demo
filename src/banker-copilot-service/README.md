@@ -15,6 +15,11 @@ when the conversation reaches a state-changing conclusion — hands a **proposal
 > Agents never approve. Every state-changing action carries a human signature. Thresholds
 > govern how many humans sign and how senior — never *whether* a human signs.
 
+It also cannot calculate loan-underwriting correctness. The dormant #382 foundation is owned by
+the .NET 10/Newtonsoft `authority-service`; Python remains a diagnostic/model boundary. Until
+POL-001..POL-010 are ratified, that foundation returns only
+`POLICY_DEFINITION_UNRESOLVED`, and no loan endpoint or execution workflow exists.
+
 ## How that is enforced
 
 Not by a runtime check that someone can delete. By the **shape of the manifest schema**.

@@ -124,6 +124,33 @@ changes in §5.4/§5.5, permanent `payloadHash` display in §8.5.1 (Q2), denial-
 
 ## 0. Ground rules inherited (not re-litigated here)
 
+### 0.1 Generic escalation is not underwriting correctness
+
+This document's existing policy engine determines authority rungs for agent-proposed actions.
+It does **not** determine whether a loan should be `APPROVE`, `CONDITIONAL`, or `DECLINE`.
+
+The first dormant slice of #382 now lives in the .NET 10/Newtonsoft
+`src/authority-service/LoanDecision/` area. `config/loan-underwriting-policy.yaml` accounts for
+POL-001..POL-010, but every entry is explicitly `PROVISIONAL`, has operator `UNDEFINED`, and
+produces only `BLOCKED`. Startup validation rejects missing, duplicate, unknown, or malformed
+definitions, and provisional rules cannot emit a loan verdict.
+
+The slice also defines an `ILoanAuthoritativeSource` contract, a production-safe unconfigured
+provider, versioned request/snapshot/result/reconciliation contracts, subject and action bindings,
+derived completeness/freshness/contradiction records, normalized facts, and domain-separated
+digests. Required Newtonsoft members, unexpected members, integer/undefined enum values, and
+unsupported schema versions fail closed. Pagination is derived from deterministic authoritative
+page enumeration. Source, document, and evidence record identity plus version/ETag must agree,
+and the source is re-enumerated before decision use to detect TOCTOU changes. Typed facts use
+canonical invariant values, and nested evidence-ID sets are order-independent in snapshot hashes.
+A test-only independent provisional reference
+interpreter and deterministic hostile-source simulator exercise these controls without supplying
+POL predicates. It is offline scaffolding only: it adds no loan evaluator, endpoint, approval
+integration, signature path, or execution path. The existing generic action-catalogue entry is
+unchanged and remains authority escalation rather than underwriting truth. Underwriting
+semantics require separate product ratification; durable workflow execution remains owned by
+#383.
+
 From `.squad/decisions/inbox/copilot-directive-banker-copilot-{epic,authority-model,scope-boundary}.md`:
 
 | Invariant | Consequence for this design |

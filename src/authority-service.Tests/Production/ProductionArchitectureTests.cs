@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.RegularExpressions;
 using AuthorityService.Models;
 using AuthorityService.Repositories;
 using AuthorityService.Services;
@@ -219,6 +220,121 @@ public sealed class ProductionArchitectureTests(ITestOutputHelper output)
         var window = text[idx..Math.Min(text.Length, idx + 1200)];
         window.Should().NotMatchRegex(@"default_ttl\s*=\s*[1-9]",
             "a positive default_ttl on the approvals container would delete the audit record");
+    }
+
+    [Fact]
+    public void Authority_service_production_code_references_no_model_or_LLM_SDK()
+    {
+        var serviceDir = Path.Combine(RepoRoot(), "src", "authority-service");
+        var offenders = ProductionFiles(serviceDir, "*.cs")
+            .Concat(ProductionFiles(serviceDir, "*.csproj"))
+            .Where(file => ContainsForbiddenModelReference(File.ReadAllText(file)))
+            .Select(file => Path.GetRelativePath(serviceDir, file))
+            .ToList();
+
+        offenders.Should().BeEmpty(
+            "authority-service production code and package manifests must not reference a " +
+            "model/LLM SDK, including fully-qualified or differently-cased references: " +
+            string.Join(", ", offenders));
+    }
+
+    [Fact]
+    public void Dormant_loan_contracts_are_not_reachable_from_approval_signing_or_execution()
+    {
+        var serviceDir = Path.Combine(RepoRoot(), "src", "authority-service");
+        var allowedProgramLines = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "using AuthorityService.LoanDecision.Policy;",
+            "using AuthorityService.LoanDecision.Snapshots;",
+            "builder.Services.AddDormantLoanDecisionPolicy(builder.Configuration);",
+            "builder.Services.AddSingleton<LoanSnapshotValidator>();",
+            "builder.Services.AddSingleton<ILoanAuthoritativeSource, UnconfiguredLoanAuthoritativeSource>();",
+            "builder.Services.AddSingleton<LoanSnapshotBuilder>();"
+        };
+
+        var offenders = new List<string>();
+        foreach (var file in ProductionFiles(serviceDir, "*.cs")
+                     .Concat(ProductionFiles(serviceDir, "*.csproj")))
+        {
+            var relative = Path.GetRelativePath(serviceDir, file);
+            var lines = File.ReadAllLines(file);
+            for (var index = 0; index < lines.Length; index++)
+            {
+                var line = lines[index].Trim();
+                if (relative == "Program.cs" && allowedProgramLines.Contains(line))
+                    continue;
+                if (ContainsLoanActivationSeam(relative, line))
+                    offenders.Add($"{relative}:{index + 1}");
+            }
+        }
+
+        offenders.Should().BeEmpty(
+            "the first #382 slice is dormant; all production C# and project files are scanned for " +
+            "controllers/routes, ApprovalService or broker integration, tools, signing/execution, " +
+            "model SDKs, and references outside the isolated core: " +
+            string.Join(", ", offenders));
+    }
+
+    [Theory]
+    [InlineData("global::Azure.AI.Projects.ProjectClient")]
+    [InlineData("openai.chat.ChatClient")]
+    [InlineData("MICROSOFT.SEMANTICKERNEL.KERNEL")]
+    [InlineData("AgentFramework.Agent")]
+    [InlineData("<PackageReference Include=\"Microsoft.Extensions.AI\" />")]
+    public void Model_reference_guard_detects_bypass_forms(string source)
+    {
+        ContainsForbiddenModelReference(source).Should().BeTrue(
+            "the architecture guard must detect fully-qualified, package, and casing variants");
+    }
+
+    [Theory]
+    [InlineData("LoanDecision/LoanController.cs", "public sealed class LoanController : ControllerBase")]
+    [InlineData("LoanDecision/Routes.cs", "app.MapPost(\"/loans/decision\", handler);")]
+    [InlineData("Services/ApprovalService.cs", "global::AuthorityService.LoanDecision.Contracts.LoanDecisionSnapshotV1 value;")]
+    [InlineData("LoanDecision/Broker.cs", "private readonly IActionBroker broker;")]
+    [InlineData("LoanDecision/Tools.cs", "services.AddTool<LoanDecisionTool>();")]
+    [InlineData("LoanDecision/Activation.cs", "builder.BuildForDecision(input, policy);")]
+    [InlineData("Other/Activation.cs", "provider.RequireExecutable();")]
+    [InlineData("LoanDecision/Model.cs", "global::Azure.AI.Projects.ProjectClient client;")]
+    public void Dormancy_guard_detects_bypass_forms(string path, string source)
+    {
+        ContainsLoanActivationSeam(path, source).Should().BeTrue(
+            "the guard must detect activation both under LoanDecision and elsewhere");
+    }
+
+    private static IEnumerable<string> ProductionFiles(string serviceDir, string pattern) =>
+        Directory.EnumerateFiles(serviceDir, pattern, SearchOption.AllDirectories)
+            .Where(file => !file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}") &&
+                           !file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"));
+
+    private static bool ContainsForbiddenModelReference(string source) =>
+        Regex.IsMatch(
+            source,
+            @"(?:Azure\.AI\.|OpenAI|SemanticKernel|AgentFramework|Microsoft\.Extensions\.AI)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static bool ContainsLoanActivationSeam(string relativePath, string source)
+    {
+        if (ContainsForbiddenModelReference(source))
+            return true;
+
+        var underLoanDecision = relativePath.Replace('\\', '/')
+            .Contains("/LoanDecision/", StringComparison.OrdinalIgnoreCase) ||
+            relativePath.Replace('\\', '/')
+                .StartsWith("LoanDecision/", StringComparison.OrdinalIgnoreCase);
+        var activation = Regex.IsMatch(source,
+            @"(?:\bController(?:Base)?\b|\bMap(?:Get|Post|Put|Patch|Delete)\s*\(|" +
+            @"\bIActionBroker\b|\bHttpActionBroker\b|\bAddTool\b|\bFunctionTool\b|" +
+            @"\.\s*BuildForDecision\s*\(|\.\s*RequireExecutable\s*\(|" +
+            @"\bSignAsync\s*\(|\bExecuteAsync\s*\()",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (underLoanDecision)
+            return activation;
+
+        return Regex.IsMatch(source,
+            @"\bAuthorityService\.LoanDecision\b|\bLoanDecision\.|" +
+            @"\.\s*BuildForDecision\s*\(|\.\s*RequireExecutable\s*\(",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 }
 

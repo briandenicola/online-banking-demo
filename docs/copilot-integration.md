@@ -1,5 +1,16 @@
 # Copilot Integration Guide
 
+## Authoritative loan-control boundary
+
+`banker-copilot-service` is Python and may gather evidence, call models, and render
+authority-service results. It is not an underwriting oracle. The current #382 slice adds only a
+dormant .NET 10/Newtonsoft control core under `src/authority-service/LoanDecision/`: provisional
+POL-001..POL-010 inventory validation, an explicit fail-closed `ILoanAuthoritativeSource`,
+canonical snapshot construction, exact record/revision/ETag binding, strict loan-only JSON,
+TOCTOU reconciliation, and domain-separated digests. The builder derives completeness from
+authoritative page enumeration rather than accepting caller claims. No loan tools, endpoints, approval integration,
+signing, or execution described by later #382/#383 phases are implemented yet. Guide
+
 [← Home](README.md)
 
 This project uses GitHub Copilot CLI and the speckit workflow for AI-assisted development. This document explains the tooling, customization, and workflows used.

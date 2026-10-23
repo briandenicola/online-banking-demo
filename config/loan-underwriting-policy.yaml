@@ -1,0 +1,55 @@
+apiVersion: loan-underwriting/v1
+metadata:
+  policyId: authoritative-loan-underwriting
+  description: Dormant ratification-first inventory for POL-001 through POL-010.
+rules:
+  - id: POL-001
+    status: PROVISIONAL
+    operator: UNDEFINED
+    outcome: BLOCKED
+    reasonCode: POL_001_DEFINITION_UNRESOLVED
+  - id: POL-002
+    status: PROVISIONAL
+    operator: UNDEFINED
+    outcome: BLOCKED
+    reasonCode: POL_002_DEFINITION_UNRESOLVED
+  - id: POL-003
+    status: PROVISIONAL
+    operator: UNDEFINED
+    outcome: BLOCKED
+    reasonCode: POL_003_DEFINITION_UNRESOLVED
+  - id: POL-004
+    status: PROVISIONAL
+    operator: UNDEFINED
+    outcome: BLOCKED
+    reasonCode: POL_004_DEFINITION_UNRESOLVED
+  - id: POL-005
+    status: PROVISIONAL
+    operator: UNDEFINED
+    outcome: BLOCKED
+    reasonCode: POL_005_DEFINITION_UNRESOLVED
+  - id: POL-006
+    status: PROVISIONAL
+    operator: UNDEFINED
+    outcome: BLOCKED
+    reasonCode: POL_006_DEFINITION_UNRESOLVED
+  - id: POL-007
+    status: PROVISIONAL
+    operator: UNDEFINED
+    outcome: BLOCKED
+    reasonCode: POL_007_DEFINITION_UNRESOLVED
+  - id: POL-008
+    status: PROVISIONAL
+    operator: UNDEFINED
+    outcome: BLOCKED
+    reasonCode: POL_008_DEFINITION_UNRESOLVED
+  - id: POL-009
+    status: PROVISIONAL
+    operator: UNDEFINED
+    outcome: BLOCKED
+    reasonCode: POL_009_DEFINITION_UNRESOLVED
+  - id: POL-010
+    status: PROVISIONAL
+    operator: UNDEFINED
+    outcome: BLOCKED
+    reasonCode: POL_010_DEFINITION_UNRESOLVED
