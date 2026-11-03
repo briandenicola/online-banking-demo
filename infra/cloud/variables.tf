@@ -19,7 +19,7 @@ variable "aks_node_count" {
 variable "aks_node_size" {
   description = "VM size for AKS nodes"
   type        = string
-  default     = "Standard_D4_v5"
+  default     = "standard_d4s_v7"
 }
 
 variable "kubernetes_version" {
@@ -50,7 +50,7 @@ variable "keyvault_allowed_ip_rules" {
 variable "jumpbox_vm_size" {
   description = "VM size for the in-VNet jumpbox"
   type        = string
-  default     = "Standard_D2s_v5"
+  default     = "Standard_D4s_v4"
 }
 
 variable "jumpbox_admin_username" {
